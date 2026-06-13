@@ -37,11 +37,9 @@ Python 3.11+.
 - **Phase 1 ✅ — Foundation + Dashboard:** Garmin sync (token cache + MFA),
   SQLite cache, trend dashboard, fitness-age/VO₂ tiles, and type-aware
   workout-detail views (strength sets, cardio stats, HR zones).
-- **Phase 2 ⏳ — Metrics engine:** training load, ACWR, readiness, sleep debt,
+- **Phase 2 ✅ — Metrics engine:** training load, ACWR, readiness, sleep debt,
   strength progression. (Per-activity load already computed.)
-- **Phase 3 ⏳ — Coach (LLM):** daily suggestions + chat, swappable Ollama/Claude
-  (`coach/` module scaffolded, not yet implemented).
-- **Phase 4 ⏳ — Run on boot.**
+- **Phase 3 ✅ — Coach (LLM):** daily suggestions + chat, swappable Ollama/Claude.
 
 ## Setup
 
@@ -54,14 +52,16 @@ cp .env.example .env                          # then edit GARMIN_EMAIL
 
 Edit `.env` and set `GARMIN_EMAIL`. Leave `LLM_PROVIDER=ollama` (default, free).
 
-## Run
-
 ```bash
 .venv/bin/python app.py          # Windows: .venv\Scripts\python app.py
 ```
 
 Open http://localhost:8000 (or http://<this-machine-ip>:8000 from your iPhone on
 the same wifi).
+
+## Access Away From Home (Tailscale)
+Install [Tailscale](https://tailscale.com/) on the machine running this app, and on your phone.
+The app automatically binds to `0.0.0.0`, meaning you can open `http://<your-tailscale-ip>:8000` from your phone anywhere in the world to chat with the Coach or check your readiness!
 
 ## First login (one time)
 

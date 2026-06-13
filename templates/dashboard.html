@@ -17,6 +17,9 @@
       </form>
     {% endif %}
   </span>
+  <span style="flex: 1;"></span>
+  <a href="/goal" class="btn small" style="background: transparent; border: 1px solid var(--border); color: var(--fg); margin-right: 0.5rem;">Goal</a>
+  <a href="/chat" class="btn small" style="background: transparent; border: 1px solid var(--accent); color: var(--accent); margin-right: 0.5rem;">Coach Chat</a>
   {% if needs_login %}
   <a href="/login" class="btn small">Connect Garmin to sync</a>
   {% else %}
@@ -26,6 +29,17 @@
   {% endif %}
 </div>
 
+{% if coach_suggestion %}
+<div class="card" style="border-left: 4px solid var(--accent); background: linear-gradient(145deg, #161b22, #0b0f14);">
+  <h3 style="margin-top: 0; color: var(--accent); font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+    <span>🤖</span> Daily Coach Suggestion
+  </h3>
+  <p style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
+    {{ coach_suggestion }}
+  </p>
+</div>
+{% endif %}
+
 {% if sync_summary %}
 <div class="notice muted">
   Synced {{ sync_summary.activities or 0 }} activities, {{ sync_summary.days or 0 }} days.
@@ -34,46 +48,76 @@
 </div>
 {% endif %}
 
-{% if fitness_tiles %}
-<div class="tile-row">
-  {% for t in fitness_tiles %}
-  <div class="tile">
-    <div class="tile-label">{{ t.label }}</div>
+{% macro render_tile(t) %}
+  {% if t.is_gauge %}
+  <div class="tile tile-gauge">
+    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">ⓘ</span>{% endif %}</div>
+    <div class="gauge-wrap">
+      <div class="gauge">
+        <div class="gauge-arc"></div>
+        <div class="gauge-val-text">{{ t.value|round(1) if t.value is not none else '—' }}<div class="gauge-unit">{{ t.unit }}</div></div>
+        {% if t.bar_pct is not none %}
+        <div class="gauge-indicator" style="transform: rotate({{ (t.bar_pct / 100 * 180) - 90 }}deg)">
+          <div class="gauge-dot"></div>
+        </div>
+        {% endif %}
+      </div>
+      {% if t.age %}<div class="gauge-footer">{{ t.age }}</div>{% endif %}
+      {% if t.desc %}<div class="gauge-desc">{{ t.desc }}</div>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="tile{% if t.color %} tile-{{ t.color }}{% endif %}">
+    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">ⓘ</span>{% endif %}</div>
     <div class="tile-value">
       {% if t.value is not none %}{{ t.value }}{% if t.unit %}<span class="tile-unit">{{ t.unit }}</span>{% endif %}
-        {% if t.trend == 'up' %}<span class="trend up" title="Improved">▲</span>
-        {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">▼</span>
-        {% else %}<span class="trend flat" title="No change">→</span>{% endif %}
+        {% if t.trend is not none %}
+          {% if t.trend == 'up' %}<span class="trend up" title="Improved">▲</span>
+          {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">▼</span>
+          {% else %}<span class="trend flat" title="No change">→</span>{% endif %}
+        {% endif %}
       {% else %}<span class="muted">—</span>{% endif %}
     </div>
     <div class="tile-sub muted">
       {% if t.value is none %}No data yet
       {% else %}
         {%- if t.prev is not none %}from {{ t.prev }}{% if t.age %} · {% endif %}{% endif -%}
-        {%- if t.age %}{{ t.age }}{% endif -%}
+        {%- if t.age %}<span class="acwr-label">{{ t.age }}</span>{% endif -%}
         {%- if t.prev is none and not t.age %}&nbsp;{% endif -%}
       {% endif %}
+      {% if t.desc %}<div style="margin-top:.3rem;">{{ t.desc }}</div>{% endif %}
     </div>
   </div>
+  {% endif %}
+{% endmacro %}
+
+{% if fitness_tiles or readiness_tiles %}
+<div class="tile-row">
+  {% for t in fitness_tiles %}
+    {{ render_tile(t) }}
+  {% endfor %}
+
+  {% for t in readiness_tiles %}
+    {{ render_tile(t) }}
   {% endfor %}
 </div>
 {% endif %}
 
 <div class="chart-grid">
   <div class="card chart-card" data-chart="sleep">
-    <div class="chart-head"><h3>Sleep (hrs)</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Sleep (hrs)<span class="info" tabindex="0" data-tip="Total sleep time from your watch. Aim for 7–9 hours consistently — sleep quality and consistency matter more than occasional long nights.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
     <div class="chart-wrap"><canvas id="sleepChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="hrv">
-    <div class="chart-head"><h3>HRV (overnight)</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>HRV (overnight)<span class="info" tabindex="0" data-tip="Heart Rate Variability — the variation in time between heartbeats, measured overnight. Higher HRV = better recovery and readiness. A drop below your baseline may signal fatigue, stress, or illness.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
     <div class="chart-wrap"><canvas id="hrvChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="rhr">
-    <div class="chart-head"><h3>Resting HR</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Resting HR<span class="info" tabindex="0" data-tip="Your lowest sustained heart rate, typically measured during sleep. Lower resting HR generally indicates better cardiovascular fitness. A spike above your baseline can signal fatigue, stress, or dehydration.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
     <div class="chart-wrap"><canvas id="rhrChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="steps">
-    <div class="chart-head"><h3>Steps</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Steps<span class="info" tabindex="0" data-tip="Daily step count from your watch. Reflects overall daily movement and non-exercise activity. General guideline: 7,000–10,000 steps/day supports cardiovascular health.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
     <div class="chart-wrap"><canvas id="stepsChart"></canvas></div>
   </div>
 </div>

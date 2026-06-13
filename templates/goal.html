@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+  <div class="header-left">
+    <h1><a href="/" style="text-decoration: none; color: var(--fg);">&larr;</a> Training Goal</h1>
+  </div>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto; padding: 2rem;">
+  <p class="muted" style="margin-bottom: 1.5rem;">
+    Set your current training goal. The GarminCoach AI uses this to personalize its daily suggestions and answers.
+  </p>
+
+  <form method="post" action="/goal">
+    <div style="margin-bottom: 1.5rem;">
+      <label for="goal" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Primary Goal</label>
+      <input type="text" id="goal" name="goal" value="{{ goal.goal }}" 
+             placeholder="e.g., Run a sub-20 5k, Build muscle, or Maintain fitness" 
+             style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg);">
+    </div>
+
+    <div style="margin-bottom: 1.5rem;">
+      <label for="custom_input" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Constraints & Preferences</label>
+      <textarea id="custom_input" name="custom_input" rows="4" 
+                placeholder="e.g., I can only work out on Tuesdays and Thursdays. I have a bad left knee."
+                style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); resize: vertical;">{{ goal.custom_input }}</textarea>
+    </div>
+
+    <div style="text-align: right;">
+      <button type="submit" class="btn" style="padding: 0.75rem 1.5rem;">Save Goal</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
