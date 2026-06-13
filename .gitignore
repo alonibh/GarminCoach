@@ -24,3 +24,8 @@ _login.py
 .idea/
 .vscode/
 *.swp
+
+# SQLite sidecar files
+*.db-journal
+*.db-wal
+*.db-shm
