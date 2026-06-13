@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<a href="/" class="muted">← Dashboard</a>
+<div class="card">
+  <h2>{{ activity.name or activity.type|humanize }}
+    <span class="type-tag">{{ activity.type|humanize }}</span>
+  </h2>
+  <p class="muted">{{ activity.start.strftime('%A %b %d, %Y · %H:%M') if activity.start else '' }}</p>
+  <div class="stats">
+    <span><b>{{ activity.duration_min }}</b> min</span>
+    <span><b>{{ activity.calories|round|int if activity.calories else '—' }}</b> cal</span>
+    <span><b>{{ activity.avg_hr|round|int if activity.avg_hr else '—' }}</b> avg HR</span>
+    <span><b>{{ activity.max_hr|round|int if activity.max_hr else '—' }}</b> max HR</span>
+  </div>
+</div>
+
+{% if activity.is_strength %}
+  {% if exercises %}
+  <div class="card">
+    <h3>Exercises <span class="muted">(from your watch)</span>
+      <span class="info" tabindex="0" data-tip="Sets grouped by exercise. 'vol' = total volume = sum of weight × reps across all sets. 'BW' = bodyweight (no added load).">ⓘ</span>
+    </h3>
+    {% for ex in exercises %}
+    <div class="exercise">
+      <div class="exercise-head">
+        <span class="exercise-name">{{ ex.name|humanize }}</span>
+        <span class="muted">{{ ex.set_count }} sets · {{ ex.total_reps }} reps{% if ex.volume_kg %} · {{ ex.volume_kg }} kg vol{% endif %}</span>
+      </div>
+      <div class="set-pills">
+        {% for st in ex.sets %}
+        <span class="set-pill" title="Set {{ st.index + 1 }}">
+          {% if st.weight_kg %}{{ st.weight_kg }}kg{% else %}BW{% endif %} × {{ st.reps if st.reps else '—' }}{% if st.edited %} *{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    <p class="muted">Weights & reps come straight from the watch. <span title="An asterisk marks a manually-corrected set">* = edited</span></p>
+  </div>
+  {% else %}
+  <div class="card muted">The watch didn't log per-set data for this strength session.</div>
+  {% endif %}
+{% else %}
+  {% if cardio %}
+  <div class="card">
+    <h3>{{ activity.type|humanize }} details</h3>
+    <div class="cardio-grid">
+      {% for row in cardio %}
+      <div class="cardio-stat">
+        <div class="cardio-label muted">{{ row.label }}{% if row.hint %}<span class="info" tabindex="0" data-tip="{{ row.hint }}">ⓘ</span>{% endif %}</div>
+        <div class="cardio-value">{{ row.value }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="card muted">No detailed metrics recorded for this activity.</div>
+  {% endif %}
+{% endif %}
+
+{% if hr_zones %}
+<div class="card">
+  <h3>HR zones <span class="muted">(time in each)</span>
+    <span class="info" tabindex="0" data-tip="How long your heart rate stayed in each zone. Higher zones (Z4–Z5) mean harder effort; the number is the zone's lower BPM boundary.">ⓘ</span>
+  </h3>
+  <div class="hrz">
+    {% for z in hr_zones %}
+    <div class="hrz-row">
+      <span class="hrz-label">Z{{ z.zone }}{% if z.low_bpm %} <span class="muted">{{ z.low_bpm }}+</span>{% endif %}</span>
+      <span class="hrz-track"><span class="hrz-fill hrz-z{{ z.zone }}" style="width: {{ z.pct }}%"></span></span>
+      <span class="hrz-time">{{ z.minutes }}m <span class="muted">{{ z.pct }}%</span></span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

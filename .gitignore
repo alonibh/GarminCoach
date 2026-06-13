@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Secrets & local data (NEVER commit)
+.env
+*.db
+*.sqlite
+*.sqlite3
+
+# Garmin auth tokens (if ever stored inside the repo instead of ~/.garminconnect)
+garmin_tokens.json
+.garminconnect/
+
+# Temp / scratch
+_login.py
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

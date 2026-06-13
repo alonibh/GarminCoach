@@ -1,0 +1,165 @@
+:root {
+  --bg: #0f1419; --card: #1a2129; --fg: #e6edf3; --muted: #8b98a5;
+  --accent: #2f81f7; --warn: #3a2a1a; --border: #2a333d;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: -apple-system, system-ui, sans-serif;
+  background: var(--bg); color: var(--fg); line-height: 1.5;
+}
+header {
+  display: flex; align-items: center; gap: 1.5rem;
+  padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; font-size: 1.2rem; text-decoration: none; color: var(--fg); }
+nav a { color: var(--muted); text-decoration: none; margin-right: 1rem; }
+nav a:hover { color: var(--fg); }
+main { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem;
+}
+.card.warn, .warn { background: var(--warn); border-color: #6b4a1a; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap: 1rem; }
+.grid .card { margin-bottom: 0; }
+
+/* Summary tiles (Fitness Age, VO2 max) — slim stat strip */
+.tile-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin-bottom: 1.25rem;
+}
+.tile {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: .6rem .9rem;
+  min-width: 200px;        /* compact, content-sized — not half-width */
+}
+.tile-label { color: var(--muted); font-size: .78rem; margin-bottom: .15rem; }
+.tile-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; display: flex; align-items: baseline; gap: .3rem; }
+.tile-unit { font-size: .8rem; font-weight: 500; color: var(--muted); }
+.tile-sub { font-size: .72rem; margin-top: .15rem; }
+.trend { font-size: .85rem; }
+.trend.up { color: #3fb950; }    /* improvement */
+.trend.down { color: #e5534b; }  /* regression */
+.trend.flat { color: var(--muted); }
+.trend-prev { font-size: .75rem; font-weight: 500; align-self: center; }
+.tile-stale { font-size: .7rem; color: #d29922; margin-top: .25rem; }
+
+/* 2×2 chart grid with large, readable charts */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.chart-card { margin-bottom: 0; padding: .9rem 1rem; }
+.chart-card h3 { margin: 0; font-size: .95rem; }
+.chart-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: .4rem;
+}
+.collapse-btn {
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 6px; width: 24px; height: 24px; line-height: 1; font-size: 1rem;
+  cursor: pointer; padding: 0; flex: none;
+}
+.collapse-btn:hover { color: var(--fg); border-color: var(--muted); }
+.chart-wrap { position: relative; height: 180px; }
+.chart-card.collapsed .chart-wrap { display: none; }
+.chart-card.collapsed { padding-bottom: .9rem; }
+@media (max-width: 720px) {
+  .chart-grid { grid-template-columns: 1fr; }   /* stack on phones */
+  .chart-wrap { height: 170px; }
+}
+h2, h3 { margin: 0 0 .75rem; }
+.muted { color: var(--muted); font-size: .9rem; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.toolbar.compact { margin: 0 0 1rem; font-size: .85rem; }
+.notice { margin: -.5rem 0 1rem; font-size: .85rem; }
+.notice ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+.btn {
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  padding: .5rem 1rem; font-size: .95rem; cursor: pointer; text-decoration: none;
+  display: inline-block;
+}
+.btn:hover { filter: brightness(1.1); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.small { padding: .25rem .6rem; font-size: .8rem; }
+.badge { background: var(--accent); color: #fff; border-radius: 6px; padding: .1rem .45rem; font-size: .75rem; margin-left: .5rem; }
+
+/* Workout detail: type tag */
+.type-tag {
+  font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 999px;
+  padding: .15rem .55rem; margin-left: .6rem; vertical-align: middle;
+}
+
+/* Strength: grouped exercise blocks with per-set pills */
+.exercise { padding: .75rem 0; border-bottom: 1px solid var(--border); }
+.exercise:last-of-type { border-bottom: 0; }
+.exercise-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: .5rem; flex-wrap: wrap; }
+.exercise-name { font-weight: 600; font-size: 1rem; }
+.set-pills { display: flex; flex-wrap: wrap; gap: .4rem; }
+.set-pill {
+  background: #0f1419; border: 1px solid var(--border); border-radius: 8px;
+  padding: .25rem .6rem; font-size: .85rem; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* Info tooltip (ⓘ) — pure CSS, shows on hover/focus */
+.info {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: .35rem; width: 15px; height: 15px; font-size: .72rem;
+  color: var(--muted); cursor: help; position: relative; border-radius: 50%;
+  vertical-align: middle;
+}
+.info:hover, .info:focus { color: var(--accent); outline: none; }
+.info::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 140%; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: 240px; white-space: normal;
+  background: #0b0f14; color: var(--fg); border: 1px solid var(--border);
+  border-radius: 8px; padding: .5rem .65rem; font-size: .78rem; line-height: 1.4;
+  text-transform: none; font-weight: 400; letter-spacing: 0;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  opacity: 0; visibility: hidden; transition: opacity .12s; z-index: 20; pointer-events: none;
+}
+.info:hover::after, .info:focus::after { opacity: 1; visibility: visible; }
+
+/* Cardio: stat grid */
+.cardio-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: .9rem;
+}
+.cardio-stat { background: #0f1419; border: 1px solid var(--border); border-radius: 10px; padding: .7rem .85rem; }
+.cardio-label { font-size: .75rem; margin-bottom: .2rem; }
+.cardio-value { font-size: 1.15rem; font-weight: 600; }
+
+/* HR zones: labelled bars */
+.hrz { display: flex; flex-direction: column; gap: .5rem; }
+.hrz-row { display: grid; grid-template-columns: 64px 1fr 80px; align-items: center; gap: .7rem; }
+.hrz-label { font-size: .85rem; font-weight: 600; }
+.hrz-track { background: #0f1419; border-radius: 6px; height: 16px; overflow: hidden; }
+.hrz-fill { display: block; height: 100%; border-radius: 6px; min-width: 2px; }
+.hrz-time { font-size: .82rem; text-align: right; font-variant-numeric: tabular-nums; }
+.hrz-z1 { background: #4593e6; }   /* easy → hard: blue, teal, green, orange, red */
+.hrz-z2 { background: #3fb9c5; }
+.hrz-z3 { background: #3fb950; }
+.hrz-z4 { background: #f0883e; }
+.hrz-z5 { background: #e5534b; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: .85rem; }
+tr.rest td { color: var(--muted); }
+a { color: var(--accent); }
+input {
+  width: 100%; padding: .5rem; margin: .25rem 0 .5rem; background: #0f1419;
+  border: 1px solid var(--border); border-radius: 8px; color: var(--fg);
+}
+.setedit { display: flex; gap: .4rem; align-items: center; margin-top: .5rem; }
+.setedit input { width: auto; margin: 0; }
+.stats { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.stats b { font-size: 1.3rem; }
+code { background: #0f1419; padding: .1rem .3rem; border-radius: 4px; }
+details summary { cursor: pointer; color: var(--accent); font-size: .85rem; }

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:2rem auto;">
+  <h2>Connect Garmin</h2>
+  <p class="muted">Your password is used once to log in, then a token is cached locally.
+  It is never stored. If your account uses 2FA, enter the code too.</p>
+  {% if error %}<div class="warn">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
+    <label>Email</label>
+    <input name="email_display" value="{{ email }}" disabled>
+    <label>Password</label>
+    <input name="password" type="password" required autofocus>
+    <label>2FA code <span class="muted">(if prompted)</span></label>
+    <input name="mfa" inputmode="numeric" autocomplete="one-time-code">
+    <button class="btn" style="margin-top:1rem;">Connect & sync</button>
+  </form>
+  <p class="muted" style="margin-top:1rem;">Set <code>GARMIN_EMAIL</code> in your <code>.env</code> first.</p>
+</div>
+{% endblock %}

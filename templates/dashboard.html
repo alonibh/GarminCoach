@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if needs_login %}
+<div class="card warn">
+  <strong>Not connected to Garmin.</strong>
+  <a href="/login" class="btn">Connect your Garmin account →</a>
+</div>
+{% endif %}
+
+<div class="toolbar compact">
+  <span class="muted">
+    {% if last_sync_at %}Synced {{ last_sync_at }}{% else %}Never synced{% endif %}
+    {% if sync_running %}<span class="badge">syncing…</span>
+      <form method="post" action="/sync/reset" style="display:inline">
+        <button class="btn small" style="background:#444">reset</button>
+      </form>
+    {% endif %}
+  </span>
+  {% if needs_login %}
+  <a href="/login" class="btn small">Connect Garmin to sync</a>
+  {% else %}
+  <form method="post" action="/sync" style="margin:0">
+    <button class="btn small" {% if sync_running %}disabled{% endif %}>Sync now</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if sync_summary %}
+<div class="notice muted">
+  Synced {{ sync_summary.activities or 0 }} activities, {{ sync_summary.days or 0 }} days.
+  {% if sync_summary.errors %}<details style="display:inline"><summary>{{ sync_summary.errors|length }} warnings</summary>
+  <ul>{% for e in sync_summary.errors[:10] %}<li>{{ e }}</li>{% endfor %}</ul></details>{% endif %}
+</div>
+{% endif %}
+
+{% if fitness_tiles %}
+<div class="tile-row">
+  {% for t in fitness_tiles %}
+  <div class="tile">
+    <div class="tile-label">{{ t.label }}</div>
+    <div class="tile-value">
+      {% if t.value is not none %}{{ t.value }}{% if t.unit %}<span class="tile-unit">{{ t.unit }}</span>{% endif %}
+        {% if t.trend == 'up' %}<span class="trend up" title="Improved">▲</span>
+        {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">▼</span>
+        {% else %}<span class="trend flat" title="No change">→</span>{% endif %}
+      {% else %}<span class="muted">—</span>{% endif %}
+    </div>
+    <div class="tile-sub muted">
+      {% if t.value is none %}No data yet
+      {% else %}
+        {%- if t.prev is not none %}from {{ t.prev }}{% if t.age %} · {% endif %}{% endif -%}
+        {%- if t.age %}{{ t.age }}{% endif -%}
+        {%- if t.prev is none and not t.age %}&nbsp;{% endif -%}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="chart-grid">
+  <div class="card chart-card" data-chart="sleep">
+    <div class="chart-head"><h3>Sleep (hrs)</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-wrap"><canvas id="sleepChart"></canvas></div>
+  </div>
+  <div class="card chart-card" data-chart="hrv">
+    <div class="chart-head"><h3>HRV (overnight)</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-wrap"><canvas id="hrvChart"></canvas></div>
+  </div>
+  <div class="card chart-card" data-chart="rhr">
+    <div class="chart-head"><h3>Resting HR</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-wrap"><canvas id="rhrChart"></canvas></div>
+  </div>
+  <div class="card chart-card" data-chart="steps">
+    <div class="chart-head"><h3>Steps</h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-wrap"><canvas id="stepsChart"></canvas></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Recent workouts</h3>
+  <table>
+    <thead><tr><th>Date</th><th>Type</th><th>Dur</th><th>Cal</th><th>Avg HR</th><th>Load</th><th></th></tr></thead>
+    <tbody>
+    {% for a in activities %}
+      <tr>
+        <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '—' }}</td>
+        <td>{{ a.type|humanize }}</td>
+        <td>{{ a.duration_min }}m</td>
+        <td>{{ a.calories|round|int if a.calories else '—' }}</td>
+        <td>{{ a.avg_hr|round|int if a.avg_hr else '—' }}</td>
+        <td>{{ a.load if a.load else '—' }}</td>
+        <td><a href="/workout/{{ a.id }}">details →</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No workouts yet. Sync to pull your data.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+const health = {{ health_series|tojson }};
+const sleep = {{ sleep_series|tojson }};
+
+// Show a date label roughly weekly so the x-axis isn't a wall of text.
+function fmtDay(iso) {
+  const d = new Date(iso + 'T00:00');
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+if (window.ChartDataLabels) Chart.register(ChartDataLabels);
+
+function lineChart(id, labels, data, label, color, fmtVal) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const n = data.length;
+  new Chart(el, {
+    type: 'line',
+    data: {
+      labels: labels.map(fmtDay),
+      datasets: [{
+        label, data,
+        tension: 0.35,
+        spanGaps: true,
+        borderColor: color,
+        borderWidth: 2.5,
+        backgroundColor: color + '22',
+        fill: true,
+        pointRadius: 2.5,
+        pointHoverRadius: 5,
+        pointBackgroundColor: color,
+        pointHoverBackgroundColor: color,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: 18, right: 6, left: 2 } }, // room for top labels
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { title: (items) => labels[items[0].dataIndex] } },
+        datalabels: {
+          // A value on every data point.
+          display: (ctx) => {
+            const v = ctx.dataset.data[ctx.dataIndex];
+            return v !== null && v !== undefined;
+          },
+          align: 'top',
+          anchor: 'end',
+          offset: 2,
+          clamp: true,
+          color: '#e6edf3',
+          font: { size: 9, weight: '600' },
+          formatter: (v) => (v === null || v === undefined) ? '' : fmtVal(v),
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: {
+            color: '#8b98a5',
+            autoSkip: true,
+            maxTicksLimit: 6,
+            maxRotation: 0,
+          }
+        },
+        y: {
+          grid: { color: '#2a333d' },
+          ticks: { color: '#8b98a5', maxTicksLimit: 4 },
+          grace: '12%', // headroom so top labels don't clip
+        }
+      }
+    }
+  });
+}
+
+const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
+const round0 = (v) => Math.round(v).toString();                       // 56
+const kSteps = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k' : round0(v); // 8.4k
+
+// Only the past week. Series are oldest→newest, so the last 7 entries are the
+// most recent days.
+const lastWeek = (arr) => arr.slice(-7);
+const sleek = lastWeek(sleep);
+const healthk = lastWeek(health);
+
+lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1);
+lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0);
+lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0);
+lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps);
+
+// Per-chart collapse, remembered across reloads via localStorage.
+function applyCollapse(card, collapsed) {
+  card.classList.toggle('collapsed', collapsed);
+  const btn = card.querySelector('.collapse-btn');
+  if (btn) { btn.textContent = collapsed ? '+' : '–'; btn.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse'); }
+}
+document.querySelectorAll('.chart-card[data-chart]').forEach(card => {
+  const key = 'chartCollapsed:' + card.dataset.chart;
+  applyCollapse(card, localStorage.getItem(key) === '1');
+  const btn = card.querySelector('.collapse-btn');
+  if (btn) btn.addEventListener('click', () => {
+    const collapsed = !card.classList.contains('collapsed');
+    applyCollapse(card, collapsed);
+    localStorage.setItem(key, collapsed ? '1' : '0');
+  });
+});
+</script>
+{% endblock %}
