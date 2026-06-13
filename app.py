@@ -6,7 +6,7 @@ import threading
 from datetime import date, datetime, timedelta
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -183,7 +183,7 @@ def dashboard(request: Request):
             "sleep_series": sleep_series,
             "fitness_tiles": _fitness_tiles(),
             "last_sync_at": _last_sync_at(),
-            "sync_running": sync_runner.status["running"],
+            "sync_running": sync_runner.is_running(),
             "sync_summary": sync_runner.status["summary"],
         },
     )
@@ -371,6 +371,16 @@ def sync_now(full: bool = Form(False)):
         return RedirectResponse("/login", status_code=303)
     sync_runner.try_start_sync(full)
     return RedirectResponse("/", status_code=303)
+
+
+@app.get("/sync/status")
+def sync_status():
+    """JSON endpoint polled by the dashboard while a sync is in progress."""
+    return JSONResponse({
+        "running": sync_runner.is_running(),
+        "summary": sync_runner.status["summary"],
+        "last_sync_at": _last_sync_at(),
+    })
 
 
 @app.post("/sync/reset")

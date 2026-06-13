@@ -208,5 +208,28 @@ document.querySelectorAll('.chart-card[data-chart]').forEach(card => {
     localStorage.setItem(key, collapsed ? '1' : '0');
   });
 });
+
+// Auto-poll sync status while a sync is running, then reload the page
+// so the user sees the results without a manual refresh.
+(function() {
+  let syncing = {{ sync_running|tojson }};
+  if (!syncing) return;
+  const POLL_MS = 3000;
+  const MAX_POLLS = 200;  // safety cap: stop after ~10 min
+  let polls = 0;
+  const timer = setInterval(async () => {
+    polls++;
+    if (polls >= MAX_POLLS) { clearInterval(timer); return; }
+    try {
+      const res = await fetch('/sync/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.running) {
+        clearInterval(timer);
+        location.reload();
+      }
+    } catch (_) { /* network hiccup — try again next tick */ }
+  }, POLL_MS);
+})();
 </script>
 {% endblock %}
