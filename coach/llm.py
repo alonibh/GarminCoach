@@ -60,3 +60,32 @@ def _generate_claude(system: str, user: str, history: list[dict]) -> str:
     except Exception as e:
         logger.error(f"Claude generation failed: {e}")
         return "Coach is currently offline. Please check your Anthropic API key and configuration."
+
+
+def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
+        
+        # Format history to Gemini API specification
+        contents = []
+        for msg in history:
+            role = "user" if msg["role"] == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+        contents.append({"role": "user", "parts": [{"text": user}]})
+        
+        payload = {
+            "system_instruction": {"parts": {"text": system}},
+            "contents": contents
+        }
+        
+        resp = requests.post(url, json=payload, timeout=60)
+        resp.raise_for_status()
+        
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if candidates and candidates[0].get("content", {}).get("parts"):
+            return candidates[0]["content"]["parts"][0]["text"].strip()
+        return "Coach encountered an empty response from Gemini."
+    except Exception as e:
+        logger.error(f"Gemini REST API generation failed: {e}")
+        return "Coach is currently offline. Please check your Gemini API key and configuration."

@@ -22,9 +22,7 @@
           {{ msg.content }}
         </div>
       {% else %}
-        <div style="align-self: flex-start; background: #2a2e33; color: var(--fg); padding: 0.75rem 1rem; border-radius: 12px 12px 12px 0; max-width: 80%;">
-          {{ msg.content }}
-        </div>
+        <div class="ai-message" style="align-self: flex-start; background: #2a2e33; color: var(--fg); padding: 0.75rem 1rem; border-radius: 12px 12px 12px 0; max-width: 80%; line-height: 1.5;">{{ msg.content }}</div>
       {% endif %}
     {% endfor %}
   </div>
@@ -38,7 +36,15 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
+  // Render markdown for all AI messages
+  document.querySelectorAll('.ai-message').forEach(el => {
+    // Preserve line breaks properly by trimming first
+    const rawText = el.textContent.trim();
+    el.innerHTML = marked.parse(rawText);
+  });
+
   // Auto-scroll to bottom of chat
   const history = document.querySelector('.chat-history');
   if (history) {
