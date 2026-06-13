@@ -34,6 +34,32 @@ app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")),
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
 
 
+import base64
+import secrets
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/static"):
+            return await call_next(request)
+            
+        auth = request.headers.get("Authorization")
+        if not auth or not auth.startswith("Basic "):
+            return Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": 'Basic realm="GarminCoach"'})
+            
+        try:
+            decoded = base64.b64decode(auth[6:]).decode("utf-8")
+            username, password = decoded.split(":", 1)
+            if secrets.compare_digest(username, config.APP_USERNAME) and secrets.compare_digest(password, config.APP_PASSWORD):
+                return await call_next(request)
+        except Exception:
+            pass
+            
+        return Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": 'Basic realm="GarminCoach"'})
+
+app.add_middleware(BasicAuthMiddleware)
+
 def _asset_version() -> int:
     """Cache-buster: stylesheet mtime, so a CSS edit forces a fresh fetch."""
     try:

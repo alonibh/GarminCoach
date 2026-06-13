@@ -24,6 +24,40 @@ main { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
 .grid .card { margin-bottom: 0; }
 
 /* Summary tiles (Fitness Age, VO2 max) — slim stat strip */
+.ai-msg {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* --- Mobile Responsiveness --- */
+@media (max-width: 768px) {
+  main { padding: 0.5rem 1rem 1rem; }
+  header { 
+    flex-direction: column; 
+    align-items: flex-start; 
+    gap: 0.75rem; 
+    padding: 1rem;
+  }
+  nav { width: 100%; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  nav a { margin-right: 0.5rem; }
+  
+  .grid, .tile-row { 
+    grid-template-columns: 1fr; 
+    flex-direction: column;
+  }
+  
+  .tile { width: 100%; }
+  
+  /* Tables horizontally scrollable */
+  .table-responsive, .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 500px; }
+  
+  /* Charts stack instead of side-by-side */
+  div[style*="display: grid; grid-template-columns: 1fr 1fr;"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 .tile-row {
   display: flex;
   flex-wrap: wrap;

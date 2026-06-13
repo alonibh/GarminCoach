@@ -40,6 +40,8 @@ Python 3.11+.
 - **Phase 2 ✅ — Metrics engine:** training load, ACWR, readiness, sleep debt,
   strength progression. (Per-activity load already computed.)
 - **Phase 3 ✅ — Coach (LLM):** daily suggestions + chat, swappable Ollama/Claude.
+- **Phase 4 ✅ — Cloud Security:** HTTP Basic Authentication locking down all routes and data, preparing the app for safe deployment to the public internet (e.g. Oracle Cloud Free Tier).
+- **Phase 5 🚧 — Lifestyle Integration (Planned):** sync to Google/Apple Calendar via `.ics` to suggest workout times, plus dynamic nutrition/food/vitamin suggestions based on goals and current recovery status.
 
 ## Setup
 
