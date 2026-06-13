@@ -371,6 +371,28 @@ def _upsert_snapshot(session, metric: str, history: list[tuple]) -> None:
     row.updated_at = datetime.now()
     session.add(row)
 
+def _target_fitness_age() -> Optional[float]:
+    try:
+        fa = client.api.get_fitnessage_data(date.today().isoformat()) or {}
+        val = fa.get("achievableFitnessAge")
+        return round(float(val), 1) if val is not None else None
+    except Exception:
+        return None
+
+
+def _snapshot_user_profile(session) -> None:
+    try:
+        prof = client.api.get_user_profile() or {}
+        ud = prof.get("userData", {})
+        if ud.get("gender"):
+            _set_state(session, "user_gender", ud.get("gender"))
+        if ud.get("weight"):
+            _set_state(session, "user_weight", str(round(ud.get("weight") / 1000.0, 1)))
+        if ud.get("birthDate"):
+            _set_state(session, "user_birth_date", ud.get("birthDate"))
+    except Exception:
+        pass
+
 
 def _snapshot_summary_metrics() -> None:
     """Compute + store fitness age and VO2 max snapshots (runs during sync)."""
@@ -378,6 +400,14 @@ def _snapshot_summary_metrics() -> None:
         return
     fa_hist = _fitness_age_history()
     vo2_hist = _vo2max_history()
+    tfa = _target_fitness_age()
     with get_session() as session:
         _upsert_snapshot(session, "fitness_age", fa_hist)
         _upsert_snapshot(session, "vo2max", vo2_hist)
+        _snapshot_user_profile(session)
+        if tfa is not None:
+            row = session.get(MetricSnapshot, "target_fitness_age") or MetricSnapshot(metric="target_fitness_age")
+            row.value = tfa
+            row.value_date = date.today().isoformat()
+            row.updated_at = datetime.now()
+            session.add(row)

@@ -1,4 +1,4 @@
-"""GarminCoach FastAPI app — Phase 1 (dashboard + sync + workout detail)."""
+"""GarminCoach FastAPI app — dashboard + sync + workout detail."""
 from __future__ import annotations
 
 import os
@@ -14,6 +14,7 @@ import config
 from db import (
     Activity,
     DailyHealth,
+    DailyMetrics,
     ExerciseSet,
     MetricSnapshot,
     Sleep,
@@ -21,6 +22,7 @@ from db import (
     get_session,
     init_db,
 )
+from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
 
@@ -110,16 +112,183 @@ def _tile(row, *, key, label, unit, lower_is_better):
     }
 
 
+def _vo2_max_details(val: float | None, age: int = 28, is_male: bool = True) -> tuple[float | None, str]:
+    """Calculate the gauge percentage and text label for VO2 max based on Cooper Institute."""
+    if val is None:
+        return None, ""
+    
+    # Exact Garmin (Firstbeat Analytics) boundaries
+    if is_male:
+        if age < 30: b = (36.5, 42.5, 46.5, 51.5)
+        elif age < 40: b = (35.5, 41.0, 45.0, 50.5)
+        elif age < 50: b = (34.0, 39.0, 43.8, 49.0)
+        else: b = (32.5, 36.8, 41.0, 45.8)
+    else:
+        if age < 30: b = (32.0, 36.5, 41.2, 46.9)
+        elif age < 40: b = (31.0, 35.3, 39.5, 44.7)
+        elif age < 50: b = (29.5, 33.5, 37.0, 42.5)
+        else: b = (27.5, 31.0, 34.5, 39.0)
+
+    b1, b2, b3, b4 = b
+    
+    # We want each zone to be 20% of the gauge width visually.
+    min_val = b1 - 5.0
+    max_val = b4 + 5.0
+    
+    if val < b1:
+        label = "Poor"
+        pct = (val - min_val) / (b1 - min_val) * 20
+    elif val < b2:
+        label = "Fair"
+        pct = 20 + (val - b1) / (b2 - b1) * 20
+    elif val < b3:
+        label = "Good"
+        pct = 40 + (val - b2) / (b3 - b2) * 20
+    elif val < b4:
+        label = "Excellent"
+        pct = 60 + (val - b3) / (b4 - b3) * 20
+    else:
+        label = "Superior"
+        pct = 80 + (val - b4) / (max_val - b4) * 20
+        
+    return min(100.0, max(0.0, pct)), label
+
+
 def _fitness_tiles() -> list[dict]:
     """Fitness Age + VO2 max tiles, read from the DB snapshot computed during
     sync — no live Garmin calls, so the dashboard never lags or blanks."""
     with get_session() as s:
         fa = s.get(MetricSnapshot, "fitness_age")
         vo2 = s.get(MetricSnapshot, "vo2max")
-        return [
-            _tile(fa, key="fitness_age", label="Fitness Age", unit="yrs", lower_is_better=True),
-            _tile(vo2, key="vo2max", label="VO₂ max", unit="", lower_is_better=False),
-        ]
+        tfa = s.get(MetricSnapshot, "target_fitness_age")
+        
+        # Dynamic profile config
+        gender_st = s.get(SyncState, "user_gender")
+        weight_st = s.get(SyncState, "user_weight")
+        bd_st = s.get(SyncState, "user_birth_date")
+        
+        is_male = (gender_st.value.upper() == "MALE") if gender_st and gender_st.value else True
+        weight_str = weight_st.value if weight_st and weight_st.value else ""
+        gender_str = "Male" if is_male else "Female"
+        
+        age = 28
+        if bd_st and bd_st.value:
+            try:
+                bd = date.fromisoformat(bd_st.value[:10])
+                today = date.today()
+                age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+            except Exception:
+                pass
+        
+        fa_tile = _tile(fa, key="fitness_age", label="Fitness Age", unit="yrs", lower_is_better=True)
+        fa_tile["prev"] = None  # Hide 'from X' text but keep trend arrow
+        if tfa and tfa.value:
+            fa_tile["age"] = f"Target: {tfa.value}"
+        fa_tile["hint"] = "Garmin's estimate of how old your body performs. Lower is better — a 30-year-old with a fitness age of 22 has above-average cardiovascular fitness."
+        
+        vo2_val = vo2.value if vo2 else None
+        vo2_pct, vo2_label = _vo2_max_details(vo2_val, age=age, is_male=is_male)
+        
+        desc = []
+        desc.append(gender_str)
+        desc.append(f"{age} yrs")
+        if weight_str:
+            desc.append(f"{weight_str} kg")
+            
+        vo2_tile = {
+            "key": "vo2max", "label": "VO₂ max", "value": vo2_val, "unit": "ml/kg/min",
+            "is_gauge": True,
+            "bar_pct": vo2_pct,
+            "age": vo2_label,
+            "desc": " | ".join(desc),
+            "hint": "Maximum oxygen uptake. Higher = better aerobic capacity. Measured from qualifying GPS runs with heart rate."
+        }
+        
+        return [fa_tile, vo2_tile]
+
+
+def _readiness_tiles() -> list[dict]:
+    """Readiness + ACWR tiles from the latest DailyMetrics row."""
+    with get_session() as s:
+        today = date.today()
+        # Latest row (today or most recent day with data).
+        latest = (
+            s.query(DailyMetrics)
+            .filter(DailyMetrics.day <= today)
+            .order_by(DailyMetrics.day.desc())
+            .first()
+        )
+        # Previous day for trend arrows.
+        prev = None
+        if latest:
+            prev = (
+                s.query(DailyMetrics)
+                .filter(DailyMetrics.day < latest.day)
+                .order_by(DailyMetrics.day.desc())
+                .first()
+            )
+
+        # Readiness tile.
+        r_val = latest.readiness if latest else None
+        
+        r_desc = ""
+        if r_val is not None:
+            if r_val >= 70:
+                r_desc = "Ready to push."
+            elif r_val >= 40:
+                r_desc = "Moderate recovery."
+            else:
+                r_desc = "Prioritize recovery."
+
+        readiness_tile = {
+            "key": "readiness", "label": "Readiness",
+            "value": int(r_val) if r_val is not None else None,
+            "unit": "",
+            "prev": None,
+            "age": _age_label(latest.day.isoformat()) if latest else None,
+            "trend": None,
+            "desc": r_desc,
+            "color": ("green" if r_val and r_val >= 70
+                      else "yellow" if r_val and r_val >= 40
+                      else "red" if r_val is not None
+                      else None),
+            "bar_pct": int(r_val) if r_val is not None else None,
+            "hint": "Daily recovery score (0–100) based on your overnight HRV, resting heart rate, sleep duration, and Body Battery — all compared to your own 60-day personal baselines, not population averages. Green (≥70) = ready to push, yellow (40–69) = moderate, red (<40) = prioritize recovery.",
+        }
+
+        # ACWR tile.
+        a_val = latest.acwr if latest else None
+        # Color zones: green (balanced), yellow (ramping/detraining), red (spike).
+        a_color = None
+        a_desc = ""
+        if a_val is not None:
+            if a_val < 0.8:
+                a_color = "yellow"
+                a_desc = "Doing less than usual."
+            elif a_val <= 1.3:
+                a_color = "green"
+                a_desc = "Steady progression, low injury risk."
+            elif a_val <= 1.5:
+                a_color = "yellow"
+                a_desc = "Building up load."
+            else:
+                a_color = "red"
+                a_desc = "Sharp increase, higher injury risk."
+        # Bar position: map ACWR 0–2.0 to 0–100%, capped.
+        a_bar_pct = min(100, int(a_val / 2.0 * 100)) if a_val is not None else None
+        acwr_tile = {
+            "key": "acwr", "label": "ACWR",
+            "value": a_val,
+            "unit": "",
+            "is_gauge": True,
+            "age": acwr_label(a_val),
+            "desc": a_desc,
+            "color": a_color,
+            "bar_pct": a_bar_pct,
+            "hint": "Acute:Chronic Workload Ratio — your last 7 days of training load divided by your last 28 days. Balanced (0.8–1.3) = steady progression. Ramping (1.3–1.5) = building up. Spike (>1.5) = sharp increase, higher injury risk. Detraining (<0.8) = doing less than usual.",
+        }
+
+        return [readiness_tile, acwr_tile]
 
 
 # --- routes ---------------------------------------------------------------
@@ -182,6 +351,7 @@ def dashboard(request: Request):
             "health_series": health_series,
             "sleep_series": sleep_series,
             "fitness_tiles": _fitness_tiles(),
+            "readiness_tiles": _readiness_tiles(),
             "last_sync_at": _last_sync_at(),
             "sync_running": sync_runner.is_running(),
             "sync_summary": sync_runner.status["summary"],
@@ -328,6 +498,37 @@ def workout_detail(request: Request, activity_id: int):
                 ex["set_count"] = len(ex["sets"])
                 ex["total_reps"] = sum((x["reps"] or 0) for x in ex["sets"])
                 ex["volume_kg"] = round(vol)
+
+            # Strength progression: compare each exercise against the
+            # previous session that contained the same exercise.
+            if act.start_time:
+                for ex in exercises:
+                    prev_sets = (
+                        s.query(ExerciseSet)
+                        .join(Activity)
+                        .filter(
+                            ExerciseSet.exercise_name == ex["name"],
+                            Activity.start_time < act.start_time,
+                            ExerciseSet.set_type != "REST",
+                        )
+                        .order_by(Activity.start_time.desc())
+                        .all()
+                    )
+                    if not prev_sets:
+                        ex["delta_vol"] = None
+                        ex["delta_best"] = None
+                        continue
+                    # Group by the most recent activity only.
+                    prev_act_id = prev_sets[0].activity_id
+                    prev_for_ex = [ps for ps in prev_sets if ps.activity_id == prev_act_id]
+                    prev_vol = sum(
+                        (ps.reps or 0) * (ps.weight_kg or 0) for ps in prev_for_ex
+                    )
+                    prev_best = max((ps.weight_kg or 0) for ps in prev_for_ex)
+                    cur_best = max((x["weight_kg"] or 0) for x in ex["sets"])
+                    ex["delta_vol"] = round(vol - prev_vol) if prev_vol else None
+                    delta_b = round(cur_best - prev_best, 1) if prev_best else None
+                    ex["delta_best"] = delta_b if delta_b and delta_b != 0 else None
         else:
             cardio = _cardio_stats(act)
 

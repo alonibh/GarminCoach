@@ -24,7 +24,10 @@
     <div class="exercise">
       <div class="exercise-head">
         <span class="exercise-name">{{ ex.name|humanize }}</span>
-        <span class="muted">{{ ex.set_count }} sets · {{ ex.total_reps }} reps{% if ex.volume_kg %} · {{ ex.volume_kg }} kg vol{% endif %}</span>
+        <span class="muted">{{ ex.set_count }} sets · {{ ex.total_reps }} reps{% if ex.volume_kg %} · {{ ex.volume_kg }} kg vol{% endif %}
+          {% if ex.delta_vol is not none %}<span class="delta {{ 'up' if ex.delta_vol > 0 else 'down' if ex.delta_vol < 0 else 'flat' }}">{{ '+' if ex.delta_vol > 0 }}{{ ex.delta_vol }} kg vs last</span>{% endif %}
+          {% if ex.delta_best is not none %}<span class="delta {{ 'up' if ex.delta_best > 0 else 'down' }}">best {{ '+' if ex.delta_best > 0 }}{{ ex.delta_best }} kg</span>{% endif %}
+        </span>
       </div>
       <div class="set-pills">
         {% for st in ex.sets %}
