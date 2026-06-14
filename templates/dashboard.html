@@ -30,26 +30,40 @@
 </div>
 
 {% if coach_suggestion %}
-<div class="card" style="border-left: 4px solid var(--accent); background: linear-gradient(145deg, #161b22, #0b0f14);">
-  <h3 style="margin-top: 0; color: var(--accent); font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
-    <span>🤖</span> Daily Coach Suggestion
-  </h3>
-  <p style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
-    {{ coach_suggestion }}
-  </p>
+<div class="card collapsible-card" data-card="coach" style="border-left: 4px solid var(--accent); background: linear-gradient(145deg, #161b22, #0b0f14);">
+  <div class="chart-head" style="margin-bottom:0">
+    <h3 style="margin-top: 0; color: var(--accent); font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
+      <span>🤖</span> Daily Coach Suggestion
+    </h3>
+    <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
+  </div>
+  <div class="collapsible-content" style="margin-top:0.75rem;">
+    <p style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
+      {{ coach_suggestion }}
+    </p>
+  </div>
 </div>
 {% endif %}
 
 {% if nutrition_suggestion %}
-<div class="card" style="border-left: 4px solid #3fb950; background: linear-gradient(145deg, #111d13, #08100a);">
-  <h3 style="margin-top: 0; color: #3fb950; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
-    <span>🥗</span> Nutrition Coach
-  </h3>
-  <p style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
-    {{ nutrition_suggestion }}
-  </p>
+<div class="card collapsible-card" data-card="nutrition" style="border-left: 4px solid #3fb950; background: linear-gradient(145deg, #111d13, #08100a);">
+  <div class="chart-head" style="margin-bottom:0">
+    <h3 style="margin-top: 0; color: #3fb950; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
+      <span>🥗</span> Nutrition Coach
+    </h3>
+    <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
+  </div>
+  <div class="collapsible-content" style="margin-top:0.75rem;">
+    <p style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
+      {{ nutrition_suggestion }}
+    </p>
+  </div>
 </div>
 {% endif %}
+<style>
+.collapsible-card.collapsed .collapsible-content { display: none; }
+.collapsible-card.collapsed { padding-bottom: 1.25rem; }
+</style>
 
 {% if sync_summary %}
 <div class="notice muted">
@@ -251,7 +265,7 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: labels.map(shortDate),
+      labels: labels.map(fmtDay),
       datasets: [
         {
           label: 'Active',
@@ -300,8 +314,8 @@ function applyCollapse(card, collapsed) {
   const btn = card.querySelector('.collapse-btn');
   if (btn) { btn.textContent = collapsed ? '+' : '–'; btn.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse'); }
 }
-document.querySelectorAll('.chart-card[data-chart]').forEach(card => {
-  const key = 'chartCollapsed:' + card.dataset.chart;
+document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]').forEach(card => {
+  const key = 'chartCollapsed:' + (card.dataset.chart || card.dataset.card);
   applyCollapse(card, localStorage.getItem(key) === '1');
   const btn = card.querySelector('.collapse-btn');
   if (btn) btn.addEventListener('click', () => {
