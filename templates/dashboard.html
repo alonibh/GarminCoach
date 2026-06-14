@@ -124,24 +124,26 @@
 
 <div class="card">
   <h3>Recent workouts</h3>
-  <table>
-    <thead><tr><th>Date</th><th>Type</th><th>Dur</th><th>Cal</th><th>Avg HR</th><th>Load</th><th></th></tr></thead>
-    <tbody>
-    {% for a in activities %}
-      <tr>
-        <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '—' }}</td>
-        <td>{{ a.type|humanize }}</td>
-        <td>{{ a.duration_min }}m</td>
-        <td>{{ a.calories|round|int if a.calories else '—' }}</td>
-        <td>{{ a.avg_hr|round|int if a.avg_hr else '—' }}</td>
-        <td>{{ a.load if a.load else '—' }}</td>
-        <td><a href="/workout/{{ a.id }}">details →</a></td>
-      </tr>
-    {% else %}
-      <tr><td colspan="7" class="muted">No workouts yet. Sync to pull your data.</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  <div style="overflow-x: auto;">
+    <table>
+      <thead><tr><th>Date</th><th>Type</th><th>Dur</th><th>Cal</th><th>Avg HR</th><th>Load</th><th></th></tr></thead>
+      <tbody>
+      {% for a in activities %}
+        <tr>
+          <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '—' }}</td>
+          <td>{{ a.type|humanize }}</td>
+          <td>{{ a.duration_min }}m</td>
+          <td>{{ a.calories|round|int if a.calories else '—' }}</td>
+          <td>{{ a.avg_hr|round|int if a.avg_hr else '—' }}</td>
+          <td>{{ a.load if a.load else '—' }}</td>
+          <td><a href="/workout/{{ a.id }}">details →</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted text-center">No workouts yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <script>
