@@ -99,7 +99,28 @@ def _startup() -> None:
 def _last_sync_at() -> str | None:
     with get_session() as s:
         row = s.get(SyncState, "last_sync_at")
-        return row.value if row else None
+        if not row or not row.value:
+            return None
+        try:
+            dt = datetime.fromisoformat(row.value)
+            now = datetime.now()
+            # If the stored value has tzinfo but now doesn't, or vice versa, handle it.
+            # Assuming row.value is naive local time based on our sync.py
+            diff = now - dt
+            seconds = int(diff.total_seconds())
+            if seconds < 60:
+                return "just now"
+            elif seconds < 3600:
+                mins = seconds // 60
+                return f"{mins} minute{'s' if mins != 1 else ''} ago"
+            elif seconds < 86400:
+                hours = seconds // 3600
+                return f"{hours} hour{'s' if hours != 1 else ''} ago"
+            else:
+                days = seconds // 86400
+                return f"{days} day{'s' if days != 1 else ''} ago"
+        except Exception:
+            return row.value
 
 
 def _trend(current, previous, *, lower_is_better: bool) -> str:
