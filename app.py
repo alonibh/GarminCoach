@@ -51,7 +51,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         try:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
-            if secrets.compare_digest(username, config.APP_USERNAME) and secrets.compare_digest(password, config.APP_PASSWORD):
+            
+            # Temporary hardcoded check to bypass .env issues
+            if secrets.compare_digest(username, "aloni") and secrets.compare_digest(password, "cloud2026!"):
                 return await call_next(request)
         except Exception:
             pass
