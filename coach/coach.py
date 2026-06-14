@@ -27,13 +27,9 @@ RULES:
 def generate_daily_suggestion(session: Session) -> None:
     """Generate a daily proactive coaching suggestion if one doesn't exist for today."""
     
-    # Check if we already generated a suggestion today
-    today = date.today()
-    latest_msg = session.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
-    
-    if latest_msg and latest_msg.created_at and latest_msg.created_at.date() == today:
-        logger.info("Daily suggestion already exists for today. Skipping.")
-        return
+    # We generate a fresh suggestion every time this is called (both on the
+    # automated 4am sync, and whenever the user clicks Manual Sync).
+    # The dashboard always shows the most recent suggestion for today.
         
     snapshot_json = build_snapshot(session)
     
