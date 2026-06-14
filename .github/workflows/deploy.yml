@@ -16,7 +16,8 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd ~/garmincoach
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             source .venv/bin/activate
             pip install -r requirements.txt
             sudo systemctl restart garmincoach
