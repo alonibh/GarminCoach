@@ -230,7 +230,7 @@ h2, h3 { margin: 0 0 .75rem; }
 .hrz-z5 { background: #e5534b; }
 
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--border); }
+th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; font-size: .85rem; }
 tr.rest td { color: var(--muted); }
 a { color: var(--accent); }
