@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<a href="javascript:history.back()" class="muted">← Back</a>
 <div class="card">
   <h2>{{ activity.name or activity.type|humanize }}
     <span class="type-tag">{{ activity.type|humanize }}</span>
