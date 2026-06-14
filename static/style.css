@@ -92,9 +92,10 @@ main { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
   background: var(--card); border: 1px solid var(--border);
   border-radius: 10px; padding: .6rem .9rem;
   min-width: 200px;        /* compact, content-sized — not half-width */
+  text-align: center;
 }
 .tile-label { color: var(--muted); font-size: .78rem; margin-bottom: .15rem; }
-.tile-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; display: flex; align-items: baseline; gap: .3rem; }
+.tile-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; display: flex; align-items: baseline; justify-content: center; gap: .3rem; }
 .tile-unit { font-size: .8rem; font-weight: 500; color: var(--muted); }
 .tile-sub { font-size: .72rem; margin-top: .15rem; }
 .trend { font-size: .85rem; }
