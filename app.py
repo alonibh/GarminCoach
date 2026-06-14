@@ -811,17 +811,7 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
         "next_y": next_y, "next_m": next_m
     })
 
-@app.get("/calendar/summary/{year_week}", response_class=HTMLResponse)
-def get_weekly_summary(request: Request, year_week: str):
-    """HTMX endpoint to generate and return a weekly summary."""
-    from coach.coach import generate_weekly_summary
-    
-    with get_session() as session:
-        try:
-            summary = generate_weekly_summary(session, year_week)
-            return HTMLResponse(f"<div class='weekly-summary-content'>{summary}</div>")
-        except Exception as e:
-            return HTMLResponse(f"<div class='weekly-summary-error'>Failed to generate summary: {e}</div>")
+
 
 
 if __name__ == "__main__":

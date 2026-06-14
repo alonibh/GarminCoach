@@ -39,8 +39,6 @@ Feature backlog for the GarminCoach app. Priorities may shift as we go.
   - Daily macro targets (protein/carbs/fat) adjusted to training load and rest days.
   - Integration with Garmin's calorie burn data to suggest caloric intake.
 
-- [x] **Weekly training summaries**
-  - Auto-generated weekly report: total volume, progress vs. goal, recovery trends.
 
 - [x] **Training plan calendar view**
   - View past workouts in a calendar grid.

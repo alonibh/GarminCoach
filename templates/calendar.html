@@ -16,7 +16,6 @@
   <div class="weekday-header">Fri</div>
   <div class="weekday-header">Sat</div>
   <div class="weekday-header">Sun</div>
-  <div class="weekday-header">Summary</div>
   
   {% for week in weeks %}
     {% for day in week.days %}
@@ -37,17 +36,6 @@
         </div>
       </div>
     {% endfor %}
-    <div class="calendar-cell summary-cell">
-      {% if week.is_current_week %}
-      <button class="btn-summary" hx-get="/calendar/summary/{{ week.year_week }}" hx-target="#summary-{{ week.year_week }}" hx-swap="innerHTML">
-        AI Review
-      </button>
-      {% endif %}
-    </div>
-    
-    <div class="week-summary-row" id="summary-{{ week.year_week }}">
-      <!-- AI summary will load here -->
-    </div>
   {% endfor %}
 </div>
 
@@ -60,7 +48,7 @@
 }
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr) 100px;
+  grid-template-columns: repeat(7, 1fr);
   gap: 10px;
 }
 .weekday-header {
@@ -120,50 +108,6 @@
 }
 .act-pill:hover {
   background: #444;
-}
-.summary-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px dashed #444;
-}
-.btn-summary {
-  background: #00E676;
-  color: #000;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-  font-size: 0.85em;
-}
-.btn-summary:hover {
-  background: #00c853;
-}
-.week-summary-row {
-  grid-column: span 8;
-  margin-bottom: 10px;
-}
-.weekly-summary-content {
-  background: #1e1e1e;
-  padding: 15px 20px;
-  border-radius: 12px;
-  border-left: 4px solid #00E676;
-  color: #ddd;
-  line-height: 1.5;
-}
-.weekly-summary-content p:last-child {
-  margin-bottom: 0;
-}
-.htmx-indicator {
-  display:none;
-}
-.htmx-request .htmx-indicator {
-  display:inline;
-}
-.htmx-request.htmx-indicator {
-  display:inline;
 }
 </style>
 {% endblock %}

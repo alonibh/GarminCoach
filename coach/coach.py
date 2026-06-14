@@ -5,9 +5,9 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from db import CoachMessage, WeeklySummary
+from db import CoachMessage
 from coach import llm
-from coach.snapshot import build_snapshot, build_weekly_snapshot
+from coach.snapshot import build_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -23,40 +23,6 @@ RULES:
    - Readiness < 40 means prioritize recovery.
    - ACWR > 1.5 means high injury risk (spiking load).
 """
-
-def generate_weekly_summary(session: Session, year_week: str) -> str:
-    """Generate or retrieve a weekly summary for the given ISO year_week (e.g. '2026-W24')."""
-    # Check if already generated
-    summary_row = session.get(WeeklySummary, year_week)
-    if summary_row:
-        return summary_row.content
-        
-    # Calculate start (Monday) and end (Sunday) dates
-    from datetime import timedelta
-    start_date = datetime.strptime(f"{year_week}-1", "%G-W%V-%u").date()
-    end_date = start_date + timedelta(days=6)
-    
-    snapshot_json = build_weekly_snapshot(session, start_date, end_date)
-    
-    prompt = f"""Generate a weekly training summary for the week of {start_date}.
-Review the following metrics snapshot:
-{snapshot_json}
-
-Write a 2-3 paragraph summary evaluating the week's training volume and average recovery/readiness. 
-Point out any great achievements or alarming trends. Do NOT use markdown headers or greetings.
-"""
-    
-    summary_text = llm.generate(SYSTEM_PROMPT, prompt)
-    
-    summary_row = WeeklySummary(
-        year_week=year_week,
-        content=summary_text,
-        created_at=datetime.now()
-    )
-    session.add(summary_row)
-    session.commit()
-    
-    return summary_text
 
 
 def generate_daily_suggestion(session: Session) -> None:
