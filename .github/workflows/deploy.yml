@@ -1,0 +1,22 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ~/garmincoach
+            git pull origin main
+            source .venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart garmincoach
