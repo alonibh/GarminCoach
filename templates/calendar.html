@@ -29,7 +29,7 @@
         <div class="cell-activities">
           {% for act in day.activities %}
             <a href="/workout/{{ act.id }}" class="act-pill">
-              <span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% else %}⏱️{% endif %}</span>
+              <span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% elif 'soccer' in act.activity_type.lower() %}⚽{% else %}⏱️{% endif %}</span>
               <span class="act-dur">{{ (act.duration_s / 60)|round|int }}m</span>
             </a>
           {% endfor %}
