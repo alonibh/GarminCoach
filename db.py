@@ -115,6 +115,9 @@ class DailyHealth(Base):
     body_battery_low: Mapped[Optional[float]] = mapped_column(Float)
     stress_avg: Mapped[Optional[float]] = mapped_column(Float)
     steps: Mapped[Optional[int]] = mapped_column(Integer)
+    total_kcal: Mapped[Optional[int]] = mapped_column(Integer)
+    active_kcal: Mapped[Optional[int]] = mapped_column(Integer)
+    bmr_kcal: Mapped[Optional[int]] = mapped_column(Integer)
 
 
 class DailyMetrics(Base):

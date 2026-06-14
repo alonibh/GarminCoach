@@ -353,6 +353,9 @@ def dashboard(request: Request):
         today = date.today()
         suggestion = s.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
         coach_suggestion = suggestion.content if suggestion and suggestion.created_at and suggestion.created_at.date() == today else None
+        
+        nutr = s.query(CoachMessage).filter_by(role="nutrition").order_by(CoachMessage.created_at.desc()).first()
+        nutrition_suggestion = nutr.content if nutr and nutr.created_at and nutr.created_at.date() == today else None
 
         # All workouts in the past month (no row cap).
         activities = (
@@ -391,6 +394,9 @@ def dashboard(request: Request):
                 "hrv": h.hrv_overnight,
                 "bb_low": h.body_battery_low,
                 "steps": h.steps,
+                "total_kcal": h.total_kcal,
+                "active_kcal": h.active_kcal,
+                "bmr_kcal": h.bmr_kcal,
             }
             for h in health
         ]
@@ -414,6 +420,7 @@ def dashboard(request: Request):
             "sync_summary": sync_runner.status["summary"],
             "active_goal": active_goal,
             "coach_suggestion": coach_suggestion,
+            "nutrition_suggestion": nutrition_suggestion,
         },
     )
 

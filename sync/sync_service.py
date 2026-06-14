@@ -222,6 +222,15 @@ def _sync_daily_health(session, day: date) -> None:
     except Exception:
         pass
 
+    try:
+        summary = client.user_summary(day)
+        if summary:
+            row.total_kcal = summary.get("totalKilocalories")
+            row.active_kcal = summary.get("activeKilocalories")
+            row.bmr_kcal = summary.get("bmrKilocalories")
+    except Exception:
+        pass
+
     session.add(row)
 
 
@@ -312,6 +321,7 @@ def run_sync(full: bool = False) -> dict:
     try:
         with get_session() as session:
             coach.generate_daily_suggestion(session)
+            coach.generate_nutrition_suggestion(session)
     except Exception as e:
         summary["errors"].append(f"coach suggestion: {e}")
 

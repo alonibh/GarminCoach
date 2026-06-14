@@ -44,7 +44,10 @@ def build_snapshot(session: Session) -> str:
             "hrv_overnight": latest_health.hrv_overnight,
             "body_battery_high": latest_health.body_battery_high,
             "body_battery_low": latest_health.body_battery_low,
-            "stress_avg": latest_health.stress_avg
+            "stress_avg": latest_health.stress_avg,
+            "total_kcal": getattr(latest_health, "total_kcal", None),
+            "active_kcal": getattr(latest_health, "active_kcal", None),
+            "bmr_kcal": getattr(latest_health, "bmr_kcal", None)
         }
         
     # 4. Recent Workouts (Last 3)
@@ -55,7 +58,8 @@ def build_snapshot(session: Session) -> str:
             "type": a.activity_type,
             "start_time": a.start_time.isoformat() if a.start_time else None,
             "duration_minutes": round(a.duration_s / 60) if a.duration_s else 0,
-            "training_load": getattr(a, "training_load", None)
+            "training_load": getattr(a, "training_load", None),
+            "calories": getattr(a, "calories", None)
         }
         if a.activity_type == "strength_training":
             sets = session.query(ExerciseSet).filter_by(activity_id=a.id).all()

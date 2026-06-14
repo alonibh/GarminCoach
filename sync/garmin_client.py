@@ -126,6 +126,9 @@ class GarminClient:
     def daily_steps(self, start: date, end: date) -> list[dict]:
         return self.api.get_daily_steps(start.isoformat(), end.isoformat())
 
+    def user_summary(self, day: date) -> dict:
+        return self.api.get_stats(day.isoformat())
+
 
 # Module-level singleton so the scheduler and web routes share one session.
 client = GarminClient()

@@ -40,6 +40,17 @@
 </div>
 {% endif %}
 
+{% if nutrition_suggestion %}
+<div class="card" style="border-left: 4px solid #3fb950; background: linear-gradient(145deg, #111d13, #08100a);">
+  <h3 style="margin-top: 0; color: #3fb950; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+    <span>🥗</span> Nutrition Coach
+  </h3>
+  <p style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
+    {{ nutrition_suggestion }}
+  </p>
+</div>
+{% endif %}
+
 {% if sync_summary %}
 <div class="notice muted">
   Synced {{ sync_summary.activities or 0 }} activities, {{ sync_summary.days or 0 }} days.
@@ -119,6 +130,10 @@
   <div class="card chart-card" data-chart="steps">
     <div class="chart-head"><h3>Steps<span class="info" tabindex="0" data-tip="Daily step count from your watch. Reflects overall daily movement and non-exercise activity. General guideline: 7,000–10,000 steps/day supports cardiovascular health.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
     <div class="chart-wrap"><canvas id="stepsChart"></canvas></div>
+  </div>
+  <div class="card chart-card" data-chart="calories">
+    <div class="chart-head"><h3>Calories<span class="info" tabindex="0" data-tip="Daily caloric expenditure. Shows your Resting (BMR) and Active (Workout/Movement) calories.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-wrap"><canvas id="caloriesChart"></canvas></div>
   </div>
 </div>
 
@@ -227,16 +242,57 @@ const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
 const round0 = (v) => Math.round(v).toString();                       // 56
 const kSteps = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k' : round0(v); // 8.4k
 
-// Only the past week. Series are oldest→newest, so the last 7 entries are the
-// most recent days.
 const lastWeek = (arr) => arr.slice(-7);
 const sleek = lastWeek(sleep);
 const healthk = lastWeek(health);
+
+function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels.map(shortDate),
+      datasets: [
+        {
+          label: 'Active',
+          data: dataActive,
+          backgroundColor: '#ff5c5c',
+        },
+        {
+          label: 'BMR',
+          data: dataBMR,
+          backgroundColor: '#4a90e2',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, labels: { color: '#8b98a5' } },
+        datalabels: { display: false }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: { color: '#8b98a5' }
+        },
+        y: {
+          stacked: true,
+          grid: { color: '#2a333d' },
+          ticks: { color: '#8b98a5' }
+        }
+      }
+    }
+  });
+}
 
 lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1);
 lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0);
 lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0);
 lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps);
+stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
 
 // Per-chart collapse, remembered across reloads via localStorage.
 function applyCollapse(card, collapsed) {

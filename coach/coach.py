@@ -54,6 +54,31 @@ Do NOT use markdown headers or greetings, just give the insight.
     session.add(msg)
     session.commit()
 
+def generate_nutrition_suggestion(session: Session) -> None:
+    """Generate daily dietary recommendations and macro targets."""
+    snapshot_json = build_snapshot(session)
+    
+    prompt = f"""Generate today's daily nutrition coach recommendation.
+Review the following metrics snapshot:
+{snapshot_json}
+
+Provide exactly 1 short paragraph. 
+Recommend daily macro targets (Protein/Carbs/Fat in grams or percentages) based on today's calorie burn (`total_kcal` and `active_kcal`) and workouts.
+Also suggest a healthy, actionable post-workout meal idea or a rest-day meal idea depending on the day's activity level.
+Do NOT use markdown headers or greetings, just give the insight.
+"""
+    
+    suggestion_text = llm.generate(SYSTEM_PROMPT, prompt)
+    
+    msg = CoachMessage(
+        role="nutrition",
+        content=suggestion_text,
+        created_at=datetime.now(),
+        data_snapshot=snapshot_json
+    )
+    session.add(msg)
+    session.commit()
+
 
 def handle_chat(session: Session, user_text: str) -> str:
     """Handle an interactive chat message from the user."""
