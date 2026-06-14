@@ -280,14 +280,16 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
           label: 'BMR',
           data: dataBMR,
           backgroundColor: gradBMR,
-          borderRadius: 4,
+          borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 },
+          borderSkipped: false,
           datalabels: { display: false }
         },
         {
           label: 'Active',
           data: dataActive,
           backgroundColor: gradActive,
-          borderRadius: 4,
+          borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
+          borderSkipped: false,
           datalabels: {
             display: (context) => {
               const bmr = context.chart.data.datasets[0].data[context.dataIndex] || 0;
