@@ -48,8 +48,32 @@
 }
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
+}
+@media (max-width: 600px) {
+  .calendar-grid {
+    gap: 4px;
+  }
+  .calendar-cell {
+    padding: 4px !important;
+    min-height: 70px !important;
+    border-radius: 6px !important;
+  }
+  .act-pill {
+    padding: 2px !important;
+    font-size: 0.65em !important;
+    border-radius: 4px !important;
+  }
+  .weekday-header {
+    font-size: 0.8em;
+  }
+  .cell-top {
+    margin-bottom: 4px !important;
+  }
+  .date-num {
+    font-size: 0.85em;
+  }
 }
 .weekday-header {
   text-align: center;
@@ -64,6 +88,7 @@
   padding: 10px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 .other-month {
   opacity: 0.4;
