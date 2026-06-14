@@ -38,9 +38,11 @@
       </div>
     {% endfor %}
     <div class="calendar-cell summary-cell">
+      {% if week.is_current_week %}
       <button class="btn-summary" hx-get="/calendar/summary/{{ week.year_week }}" hx-target="#summary-{{ week.year_week }}" hx-swap="innerHTML">
         AI Review
       </button>
+      {% endif %}
     </div>
     
     <div class="week-summary-row" id="summary-{{ week.year_week }}">

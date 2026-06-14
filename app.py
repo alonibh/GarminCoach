@@ -797,7 +797,8 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
             
             weeks.append({
                 "days": week_data,
-                "year_week": year_week
+                "year_week": year_week,
+                "is_current_week": today in week
             })
             
     month_name = calendar.month_name[m]
