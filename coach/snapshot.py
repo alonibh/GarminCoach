@@ -69,3 +69,54 @@ def build_snapshot(session: Session) -> str:
         snapshot["recent_workouts"] = workouts
 
     return json.dumps(snapshot, indent=2)
+
+
+def build_weekly_snapshot(session: Session, start_date: date, end_date: date) -> str:
+    """Build a snapshot for a specific week."""
+    from sqlalchemy import func
+    
+    goal_row = session.get(Goal, 1)
+    
+    snapshot = {
+        "user_goal": goal_row.goal if goal_row else "None",
+        "week_start": start_date.isoformat(),
+        "week_end": end_date.isoformat(),
+    }
+    
+    # 1. Activities in this week
+    from datetime import datetime, time
+    start_dt = datetime.combine(start_date, time.min)
+    end_dt = datetime.combine(end_date, time.max)
+    
+    activities = session.query(Activity).filter(
+        Activity.start_time >= start_dt,
+        Activity.start_time <= end_dt
+    ).all()
+    
+    workouts = []
+    for a in activities:
+        workouts.append({
+            "type": a.activity_type,
+            "date": a.start_time.isoformat() if a.start_time else None,
+            "duration_minutes": round(a.duration_s / 60) if a.duration_s else 0,
+            "distance_km": round(a.distance_m / 1000, 2) if getattr(a, "distance_m", None) else None,
+            "avg_hr": a.avg_hr
+        })
+    snapshot["workouts"] = workouts
+    
+    # 2. Average Readiness for the week
+    readiness_rows = session.query(DailyMetrics).filter(
+        DailyMetrics.day >= start_date,
+        DailyMetrics.day <= end_date
+    ).all()
+    
+    if readiness_rows:
+        avg_readiness = sum(r.readiness for r in readiness_rows if r.readiness is not None) / len([r for r in readiness_rows if r.readiness is not None])
+        snapshot["avg_readiness"] = round(avg_readiness)
+        
+        # Include end of week ACWR
+        last_metric = max(readiness_rows, key=lambda r: r.day)
+        snapshot["end_of_week_acwr"] = last_metric.acwr
+        snapshot["end_of_week_acwr_status"] = acwr_label(last_metric.acwr) if last_metric.acwr is not None else None
+
+    return json.dumps(snapshot, indent=2)

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Calendar - GarminCoach{% endblock %}
+
+{% block content %}
+<div class="calendar-header">
+  <a href="/calendar?year={{ prev_y }}&month={{ prev_m }}" class="btn-secondary">⬅️ Prev</a>
+  <h2>{{ month_name }} {{ year }}</h2>
+  <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary">Next ➡️</a>
+</div>
+
+<div class="calendar-grid">
+  <div class="weekday-header">Mon</div>
+  <div class="weekday-header">Tue</div>
+  <div class="weekday-header">Wed</div>
+  <div class="weekday-header">Thu</div>
+  <div class="weekday-header">Fri</div>
+  <div class="weekday-header">Sat</div>
+  <div class="weekday-header">Sun</div>
+  <div class="weekday-header">Summary</div>
+  
+  {% for week in weeks %}
+    {% for day in week.days %}
+      <div class="calendar-cell {% if not day.is_current_month %}other-month{% endif %} {% if day.is_today %}today{% endif %}">
+        <div class="cell-top">
+          <span class="date-num">{{ day.date.day }}</span>
+          {% if day.readiness_color %}
+            <span class="dot dot-{{ day.readiness_color }}" title="Readiness: {{ day.readiness_score }}"></span>
+          {% endif %}
+        </div>
+        <div class="cell-activities">
+          {% for act in day.activities %}
+            <a href="/workout/{{ act.id }}" class="act-pill">
+              {% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% else %}⏱️{% endif %}
+              {{ (act.duration_s / 60)|round|int }}m
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    <div class="calendar-cell summary-cell">
+      <button class="btn-summary" hx-get="/calendar/summary/{{ week.year_week }}" hx-target="#summary-{{ week.year_week }}" hx-swap="innerHTML">
+        AI Review
+      </button>
+    </div>
+    
+    <div class="week-summary-row" id="summary-{{ week.year_week }}">
+      <!-- AI summary will load here -->
+    </div>
+  {% endfor %}
+</div>
+
+<style>
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) 100px;
+  gap: 10px;
+}
+.weekday-header {
+  text-align: center;
+  font-weight: 600;
+  color: #888;
+  padding: 10px 0;
+}
+.calendar-cell {
+  background: #1e1e1e;
+  border-radius: 12px;
+  min-height: 100px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+}
+.other-month {
+  opacity: 0.4;
+}
+.today {
+  border: 1px solid #00E676;
+  background: #1a2a20;
+}
+.cell-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.date-num {
+  font-weight: bold;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-green { background-color: #00E676; }
+.dot-yellow { background-color: #FFD600; }
+.dot-red { background-color: #FF1744; }
+.cell-activities {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.act-pill {
+  background: #333;
+  color: #eee;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  text-decoration: none;
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.act-pill:hover {
+  background: #444;
+}
+.summary-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px dashed #444;
+}
+.btn-summary {
+  background: #00E676;
+  color: #000;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+.btn-summary:hover {
+  background: #00c853;
+}
+.week-summary-row {
+  grid-column: span 8;
+  margin-bottom: 10px;
+}
+.weekly-summary-content {
+  background: #1e1e1e;
+  padding: 15px 20px;
+  border-radius: 12px;
+  border-left: 4px solid #00E676;
+  color: #ddd;
+  line-height: 1.5;
+}
+.weekly-summary-content p:last-child {
+  margin-bottom: 0;
+}
+.htmx-indicator {
+  display:none;
+}
+.htmx-request .htmx-indicator {
+  display:inline;
+}
+.htmx-request.htmx-indicator {
+  display:inline;
+}
+</style>
+{% endblock %}

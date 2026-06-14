@@ -730,6 +730,99 @@ def post_chat_page(request: Request, message: str = Form(...)):
         return templates.TemplateResponse(request, "chat.html", {"messages": msgs})
 
 
+@app.get("/calendar", response_class=HTMLResponse)
+def get_calendar_page(request: Request, year: int = None, month: int = None):
+    """Monthly calendar view with workouts and readiness."""
+    import calendar
+    
+    today = date.today()
+    y = year or today.year
+    m = month or today.month
+    
+    # Calculate prev/next month links
+    prev_y, prev_m = (y, m - 1) if m > 1 else (y - 1, 12)
+    next_y, next_m = (y, m + 1) if m < 12 else (y + 1, 1)
+    
+    cal = calendar.Calendar(firstweekday=0) # Monday first
+    month_days = cal.monthdatescalendar(y, m)
+    
+    with get_session() as session:
+        # Get all activities for the displayed dates
+        start_date = month_days[0][0]
+        end_date = month_days[-1][-1]
+        
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
+        
+        activities = session.query(Activity).filter(
+            Activity.start_time >= start_dt,
+            Activity.start_time <= end_dt
+        ).all()
+        
+        metrics = session.query(DailyMetrics).filter(
+            DailyMetrics.day >= start_date,
+            DailyMetrics.day <= end_date
+        ).all()
+        
+        act_map = {}
+        for a in activities:
+            d = a.start_time.date()
+            if d not in act_map: act_map[d] = []
+            act_map[d].append(a)
+            
+        metric_map = {m.day: m for m in metrics}
+        
+        weeks = []
+        for week in month_days:
+            week_data = []
+            for d in week:
+                # Determine readiness color
+                r_val = metric_map.get(d).readiness if metric_map.get(d) else None
+                color = None
+                if r_val is not None:
+                    color = "green" if r_val >= 70 else "yellow" if r_val >= 40 else "red"
+                
+                week_data.append({
+                    "date": d,
+                    "is_current_month": d.month == m,
+                    "is_today": d == today,
+                    "activities": act_map.get(d, []),
+                    "readiness_color": color,
+                    "readiness_score": int(r_val) if r_val is not None else None
+                })
+                
+            # ISO year and week for the Monday of this week
+            iso_year, iso_week, _ = week[0].isocalendar()
+            year_week = f"{iso_year}-W{iso_week:02d}"
+            
+            weeks.append({
+                "days": week_data,
+                "year_week": year_week
+            })
+            
+    month_name = calendar.month_name[m]
+    
+    return templates.TemplateResponse(request, "calendar.html", {
+        "weeks": weeks,
+        "month_name": month_name,
+        "year": y,
+        "prev_y": prev_y, "prev_m": prev_m,
+        "next_y": next_y, "next_m": next_m
+    })
+
+@app.get("/calendar/summary/{year_week}", response_class=HTMLResponse)
+def get_weekly_summary(request: Request, year_week: str):
+    """HTMX endpoint to generate and return a weekly summary."""
+    from coach.coach import generate_weekly_summary
+    
+    with get_session() as session:
+        try:
+            summary = generate_weekly_summary(session, year_week)
+            return HTMLResponse(f"<div class='weekly-summary-content'>{summary}</div>")
+        except Exception as e:
+            return HTMLResponse(f"<div class='weekly-summary-error'>Failed to generate summary: {e}</div>")
+
+
 if __name__ == "__main__":
     import uvicorn
 

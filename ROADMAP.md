@@ -19,11 +19,11 @@ Feature backlog for the GarminCoach app. Priorities may shift as we go.
 - [x] **Custom domain name**
   - Live at `https://garmincoach.duckdns.org` via DuckDNS (free).
 
-- [ ] **Auto-deploy from GitHub**
-  - Push code to GitHub → server automatically pulls and restarts. No more manual `deploy.ps1` runs.
+- [x] **Auto-deploy from GitHub**
+  - Push code to GitHub → server automatically pulls and restarts using GitHub Actions.
 
-- [ ] **Install as phone app (PWA)**
-  - Add a Web App Manifest + service worker so the app can be "installed" to the home screen on iPhone/Android and feel like a native app.
+- [x] **Install as phone app (PWA)**
+  - App is now installable via 'Add to Home Screen' with custom icons and standalone mode.
 
 ---
 
@@ -39,10 +39,11 @@ Feature backlog for the GarminCoach app. Priorities may shift as we go.
   - Daily macro targets (protein/carbs/fat) adjusted to training load and rest days.
   - Integration with Garmin's calorie burn data to suggest caloric intake.
 
-- [ ] **Weekly training summaries**
+- [x] **Weekly training summaries**
   - Auto-generated weekly report: total volume, progress vs. goal, recovery trends.
 
-- [ ] **Training plan calendar view**
+- [x] **Training plan calendar view**
+  - View past workouts in a calendar grid.
   - Visual week/month calendar showing past workouts and planned sessions.
 
 - [ ] **Push notifications**
