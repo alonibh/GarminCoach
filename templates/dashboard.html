@@ -262,40 +262,77 @@ const healthk = lastWeek(health);
 
 function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   const ctx = document.getElementById(canvasId).getContext('2d');
+  
+  const gradActive = ctx.createLinearGradient(0, 0, 0, 400);
+  gradActive.addColorStop(0, '#ff8a65');
+  gradActive.addColorStop(1, '#ff5252');
+  
+  const gradBMR = ctx.createLinearGradient(0, 0, 0, 400);
+  gradBMR.addColorStop(0, '#58a6ff');
+  gradBMR.addColorStop(1, '#1f6feb');
+
   new Chart(ctx, {
     type: 'bar',
     data: {
       labels: labels.map(fmtDay),
       datasets: [
         {
-          label: 'Active',
-          data: dataActive,
-          backgroundColor: '#ff5c5c',
-        },
-        {
           label: 'BMR',
           data: dataBMR,
-          backgroundColor: '#4a90e2',
+          backgroundColor: gradBMR,
+          borderRadius: 4,
+          datalabels: { display: false }
+        },
+        {
+          label: 'Active',
+          data: dataActive,
+          backgroundColor: gradActive,
+          borderRadius: 4,
+          datalabels: {
+            display: (context) => {
+              const bmr = context.chart.data.datasets[0].data[context.dataIndex] || 0;
+              const active = context.dataset.data[context.dataIndex] || 0;
+              return (bmr + active) > 0;
+            },
+            align: 'top',
+            anchor: 'end',
+            offset: 4,
+            color: '#e6edf3',
+            font: { size: 10, weight: '600' },
+            formatter: (val, context) => {
+              const bmr = context.chart.data.datasets[0].data[context.dataIndex] || 0;
+              const active = val || 0;
+              return Math.round(bmr + active);
+            }
+          }
         }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: { top: 25 } },
       plugins: {
-        legend: { display: true, labels: { color: '#8b98a5' } },
-        datalabels: { display: false }
+        legend: { display: true, labels: { color: '#8b98a5', usePointStyle: true, boxWidth: 8 } },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return context.dataset.label + ': ' + Math.round(context.raw || 0) + ' kcal';
+            }
+          }
+        }
       },
       scales: {
         x: {
           stacked: true,
           grid: { display: false },
-          ticks: { color: '#8b98a5' }
+          ticks: { color: '#8b98a5', maxRotation: 0 }
         },
         y: {
           stacked: true,
-          grid: { color: '#2a333d' },
-          ticks: { color: '#8b98a5' }
+          border: { display: false },
+          grid: { color: '#2a333d', borderDash: [4, 4] },
+          ticks: { color: '#8b98a5', maxTicksLimit: 5 }
         }
       }
     }
