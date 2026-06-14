@@ -29,8 +29,8 @@
         <div class="cell-activities">
           {% for act in day.activities %}
             <a href="/workout/{{ act.id }}" class="act-pill">
-              {% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% else %}⏱️{% endif %}
-              {{ (act.duration_s / 60)|round|int }}m
+              <span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% else %}⏱️{% endif %}</span>
+              <span class="act-dur">{{ (act.duration_s / 60)|round|int }}m</span>
             </a>
           {% endfor %}
         </div>
@@ -64,6 +64,11 @@
     padding: 2px !important;
     font-size: 0.65em !important;
     border-radius: 4px !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+  }
+  .act-dur {
+    font-size: 0.85em;
   }
   .weekday-header {
     font-size: 0.8em;
@@ -126,10 +131,11 @@
   border-radius: 6px;
   font-size: 0.85em;
   text-decoration: none;
-  display: inline-block;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .act-pill:hover {
   background: #444;
