@@ -51,9 +51,10 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         try:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
-            
-            # Temporary hardcoded check to bypass .env issues
-            if secrets.compare_digest(username, "aloni") and secrets.compare_digest(password, "cloud2026!"):
+            # Use env vars but strip any stray whitespace or carriage returns from Windows
+            env_user = config.APP_USERNAME.strip() if config.APP_USERNAME else ""
+            env_pass = config.APP_PASSWORD.strip() if config.APP_PASSWORD else ""
+            if secrets.compare_digest(username, env_user) and secrets.compare_digest(password, env_pass):
                 return await call_next(request)
         except Exception:
             pass
