@@ -313,9 +313,9 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 25 } },
+      layout: { padding: { top: 15 } },
       plugins: {
-        legend: { display: true, labels: { color: '#8b98a5', usePointStyle: true, boxWidth: 8 } },
+        legend: { display: true, position: 'bottom', labels: { color: '#8b98a5', usePointStyle: true, boxWidth: 8 } },
         tooltip: {
           callbacks: {
             label: function(context) {
