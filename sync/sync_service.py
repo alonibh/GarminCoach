@@ -187,8 +187,8 @@ def _sync_daily_health(session, day: date) -> None:
     try:
         hrv = client.hrv(day)
         row.hrv_overnight = _g(hrv, "hrvSummary", "lastNightAvg")
-        row.hrv_baseline_low = _g(hrv, "hrvSummary", "baselineLow")
-        row.hrv_baseline_high = _g(hrv, "hrvSummary", "baselineHigh")
+        row.hrv_baseline_low = _g(hrv, "hrvSummary", "baseline", "balancedLow")
+        row.hrv_baseline_high = _g(hrv, "hrvSummary", "baseline", "balancedUpper")
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
