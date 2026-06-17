@@ -42,4 +42,6 @@ PORT = int(os.getenv("PORT", "8000"))
 DB_PATH = _expand(os.getenv("DB_PATH", "garmincoach.db"))
 APP_USERNAME = os.getenv("APP_USERNAME", "")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "change-me-to-a-random-string")
+SESSION_MAX_AGE_DAYS = int(os.getenv("SESSION_MAX_AGE_DAYS", "30"))
 DB_URL = f"sqlite:///{DB_PATH}"

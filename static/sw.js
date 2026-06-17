@@ -40,8 +40,9 @@ self.addEventListener('fetch', event => {
   // Only intercept GET requests
   if (event.request.method !== 'GET') return;
   
-  // Don't cache API requests or the chat endpoint
-  if (event.request.url.includes('/sync') || event.request.url.includes('/chat')) {
+  // Don't cache API requests, chat endpoint, or auth routes
+  if (event.request.url.includes('/sync') || event.request.url.includes('/chat')
+      || event.request.url.includes('/app-login') || event.request.url.includes('/app-logout')) {
     return;
   }
 

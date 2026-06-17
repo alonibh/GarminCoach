@@ -34,34 +34,74 @@ app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")),
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
 
 
-import base64
+import hashlib
+import hmac
+import json
 import secrets
+import time as _time
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-class BasicAuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/static"):
-            return await call_next(request)
-            
-        auth = request.headers.get("Authorization")
-        if not auth or not auth.startswith("Basic "):
-            return Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": 'Basic realm="GarminCoach"'})
-            
-        try:
-            decoded = base64.b64decode(auth[6:]).decode("utf-8")
-            username, password = decoded.split(":", 1)
-            # Use env vars but strip any stray whitespace or carriage returns from Windows
-            env_user = config.APP_USERNAME.strip() if config.APP_USERNAME else ""
-            env_pass = config.APP_PASSWORD.strip() if config.APP_PASSWORD else ""
-            if secrets.compare_digest(username, env_user) and secrets.compare_digest(password, env_pass):
-                return await call_next(request)
-        except Exception:
-            pass
-            
-        return Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": 'Basic realm="GarminCoach"'})
+# --- Cookie-based session auth (replaces Basic Auth) ----------------------
+# The session cookie is HMAC-signed (SHA-256) so it can't be forged, and
+# carries an expiry timestamp so it auto-expires after SESSION_MAX_AGE_DAYS.
+# The browser keeps it across restarts (max_age is set on the cookie).
 
-app.add_middleware(BasicAuthMiddleware)
+_COOKIE_NAME = "gc_session"
+_MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
+
+# Paths that don't require auth.
+_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon")
+
+
+def _sign_session(username: str) -> str:
+    """Create a signed session token: base64(json payload) + '.' + hex(hmac)."""
+    payload = json.dumps({"u": username, "t": int(_time.time())})
+    sig = hmac.new(config.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    import base64
+    b64 = base64.urlsafe_b64encode(payload.encode()).decode()
+    return f"{b64}.{sig}"
+
+
+def _verify_session(token: str) -> str | None:
+    """Verify a session token. Returns the username if valid, None otherwise."""
+    try:
+        import base64
+        b64, sig = token.rsplit(".", 1)
+        payload = base64.urlsafe_b64decode(b64).decode()
+        expected = hmac.new(config.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        data = json.loads(payload)
+        # Check expiry.
+        if int(_time.time()) - data.get("t", 0) > _MAX_AGE_S:
+            return None
+        return data.get("u")
+    except Exception:
+        return None
+
+
+class CookieAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # If no APP_USERNAME is set, auth is disabled — let everything through.
+        if not (config.APP_USERNAME or "").strip():
+            return await call_next(request)
+
+        # Skip auth for public paths.
+        path = request.url.path
+        if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+            return await call_next(request)
+
+        # Check session cookie.
+        token = request.cookies.get(_COOKIE_NAME)
+        if token and _verify_session(token):
+            return await call_next(request)
+
+        # Not authenticated → redirect to login page.
+        return RedirectResponse(f"/app-login?next={path}", status_code=303)
+
+app.add_middleware(CookieAuthMiddleware)
+
 
 def _asset_version() -> int:
     """Cache-buster: stylesheet mtime, so a CSS edit forces a fresh fetch."""
@@ -661,6 +701,113 @@ def sync_reset():
     """Escape hatch: force-clear a stuck 'syncing' state."""
     sync_runner.reset()
     return RedirectResponse("/", status_code=303)
+
+
+# --- App login (cookie session) -------------------------------------------
+_APP_LOGIN_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — GarminCoach</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117; color: #e6edf3;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+    }
+    .login-card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      padding: 2.5rem; width: 100%%; max-width: 380px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    }
+    .login-card h1 { font-size: 1.4rem; text-align: center; margin-bottom: .3rem; }
+    .login-card .sub { text-align: center; color: #8b949e; font-size: .85rem; margin-bottom: 1.5rem; }
+    label { display: block; font-size: .85rem; color: #8b949e; margin-bottom: .3rem; margin-top: 1rem; }
+    input[type=text], input[type=password] {
+      width: 100%%; padding: .65rem .8rem; border-radius: 6px;
+      border: 1px solid #30363d; background: #0d1117; color: #e6edf3;
+      font-size: .95rem; outline: none; transition: border-color .2s;
+    }
+    input:focus { border-color: #58a6ff; }
+    button {
+      width: 100%%; margin-top: 1.5rem; padding: .7rem;
+      border: none; border-radius: 6px; cursor: pointer;
+      font-size: .95rem; font-weight: 600;
+      background: #238636; color: #fff; transition: background .2s;
+    }
+    button:hover { background: #2ea043; }
+    .error {
+      background: #3d1f1f; border: 1px solid #6e3630; border-radius: 6px;
+      padding: .6rem .8rem; margin-bottom: 1rem; font-size: .85rem; color: #f85149;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <h1>🏃 GarminCoach</h1>
+    <p class="sub">Sign in to continue</p>
+    {error_html}
+    <form method="post">
+      <input type="hidden" name="next" value="{next_url}">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/app-login", response_class=HTMLResponse)
+def app_login_form(request: Request, next: str = "/"):
+    html = _APP_LOGIN_HTML.format(error_html="", next_url=next)
+    return HTMLResponse(html)
+
+
+@app.post("/app-login", response_class=HTMLResponse)
+def app_login_submit(
+    request: Request,
+    username: str = Form(""),
+    password: str = Form(""),
+    next: str = Form("/"),
+):
+    env_user = (config.APP_USERNAME or "").strip()
+    env_pass = (config.APP_PASSWORD or "").strip()
+    if (
+        env_user
+        and secrets.compare_digest(username.strip(), env_user)
+        and secrets.compare_digest(password, env_pass)
+    ):
+        # Success → set signed session cookie and redirect.
+        token = _sign_session(username.strip())
+        response = RedirectResponse(next or "/", status_code=303)
+        response.set_cookie(
+            _COOKIE_NAME,
+            token,
+            max_age=_MAX_AGE_S,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+        return response
+
+    # Failed login.
+    error_html = '<div class="error">Invalid username or password.</div>'
+    html = _APP_LOGIN_HTML.format(error_html=error_html, next_url=next)
+    return HTMLResponse(html, status_code=401)
+
+
+@app.get("/app-logout")
+def app_logout():
+    response = RedirectResponse("/app-login", status_code=303)
+    response.delete_cookie(_COOKIE_NAME, path="/")
+    return response
 
 
 @app.get("/login", response_class=HTMLResponse)
