@@ -193,27 +193,58 @@ function fmtDay(iso) {
 
 if (window.ChartDataLabels) Chart.register(ChartDataLabels);
 
-function lineChart(id, labels, data, label, color, fmtVal) {
+function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal = null) {
   const el = document.getElementById(id);
   if (!el) return;
   const n = data.length;
+  
+  const datasets = [{
+    label, data,
+    tension: 0.35,
+    spanGaps: true,
+    borderColor: color,
+    borderWidth: 2.5,
+    backgroundColor: color + '22',
+    fill: true,
+    pointRadius: 2.5,
+    pointHoverRadius: 5,
+    pointBackgroundColor: color,
+    pointHoverBackgroundColor: color,
+  }];
+
+  if (minVal !== null) {
+    datasets.push({
+      label: 'Min Good Range',
+      data: Array(n).fill(minVal),
+      borderColor: '#8b98a588',
+      borderWidth: 1.5,
+      borderDash: [5, 5],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+      datalabels: { display: false }
+    });
+  }
+  
+  if (maxVal !== null) {
+    datasets.push({
+      label: 'Max Good Range',
+      data: Array(n).fill(maxVal),
+      borderColor: '#8b98a588',
+      borderWidth: 1.5,
+      borderDash: [5, 5],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+      datalabels: { display: false }
+    });
+  }
+
   new Chart(el, {
     type: 'line',
     data: {
       labels: labels.map(fmtDay),
-      datasets: [{
-        label, data,
-        tension: 0.35,
-        spanGaps: true,
-        borderColor: color,
-        borderWidth: 2.5,
-        backgroundColor: color + '22',
-        fill: true,
-        pointRadius: 2.5,
-        pointHoverRadius: 5,
-        pointBackgroundColor: color,
-        pointHoverBackgroundColor: color,
-      }]
+      datasets: datasets
     },
     options: {
       responsive: true,
@@ -227,7 +258,7 @@ function lineChart(id, labels, data, label, color, fmtVal) {
           // A value on every data point.
           display: (ctx) => {
             const v = ctx.dataset.data[ctx.dataIndex];
-            return v !== null && v !== undefined;
+            return v !== null && v !== undefined && ctx.datasetIndex === 0;
           },
           align: 'top',
           anchor: 'end',
@@ -347,10 +378,10 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   });
 }
 
-lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1);
+lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1, 7, 9);
 lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0);
 lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0);
-lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps);
+lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps, 7000, null);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
 
 // Per-chart collapse, remembered across reloads via localStorage.
