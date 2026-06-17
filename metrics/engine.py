@@ -33,7 +33,7 @@ W_RHR = 0.20
 W_BB = 0.15
 
 # Sleep target for debt calculation.
-SLEEP_TARGET_HOURS = 8.0
+SLEEP_TARGET_HOURS = 7.5
 
 # Trailing windows.
 ACUTE_DAYS = 7
