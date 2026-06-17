@@ -395,7 +395,7 @@ def _readiness_tiles() -> list[dict]:
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     needs_login = not client.is_authenticated()
-    since = date.today() - timedelta(days=30)
+    since = date.today() - timedelta(days=90)
     with get_session() as s:
         goal_row = s.get(Goal, 1)
         active_goal = goal_row.goal if goal_row and goal_row.goal else None

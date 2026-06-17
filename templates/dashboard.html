@@ -216,9 +216,9 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
     datasets.push({
       label: 'Min Good Range',
       data: Array(n).fill(minVal),
-      borderColor: '#8b98a588',
-      borderWidth: 1.5,
-      borderDash: [5, 5],
+      borderColor: '#8b98a5', // fully opaque
+      borderWidth: 2,
+      borderDash: [4, 4],
       pointRadius: 0,
       pointHoverRadius: 0,
       fill: false,
@@ -230,9 +230,9 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
     datasets.push({
       label: 'Max Good Range',
       data: Array(n).fill(maxVal),
-      borderColor: '#8b98a588',
-      borderWidth: 1.5,
-      borderDash: [5, 5],
+      borderColor: '#8b98a5', // fully opaque
+      borderWidth: 2,
+      borderDash: [4, 4],
       pointRadius: 0,
       pointHoverRadius: 0,
       fill: false,
@@ -293,7 +293,7 @@ const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
 const round0 = (v) => Math.round(v).toString();                       // 56
 const kSteps = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k' : round0(v); // 8.4k
 
-const lastWeek = (arr) => arr.slice(-7);
+const lastWeek = (arr) => arr.slice(-14);
 const sleek = lastWeek(sleep);
 const healthk = lastWeek(health);
 
