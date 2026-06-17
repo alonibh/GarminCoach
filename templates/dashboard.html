@@ -379,8 +379,8 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
 }
 
 lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1, 7, 9);
-lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0);
-lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0);
+lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0, 40, 70);
+lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0, 45, 65);
 lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps, 7000, null);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
 
