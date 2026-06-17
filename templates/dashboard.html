@@ -160,9 +160,9 @@
 <div class="card">
   <h3>Recent workouts</h3>
   <div style="overflow-x: auto;">
-    <table>
+    <table id="activities-table">
       <thead><tr><th>Date</th><th>Type</th><th>Dur</th><th>Cal</th><th>Avg HR</th><th>Load</th><th></th></tr></thead>
-      <tbody>
+      <tbody id="activities-body">
       {% for a in activities %}
         <tr>
           <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '—' }}</td>
@@ -179,9 +179,42 @@
       </tbody>
     </table>
   </div>
+  <div id="pagination-controls" style="text-align: center; margin-top: 15px;"></div>
 </div>
 
 <script>
+document.addEventListener("DOMContentLoaded", () => {
+  const tbody = document.getElementById("activities-body");
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll("tr"));
+  if (rows.length <= 1 && rows[0].innerText.includes("No workouts yet")) return;
+  
+  const rowsPerPage = 10;
+  let currentPage = 1;
+  const totalPages = Math.ceil(rows.length / rowsPerPage);
+  const controls = document.getElementById("pagination-controls");
+
+  function renderPage(page) {
+    currentPage = page;
+    rows.forEach((row, index) => {
+      row.style.display = (index >= (page - 1) * rowsPerPage && index < page * rowsPerPage) ? "" : "none";
+    });
+    if (totalPages > 1) {
+      controls.innerHTML = `
+        <button class="btn small" onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Prev</button>
+        <span class="muted" style="margin: 0 15px; font-size: 0.9rem;">Page ${currentPage} of ${totalPages}</span>
+        <button class="btn small" onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>
+      `;
+    }
+  }
+
+  window.changePage = function(page) {
+    if (page >= 1 && page <= totalPages) renderPage(page);
+  };
+
+  renderPage(1);
+});
+
 const health = {{ health_series|tojson }};
 const sleep = {{ sleep_series|tojson }};
 
@@ -293,7 +326,7 @@ const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
 const round0 = (v) => Math.round(v).toString();                       // 56
 const kSteps = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k' : round0(v); // 8.4k
 
-const lastWeek = (arr) => arr.slice(-14);
+const lastWeek = (arr) => arr.slice(-7);
 const sleek = lastWeek(sleep);
 const healthk = lastWeek(health);
 
