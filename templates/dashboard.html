@@ -188,7 +188,7 @@ const sleep = {{ sleep_series|tojson }};
 // Show a date label roughly weekly so the x-axis isn't a wall of text.
 function fmtDay(iso) {
   const d = new Date(iso + 'T00:00');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 if (window.ChartDataLabels) Chart.register(ChartDataLabels);
