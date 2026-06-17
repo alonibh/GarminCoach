@@ -2,6 +2,7 @@
 import json
 import logging
 import requests
+import time
 
 import config
 
@@ -78,14 +79,31 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
             "contents": contents
         }
         
-        resp = requests.post(url, json=payload, timeout=60)
-        resp.raise_for_status()
-        
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if candidates and candidates[0].get("content", {}).get("parts"):
-            return candidates[0]["content"]["parts"][0]["text"].strip()
-        return "Coach encountered an empty response from Gemini."
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            resp = requests.post(url, json=payload, timeout=60)
+            
+            if resp.status_code in (429, 503) and attempt < max_retries:
+                # Rate limited or temporarily unavailable. Sleep and retry.
+                time.sleep(5 * attempt)
+                continue
+                
+            # Give a better error message based on the HTTP status code
+            if not resp.ok:
+                if resp.status_code == 429:
+                    return "Coach is currently rate-limited by Gemini. Please wait a minute and try again."
+                elif resp.status_code in (400, 403):
+                    return "Coach is currently offline. Please check your Gemini API key and configuration."
+                else:
+                    return f"Coach is currently offline (Gemini API returned {resp.status_code}). Please try again later."
+                    
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates and candidates[0].get("content", {}).get("parts"):
+                return candidates[0]["content"]["parts"][0]["text"].strip()
+            return "Coach encountered an empty response from Gemini."
+    except requests.exceptions.Timeout:
+        return "Coach is currently offline (Gemini API timed out). Please try again later."
     except Exception as e:
         logger.error(f"Gemini REST API generation failed: {e}")
-        return "Coach is currently offline. Please check your Gemini API key and configuration."
+        return "Coach is currently offline. Please check your network connection or Gemini configuration."

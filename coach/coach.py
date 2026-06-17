@@ -24,6 +24,10 @@ RULES:
    - ACWR > 1.5 means high injury risk (spiking load).
 """
 
+def _is_error_response(text: str) -> bool:
+    return text.startswith("Coach is currently") or text.startswith("Coach encountered")
+
+
 
 def generate_daily_suggestion(session: Session) -> None:
     """Generate a daily proactive coaching suggestion if one doesn't exist for today."""
@@ -45,6 +49,11 @@ Do NOT use markdown headers or greetings, just give the insight.
     
     suggestion_text = llm.generate(SYSTEM_PROMPT, prompt)
     
+    if _is_error_response(suggestion_text):
+        existing = session.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
+        if existing and existing.created_at and existing.created_at.date() == date.today() and not _is_error_response(existing.content):
+            return  # Keep the existing valid suggestion for today
+            
     msg = CoachMessage(
         role="suggestion",
         content=suggestion_text,
@@ -70,6 +79,11 @@ Do NOT use markdown headers or greetings, just give the insight.
     
     suggestion_text = llm.generate(SYSTEM_PROMPT, prompt)
     
+    if _is_error_response(suggestion_text):
+        existing = session.query(CoachMessage).filter_by(role="nutrition").order_by(CoachMessage.created_at.desc()).first()
+        if existing and existing.created_at and existing.created_at.date() == date.today() and not _is_error_response(existing.content):
+            return  # Keep the existing valid nutrition for today
+            
     msg = CoachMessage(
         role="nutrition",
         content=suggestion_text,
