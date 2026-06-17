@@ -12,35 +12,42 @@ import config
 logger = logging.getLogger(__name__)
 
 def get_todays_schedule() -> list[dict]:
-    """Fetch today's events from the configured ICS URL."""
+    """Fetch today's events from the configured ICS URL(s)."""
     if not config.ICS_CALENDAR_URL or events is None:
         return []
         
+    schedule = []
+    
+    # Split by comma to support multiple calendars
+    urls = [url.strip() for url in config.ICS_CALENDAR_URL.split(',')]
+    
     try:
         # Fetch events from now until the end of the day
         start_of_day = datetime.combine(date.today(), datetime.min.time())
         end_of_day = datetime.combine(date.today(), datetime.max.time())
         
-        # icalevents.events handles the timezone and RRULE expansion
-        cal_events = events(
-            url=config.ICS_CALENDAR_URL,
-            start=start_of_day,
-            end=end_of_day
-        )
-        
-        schedule = []
-        for e in cal_events:
-            # Skip all-day events if they don't block time
-            if e.all_day:
-                continue
-                
-            schedule.append({
-                "title": e.summary,
-                "start": e.start.astimezone().strftime("%H:%M"),
-                "end": e.end.astimezone().strftime("%H:%M")
-            })
+        for url in urls:
+            if not url: continue
             
-        # Sort chronologically
+            # icalevents.events handles the timezone and RRULE expansion
+            cal_events = events(
+                url=url,
+                start=start_of_day,
+                end=end_of_day
+            )
+            
+            for e in cal_events:
+                # Skip all-day events if they don't block time
+                if e.all_day:
+                    continue
+                    
+                schedule.append({
+                    "title": e.summary,
+                    "start": e.start.astimezone().strftime("%H:%M"),
+                    "end": e.end.astimezone().strftime("%H:%M")
+                })
+            
+        # Sort chronologically across all combined calendars
         schedule.sort(key=lambda x: x["start"])
         return schedule
         
