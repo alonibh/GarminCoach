@@ -113,10 +113,13 @@ class DailyHealth(Base):
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     resting_hr: Mapped[Optional[float]] = mapped_column(Float)
     hrv_overnight: Mapped[Optional[float]] = mapped_column(Float)
+    hrv_baseline_low: Mapped[Optional[float]] = mapped_column(Float)
+    hrv_baseline_high: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_high: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_low: Mapped[Optional[float]] = mapped_column(Float)
     stress_avg: Mapped[Optional[float]] = mapped_column(Float)
     steps: Mapped[Optional[int]] = mapped_column(Integer)
+    step_goal: Mapped[Optional[int]] = mapped_column(Integer)
     total_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     active_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     bmr_kcal: Mapped[Optional[int]] = mapped_column(Integer)
@@ -219,17 +222,29 @@ _ACTIVITY_ADD_COLUMNS = {
 }
 
 
+_DAILY_HEALTH_ADD_COLUMNS = {
+    "hrv_baseline_low": "FLOAT",
+    "hrv_baseline_high": "FLOAT",
+    "step_goal": "INTEGER",
+}
+
+
 def _migrate_add_columns() -> None:
     from sqlalchemy import inspect, text
 
     insp = inspect(engine)
-    existing = {c["name"] for c in insp.get_columns("activities")}
-    missing = {k: v for k, v in _ACTIVITY_ADD_COLUMNS.items() if k not in existing}
-    if not missing:
-        return
     with engine.begin() as conn:
-        for col, sqltype in missing.items():
+        # Migrate activities
+        existing_act = {c["name"] for c in insp.get_columns("activities")}
+        missing_act = {k: v for k, v in _ACTIVITY_ADD_COLUMNS.items() if k not in existing_act}
+        for col, sqltype in missing_act.items():
             conn.execute(text(f"ALTER TABLE activities ADD COLUMN {col} {sqltype}"))
+
+        # Migrate daily_health
+        existing_dh = {c["name"] for c in insp.get_columns("daily_health")}
+        missing_dh = {k: v for k, v in _DAILY_HEALTH_ADD_COLUMNS.items() if k not in existing_dh}
+        for col, sqltype in missing_dh.items():
+            conn.execute(text(f"ALTER TABLE daily_health ADD COLUMN {col} {sqltype}"))
 
 
 @contextmanager

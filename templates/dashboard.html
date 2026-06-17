@@ -248,7 +248,7 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
   if (minVal !== null) {
     datasets.push({
       label: 'Min Good Range',
-      data: Array(n).fill(minVal),
+      data: Array.isArray(minVal) ? minVal : Array(n).fill(minVal),
       borderColor: '#8b98a5', // fully opaque
       borderWidth: 2,
       borderDash: [4, 4],
@@ -262,7 +262,7 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
   if (maxVal !== null) {
     datasets.push({
       label: 'Max Good Range',
-      data: Array(n).fill(maxVal),
+      data: Array.isArray(maxVal) ? maxVal : Array(n).fill(maxVal),
       borderColor: '#8b98a5', // fully opaque
       borderWidth: 2,
       borderDash: [4, 4],
@@ -412,9 +412,9 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
 }
 
 lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1, 7, 9);
-lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0, 40, 70);
+lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0, healthk.map(d => d.hrv_baseline_low), healthk.map(d => d.hrv_baseline_high));
 lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0, 45, 65);
-lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps, 7000, null);
+lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps, healthk.map(d => d.step_goal), null);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
 
 // Per-chart collapse, remembered across reloads via localStorage.
