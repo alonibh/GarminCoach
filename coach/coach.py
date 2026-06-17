@@ -44,6 +44,7 @@ Review the following metrics snapshot:
 
 Provide exactly 1-2 short, punchy paragraphs. 
 Point out any alarming trends (e.g. ACWR spike, sleep debt) or give a green light if things look great.
+Review the user's `today_schedule`. Suggest an exact optimal time window for today's workout based on their free time and their `readiness`/`acwr` status. If their schedule is completely packed and their readiness is low, suggest a rest day.
 Do NOT use markdown headers or greetings, just give the insight.
 """
     

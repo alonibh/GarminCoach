@@ -15,10 +15,13 @@ def build_snapshot(session: Session) -> str:
     goal_text = goal_row.goal if goal_row else "No specific goal set."
     constraints = goal_row.custom_input if goal_row else "None."
     
+    from coach.calendar import get_todays_schedule
+    
     snapshot = {
         "user_goal": goal_text,
         "user_constraints": constraints,
-        "today_date": date.today().isoformat()
+        "today_date": date.today().isoformat(),
+        "today_schedule": get_todays_schedule()
     }
     
     # 2. Latest Metrics

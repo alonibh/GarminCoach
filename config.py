@@ -20,6 +20,7 @@ def _expand(path: str) -> Path:
 # --- Garmin ---
 GARMIN_EMAIL = os.getenv("GARMIN_EMAIL", "")
 GARMIN_TOKEN_STORE = _expand(os.getenv("GARMIN_TOKEN_STORE", "~/.garminconnect"))
+ICS_CALENDAR_URL = os.getenv("ICS_CALENDAR_URL", "")
 
 # --- LLM ---
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()

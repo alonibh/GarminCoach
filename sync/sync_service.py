@@ -25,6 +25,7 @@ from db import (
     get_session,
 )
 from sync.garmin_client import client
+from sync import calendar_sync
 
 # Activity type substrings that carry per-set strength detail.
 _STRENGTH_HINTS = ("strength", "weight")

@@ -9,3 +9,4 @@ garminconnect>=0.2.20
 ollama>=0.3
 anthropic>=0.40
 google-generativeai>=0.8.0
+icalevents>=0.1.28
