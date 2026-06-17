@@ -302,6 +302,17 @@ def run_sync(full: bool = False) -> dict:
                 session, "last_sync_at", datetime.now().isoformat(timespec="seconds")
             )
 
+        # Store the watch's last upload time so the dashboard can show both
+        # "when we fetched" and "when the watch last synced to Garmin".
+        try:
+            dev = client.device_last_used()
+            upload_ms = dev.get("lastUsedDeviceUploadTime")
+            if upload_ms:
+                ts = datetime.fromtimestamp(upload_ms / 1000).isoformat(timespec="seconds")
+                _set_state(session, "device_last_upload", ts)
+        except Exception:
+            pass
+
     # Snapshot summary metrics (fitness age, VO2 max) so the dashboard reads
     # them instantly without live Garmin calls. Safe to fail.
     try:

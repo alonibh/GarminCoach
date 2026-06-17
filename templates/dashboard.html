@@ -10,7 +10,10 @@
 
 <div class="toolbar compact" style="flex-wrap: wrap; gap: 0.5rem;">
   <div class="muted" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-    <span>{% if last_sync_at %}Synced {{ last_sync_at }}{% else %}Never synced{% endif %}</span>
+    <span id="sync-status">
+      {% if last_sync_at %}Fetched {{ last_sync_at }}{% else %}Never synced{% endif %}
+      {% if device_last_upload %} · Watch synced {{ device_last_upload }}{% endif %}
+    </span>
     {% if sync_running %}
       <span class="badge" style="margin-left:0;">syncing…</span>
       <form method="post" action="/sync/reset" style="margin:0;">

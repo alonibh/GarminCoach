@@ -139,31 +139,38 @@ def _startup() -> None:
 
 
 # --- helpers --------------------------------------------------------------
+def _time_ago(iso_str: str | None) -> str | None:
+    """Convert an ISO datetime string to a human-readable 'X ago' label."""
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        seconds = int((datetime.now() - dt).total_seconds())
+        if seconds < 60:
+            return "just now"
+        elif seconds < 3600:
+            mins = seconds // 60
+            return f"{mins} minute{'s' if mins != 1 else ''} ago"
+        elif seconds < 86400:
+            hours = seconds // 3600
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        else:
+            days = seconds // 86400
+            return f"{days} day{'s' if days != 1 else ''} ago"
+    except Exception:
+        return iso_str
+
+
 def _last_sync_at() -> str | None:
     with get_session() as s:
         row = s.get(SyncState, "last_sync_at")
-        if not row or not row.value:
-            return None
-        try:
-            dt = datetime.fromisoformat(row.value)
-            now = datetime.now()
-            # If the stored value has tzinfo but now doesn't, or vice versa, handle it.
-            # Assuming row.value is naive local time based on our sync.py
-            diff = now - dt
-            seconds = int(diff.total_seconds())
-            if seconds < 60:
-                return "just now"
-            elif seconds < 3600:
-                mins = seconds // 60
-                return f"{mins} minute{'s' if mins != 1 else ''} ago"
-            elif seconds < 86400:
-                hours = seconds // 3600
-                return f"{hours} hour{'s' if hours != 1 else ''} ago"
-            else:
-                days = seconds // 86400
-                return f"{days} day{'s' if days != 1 else ''} ago"
-        except Exception:
-            return row.value
+        return _time_ago(row.value if row else None)
+
+
+def _device_last_upload() -> str | None:
+    with get_session() as s:
+        row = s.get(SyncState, "device_last_upload")
+        return _time_ago(row.value if row else None)
 
 
 def _trend(current, previous, *, lower_is_better: bool) -> str:
@@ -459,6 +466,7 @@ def dashboard(request: Request):
             "fitness_tiles": _fitness_tiles(),
             "readiness_tiles": _readiness_tiles(),
             "last_sync_at": _last_sync_at(),
+            "device_last_upload": _device_last_upload(),
             "sync_running": sync_runner.is_running(),
             "sync_summary": sync_runner.status["summary"],
             "active_goal": active_goal,
@@ -693,6 +701,7 @@ def sync_status():
         "running": sync_runner.is_running(),
         "summary": sync_runner.status["summary"],
         "last_sync_at": _last_sync_at(),
+        "device_last_upload": _device_last_upload(),
     })
 
 
@@ -711,38 +720,38 @@ _APP_LOGIN_HTML = """<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Login — GarminCoach</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #0d1117; color: #e6edf3;
       display: flex; align-items: center; justify-content: center;
       min-height: 100vh;
-    }
-    .login-card {
+    }}
+    .login-card {{
       background: #161b22; border: 1px solid #30363d; border-radius: 12px;
-      padding: 2.5rem; width: 100%%; max-width: 380px;
+      padding: 2.5rem; width: 100%; max-width: 380px;
       box-shadow: 0 8px 32px rgba(0,0,0,.4);
-    }
-    .login-card h1 { font-size: 1.4rem; text-align: center; margin-bottom: .3rem; }
-    .login-card .sub { text-align: center; color: #8b949e; font-size: .85rem; margin-bottom: 1.5rem; }
-    label { display: block; font-size: .85rem; color: #8b949e; margin-bottom: .3rem; margin-top: 1rem; }
-    input[type=text], input[type=password] {
-      width: 100%%; padding: .65rem .8rem; border-radius: 6px;
+    }}
+    .login-card h1 {{ font-size: 1.4rem; text-align: center; margin-bottom: .3rem; }}
+    .login-card .sub {{ text-align: center; color: #8b949e; font-size: .85rem; margin-bottom: 1.5rem; }}
+    label {{ display: block; font-size: .85rem; color: #8b949e; margin-bottom: .3rem; margin-top: 1rem; }}
+    input[type=text], input[type=password] {{
+      width: 100%; padding: .65rem .8rem; border-radius: 6px;
       border: 1px solid #30363d; background: #0d1117; color: #e6edf3;
       font-size: .95rem; outline: none; transition: border-color .2s;
-    }
-    input:focus { border-color: #58a6ff; }
-    button {
-      width: 100%%; margin-top: 1.5rem; padding: .7rem;
+    }}
+    input:focus {{ border-color: #58a6ff; }}
+    button {{
+      width: 100%; margin-top: 1.5rem; padding: .7rem;
       border: none; border-radius: 6px; cursor: pointer;
       font-size: .95rem; font-weight: 600;
       background: #238636; color: #fff; transition: background .2s;
-    }
-    button:hover { background: #2ea043; }
-    .error {
+    }}
+    button:hover {{ background: #2ea043; }}
+    .error {{
       background: #3d1f1f; border: 1px solid #6e3630; border-radius: 6px;
       padding: .6rem .8rem; margin-bottom: 1rem; font-size: .85rem; color: #f85149;
-    }
+    }}
   </style>
 </head>
 <body>
