@@ -15,6 +15,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
+echo "Running database migrations..."
+python3 migrate.py
+
 echo "Configuring systemd service..."
 sudo tee /etc/systemd/system/garmincoach.service > /dev/null << 'EOF'
 [Unit]
