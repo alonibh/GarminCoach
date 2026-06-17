@@ -103,6 +103,8 @@ class Sleep(Base):
     rem_s: Mapped[Optional[float]] = mapped_column(Float)
     awake_s: Mapped[Optional[float]] = mapped_column(Float)
     score: Mapped[Optional[float]] = mapped_column(Float)
+    respiration_avg: Mapped[Optional[float]] = mapped_column(Float)
+    sleep_stress_avg: Mapped[Optional[float]] = mapped_column(Float)
 
 
 class DailyHealth(Base):
@@ -118,6 +120,8 @@ class DailyHealth(Base):
     total_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     active_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     bmr_kcal: Mapped[Optional[int]] = mapped_column(Integer)
+    training_readiness: Mapped[Optional[int]] = mapped_column(Integer)
+    training_status: Mapped[Optional[str]] = mapped_column(String(32))
 
 
 class DailyMetrics(Base):

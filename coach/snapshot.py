@@ -47,7 +47,20 @@ def build_snapshot(session: Session) -> str:
             "stress_avg": latest_health.stress_avg,
             "total_kcal": getattr(latest_health, "total_kcal", None),
             "active_kcal": getattr(latest_health, "active_kcal", None),
-            "bmr_kcal": getattr(latest_health, "bmr_kcal", None)
+            "bmr_kcal": getattr(latest_health, "bmr_kcal", None),
+            "garmin_training_readiness": getattr(latest_health, "training_readiness", None),
+            "garmin_training_status": getattr(latest_health, "training_status", None)
+        }
+        
+    # 3b. Latest Sleep
+    latest_sleep = session.query(Sleep).order_by(Sleep.day.desc()).first()
+    if latest_sleep:
+        snapshot["latest_sleep"] = {
+            "date": latest_sleep.day.isoformat(),
+            "total_hours": round((latest_sleep.total_s or 0) / 3600, 1),
+            "sleep_score": latest_sleep.score,
+            "respiration_avg": getattr(latest_sleep, "respiration_avg", None),
+            "sleep_stress_avg": getattr(latest_sleep, "sleep_stress_avg", None)
         }
         
     # 4. Recent Workouts (Last 3)

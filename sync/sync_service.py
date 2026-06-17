@@ -165,6 +165,8 @@ def _sync_activities(session, start: date, end: date) -> int:
 def _sync_sleep(session, day: date) -> None:
     try:
         data = client.sleep(day)
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         return
     dto = _g(data, "dailySleepDTO", default={}) or {}
@@ -175,6 +177,8 @@ def _sync_sleep(session, day: date) -> None:
     row.rem_s = dto.get("remSleepSeconds")
     row.awake_s = dto.get("awakeSleepSeconds")
     row.score = _g(dto, "sleepScores", "overall", "value")
+    row.respiration_avg = dto.get("averageRespirationValue")
+    row.sleep_stress_avg = dto.get("avgSleepStress")
     session.add(row)
 
 
@@ -184,6 +188,8 @@ def _sync_daily_health(session, day: date) -> None:
     try:
         hrv = client.hrv(day)
         row.hrv_overnight = _g(hrv, "hrvSummary", "lastNightAvg")
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
@@ -192,12 +198,16 @@ def _sync_daily_health(session, day: date) -> None:
         vals = _g(rhr, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE", default=[])
         if vals:
             row.resting_hr = vals[0].get("value")
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
     try:
         stress = client.stress(day)
         row.stress_avg = stress.get("avgStressLevel")
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
@@ -212,6 +222,8 @@ def _sync_daily_health(session, day: date) -> None:
             if levels:
                 row.body_battery_high = max(levels)
                 row.body_battery_low = min(levels)
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
@@ -219,6 +231,8 @@ def _sync_daily_health(session, day: date) -> None:
         steps = client.daily_steps(day, day)
         if steps:
             row.steps = steps[0].get("totalSteps")
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
@@ -228,6 +242,27 @@ def _sync_daily_health(session, day: date) -> None:
             row.total_kcal = summary.get("totalKilocalories")
             row.active_kcal = summary.get("activeKilocalories")
             row.bmr_kcal = summary.get("bmrKilocalories")
+    except GarminConnectTooManyRequestsError:
+        raise
+    except Exception:
+        pass
+
+    try:
+        readiness_data = client.training_readiness(day)
+        if isinstance(readiness_data, dict):
+            # The exact key varies by device generation, but typically:
+            row.training_readiness = readiness_data.get("trainingReadiness") or readiness_data.get("value")
+    except GarminConnectTooManyRequestsError:
+        raise
+    except Exception:
+        pass
+
+    try:
+        status_data = client.training_status(day)
+        if isinstance(status_data, dict):
+            row.training_status = status_data.get("mostRecentTrainingStatus")
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
@@ -325,6 +360,8 @@ def run_sync(full: bool = False) -> dict:
         from metrics.engine import recompute_all
 
         recompute_all()
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 
@@ -420,6 +457,8 @@ def _snapshot_user_profile(session) -> None:
             _set_state(session, "user_weight", str(round(ud.get("weight") / 1000.0, 1)))
         if ud.get("birthDate"):
             _set_state(session, "user_birth_date", ud.get("birthDate"))
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         pass
 

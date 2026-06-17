@@ -132,6 +132,12 @@ class GarminClient:
     def device_last_used(self) -> dict:
         return self.api.get_device_last_used()
 
+    def training_readiness(self, day: date) -> dict:
+        return self.api.get_training_readiness(day.isoformat())
+
+    def training_status(self, day: date) -> dict:
+        return self.api.get_training_status(day.isoformat())
+
 
 # Module-level singleton so the scheduler and web routes share one session.
 client = GarminClient()
