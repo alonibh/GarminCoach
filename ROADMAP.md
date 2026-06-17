@@ -52,6 +52,8 @@ Feature backlog for the GarminCoach app. Priorities may shift as we go.
 ## 💡 Ideas Parking Lot
 _Drop any future ideas here:_
 
+- **Proactive AI Notifications:** Actively push messages like "Eat a protein bar", "Rest today", or "Ready for heavy lifting this evening".
+- **Smart Activity Recommendations:** Recommend specific activities based on user preferences and goals.
 - Strava integration
 - Export reports as PDF
 - Multi-user support
