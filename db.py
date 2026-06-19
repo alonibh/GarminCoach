@@ -185,14 +185,6 @@ class CoachMessage(Base):
         return None
 
 
-class WeeklySummary(Base):
-    __tablename__ = "weekly_summaries"
-
-    year_week: Mapped[str] = mapped_column(String(10), primary_key=True)  # e.g., "2026-W24"
-    content: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-
-
 class SyncState(Base):
     """Bookkeeping so we only fetch new data each sync."""
 

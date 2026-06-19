@@ -43,6 +43,17 @@ PORT = int(os.getenv("PORT", "8000"))
 DB_PATH = _expand(os.getenv("DB_PATH", "garmincoach.db"))
 APP_USERNAME = os.getenv("APP_USERNAME", "")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
-SESSION_SECRET = os.getenv("SESSION_SECRET", "change-me-to-a-random-string")
+_DEFAULT_SESSION_SECRET = "change-me-to-a-random-string"
+SESSION_SECRET = os.getenv("SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 SESSION_MAX_AGE_DAYS = int(os.getenv("SESSION_MAX_AGE_DAYS", "30"))
 DB_URL = f"sqlite:///{DB_PATH}"
+
+# Security guard: a default signing secret makes session cookies forgeable, so
+# refuse to run with auth enabled and the placeholder secret still in place.
+if APP_USERNAME.strip() and SESSION_SECRET.strip() == _DEFAULT_SESSION_SECRET:
+    raise RuntimeError(
+        "SESSION_SECRET is still the default placeholder while app auth is "
+        "enabled (APP_USERNAME is set). Generate a real secret with:\n"
+        '  python -c "import secrets; print(secrets.token_hex(32))"\n'
+        "and set it in .env, or leave APP_USERNAME blank to disable auth."
+    )
