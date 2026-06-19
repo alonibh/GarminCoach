@@ -23,9 +23,9 @@
       <a href="/app-logout" class="muted" style="font-size:.8rem">Sign out</a>
     </nav>
   </header>
-  <main>
+  <div class="main-content">
     {% block content %}{% endblock %}
-  </main>
+  </div>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

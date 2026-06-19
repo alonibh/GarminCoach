@@ -14,7 +14,7 @@ header {
 .brand { font-weight: 700; font-size: 1.2rem; text-decoration: none; color: var(--fg); }
 nav a { color: var(--muted); text-decoration: none; margin-right: 1rem; }
 nav a:hover { color: var(--fg); }
-main { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
+.main-content { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
 .card {
   background: var(--card); border: 1px solid var(--border);
   border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem;
@@ -55,7 +55,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
 
 /* --- Mobile Responsiveness --- */
 @media (max-width: 768px) {
-  main { padding: 0.5rem 1rem 1rem; }
+  .main-content { padding: 0.5rem 1rem 1rem; }
   header { 
     flex-direction: column; 
     align-items: flex-start; 
