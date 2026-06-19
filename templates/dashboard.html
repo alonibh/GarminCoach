@@ -233,6 +233,30 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   renderPage(1);
+
+  // Dismiss tooltips on mobile when tapping outside
+  document.addEventListener('touchstart', (e) => {
+    // 1. Dismiss CSS info popups (ⓘ)
+    if (!e.target.closest('.info')) {
+      const active = document.activeElement;
+      if (active && active.classList.contains('info')) {
+        active.blur();
+      }
+    }
+    // 2. Dismiss Chart.js tooltips
+    if (!e.target.closest('canvas')) {
+      for (const id in Chart.instances) {
+        const chart = Chart.instances[id];
+        if (chart && chart.tooltip) {
+          const activeEls = chart.tooltip.getActiveElements();
+          if (activeEls && activeEls.length > 0) {
+            chart.tooltip.setActiveElements([], {x: 0, y: 0});
+            chart.update();
+          }
+        }
+      }
+    }
+  }, { passive: true });
 });
 
 const health = {{ health_series|tojson }};
