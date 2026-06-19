@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+  <title>{% block title %}Coach Chat{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version() }}">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="theme-color" content="#121212">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <style>
+    body.chat-app {
+      margin: 0;
+      padding: 0;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden; /* Lock body scrolling to prevent Safari gap & reading mode */
+      background: #0f1419;
+    }
+    .chat-header {
+      flex: none;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1rem; border-bottom: 1px solid var(--border);
+      background: var(--card);
+      z-index: 10;
+    }
+    .chat-header-brand { 
+      font-weight: 600; font-size: 1rem; text-decoration: none; color: var(--accent); 
+      display: flex; align-items: center; gap: 0.3rem;
+    }
+    .chat-header-brand:hover { color: #58a6ff; }
+  </style>
+</head>
+<body class="chat-app">
+  <header class="chat-header">
+    <a href="/" class="chat-header-brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      Back
+    </a>
+    <div style="font-weight: 600; font-size: 1.1rem; color: var(--fg);">AI Coach</div>
+    <div style="width: 60px;"></div> <!-- Spacer to center title -->
+  </header>
+  
+  {% block content %}{% endblock %}
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js');
+      });
+    }
+  </script>
+</body>
+</html>
