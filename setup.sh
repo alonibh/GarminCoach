@@ -15,8 +15,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-echo "Running database migrations..."
-python3 migrate.py
+# Database schema is created and migrated automatically on startup via
+# init_db() / _migrate_add_columns() in db.py — no separate migrate step.
 
 echo "Configuring systemd service..."
 sudo tee /etc/systemd/system/garmincoach.service > /dev/null << 'EOF'

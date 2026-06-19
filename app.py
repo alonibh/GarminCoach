@@ -139,18 +139,34 @@ def _startup() -> None:
 
 
 # --- helpers --------------------------------------------------------------
+def _has_tz(iso_str: str) -> bool:
+    """True if an ISO timestamp already carries a timezone (trailing 'Z' or a
+    ±HH:MM offset). Parsing is the reliable test — string-sniffing the offset
+    false-matches on hyphens inside the date portion."""
+    try:
+        return datetime.fromisoformat(iso_str.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
+def _ensure_utc_iso(val: str | None) -> str | None:
+    """Normalize a stored timestamp so the client always gets a tz-aware string.
+    Legacy rows were written as naive UTC; tag those with 'Z'."""
+    if not val:
+        return val
+    return val if _has_tz(val) else val + "Z"
+
+
 def _time_ago(iso_str: str | None) -> str | None:
     """Convert an ISO datetime string to a human-readable 'X ago' label."""
     if not iso_str:
         return None
     try:
-        dt = datetime.fromisoformat(iso_str)
+        dt = datetime.fromisoformat(_ensure_utc_iso(iso_str).replace("Z", "+00:00"))
+        # dt is now tz-aware; compare against an aware 'now' in the same tz.
         now = datetime.now(dt.tzinfo)
-        
-        # Format the time
+
         time_str = dt.strftime("%H:%M")
-        
-        # Determine the day
         if dt.date() == now.date():
             return f"Today at {time_str}"
         elif dt.date() == (now.date() - timedelta(days=1)):
@@ -164,21 +180,13 @@ def _time_ago(iso_str: str | None) -> str | None:
 def _last_sync_at() -> str | None:
     with get_session() as s:
         row = s.get(SyncState, "last_sync_at")
-        # Ensure it has a timezone for JS parser if it was saved as naive UTC previously
-        # We'll just return the raw string and let JS handle it. Newer strings will have +00:00.
-        val = row.value if row else None
-        if val and not ("+" in val or "Z" in val or "-" in val[-6:]):
-            val += "Z" # Assuming old naive strings were saved by UTC server
-        return val
+        return _ensure_utc_iso(row.value if row else None)
 
 
 def _device_last_upload() -> str | None:
     with get_session() as s:
         row = s.get(SyncState, "device_last_upload")
-        val = row.value if row else None
-        if val and not ("+" in val or "Z" in val or "-" in val[-6:]):
-            val += "Z"
-        return val
+        return _ensure_utc_iso(row.value if row else None)
 
 
 def _trend(current, previous, *, lower_is_better: bool) -> str:
@@ -220,22 +228,56 @@ def _tile(row, *, key, label, unit, lower_is_better):
     }
 
 
-def _vo2_max_details(val: float | None, age: int = 28, is_male: bool = True) -> tuple[float | None, str]:
-    """Calculate the gauge percentage and text label for VO2 max based on Cooper Institute."""
+# VO₂max fitness-category floors (ml/kg/min), as (Fair, Good, Excellent,
+# Superior) lower bounds — i.e. the 40th / 60th / 80th / 95th percentiles.
+# Source: The Cooper Institute normative tables, reprinted verbatim in the
+# Garmin Forerunner 935 owner's manual ("Data reprinted with permission from
+# The Cooper Institute"); also ACSM Guidelines 11th ed. Table 4.7.
+# Keyed by sex (True=male) then (age_low, age_high) inclusive decade band.
+COOPER_VO2_NORMS: dict[bool, dict[tuple[int, int], tuple[float, float, float, float]]] = {
+    True: {  # male
+        (20, 29): (41.7, 45.4, 51.1, 55.4),
+        (30, 39): (40.5, 44.0, 48.3, 54.0),
+        (40, 49): (38.5, 42.4, 46.4, 52.5),
+        (50, 59): (35.6, 39.2, 43.4, 48.9),
+        (60, 69): (32.3, 35.5, 39.5, 45.7),
+        (70, 79): (29.4, 32.3, 36.7, 42.1),
+    },
+    False: {  # female
+        (20, 29): (36.1, 39.5, 43.9, 49.6),
+        (30, 39): (34.4, 37.8, 42.4, 47.4),
+        (40, 49): (33.0, 36.3, 39.7, 45.3),
+        (50, 59): (30.1, 33.0, 36.7, 41.1),
+        (60, 69): (27.5, 30.0, 33.0, 37.8),
+        (70, 79): (25.9, 28.1, 30.9, 36.7),
+    },
+}
+
+
+def _cooper_norms(age: int, is_male: bool) -> tuple[float, float, float, float]:
+    """Pick the Cooper Institute boundary tuple for an age/sex. Ages below 20
+    use the 20–29 band; above 79 use 70–79."""
+    bands = COOPER_VO2_NORMS[is_male]
+    a = max(20, min(79, age))
+    for (lo, hi), b in bands.items():
+        if lo <= a <= hi:
+            return b
+    return bands[(20, 29)]
+
+
+def _vo2_max_details(
+    val: float | None, age: int | None = None, is_male: bool | None = None
+) -> tuple[float | None, str]:
+    """Gauge percentage and category label for VO₂max against the Cooper
+    Institute norms. Without a known age/sex we cannot pick the right band, so
+    we return no label (the raw value is shown alone) rather than fabricating a
+    bucket for a default 28-year-old male."""
     if val is None:
         return None, ""
-    
-    # Exact Garmin (Firstbeat Analytics) boundaries
-    if is_male:
-        if age < 30: b = (36.5, 42.5, 46.5, 51.5)
-        elif age < 40: b = (35.5, 41.0, 45.0, 50.5)
-        elif age < 50: b = (34.0, 39.0, 43.8, 49.0)
-        else: b = (32.5, 36.8, 41.0, 45.8)
-    else:
-        if age < 30: b = (32.0, 36.5, 41.2, 46.9)
-        elif age < 40: b = (31.0, 35.3, 39.5, 44.7)
-        elif age < 50: b = (29.5, 33.5, 37.0, 42.5)
-        else: b = (27.5, 31.0, 34.5, 39.0)
+    if age is None or is_male is None:
+        return None, ""
+
+    b = _cooper_norms(age, is_male)
 
     b1, b2, b3, b4 = b
     
@@ -275,11 +317,13 @@ def _fitness_tiles() -> list[dict]:
         weight_st = s.get(SyncState, "user_weight")
         bd_st = s.get(SyncState, "user_birth_date")
         
-        is_male = (gender_st.value.upper() == "MALE") if gender_st and gender_st.value else True
+        # Profile fields may be absent; keep them None rather than guessing, so
+        # the VO₂max category isn't computed against a fabricated default.
+        is_male = (gender_st.value.upper() == "MALE") if gender_st and gender_st.value else None
         weight_str = weight_st.value if weight_st and weight_st.value else ""
-        gender_str = "Male" if is_male else "Female"
-        
-        age = 28
+        gender_str = ("Male" if is_male else "Female") if is_male is not None else ""
+
+        age = None
         if bd_st and bd_st.value:
             try:
                 bd = date.fromisoformat(bd_st.value[:10])
@@ -314,8 +358,10 @@ def _fitness_tiles() -> list[dict]:
                 pass
         
         desc = []
-        desc.append(gender_str)
-        desc.append(f"{age} yrs")
+        if gender_str:
+            desc.append(gender_str)
+        if age is not None:
+            desc.append(f"{age} yrs")
         if weight_str:
             desc.append(f"{weight_str} kg")
             
@@ -511,6 +557,39 @@ def _is_strength(activity_type: str) -> bool:
     return any(h in (activity_type or "").lower() for h in ("strength", "weight"))
 
 
+# Number of prior sessions to form the e1RM progression baseline (HEURISTIC —
+# no source fixes the window; a small rolling best is less noisy than 1 session).
+_E1RM_BASELINE_SESSIONS = 5
+# e1RM equations are only validated up to ~12 reps; above that, ignore the set.
+_E1RM_MAX_REPS = 12
+
+
+def _epley_1rm(weight_kg: float | None, reps: int | None) -> float | None:
+    """Estimated 1-rep-max via Epley (1985): e1RM = w·(1 + reps/30); = w at
+    reps≤1 (the set is itself a 1RM test). Returns None for bodyweight (w=0) or
+    rep counts above the validated range."""
+    if not weight_kg or weight_kg <= 0 or reps is None or reps < 1:
+        return None
+    if reps > _E1RM_MAX_REPS:
+        return None
+    if reps == 1:
+        return weight_kg
+    return weight_kg * (1 + reps / 30.0)
+
+
+def _session_e1rm(sets) -> float | None:
+    """Best (max) e1RM across the working sets of one exercise in a session.
+    *sets* items expose ``reps``/``weight_kg`` either as attrs or dict keys."""
+    best = None
+    for st in sets:
+        reps = st["reps"] if isinstance(st, dict) else st.reps
+        wkg = st["weight_kg"] if isinstance(st, dict) else st.weight_kg
+        e = _epley_1rm(wkg, reps)
+        if e is not None and (best is None or e > best):
+            best = e
+    return best
+
+
 def _te_label(raw: str | None) -> str | None:
     """Garmin training-effect message like 'OVERREACHING_17' → 'Overreaching'."""
     if not raw:
@@ -642,13 +721,20 @@ def workout_detail(request: Request, activity_id: int):
                     "reps": st.reps, "weight_kg": st.weight_kg, "edited": st.edited,
                 })
             for ex in exercises:
+                # Volume load (tonnage) = Σ(reps × weight) — the standard
+                # strength-science "volume load" (Schoenfeld et al. 2021).
                 vol = sum((x["reps"] or 0) * (x["weight_kg"] or 0) for x in ex["sets"])
                 ex["set_count"] = len(ex["sets"])
                 ex["total_reps"] = sum((x["reps"] or 0) for x in ex["sets"])
                 ex["volume_kg"] = round(vol)
+                # Estimated 1RM (Epley) — normalizes progress across rep schemes.
+                cur_e1rm = _session_e1rm(ex["sets"])
+                ex["e1rm_kg"] = round(cur_e1rm, 1) if cur_e1rm else None
 
-            # Strength progression: compare each exercise against the
-            # previous session that contained the same exercise.
+            # Strength progression: compare each exercise's estimated 1RM against
+            # the best e1RM over the last few sessions (a rolling baseline is far
+            # less noisy than a single-prior-session comparison, and is robust to
+            # rep-scheme changes that confound raw weight/volume deltas).
             if act.start_time:
                 for ex in exercises:
                     prev_sets = (
@@ -666,17 +752,39 @@ def workout_detail(request: Request, activity_id: int):
                         ex["delta_vol"] = None
                         ex["delta_best"] = None
                         continue
-                    # Group by the most recent activity only.
-                    prev_act_id = prev_sets[0].activity_id
-                    prev_for_ex = [ps for ps in prev_sets if ps.activity_id == prev_act_id]
+                    # Group prior sets by activity (newest first), then take the
+                    # best e1RM from each of the last N sessions as the baseline.
+                    by_session: dict[int, list] = {}
+                    order: list[int] = []
+                    for ps in prev_sets:
+                        if ps.activity_id not in by_session:
+                            by_session[ps.activity_id] = []
+                            order.append(ps.activity_id)
+                        by_session[ps.activity_id].append(ps)
+
+                    prev_e1rms = []
+                    for aid in order[:_E1RM_BASELINE_SESSIONS]:
+                        e = _session_e1rm(by_session[aid])
+                        if e is not None:
+                            prev_e1rms.append(e)
+
+                    cur_e1rm = ex.get("e1rm_kg")
+                    base_e1rm = max(prev_e1rms) if prev_e1rms else None
+                    delta_b = (
+                        round(cur_e1rm - base_e1rm, 1)
+                        if (cur_e1rm and base_e1rm)
+                        else None
+                    )
+                    ex["delta_best"] = delta_b if delta_b else None
+
+                    # Volume delta still useful as a secondary signal vs the most
+                    # recent prior session.
+                    prev_act_id = order[0]
+                    prev_for_ex = by_session[prev_act_id]
                     prev_vol = sum(
                         (ps.reps or 0) * (ps.weight_kg or 0) for ps in prev_for_ex
                     )
-                    prev_best = max((ps.weight_kg or 0) for ps in prev_for_ex)
-                    cur_best = max((x["weight_kg"] or 0) for x in ex["sets"])
                     ex["delta_vol"] = round(vol - prev_vol) if prev_vol else None
-                    delta_b = round(cur_best - prev_best, 1) if prev_best else None
-                    ex["delta_best"] = delta_b if delta_b and delta_b != 0 else None
         else:
             cardio = _cardio_stats(act)
 

@@ -78,7 +78,7 @@ Review the following metrics snapshot:
 
 Provide exactly 1-2 short, punchy paragraphs. 
 Analyze their exponential sleep debt and EWMA ACWR. Point out any alarming trends or give a green light if their Readiness is primed.
-Review the user's `today_schedule`. Suggest an exact optimal time window for today's workout based on their free time and `readiness`/`acwr` status. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
+Review the user's `upcoming_schedule_14_days`. Suggest an exact optimal time window for today's workout based on their free time and `readiness`/`acwr` status. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
 Do NOT use markdown headers or greetings, just give the insight.
 """
     

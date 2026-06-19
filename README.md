@@ -4,7 +4,9 @@ A personal, **local** web app that pulls everything off your Garmin watch
 (workouts incl. per-set drills/reps/weights, sleep, HRV, Body Battery, stress,
 resting HR, steps), turns it into a clean dashboard and type-aware workout
 views, and (Phase 3) acts as an adaptive coach. Runs free on your own Windows
-or Linux machine — **no cloud, your data stays on your machine.**
+or Linux machine — **self-hosted; your data stays on hardware you control.**
+(You can optionally expose it over the internet — see Phase 4 — but there's no
+third-party cloud in the loop.)
 
 Built with **FastAPI · SQLAlchemy 2.0 · Jinja2 · Chart.js · garminconnect**, on
 Python 3.11+.
@@ -37,8 +39,10 @@ Python 3.11+.
 - **Phase 1 ✅ — Foundation + Dashboard:** Garmin sync (token cache + MFA),
   SQLite cache, trend dashboard, fitness-age/VO₂ tiles, and type-aware
   workout-detail views (strength sets, cardio stats, HR zones).
-- **Phase 2 ✅ — Metrics engine:** training load, ACWR, readiness, sleep debt,
-  strength progression. (Per-activity load already computed.)
+- **Phase 2 ✅ — Metrics engine:** training load (Banister/Edwards TRIMP), EWMA
+  ACWR, readiness (HRV/RHR/sleep z-scores vs a personal baseline), sleep debt,
+  and strength progression (volume load + Epley estimated-1RM). Every formula is
+  science-based and cited — see [`docs/METRICS.md`](docs/METRICS.md).
 - **Phase 3 ✅ — Coach (LLM):** daily suggestions + chat, swappable Ollama/Claude.
 - **Phase 4 ✅ — Cloud Security:** HTTP Basic Authentication locking down all routes and data, preparing the app for safe deployment to the public internet (e.g. Oracle Cloud Free Tier).
 - **Phase 5 🚧 — Lifestyle Integration (Planned):** sync to Google/Apple Calendar via `.ics` to suggest workout times, plus dynamic nutrition/food/vitamin suggestions based on goals and current recovery status.
