@@ -54,6 +54,16 @@
     history.scrollTop = history.scrollHeight;
   }
 
+  // Safari iOS keyboard gap fix: when input loses focus, force a tiny scroll or layout calculation
+  const inputFieldEl = document.getElementById('chat-input');
+  if (inputFieldEl) {
+    inputFieldEl.addEventListener('blur', () => {
+      setTimeout(() => {
+        window.scrollTo(0, 0);
+      }, 100);
+    });
+  }
+
   function showLoading() {
     const submitBtn = document.getElementById('chat-submit');
     const inputField = document.getElementById('chat-input');
