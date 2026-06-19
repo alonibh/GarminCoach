@@ -292,10 +292,26 @@ def _fitness_tiles() -> list[dict]:
         fa_tile["prev"] = None  # Hide 'from X' text but keep trend arrow
         if tfa and tfa.value:
             fa_tile["age"] = f"Target: {tfa.value}"
+        if fa and fa.value_date:
+            try:
+                lbl = _age_label(fa.value_date[:10])
+                if lbl:
+                    fa_tile["updated_str"] = f"Updated {lbl}"
+            except Exception:
+                pass
         fa_tile["hint"] = "Garmin's estimate of how old your body performs. Lower is better — a 30-year-old with a fitness age of 22 has above-average cardiovascular fitness."
         
         vo2_val = vo2.value if vo2 else None
         vo2_pct, vo2_label = _vo2_max_details(vo2_val, age=age, is_male=is_male)
+        
+        vo2_updated = ""
+        if vo2 and vo2.value_date:
+            try:
+                lbl = _age_label(vo2.value_date[:10])
+                if lbl:
+                    vo2_updated = f"Updated {lbl}"
+            except Exception:
+                pass
         
         desc = []
         desc.append(gender_str)
@@ -309,6 +325,7 @@ def _fitness_tiles() -> list[dict]:
             "bar_pct": vo2_pct,
             "age": vo2_label,
             "desc": " | ".join(desc),
+            "updated_str": vo2_updated,
             "hint": "Maximum oxygen uptake. Higher = better aerobic capacity. Measured from qualifying GPS runs with heart rate."
         }
         

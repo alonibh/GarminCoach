@@ -116,6 +116,7 @@
       </div>
       {% if t.age %}<div class="gauge-footer">{{ t.age }}</div>{% endif %}
       {% if t.desc %}<div class="gauge-desc">{{ t.desc }}</div>{% endif %}
+      {% if t.updated_str %}<div class="gauge-desc" style="opacity: 0.7; font-size: 0.75rem; margin-top: 2px;">{{ t.updated_str }}</div>{% endif %}
     </div>
   </div>
   {% else %}
@@ -138,6 +139,7 @@
         {%- if t.prev is none and not t.age %}&nbsp;{% endif -%}
       {% endif %}
       {% if t.desc %}<div style="margin-top:.3rem;">{{ t.desc }}</div>{% endif %}
+      {% if t.updated_str %}<div style="margin-top:.3rem; font-size: 0.75rem; opacity: 0.7;">{{ t.updated_str }}</div>{% endif %}
     </div>
   </div>
   {% endif %}
