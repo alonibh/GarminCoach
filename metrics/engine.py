@@ -112,32 +112,38 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
 
 
 def _score_hrv(hrv: float, baseline: float) -> float:
-    """Above baseline → high score, below → low."""
-    return _clamp(50.0 + 50.0 * (hrv - baseline) / baseline)
+    """Within/above baseline range -> high score, below -> steep drop."""
+    ratio = hrv / baseline
+    if ratio >= 0.95:
+        return _clamp(90.0 + (ratio - 0.95) * 100.0)
+    return _clamp(90.0 - (0.95 - ratio) * 280.0)
 
 
 def _score_rhr(rhr: float, baseline: float) -> float:
-    """Below baseline → high score (lower resting HR = better recovery)."""
-    return _clamp(50.0 + 50.0 * (baseline - rhr) / baseline)
+    """Below/near baseline -> high score. Elevated RHR -> steep drop."""
+    ratio = rhr / baseline
+    if ratio <= 1.05:
+        return _clamp(80.0 + (1.05 - ratio) * 200.0)
+    return _clamp(80.0 - (ratio - 1.05) * 400.0)
 
 
 def _score_sleep(actual_hours: float, target_hours: float) -> float:
-    """Fraction of target, mapped to 0–100."""
+    """Fraction of target, mapped to 0-100."""
     return _clamp(100.0 * actual_hours / target_hours)
 
 
-def _score_bb(bb_low: float) -> float:
-    """Body Battery low is already 0–100 from Garmin."""
-    return _clamp(bb_low)
+def _score_bb(bb_high: float) -> float:
+    """Body Battery high represents overnight recharge (0-100)."""
+    return _clamp(bb_high)
 
 
 def compute_readiness(
     hrv: float | None, hrv_baseline: float | None,
     rhr: float | None, rhr_baseline: float | None,
     sleep_hours: float | None, sleep_target: float,
-    bb_low: float | None,
+    bb_high: float | None,
 ) -> float | None:
-    """Weighted readiness score (0–100).
+    """Weighted readiness score (0-100).
 
     Missing components are skipped and remaining weights renormalized, so
     the score degrades gracefully when some data is absent.
@@ -153,8 +159,8 @@ def compute_readiness(
     if sleep_hours is not None:
         components.append((_score_sleep(sleep_hours, sleep_target), W_SLEEP))
 
-    if bb_low is not None:
-        components.append((_score_bb(bb_low), W_BB))
+    if bb_high is not None:
+        components.append((_score_bb(bb_high), W_BB))
 
     if not components:
         return None
@@ -283,14 +289,14 @@ def recompute_daily_metrics(session) -> None:
         s = sleep_by_day.get(day)
         hrv = h.hrv_overnight if h else None
         rhr = h.resting_hr if h else None
-        bb_low = h.body_battery_low if h else None
+        bb_high = h.body_battery_high if h else None
         sleep_hours = (s.total_s / 3600.0) if (s and s.total_s) else None
 
         readiness = compute_readiness(
             hrv, hrv_base,
             rhr, rhr_base,
             sleep_hours, SLEEP_TARGET_HOURS,
-            bb_low,
+            bb_high,
         )
 
         # Sleep debt: trailing 14 days, newest first.
