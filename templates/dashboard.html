@@ -35,12 +35,6 @@
       {% if last_sync_at %}Fetched {{ last_sync_at }}{% else %}Never synced{% endif %}
       {% if device_last_upload %} · Watch synced {{ device_last_upload }}{% endif %}
     </span>
-    {% if sync_running %}
-      <span class="badge" style="margin-left:0; font-size: 0.75rem; padding: 0.2rem 0.5rem;">syncing…</span>
-      <form method="post" action="/sync/reset" style="margin:0;">
-        <button class="btn small" style="background:#444; font-size: 0.75rem; padding: 0.2rem 0.5rem;">reset</button>
-      </form>
-    {% endif %}
   </div>
   <div class="dashboard-actions">
     <a href="/goal" class="btn small" style="background: transparent; border: 1px solid var(--border); color: var(--fg);">Goal</a>
@@ -48,9 +42,16 @@
     {% if needs_login %}
     <a href="/login" class="btn small">Connect Garmin</a>
     {% else %}
-    <form method="post" action="/sync" style="margin:0; display: flex;">
-      <button class="btn small" {% if sync_running %}disabled{% endif %}>Sync now</button>
-    </form>
+    {% if sync_running %}
+      <form method="post" action="/sync/reset" style="margin:0; display: flex;">
+        <button class="btn small" style="background:#444; color: #fff;" title="Force reset if sync is stuck">Reset</button>
+      </form>
+      <button class="btn small" disabled>Syncing…</button>
+    {% else %}
+      <form method="post" action="/sync" style="margin:0; display: flex;">
+        <button class="btn small">Sync now</button>
+      </form>
+    {% endif %}
     {% endif %}
   </div>
 </div>
