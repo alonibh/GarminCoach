@@ -234,9 +234,10 @@ th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--
 th { color: var(--muted); font-weight: 500; font-size: .85rem; }
 tr.rest td { color: var(--muted); }
 a { color: var(--accent); }
-input {
+input, textarea {
   width: 100%; padding: .5rem; margin: .25rem 0 .5rem; background: #0f1419;
   border: 1px solid var(--border); border-radius: 8px; color: var(--fg);
+  font-size: 16px; /* Prevents iOS Safari zoom on focus */
 }
 .setedit { display: flex; gap: .4rem; align-items: center; margin-top: .5rem; }
 .setedit input { width: auto; margin: 0; }
