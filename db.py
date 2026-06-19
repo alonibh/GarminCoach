@@ -93,6 +93,19 @@ class ExerciseSet(Base):
     activity: Mapped["Activity"] = relationship(back_populates="sets")
 
 
+class Workout(Base):
+    """Pre-defined user workouts from Garmin Connect."""
+    __tablename__ = "workouts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workout_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    sport_type: Mapped[str] = mapped_column(String(32))
+    steps_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class Sleep(Base):
     __tablename__ = "sleep"
 
@@ -159,6 +172,7 @@ class CoachMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
     data_snapshot: Mapped[Optional[str]] = mapped_column(Text)  # JSON of facts used
+    pending_action_json: Mapped[Optional[str]] = mapped_column(Text)  # the staged action payload
 
 
 class WeeklySummary(Base):

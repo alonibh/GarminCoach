@@ -23,7 +23,22 @@ RULES:
    - ACWR: <0.8 is Detraining, 0.8-1.3 is Optimal, 1.3-1.5 is Ramping (caution), >1.5 is the Danger Zone (high injury risk).
    - Sleep Debt: Anything > 5.0 hours of accumulated exponential debt requires immediate correction (nap or early bedtime).
    - Readiness: 0-100 scale. < 60 means prioritize recovery. > 85 means prime condition to push hard.
-6. When looking at calorie data, recommend macronutrient shifts based on training loads (e.g., high load = high carb, rest day = lower carb, high protein).
+7. When the user asks to modify a workout, you MUST holistically balance their progressive overload history against their current fatigue. Use the `recent_exercise_stats` mapping to apply progressive overload (increase weight/reps from their last baseline). However, ALWAYS evaluate their systemic fatigue (Readiness, ACWR, Sleep) and metabolic fatigue (training load and duration from `recent_workouts`). If they have high fatigue or just played a heavy sport, dial back the volume/intensity, even if their exercise history suggests they are due for an increase.
+8. If the user asks you to modify a workout (e.g., "modify my legs workout for today"), explicitly output the modified workout routine in the chat for them to follow today.
+9. To automatically schedule and push this new workout to their watch, you MUST include a JSON block at the very end of your message formatted EXACTLY like this:
+```json
+{
+  "action": "schedule_workout",
+  "base_workout_id": 12345,
+  "modifications": [
+    { "type": "keep_and_modify", "index": 0, "new_sets": 2 },
+    { "type": "add_new", "description": "Spiderman Pushups", "sets": 3, "reps": 10, "weight_kg": 0 }
+  ]
+}
+```
+Only include indices you want to keep. If you omit an index, it is deleted. `new_sets`, `new_reps`, and `new_weight_kg` are all optional for `keep_and_modify` (if omitted, keeps original values).
+10. Format exercise names nicely for the user in your response (e.g., use "Leg Curl" instead of "LEG_CURL" or "leg_curl"). Do NOT use raw ALL_CAPS internal identifiers in the conversational text.
+11. If you end your message by asking the user a simple question (like "Would you like to schedule this?"), ALWAYS append the exact phrase "[QuickReply: Yes | No]" at the very end of your conversational text (before the JSON block if one exists). This tells the UI to render clickable buttons for the user.
 """
 
 def _is_error_response(text: str) -> bool:
@@ -129,16 +144,33 @@ User Message: {user_text}"""
     session.add(user_msg)
     
     # Generate response
-    response_text = llm.generate(SYSTEM_PROMPT, prompt_with_context, history)
+    response = llm.generate(SYSTEM_PROMPT, prompt_with_context, history)
     
+    chat_text = response
+    pending_json = None
+    try:
+        if "```json\n{" in response and "}\n```" in response:
+            start = response.rfind("```json\n{") + 8
+            end = response.rfind("}\n```") + 1
+            json_str = response[start:end]
+            payload = json.loads(json_str)
+            
+            if payload.get("action") == "schedule_workout":
+                # STAGE the payload, do NOT execute it!
+                pending_json = json_str
+                chat_text = response[:response.rfind("```json\n{")].strip()
+    except Exception as e:
+        logger.error(f"Failed to intercept workout JSON: {e}")
+
     # Save assistant message
     asst_msg = CoachMessage(
         role="assistant",
-        content=response_text,
+        content=chat_text,
         created_at=datetime.now(),
-        data_snapshot=snapshot_json
+        data_snapshot=snapshot_json,
+        pending_action_json=pending_json
     )
     session.add(asst_msg)
     session.commit()
     
-    return response_text
+    return chat_text

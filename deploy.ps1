@@ -3,7 +3,7 @@ $KeyPath = "C:\Users\aloni\Downloads\ssh-key-2026-06-14.key"
 $Ip = "82.70.222.42"
 
 Write-Host "1. Creating application archive..."
-tar.exe -czf garmincoach.tar.gz --exclude=.venv --exclude=__pycache__ --exclude=.git --exclude=*.pyc .
+tar.exe -czf garmincoach.tar.gz --exclude=.venv --exclude=__pycache__ --exclude=.git --exclude=*.pyc --exclude=garmincoach.db .
 
 Write-Host "2. Uploading archive to server..."
 scp -i $KeyPath -o StrictHostKeyChecking=no garmincoach.tar.gz "ubuntu@${Ip}:~/"

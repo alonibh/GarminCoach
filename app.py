@@ -893,18 +893,50 @@ def get_chat_page(request: Request):
         msgs = session.query(CoachMessage).filter(
             CoachMessage.role.in_(["user", "assistant"])
         ).order_by(CoachMessage.created_at.asc()).all()
-        return templates.TemplateResponse(request, "chat.html", {"messages": msgs})
+        response = templates.TemplateResponse(request, "chat.html", {"messages": msgs})
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
-@app.post("/chat", response_class=HTMLResponse)
+@app.post("/chat", response_class=RedirectResponse)
 def post_chat_page(request: Request, message: str = Form(...)):
     """Handle a new chat message."""
     with get_session() as session:
         handle_chat(session, message)
-        # re-fetch to render
-        msgs = session.query(CoachMessage).filter(
-            CoachMessage.role.in_(["user", "assistant"])
-        ).order_by(CoachMessage.created_at.asc()).all()
-        return templates.TemplateResponse(request, "chat.html", {"messages": msgs})
+    return RedirectResponse(url="/chat", status_code=303)
+
+
+@app.post("/chat/{msg_id}/approve", response_class=RedirectResponse)
+def approve_action(request: Request, msg_id: int):
+    """Approve a staged action."""
+    with get_session() as session:
+        msg = session.get(CoachMessage, msg_id)
+        if msg and msg.pending_action_json:
+            import json
+            from coach.garmin_compiler import compile_and_schedule
+            payload = json.loads(msg.pending_action_json)
+            
+            if payload.get("action") == "schedule_workout":
+                success = compile_and_schedule(session, payload)
+                msg.pending_action_json = None  # Clear pending status
+                if success:
+                    msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
+                else:
+                    msg.content += "\n\n❌ *I tried to schedule this workout, but an error occurred while talking to Garmin.*"
+                session.commit()
+    return RedirectResponse("/chat", status_code=303)
+
+@app.post("/chat/{msg_id}/reject", response_class=RedirectResponse)
+def reject_action(request: Request, msg_id: int):
+    """Reject a staged action."""
+    with get_session() as session:
+        msg = session.get(CoachMessage, msg_id)
+        if msg and msg.pending_action_json:
+            msg.pending_action_json = None
+            msg.content += "\n\n❌ *Workout cancelled by user.*"
+            session.commit()
+    return RedirectResponse("/chat", status_code=303)
 
 
 @app.get("/calendar", response_class=HTMLResponse)

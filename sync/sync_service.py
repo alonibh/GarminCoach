@@ -22,6 +22,7 @@ from db import (
     MetricSnapshot,
     Sleep,
     SyncState,
+    Workout,
     get_session,
 )
 from sync.garmin_client import client
@@ -155,7 +156,45 @@ def _sync_exercise_sets(session, activity_id: int) -> None:
         )
 
 
-def _sync_activities(session, start: date, end: date) -> int:
+def _sync_workouts(session: Session) -> None:
+    """Fetch user's pre-defined workouts and their deep step structures."""
+    try:
+        workouts = client.api.get_workouts()
+    except Exception:
+        return
+        
+    import json
+    from datetime import datetime
+    
+    for w_summary in workouts:
+        wid = w_summary.get("workoutId")
+        if not wid:
+            continue
+            
+        name = w_summary.get("workoutName", "Unnamed Workout")
+        sport_type = _g(w_summary, "sportType", "sportTypeKey", default="unknown")
+        
+        # We only really care about strength, running, cycling, etc., but we can save all
+        try:
+            full_w = client.api.get_workout_by_id(wid)
+            steps_json = json.dumps(full_w.get("workoutSegments", []))
+        except Exception:
+            steps_json = "[]"
+            
+        row = session.query(Workout).filter_by(workout_id=wid).first()
+        if not row:
+            row = Workout(workout_id=wid, created_at=datetime.now())
+            
+        row.name = name
+        row.sport_type = sport_type
+        row.steps_json = steps_json
+        row.updated_at = datetime.now()
+        
+        session.add(row)
+    session.commit()
+
+
+def _sync_activities(session: Session, start: date, end: date) -> int:
     raw_list = client.activities_by_date(start, end)
     count = 0
     for raw in raw_list or []:
@@ -302,6 +341,11 @@ def run_sync(full: bool = False) -> dict:
             summary["errors"].append(f"Rate limited on activities: {e}")
         except Exception as e:
             summary["errors"].append(f"Activities: {e}")
+
+        try:
+            _sync_workouts(session)
+        except Exception as e:
+            summary["errors"].append(f"Workouts: {e}")
 
         # Circuit breaker: if Garmin is rate-limiting, don't grind through 90
         # days of doomed calls — abort fast with a clear message.

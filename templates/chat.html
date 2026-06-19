@@ -16,7 +16,23 @@
           {{ msg.content }}
         </div>
       {% else %}
-        <div class="ai-message" style="align-self: flex-start; background: #202c33; color: #e9edef; padding: 0.6rem 0.8rem; border-radius: 0 12px 12px 12px; max-width: 85%; font-size: 0.95rem; box-shadow: 0 1px 2px rgba(0,0,0,0.2); line-height: 1.5;">{{ msg.content }}</div>
+        <div class="ai-message" style="align-self: flex-start; background: #202c33; color: #e9edef; padding: 0.6rem 0.8rem; border-radius: 0 12px 12px 12px; max-width: 85%; font-size: 0.95rem; box-shadow: 0 1px 2px rgba(0,0,0,0.2); line-height: 1.5;">
+          <div class="ai-text">{{ msg.content }}</div>
+          {% if msg.pending_action_json %}
+          <div style="margin-top: 1rem; padding: 1rem; background: #2a3942; border-radius: 8px; border: 1px solid #005c4b;">
+            <div style="font-weight: 600; margin-bottom: 0.5rem; color: #00a884;">🏋️ Coach proposes a workout schedule</div>
+            <div style="font-size: 0.85rem; color: #8696a0; margin-bottom: 1rem;">Please approve this action to compile the workout and push it to your Garmin calendar for today.</div>
+            <div style="display: flex; gap: 0.5rem;">
+              <form method="post" action="/chat/{{ msg.id }}/approve" style="margin: 0; flex: 1;">
+                <button class="btn" style="width: 100%; background: #00a884; color: #111b21; border: none; padding: 0.5rem; border-radius: 4px; font-weight: 600; cursor: pointer;">Approve & Schedule</button>
+              </form>
+              <form method="post" action="/chat/{{ msg.id }}/reject" style="margin: 0; flex: 1;">
+                <button class="btn" style="width: 100%; background: transparent; color: #f15c6d; border: 1px solid #f15c6d; padding: 0.5rem; border-radius: 4px; font-weight: 600; cursor: pointer;">Reject</button>
+              </form>
+            </div>
+          </div>
+          {% endif %}
+        </div>
       {% endif %}
     {% endfor %}
   </div>
@@ -34,28 +50,80 @@
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
-  // Render markdown for all AI messages
-  document.querySelectorAll('.ai-message').forEach(el => {
-    const rawText = el.textContent.trim();
-    let html = marked.parse(rawText);
-    
-    // Replace <p> with <div> to aggressively prevent Safari Reader Mode
-    html = html.replace(/<p>/g, '<div class="chat-p">').replace(/<\/p>/g, '</div>');
-    el.innerHTML = html;
-    
-    // Add WhatsApp styling to generated elements
-    el.querySelectorAll('.chat-p').forEach(p => p.style.margin = '0 0 0.5rem 0');
-    el.querySelectorAll('.chat-p:last-child').forEach(p => p.style.margin = '0');
-    el.querySelectorAll('ul, ol').forEach(list => {
-      list.style.margin = '0 0 0.5rem 0';
-      list.style.paddingLeft = '1.2rem';
-    });
-  });
-
   // Auto-scroll to bottom of chat
   const history = document.querySelector('.chat-history');
   if (history) {
     history.scrollTop = history.scrollHeight;
+    // iOS Safari keyboard gap fix: scroll again after layout settles
+    setTimeout(() => {
+      history.scrollTop = history.scrollHeight;
+    }, 300);
+  }
+
+  // Render markdown for all AI messages
+  try {
+    document.querySelectorAll('.ai-message .ai-text').forEach(el => {
+      let rawText = el.textContent.trim();
+      
+      // Parse QuickReply tags if present
+      let quickReplies = [];
+      const qrMatch = rawText.match(/\[QuickReply:\s*(.*?)\]/i);
+      if (qrMatch) {
+        quickReplies = qrMatch[1].split('|').map(s => s.trim());
+        rawText = rawText.replace(qrMatch[0], '').trim();
+      }
+
+      let html = marked.parse(rawText);
+      
+      // Replace <p> with <div> to aggressively prevent Safari Reader Mode
+      html = html.replace(/<p>/g, '<div class="chat-p">').replace(/<\/p>/g, '</div>');
+      el.innerHTML = html;
+      
+      // Add WhatsApp styling to generated elements
+      el.querySelectorAll('.chat-p').forEach(p => p.style.margin = '0 0 0.5rem 0');
+      el.querySelectorAll('.chat-p:last-child').forEach(p => p.style.margin = '0');
+      el.querySelectorAll('ul, ol').forEach(list => {
+        list.style.margin = '0 0 0.5rem 0';
+        list.style.paddingLeft = '1.2rem';
+      });
+
+      // Render QuickReply buttons if found
+      if (quickReplies.length > 0) {
+        const qrContainer = document.createElement('div');
+        qrContainer.style.display = 'flex';
+        qrContainer.style.gap = '0.5rem';
+        qrContainer.style.marginTop = '0.75rem';
+        qrContainer.style.flexWrap = 'wrap';
+        
+        quickReplies.forEach(reply => {
+          const btn = document.createElement('button');
+          btn.innerText = reply;
+          btn.style.background = 'rgba(255, 255, 255, 0.1)';
+          btn.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+          btn.style.color = '#fff';
+          btn.style.padding = '0.4rem 1rem';
+          btn.style.borderRadius = '20px';
+          btn.style.fontSize = '0.9rem';
+          btn.style.cursor = 'pointer';
+          btn.style.fontWeight = '500';
+          
+          btn.onmouseover = () => btn.style.background = 'rgba(255, 255, 255, 0.2)';
+          btn.onmouseout = () => btn.style.background = 'rgba(255, 255, 255, 0.1)';
+          
+          btn.onclick = () => {
+            const input = document.getElementById('chat-input');
+            input.value = reply;
+            showLoading(); // Triggers UI update
+            document.getElementById('chat-form').submit(); // Native submit
+          };
+          qrContainer.appendChild(btn);
+        });
+        
+        el.appendChild(qrContainer);
+      }
+    });
+  } catch(e) {
+    console.error("Markdown parsing error:", e);
   }
 
   // Safari iOS keyboard gap fix: when input loses focus, force a tiny scroll or layout calculation
