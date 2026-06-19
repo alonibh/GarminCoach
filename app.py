@@ -164,13 +164,21 @@ def _time_ago(iso_str: str | None) -> str | None:
 def _last_sync_at() -> str | None:
     with get_session() as s:
         row = s.get(SyncState, "last_sync_at")
-        return _time_ago(row.value if row else None)
+        # Ensure it has a timezone for JS parser if it was saved as naive UTC previously
+        # We'll just return the raw string and let JS handle it. Newer strings will have +00:00.
+        val = row.value if row else None
+        if val and not ("+" in val or "Z" in val or "-" in val[-6:]):
+            val += "Z" # Assuming old naive strings were saved by UTC server
+        return val
 
 
 def _device_last_upload() -> str | None:
     with get_session() as s:
         row = s.get(SyncState, "device_last_upload")
-        return _time_ago(row.value if row else None)
+        val = row.value if row else None
+        if val and not ("+" in val or "Z" in val or "-" in val[-6:]):
+            val += "Z"
+        return val
 
 
 def _trend(current, previous, *, lower_is_better: bool) -> str:

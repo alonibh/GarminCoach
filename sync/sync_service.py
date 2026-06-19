@@ -343,18 +343,22 @@ def run_sync(full: bool = False) -> dict:
         # Only stamp "last synced" if real data came through, so a sync that
         # failed immediately doesn't look successful in the UI.
         if summary["activities"] or summary["days"]:
+            from datetime import timezone
             _set_state(
-                session, "last_sync_at", datetime.now().isoformat(timespec="seconds")
+                session, "last_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
             )
 
         # Store the watch's last upload time so the dashboard can show both
-        # "when we fetched" and "when the watch last synced to Garmin".
+        # the fetched time and the true device sync time.
         try:
+            from datetime import timezone
             dev = client.device_last_used()
             upload_ms = dev.get("lastUsedDeviceUploadTime")
             if upload_ms:
-                ts = datetime.fromtimestamp(upload_ms / 1000).isoformat(timespec="seconds")
+                ts = datetime.fromtimestamp(upload_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds")
                 _set_state(session, "device_last_upload", ts)
+            else:
+                _set_state(session, "device_last_upload", "")
         except Exception:
             pass
 

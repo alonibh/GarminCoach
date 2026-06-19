@@ -32,24 +32,24 @@
 <div class="dashboard-toolbar compact">
   <div class="muted" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.85rem;">
     <span id="sync-status">
-      {% if last_sync_at %}Fetched {{ last_sync_at }}{% else %}Never synced{% endif %}
-      {% if device_last_upload %} · Watch synced {{ device_last_upload }}{% endif %}
+      {% if last_sync_at %}Fetched <span class="time-ago" data-iso="{{ last_sync_at }}"></span>{% else %}Never synced{% endif %}
+      {% if device_last_upload %} · Watch synced <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}
     </span>
   </div>
-  <div class="dashboard-actions">
-    <a href="/goal" class="btn small" style="background: transparent; border: 1px solid var(--border); color: var(--fg);">Goal</a>
-    <a href="/chat" class="btn small" style="background: transparent; border: 1px solid var(--accent); color: var(--accent);">Coach Chat</a>
+  <div class="dashboard-actions" style="flex-wrap: wrap;">
+    <a href="/goal" class="btn small" style="background: transparent; border: 1px solid var(--border); color: var(--fg); white-space: nowrap; flex: 1 1 auto;">Goal</a>
+    <a href="/chat" class="btn small" style="background: transparent; border: 1px solid var(--accent); color: var(--accent); white-space: nowrap; flex: 1 1 auto;">Coach Chat</a>
     {% if needs_login %}
-    <a href="/login" class="btn small">Connect Garmin</a>
+    <a href="/login" class="btn small" style="white-space: nowrap; flex: 1 1 auto;">Connect Garmin</a>
     {% else %}
     {% if sync_running %}
-      <form method="post" action="/sync/reset" style="margin:0; display: flex;">
-        <button class="btn small" style="background:#444; color: #fff;" title="Force reset if sync is stuck">Reset</button>
+      <form method="post" action="/sync/reset" style="margin:0; display: flex; flex: 1 1 auto;">
+        <button class="btn small" style="background:#444; color: #fff; width: 100%; white-space: nowrap;" title="Force reset if sync is stuck">Reset</button>
       </form>
-      <button class="btn small" disabled>Syncing…</button>
+      <button class="btn small" disabled style="white-space: nowrap; flex: 1 1 auto;">Syncing…</button>
     {% else %}
-      <form method="post" action="/sync" style="margin:0; display: flex;">
-        <button class="btn small">Sync now</button>
+      <form method="post" action="/sync" style="margin:0; display: flex; flex: 1 1 auto;">
+        <button class="btn small" style="width: 100%; white-space: nowrap;">Sync now</button>
       </form>
     {% endif %}
     {% endif %}
@@ -502,6 +502,27 @@ document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]
       }
     } catch (_) { /* network hiccup — try again next tick */ }
   }, POLL_MS);
+})();
+// Format absolute timestamps into user's local timezone dynamically
+(function() {
+  document.querySelectorAll('.time-ago').forEach(el => {
+    const isoStr = el.getAttribute('data-iso');
+    if (!isoStr) return;
+    const d = new Date(isoStr);
+    if (isNaN(d)) return;
+    const now = new Date();
+    const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    if (d.toDateString() === now.toDateString()) {
+      el.textContent = "Today at " + timeStr;
+    } else {
+      now.setDate(now.getDate() - 1);
+      if (d.toDateString() === now.toDateString()) {
+        el.textContent = "Yesterday at " + timeStr;
+      } else {
+        el.textContent = d.toLocaleDateString([], {month:'short', day:'numeric'}) + " at " + timeStr;
+      }
+    }
+  });
 })();
 </script>
 {% endblock %}
