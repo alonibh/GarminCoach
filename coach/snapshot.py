@@ -152,7 +152,7 @@ def build_snapshot(session: Session) -> str:
                     if step.get("type") == "ExecutableStepDTO":
                         if step.get("stepType", {}).get("stepTypeKey") == "rest":
                             continue
-                        cat = _humanize_ex(step.get("category") or step.get("exerciseName") or "Activity")
+                        cat = _humanize_ex(step.get("exerciseName") or step.get("category") or "Activity")
                         reps = step.get("endConditionValue", "")
                         weight = step.get("weightValue")
                         cond = step.get("endCondition", {}).get("conditionTypeKey")
@@ -165,7 +165,7 @@ def build_snapshot(session: Session) -> str:
                         for child in step.get("workoutSteps", []):
                             if child.get("stepType", {}).get("stepTypeKey") == "rest":
                                 continue
-                            cat = _humanize_ex(child.get("category") or child.get("exerciseName") or "Activity")
+                            cat = _humanize_ex(child.get("exerciseName") or child.get("category") or "Activity")
                             reps = child.get("endConditionValue", "")
                             cond = child.get("endCondition", {}).get("conditionTypeKey")
                             weight = child.get("weightValue")
@@ -198,11 +198,11 @@ def build_snapshot(session: Session) -> str:
                 for seg in segments:
                     for step in seg.get("workoutSteps", []):
                         if step.get("type") == "ExecutableStepDTO":
-                            cat = step.get("category") or step.get("exerciseName")
+                            cat = step.get("exerciseName") or step.get("category")
                             if cat: unique_exercises.add(cat)
                         elif step.get("type") == "RepeatGroupDTO":
                             for child in step.get("workoutSteps", []):
-                                cat = child.get("category") or child.get("exerciseName")
+                                cat = child.get("exerciseName") or child.get("category")
                                 if cat: unique_exercises.add(cat)
             except Exception:
                 pass
