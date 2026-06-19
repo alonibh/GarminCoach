@@ -7,7 +7,7 @@ formula in that doc; if a formula changes, update both together.
 from __future__ import annotations
 
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -22,6 +22,7 @@ from metrics.engine import (
     SLEEP_DEBT_CAP,
     acwr_label,
     banister_trimp,
+    choose_load_method,
     compute_daily_loads,
     compute_readiness,
     compute_sleep_debt,
@@ -80,6 +81,60 @@ class TestTrainingLoad:
 
     def test_edwards_insufficient_zones(self):
         assert edwards_trimp([600.0, 600.0]) is None
+
+    # --- Pinned-method behaviour (scale-consistency fix) -------------------
+
+    def test_pinned_banister_does_not_cross_to_edwards(self):
+        # method="banister" but no HRrest/HRmax → None, NOT an Edwards value,
+        # so the ACWR series never silently switches scale.
+        zones = [600.0, 600.0, 600.0, 600.0, 600.0]
+        assert compute_training_load(
+            150, 3600, hr_zone_seconds=zones, method="banister"
+        ) is None
+
+    def test_pinned_edwards_does_not_cross_to_banister(self):
+        # method="edwards" with full HR-reserve inputs still uses Edwards only.
+        assert compute_training_load(
+            150, 3600, hr_rest=50, hr_max=190, method="edwards"
+        ) is None  # no zone data → None, never a Banister value
+        zones = [600.0, 600.0, 600.0, 600.0, 600.0]
+        assert compute_training_load(
+            150, 3600, hr_rest=50, hr_max=190, hr_zone_seconds=zones,
+            method="edwards",
+        ) == 150.0
+
+
+class TestChooseLoadMethod:
+    """choose_load_method pins one TRIMP scale for the whole activity set."""
+
+    class _Act:
+        def __init__(self, start_time, duration_s, avg_hr):
+            self.start_time = start_time
+            self.duration_s = duration_s
+            self.avg_hr = avg_hr
+
+    def _act(self, day, dur=3600, hr=150):
+        return self._Act(datetime(day.year, day.month, day.day, 8), dur, hr)
+
+    def test_edwards_when_hr_max_unknown(self):
+        d = date(2026, 6, 1)
+        acts = [self._act(d)]
+        assert choose_load_method(acts, {d: 50.0}, hr_max=None) == "edwards"
+
+    def test_banister_when_majority_scorable(self):
+        d1, d2 = date(2026, 6, 1), date(2026, 6, 2)
+        acts = [self._act(d1), self._act(d2)]
+        rhr = {d1: 50.0, d2: 52.0}  # both have HRrest
+        assert choose_load_method(acts, rhr, hr_max=190.0) == "banister"
+
+    def test_edwards_when_most_activities_lack_hr_reserve(self):
+        d1, d2, d3 = date(2026, 6, 1), date(2026, 6, 2), date(2026, 6, 3)
+        acts = [self._act(d1), self._act(d2), self._act(d3)]
+        rhr = {d1: 50.0}  # only 1 of 3 scorable → fall back to Edwards
+        assert choose_load_method(acts, rhr, hr_max=190.0) == "edwards"
+
+    def test_no_scorable_activities_defaults_banister(self):
+        assert choose_load_method([], {}, hr_max=190.0) == "banister"
 
 
 # ---------------------------------------------------------------------------

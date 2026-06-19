@@ -38,9 +38,18 @@ Edwards defines zones as 50–60 / 60–70 / 70–80 / 80–90 / 90–100 % HRma
 **Caveat:** Garmin's native zones are threshold-based, so applying these
 weights to Garmin zone times is approximate.
 
-### Scale caveat
-Banister and Edwards differ ~1.5–2.2× in magnitude — do not mix both in one
-ACWR series. A deployment should prefer one method consistently.
+### Scale caveat — enforced, not just advised
+Banister and Edwards differ ~1.5–2.2× in magnitude, so mixing them within one
+ACWR series makes the ratio spike or drop purely from the formula switch rather
+than from any real change in load. To prevent this, `recompute_all` calls
+`choose_load_method` **once per recompute** to pin a single method for the whole
+activity set: Banister when it can score a majority of activities (HRmax known
+and most activities have avg HR + same-day resting HR), otherwise Edwards for the
+entire set. `compute_training_load(..., method=...)` then never crosses scales —
+when the pinned method's inputs are missing for an activity it returns `None`
+rather than falling back to the other formula. (The `method=None` legacy auto
+path remains only for scoring a single isolated activity, where intra-series
+scale consistency is irrelevant.)
 
 **Citations:** Banister EW (1991), *Physiological Testing of the High-Performance
 Athlete*, Human Kinetics, pp.403–424 · Morton, Fitz-Clarke & Banister, *J Appl

@@ -121,28 +121,76 @@ def compute_training_load(
     hr_rest: float | None = None,
     hr_max: float | None = None,
     is_male: bool | None = None,
+    method: str | None = None,
 ) -> float | None:
     """Per-activity training load (TRIMP, arbitrary units).
 
-    Tiered, most-accurate-first:
-      1. Banister TRIMP when HRrest + HRmax are known (HR-reserve based).
-      2. Edwards zone TRIMP when seconds-in-zone (zones 1–5) are available.
-      3. None when neither is computable — we do NOT invent a load.
+    Banister and Edwards TRIMP differ ~1.5–2.2× in magnitude, so they must NOT
+    be mixed within a single ACWR series — switching formulas mid-window makes
+    the acute/chronic ratio spike or drop purely from the scale change, not from
+    any real change in load. Callers therefore pick ONE *method* for the whole
+    activity set (see ``choose_load_method``) and pass it here; this function
+    never silently falls back across scales.
 
-    Banister and Edwards differ ~1.5–2.2× in magnitude, so a deployment should
-    prefer one method consistently; ACWR mixes them only if both are present.
+      - ``method="banister"``: HR-reserve TRIMP; requires avg_hr + HRrest + HRmax.
+      - ``method="edwards"``:  summated zone TRIMP; requires seconds-in-zone.
+      - ``method=None``:       legacy auto (Banister if possible, else Edwards).
+                               Kept for callers scoring a single isolated
+                               activity where scale-consistency is irrelevant.
+
+    Returns None when the chosen method's inputs are missing — we do NOT invent
+    a load, and (when method is pinned) we do NOT cross to the other scale.
     """
-    if (
+    can_banister = (
         avg_hr is not None
         and duration_s
         and hr_rest is not None
         and hr_max is not None
-    ):
+    )
+
+    if method == "banister":
+        return banister_trimp(avg_hr, duration_s, hr_rest, hr_max, is_male) if can_banister else None
+    if method == "edwards":
+        return edwards_trimp(hr_zone_seconds) if hr_zone_seconds else None
+
+    # method is None: legacy most-accurate-first auto-selection.
+    if can_banister:
         banister = banister_trimp(avg_hr, duration_s, hr_rest, hr_max, is_male)
         if banister is not None:
             return banister
-
     return edwards_trimp(hr_zone_seconds) if hr_zone_seconds else None
+
+
+def choose_load_method(
+    activities: list,
+    rhr_by_day: dict[date, float],
+    hr_max: float | None,
+) -> str:
+    """Pick ONE TRIMP method for the whole activity set so the ACWR series stays
+    on a single scale (per the reviewer's "enforce one method consistently"
+    note). Prefer Banister — the more accurate HR-reserve model — when the
+    majority of activities can be scored with it; otherwise fall back to Edwards
+    zone TRIMP for the entire set.
+
+    Choosing once here, rather than per-activity, is what prevents the artificial
+    ACWR spikes/drops from formula-switching between inconsistently-instrumented
+    activities.
+    """
+    if hr_max is None:
+        return "edwards"
+
+    scorable = [a for a in activities if a.start_time and a.duration_s]
+    if not scorable:
+        return "banister"  # nothing to score; harmless default
+
+    banister_ready = sum(
+        1
+        for a in scorable
+        if a.avg_hr is not None and rhr_by_day.get(a.start_time.date()) is not None
+    )
+    # Use Banister when it covers most activities; else keep the whole set on
+    # Edwards rather than mixing scales.
+    return "banister" if banister_ready >= len(scorable) / 2 else "edwards"
 
 
 # ---------------------------------------------------------------------------
@@ -492,9 +540,16 @@ def recompute_all() -> None:
             if h.resting_hr is not None
         }
 
-        # Per-activity training load (Banister TRIMP when HRrest/HRmax known,
-        # else Edwards zone TRIMP, else None — never an invented number).
-        for act in session.query(Activity).all():
+        # Pick ONE TRIMP method for the whole set so the ACWR series stays on a
+        # single scale (Banister and Edwards differ ~1.5–2.2×; mixing them makes
+        # ACWR spike/drop from the formula switch, not from real load changes).
+        activities = session.query(Activity).all()
+        method = choose_load_method(activities, rhr_by_day, hr_max)
+        log.info("training-load method for this recompute: %s", method)
+
+        # Per-activity training load using the pinned method (None when that
+        # method's inputs are missing — never invented, never cross-scale).
+        for act in activities:
             hr_rest = rhr_by_day.get(act.start_time.date()) if act.start_time else None
             act.training_load = compute_training_load(
                 act.avg_hr,
@@ -502,6 +557,7 @@ def recompute_all() -> None:
                 hr_rest=hr_rest,
                 hr_max=hr_max,
                 is_male=is_male,
+                method=method,
             )
 
         # Daily aggregate metrics.
