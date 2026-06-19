@@ -145,18 +145,18 @@ def _time_ago(iso_str: str | None) -> str | None:
         return None
     try:
         dt = datetime.fromisoformat(iso_str)
-        seconds = int((datetime.now() - dt).total_seconds())
-        if seconds < 60:
-            return "just now"
-        elif seconds < 3600:
-            mins = seconds // 60
-            return f"{mins} minute{'s' if mins != 1 else ''} ago"
-        elif seconds < 86400:
-            hours = seconds // 3600
-            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        now = datetime.now(dt.tzinfo)
+        
+        # Format the time
+        time_str = dt.strftime("%H:%M")
+        
+        # Determine the day
+        if dt.date() == now.date():
+            return f"Today at {time_str}"
+        elif dt.date() == (now.date() - timedelta(days=1)):
+            return f"Yesterday at {time_str}"
         else:
-            days = seconds // 86400
-            return f"{days} day{'s' if days != 1 else ''} ago"
+            return dt.strftime("%b %d at %H:%M")
     except Exception:
         return iso_str
 
