@@ -206,6 +206,7 @@ h2, h3 { margin: 0 0 .75rem; }
   opacity: 0; visibility: hidden; transition: opacity .12s; z-index: 20; pointer-events: none;
 }
 .info:hover::after, .info:focus::after { opacity: 1; visibility: visible; }
+.chart-head .info::after { left: 0; transform: none; } /* Prevent left cutoff for titles */
 
 /* Cardio: stat grid */
 .cardio-grid {
