@@ -324,6 +324,7 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
       datasets: datasets
     },
     options: {
+      events: ['mousemove', 'mouseout', 'click'],
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
@@ -425,6 +426,7 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
       ]
     },
     options: {
+      events: ['mousemove', 'mouseout', 'click'],
       responsive: true,
       maintainAspectRatio: false,
       layout: { padding: { top: 15 } },
