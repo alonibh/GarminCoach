@@ -21,7 +21,7 @@ def build_snapshot(session: Session) -> str:
         "user_goal": goal_text,
         "user_constraints": constraints,
         "today_date": date.today().isoformat(),
-        "upcoming_schedule_3_days": get_upcoming_schedule(days=3)
+        "upcoming_schedule_14_days": get_upcoming_schedule(days=14)
     }
     
     # 2. Latest Metrics
