@@ -37,11 +37,15 @@
   // Render markdown for all AI messages
   document.querySelectorAll('.ai-message').forEach(el => {
     const rawText = el.textContent.trim();
-    el.innerHTML = marked.parse(rawText);
+    let html = marked.parse(rawText);
+    
+    // Replace <p> with <div> to aggressively prevent Safari Reader Mode
+    html = html.replace(/<p>/g, '<div class="chat-p">').replace(/<\/p>/g, '</div>');
+    el.innerHTML = html;
     
     // Add WhatsApp styling to generated elements
-    el.querySelectorAll('p').forEach(p => p.style.margin = '0 0 0.5rem 0');
-    el.querySelectorAll('p:last-child').forEach(p => p.style.margin = '0');
+    el.querySelectorAll('.chat-p').forEach(p => p.style.margin = '0 0 0.5rem 0');
+    el.querySelectorAll('.chat-p:last-child').forEach(p => p.style.margin = '0');
     el.querySelectorAll('ul, ol').forEach(list => {
       list.style.margin = '0 0 0.5rem 0';
       list.style.paddingLeft = '1.2rem';
