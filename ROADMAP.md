@@ -54,6 +54,7 @@ _Drop any future ideas here:_
 
 - **Proactive AI Notifications:** Actively push messages like "Eat a protein bar", "Rest today", or "Ready for heavy lifting this evening".
 - **Smart Activity Recommendations:** Recommend specific activities based on user preferences and goals.
+- **Dynamic Workout Type Suggestions:** Suggest different types of workouts (Yoga, Swim, Cardio, etc.) based on fatigue status, recovery needs, and overall goals, instead of just strength training.
 - Strava integration
 - Export reports as PDF
 - Multi-user support
