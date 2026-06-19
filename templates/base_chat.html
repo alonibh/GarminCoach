@@ -33,14 +33,14 @@
     .chat-header nav a:hover { color: var(--fg); }
     
     @media (max-width: 768px) {
-      .chat-header { 
-        flex-direction: column; 
-        align-items: flex-start; 
-        gap: 0.75rem; 
-        padding: 1rem;
+      .chat-header {
+        flex-direction: row;
+        padding: 0.75rem 1rem;
+        gap: 0.75rem;
       }
-      .chat-header nav { width: 100%; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-      .chat-header nav a { margin-right: 0.5rem; }
+      .brand { font-size: 1.1rem; }
+      .chat-header nav { width: auto; display: flex; flex-wrap: nowrap; gap: 0.5rem; align-items: center; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; flex: 1; justify-content: space-between; }
+      .chat-header nav a { font-size: 0.9rem; margin-right: 0.5rem; }
     }
   </style>
 </head>

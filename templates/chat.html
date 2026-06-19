@@ -20,8 +20,15 @@
           <div class="ai-text">{{ msg.content }}</div>
           {% if msg.pending_action_json %}
           <div style="margin-top: 1rem; padding: 1rem; background: #2a3942; border-radius: 8px; border: 1px solid #005c4b;">
+            {% set payload = msg.pending_action_payload %}
             <div style="font-weight: 600; margin-bottom: 0.5rem; color: #00a884;">🏋️ Coach proposes a workout schedule</div>
-            <div style="font-size: 0.85rem; color: #8696a0; margin-bottom: 1rem;">Please approve this action to compile the workout and push it to your Garmin calendar for today.</div>
+            <div style="font-size: 0.85rem; color: #8696a0; margin-bottom: 1rem;">
+              {% if payload and payload.get('suggested_time') %}
+                Please approve this action to compile the workout and push it to your Garmin calendar for today at <strong>{{ payload.get('suggested_time') }}</strong>.
+              {% else %}
+                Please approve this action to compile the workout and push it to your Garmin calendar for today.
+              {% endif %}
+            </div>
             <div style="display: flex; gap: 0.5rem;">
               <form method="post" action="/chat/{{ msg.id }}/approve" style="margin: 0; flex: 1;">
                 <button class="btn" style="width: 100%; background: #00a884; color: #111b21; border: none; padding: 0.5rem; border-radius: 4px; font-weight: 600; cursor: pointer;">Approve & Schedule</button>

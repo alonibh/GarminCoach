@@ -174,6 +174,16 @@ class CoachMessage(Base):
     data_snapshot: Mapped[Optional[str]] = mapped_column(Text)  # JSON of facts used
     pending_action_json: Mapped[Optional[str]] = mapped_column(Text)  # the staged action payload
 
+    @property
+    def pending_action_payload(self) -> dict | None:
+        if self.pending_action_json:
+            import json
+            try:
+                return json.loads(self.pending_action_json)
+            except Exception:
+                pass
+        return None
+
 
 class WeeklySummary(Base):
     __tablename__ = "weekly_summaries"

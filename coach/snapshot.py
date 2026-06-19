@@ -137,6 +137,11 @@ def build_snapshot(session: Session) -> str:
 
     # 5. User Pre-defined Workouts
     from db import Workout
+    
+    def _humanize_ex(name: str) -> str:
+        if not name: return ""
+        return name.replace("_", " ").title()
+
     def _parse_workout_steps(steps_json: str) -> list[str]:
         try:
             segments = json.loads(steps_json)
@@ -146,7 +151,7 @@ def build_snapshot(session: Session) -> str:
                     if step.get("type") == "ExecutableStepDTO":
                         if step.get("stepType", {}).get("stepTypeKey") == "rest":
                             continue
-                        cat = step.get("category") or step.get("exerciseName") or "Activity"
+                        cat = _humanize_ex(step.get("category") or step.get("exerciseName") or "Activity")
                         reps = step.get("endConditionValue", "")
                         weight = step.get("weightValue")
                         cond = step.get("endCondition", {}).get("conditionTypeKey")
@@ -159,7 +164,7 @@ def build_snapshot(session: Session) -> str:
                         for child in step.get("workoutSteps", []):
                             if child.get("stepType", {}).get("stepTypeKey") == "rest":
                                 continue
-                            cat = child.get("category") or child.get("exerciseName") or "Activity"
+                            cat = _humanize_ex(child.get("category") or child.get("exerciseName") or "Activity")
                             reps = child.get("endConditionValue", "")
                             cond = child.get("endCondition", {}).get("conditionTypeKey")
                             weight = child.get("weightValue")
@@ -185,26 +190,29 @@ def build_snapshot(session: Session) -> str:
                 "sport": w.sport_type, 
                 "steps": parsed
             })
-            # Extract exercise names to build our history map
-            for step_str in parsed:
-                # Format is "0: SQUAT: 10 reps @ 50kg" or "0: 3x [ SQUAT (10 reps @ 50kg) ]"
-                # For simplicity, if it's a simple step, category is the second part
-                parts = step_str.split(": ")
-                if len(parts) >= 3 and parts[1] != "Activity":
-                    unique_exercises.add(parts[1])
-                elif len(parts) >= 2 and "[" in parts[1]:
-                    # Extract from "3x [ SQUAT (10 reps), BENCH (5 reps) ]"
-                    bracket_content = parts[1][parts[1].find("[")+1 : parts[1].rfind("]")]
-                    for ex_part in bracket_content.split(","):
-                        ex_name = ex_part.split("(")[0].strip()
-                        if ex_name and ex_name != "Activity":
-                            unique_exercises.add(ex_name)
+            
+            # Extract raw exercise names for history lookup
+            try:
+                segments = json.loads(w.steps_json)
+                for seg in segments:
+                    for step in seg.get("workoutSteps", []):
+                        if step.get("type") == "ExecutableStepDTO":
+                            cat = step.get("category") or step.get("exerciseName")
+                            if cat: unique_exercises.add(cat)
+                        elif step.get("type") == "RepeatGroupDTO":
+                            for child in step.get("workoutSteps", []):
+                                cat = child.get("category") or child.get("exerciseName")
+                                if cat: unique_exercises.add(cat)
+            except Exception:
+                pass
                             
         snapshot["user_saved_workouts"] = user_workouts_data
         
         # Inject the history map!
         if unique_exercises:
-            snapshot["recent_exercise_stats"] = _get_recent_exercise_stats(session, unique_exercises)
+            raw_stats = _get_recent_exercise_stats(session, unique_exercises)
+            if raw_stats:
+                snapshot["recent_exercise_stats"] = {_humanize_ex(k): v for k, v in raw_stats.items()}
 
     return json.dumps(snapshot, indent=2)
 
