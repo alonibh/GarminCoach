@@ -116,6 +116,11 @@ def build_snapshot(session: Session) -> str:
     # 4. Recent Workouts (Last 3)
     recent_activities = session.query(Activity).order_by(Activity.start_time.desc()).limit(3).all()
     workouts = []
+    
+    def _humanize_ex(name: str) -> str:
+        if not name: return ""
+        return name.replace("_", " ").title()
+        
     for a in recent_activities:
         w = {
             "type": a.activity_type,
@@ -128,7 +133,7 @@ def build_snapshot(session: Session) -> str:
             sets = session.query(ExerciseSet).filter_by(activity_id=a.id).all()
             if sets:
                 w["exercises"] = [
-                    f"{s.exercise_category}: {s.reps} reps @ {s.weight_kg}kg" for s in sets if s.weight_kg
+                    f"{_humanize_ex(s.exercise_category)}: {s.reps} reps @ {s.weight_kg}kg" for s in sets if s.weight_kg
                 ]
         workouts.append(w)
         
@@ -137,10 +142,6 @@ def build_snapshot(session: Session) -> str:
 
     # 5. User Pre-defined Workouts
     from db import Workout
-    
-    def _humanize_ex(name: str) -> str:
-        if not name: return ""
-        return name.replace("_", " ").title()
 
     def _parse_workout_steps(steps_json: str) -> list[str]:
         try:
