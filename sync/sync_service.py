@@ -44,6 +44,14 @@ def _g(d: Any, *keys, default=None):
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
+        
+    try:
+        # Garmin occasionally adds time zone offsets (e.g. +03:00 or Z)
+        # We want the literal wall-clock time as a naive datetime.
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        pass
+        
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
         try:
             return datetime.strptime(s, fmt)
