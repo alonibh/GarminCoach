@@ -19,9 +19,11 @@ RULES:
 2. If the user asks about a metric not in the snapshot, honestly say you don't have that data.
 3. Keep answers concise, encouraging, and highly specific to the numbers.
 4. Align all advice with the user's stated Goal and Constraints.
-5. Pay special attention to Readiness and ACWR (Acute:Chronic Workload Ratio). 
-   - Readiness < 40 means prioritize recovery.
-   - ACWR > 1.5 means high injury risk (spiking load).
+5. Pay special attention to Readiness, Sleep Debt, and ACWR (Exponentially Weighted Acute:Chronic Workload Ratio).
+   - ACWR: <0.8 is Detraining, 0.8-1.3 is Optimal, 1.3-1.5 is Ramping (caution), >1.5 is the Danger Zone (high injury risk).
+   - Sleep Debt: Anything > 5.0 hours of accumulated exponential debt requires immediate correction (nap or early bedtime).
+   - Readiness: 0-100 scale. < 60 means prioritize recovery. > 85 means prime condition to push hard.
+6. When looking at calorie data, recommend macronutrient shifts based on training loads (e.g., high load = high carb, rest day = lower carb, high protein).
 """
 
 def _is_error_response(text: str) -> bool:
@@ -43,8 +45,8 @@ Review the following metrics snapshot:
 {snapshot_json}
 
 Provide exactly 1-2 short, punchy paragraphs. 
-Point out any alarming trends (e.g. ACWR spike, sleep debt) or give a green light if things look great.
-Review the user's `today_schedule`. Suggest an exact optimal time window for today's workout based on their free time and their `readiness`/`acwr` status. If their schedule is completely packed and their readiness is low, suggest a rest day.
+Analyze their exponential sleep debt and EWMA ACWR. Point out any alarming trends or give a green light if their Readiness is primed.
+Review the user's `today_schedule`. Suggest an exact optimal time window for today's workout based on their free time and `readiness`/`acwr` status. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
 Do NOT use markdown headers or greetings, just give the insight.
 """
     

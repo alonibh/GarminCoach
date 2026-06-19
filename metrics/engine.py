@@ -23,8 +23,9 @@ log = logging.getLogger(__name__)
 # Tunable constants
 # ---------------------------------------------------------------------------
 
-# Zone-weighted TRIMP multipliers (zones 1–5).
-ZONE_WEIGHTS: list[float] = [1.0, 1.5, 2.0, 3.5, 5.0]
+# Zone-weighted TRIMP multipliers (zones 1-5).
+# Using standard Edward's TRIMP weighting formula.
+ZONE_WEIGHTS: list[float] = [1.0, 2.0, 3.0, 4.0, 5.0]
 
 # Readiness component weights (must sum to 1.0).
 W_HRV = 0.40
@@ -62,17 +63,19 @@ def compute_training_load(
     back to simple ``avg_hr × minutes / 100`` when zone data is absent.
     """
     if hr_zone_seconds and len(hr_zone_seconds) >= len(ZONE_WEIGHTS):
-        total = sum(
-            secs * weight
+        total_load = sum(
+            (secs / 60.0) * weight
             for secs, weight in zip(hr_zone_seconds, ZONE_WEIGHTS)
         )
-        load = total / 60.0 / 100.0
-        return round(load, 1) if load > 0 else None
+        return round(total_load, 1) if total_load > 0 else None
 
-    # Fallback: simple TRIMP.
+    # Fallback: pseudo-Banister exponential TRIMP.
     if avg_hr is None or not duration_s:
         return None
-    return round(avg_hr * (duration_s / 60.0) / 100.0, 1)
+    minutes = duration_s / 60.0
+    # Maps avg_hr to physiological load: HR 120 -> ~1.6, HR 150 -> ~3.0, HR 180 -> ~4.9
+    intensity_factor = (avg_hr / 100.0) ** 2.7
+    return round(minutes * intensity_factor, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -83,23 +86,34 @@ def compute_daily_loads(
     daily_load_map: dict[date, float],
     target_day: date,
 ) -> tuple[float | None, float | None, float | None]:
-    """Compute (acute_load, chronic_load, acwr) for *target_day*.
+    """Compute (acute_load, chronic_load, acwr) for *target_day* using EWMA.
 
-    Rest days within each window count as 0 load (not skipped).
+    Exponentially Weighted Moving Average (EWMA) prevents artificial drops
+    when a large workout ages out of the window.
     """
-    def _window_mean(days: int) -> float | None:
+    def _ewma(days: int) -> float:
+        alpha = 2.0 / (days + 1)
         total = 0.0
-        for i in range(1, days + 1):
+        weight_sum = 0.0
+        # Look back 3x the window to capture ~95% of the exponential curve
+        lookback = days * 3
+        
+        for i in range(1, lookback + 1):
             d = target_day - timedelta(days=i)
-            total += daily_load_map.get(d, 0.0)
-        return round(total / days, 1)
+            load = daily_load_map.get(d, 0.0)
+            w = (1.0 - alpha) ** (i - 1)
+            total += load * w
+            weight_sum += w
+            
+        return round(total / weight_sum, 1) if weight_sum > 0 else 0.0
 
-    acute = _window_mean(ACUTE_DAYS)
-    chronic = _window_mean(CHRONIC_DAYS)
+    acute = _ewma(ACUTE_DAYS)
+    chronic = _ewma(CHRONIC_DAYS)
 
-    if acute is None or chronic is None:
+    if chronic == 0.0:
         return acute, chronic, None
-    acwr = round(acute / chronic, 2) if chronic > 0 else None
+        
+    acwr = round(acute / chronic, 2)
     return acute, chronic, acwr
 
 
@@ -178,16 +192,20 @@ def compute_sleep_debt(
     sleep_hours_history: list[float | None],
     target_hours: float = SLEEP_TARGET_HOURS,
 ) -> float:
-    """Accumulated sleep deficit over trailing days.
+    """Accumulated sleep deficit over trailing days with exponential decay.
 
-    *sleep_hours_history* is newest-first.  None entries (missing days) are
-    skipped.  Result is capped at SLEEP_DEBT_CAP to avoid runaway values
-    from long data gaps.
+    *sleep_hours_history* is newest-first. Sleep lost last night carries
+    full weight, while sleep lost days ago organically decays (weight *= 0.8).
+    Result is capped at SLEEP_DEBT_CAP.
     """
     debt = 0.0
+    weight = 1.0
+    decay = 0.8
     for hours in sleep_hours_history[:SLEEP_DEBT_WINDOW]:
         if hours is not None:
-            debt += max(0.0, target_hours - hours)
+            deficit = max(0.0, target_hours - hours)
+            debt += deficit * weight
+        weight *= decay
     return round(min(debt, SLEEP_DEBT_CAP), 1)
 
 
