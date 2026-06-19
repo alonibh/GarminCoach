@@ -12,8 +12,11 @@ header {
   padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
 }
 .brand { font-weight: 700; font-size: 1.2rem; text-decoration: none; color: var(--fg); }
+nav { flex: 1; display: flex; align-items: center; }
 nav a { color: var(--muted); text-decoration: none; margin-right: 1rem; }
 nav a:hover { color: var(--fg); }
+.logout-link { margin-left: auto; margin-right: 0; color: #f85149; text-decoration: none; font-weight: 500; }
+.logout-link:hover { color: #ff7b72; }
 .main-content { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
 .card {
   background: var(--card); border: 1px solid var(--border);
