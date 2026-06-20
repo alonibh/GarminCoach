@@ -1,6 +1,7 @@
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
+import os
 from sqlalchemy.orm import Session
 
 from db import Workout
@@ -149,6 +150,10 @@ def reindex_steps(workout_steps: list) -> list:
         child_id += 1
     return workout_steps
 
+# Prefix used for all coach-created workouts, so we can find and delete them.
+_COACH_PREFIX = "\U0001f3cb\ufe0f "  # 🏋️ emoji prefix
+
+
 def compile_and_schedule(session: Session, payload: dict) -> bool:
     """Compile AI json modification into a real Garmin workout and push it."""
     base_id = payload.get("base_workout_id")
@@ -214,9 +219,20 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     # Re-index everything perfectly
     new_steps = reindex_steps(new_steps)
 
+    # Build a descriptive workout name from the base workout name.
+    # Format: "🏋️ Upper Body @ 15:30" — includes the suggested time so it
+    # shows in calendar views, and the emoji prefix lets us identify and
+    # delete previous coach-created workouts.
+    base_name = base_workout.workout_name or "Workout"
+    suggested_time = payload.get("suggested_time", "")
+    if suggested_time:
+        workout_name = f"{_COACH_PREFIX}{base_name} @ {suggested_time}"
+    else:
+        workout_name = f"{_COACH_PREFIX}{base_name}"
+
     # Build the final payload wrapper
     garmin_payload = {
-        "workoutName": "Today's Workout",
+        "workoutName": workout_name,
         "sportType": {
             "sportTypeId": 5,
             "sportTypeKey": base_workout.sport_type,
@@ -238,11 +254,16 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     try:
         client.login()
         
-        # 1. Delete existing "Today's Workout"
+        # 1. Delete ALL previous coach-created workouts (identified by prefix).
         workouts = client.api.get_workouts()
         for w in workouts:
-            if w.get("workoutName") == "Today's Workout":
-                client.api.delete_workout(w.get("workoutId"))
+            wname = w.get("workoutName", "")
+            if wname.startswith(_COACH_PREFIX) or wname == "Today's Workout":
+                try:
+                    client.api.delete_workout(w.get("workoutId"))
+                    logger.info("Deleted old coach workout: %s", wname)
+                except Exception as e:
+                    logger.warning("Failed to delete old workout %s: %s", wname, e)
                 
         # 2. Upload
         res = client.api.upload_workout(garmin_payload)
@@ -251,9 +272,10 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             logger.error("Upload succeeded but no workoutId returned.")
             return False
             
-        # 3. Schedule
+        # 3. Schedule for today
         today_str = date.today().isoformat()
         client.api.schedule_workout(new_id, today_str)
+        logger.info("Scheduled workout '%s' for %s", workout_name, today_str)
         return True
         
     except Exception as e:
