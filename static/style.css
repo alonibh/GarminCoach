@@ -17,6 +17,7 @@ nav a { color: var(--muted); text-decoration: none; margin-right: 1rem; }
 nav a:hover { color: var(--fg); }
 .logout-link { margin-left: auto; margin-right: 0; color: #f85149; text-decoration: none; font-weight: 500; }
 .logout-link:hover { color: #ff7b72; }
+.hamburger { display: none; background: none; border: none; color: var(--fg); font-size: 1.5rem; cursor: pointer; padding: 0; margin-left: auto; }
 .main-content { max-width: 1000px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
 .card {
   background: var(--card); border: 1px solid var(--border);
@@ -66,8 +67,18 @@ nav a:hover { color: var(--fg); }
     padding: 0.75rem 1rem;
   }
   .brand { font-size: 1.1rem; }
-  nav { width: auto; display: flex; flex-wrap: nowrap; gap: 0.5rem; align-items: center; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; flex: 1; justify-content: space-between; }
-  nav a { margin-right: 0.5rem; font-size: 0.9rem; }
+  .hamburger { display: block; }
+  nav { 
+    display: none; 
+    position: absolute; top: 56px; left: 0; right: 0; 
+    background: var(--bg); border-bottom: 1px solid var(--border);
+    flex-direction: column; align-items: flex-start; padding: 1rem; z-index: 100;
+    width: 100%; white-space: normal; overflow-x: visible;
+  }
+  nav.open { display: flex; }
+  nav a { width: 100%; padding: 0.75rem 0; margin: 0; border-bottom: 1px solid var(--border); font-size: 1rem; }
+  nav a:last-child { border-bottom: none; }
+  .logout-link { margin-left: 0; margin-top: 0.25rem; }
   
   .grid, .tile-row { 
     grid-template-columns: 1fr; 

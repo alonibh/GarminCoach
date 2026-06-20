@@ -39,17 +39,18 @@
         gap: 0.75rem;
       }
       .brand { font-size: 1.1rem; }
-      .chat-header nav { width: auto; display: flex; flex-wrap: nowrap; gap: 0.5rem; align-items: center; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; flex: 1; justify-content: space-between; }
-      .chat-header nav a { font-size: 0.9rem; margin-right: 0.5rem; }
     }
   </style>
 </head>
 <body class="chat-app">
   <header class="chat-header">
     <a href="/" class="brand">🏃 GarminCoach</a>
+    <button class="hamburger" aria-label="Menu" onclick="document.querySelector('.chat-header nav').classList.toggle('open')">☰</button>
     <nav>
       <a href="/">Dashboard</a>
       <a href="/calendar">Calendar</a>
+      <a href="/goal">Goal</a>
+      <a href="/chat">Coach Chat</a>
       <a href="/app-logout" class="logout-link" style="color: #f15c6d;">Sign out</a>
     </nav>
   </header>
