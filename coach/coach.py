@@ -1,6 +1,7 @@
 """High-level AI Coach workflows."""
 import json
 import logging
+import re
 from datetime import date, datetime
 
 from sqlalchemy.orm import Session
@@ -61,7 +62,20 @@ To automatically push a workout to their watch, append a JSON block formatted EX
 def _is_error_response(text: str) -> bool:
     return text.startswith("Coach is currently") or text.startswith("Coach encountered")
 
-
+def _extract_and_strip_json(text: str) -> tuple[str, str | None]:
+    """Finds a ```json ... ``` block, parses it, and returns (stripped_text, json_str)."""
+    match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
+    if not match:
+        return text, None
+        
+    try:
+        json_str = match.group(1)
+        json.loads(json_str)  # Verify validity
+        stripped = text[:match.start()].strip() + "\n\n" + text[match.end():].strip()
+        return stripped.strip(), json_str
+    except Exception as e:
+        logger.error(f"Failed to parse intercepted JSON: {e}")
+        return text, None
 
 def generate_daily_suggestion(session: Session) -> None:
     """Generate a daily proactive coaching suggestion if one doesn't exist for today."""
@@ -78,11 +92,11 @@ Review the following metrics snapshot:
 
 Provide exactly 1-2 short, punchy paragraphs. 
 Analyze their exponential sleep debt and EWMA ACWR. Point out any alarming trends or give a green light if their Readiness is primed.
-Review the user's `upcoming_schedule_14_days`. Suggest an exact optimal time window for today's workout based on their free time and `readiness`/`acwr` status. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
+Review the user's `upcoming_schedule_7_days`. Suggest an exact optimal time window for today's workout based on their free time and `readiness`/`acwr` status. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
 Do NOT use markdown headers or greetings, just give the insight.
 """
-    
-    suggestion_text = llm.generate(SYSTEM_PROMPT, prompt)
+    raw_response = llm.generate(SYSTEM_PROMPT, prompt)
+    suggestion_text, _ = _extract_and_strip_json(raw_response)
     
     if _is_error_response(suggestion_text):
         existing = session.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
@@ -163,21 +177,15 @@ User Message: {user_text}"""
     # Generate response
     response = llm.generate(SYSTEM_PROMPT, prompt_with_context, history)
     
-    chat_text = response
+    chat_text, json_str = _extract_and_strip_json(response)
     pending_json = None
-    try:
-        if "```json\n{" in response and "}\n```" in response:
-            start = response.rfind("```json\n{") + 8
-            end = response.rfind("}\n```") + 1
-            json_str = response[start:end]
+    if json_str:
+        try:
             payload = json.loads(json_str)
-            
             if payload.get("action") == "schedule_workout":
-                # STAGE the payload, do NOT execute it!
                 pending_json = json_str
-                chat_text = response[:response.rfind("```json\n{")].strip()
-    except Exception as e:
-        logger.error(f"Failed to intercept workout JSON: {e}")
+        except Exception:
+            pass
 
     # Save assistant message
     asst_msg = CoachMessage(

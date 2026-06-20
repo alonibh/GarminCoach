@@ -70,7 +70,7 @@ def build_snapshot(session: Session) -> str:
         "current_local_time": local_time.strftime("%A, %B %d, %Y %H:%M"),
         "user_goal": goal_text,
         "user_constraints": constraints,
-        "upcoming_schedule_14_days": get_upcoming_schedule(days=14)
+        "upcoming_schedule_7_days": get_upcoming_schedule(days=7)
     }
     
     # User Profile (Weight & Gender & Age)
