@@ -784,7 +784,10 @@ def workout_detail(request: Request, activity_id: int):
                         (ps.reps or 0) * (ps.weight_kg or 0) for ps in prev_for_ex
                     )
                     cur_vol = ex["volume_kg"]
-                    ex["delta_vol"] = round(cur_vol - prev_vol) if prev_vol else None
+                    if prev_vol > 0 and cur_vol > 0:
+                        ex["delta_vol"] = round(cur_vol - prev_vol)
+                    else:
+                        ex["delta_vol"] = None
         else:
             cardio = _cardio_stats(act)
 
