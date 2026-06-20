@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<a href="javascript:history.back()" class="muted">← Back</a>
+<div style="margin-bottom: 1.5rem;">
+  <a href="javascript:history.back()" class="btn small" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border);">← Back to Dashboard</a>
+</div>
 <div class="card">
   <h2>{{ activity.name or activity.type|humanize }}
     <span class="type-tag">{{ activity.type|humanize }}</span>
@@ -17,17 +19,12 @@
 {% if activity.is_strength %}
   {% if exercises %}
   <div class="card">
-    <h3>Exercises <span class="muted">(from your watch)</span>
-      <span class="info" tabindex="0" data-tip="Sets grouped by exercise. 'vol' = total volume = sum of weight × reps across all sets. 'BW' = bodyweight (no added load).">ⓘ</span>
-    </h3>
+    <h3>Exercises <span class="muted">(from your watch)</span></h3>
     {% for ex in exercises %}
     <div class="exercise">
       <div class="exercise-head">
         <span class="exercise-name">{{ ex.name|humanize }}</span>
-        <span class="muted">{{ ex.set_count }} sets · {{ ex.total_reps }} reps{% if ex.volume_kg %} · {{ ex.volume_kg }} kg vol{% endif %}{% if ex.e1rm_kg %} · est 1RM {{ ex.e1rm_kg }} kg{% endif %}
-          {% if ex.delta_vol is not none %}<span class="delta {{ 'up' if ex.delta_vol > 0 else 'down' if ex.delta_vol < 0 else 'flat' }}">{{ '+' if ex.delta_vol > 0 }}{{ ex.delta_vol }} kg vol vs last</span>{% endif %}
-          {% if ex.delta_best is not none %}<span class="delta {{ 'up' if ex.delta_best > 0 else 'down' }}">est 1RM {{ '+' if ex.delta_best > 0 }}{{ ex.delta_best }} kg</span>{% endif %}
-        </span>
+        <span class="muted">{{ ex.set_count }} sets</span>
       </div>
       <div class="set-pills">
         {% for st in ex.sets %}
