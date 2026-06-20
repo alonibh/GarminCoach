@@ -777,14 +777,14 @@ def workout_detail(request: Request, activity_id: int):
                     )
                     ex["delta_best"] = delta_b if delta_b else None
 
-                    # Volume delta still useful as a secondary signal vs the most
-                    # recent prior session.
+                    # Volume delta vs the most recent prior session.
                     prev_act_id = order[0]
                     prev_for_ex = by_session[prev_act_id]
                     prev_vol = sum(
                         (ps.reps or 0) * (ps.weight_kg or 0) for ps in prev_for_ex
                     )
-                    ex["delta_vol"] = round(vol - prev_vol) if prev_vol else None
+                    cur_vol = ex["volume_kg"]
+                    ex["delta_vol"] = round(cur_vol - prev_vol) if prev_vol else None
         else:
             cardio = _cardio_stats(act)
 
