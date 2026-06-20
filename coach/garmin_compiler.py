@@ -252,18 +252,17 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     }
     
     try:
+        from db import SyncState
         client.login()
         
-        # 1. Delete ALL previous coach-created workouts (identified by prefix).
-        workouts = client.api.get_workouts()
-        for w in workouts:
-            wname = w.get("workoutName", "")
-            if wname.startswith(_COACH_PREFIX) or wname == "Today's Workout":
-                try:
-                    client.api.delete_workout(w.get("workoutId"))
-                    logger.info("Deleted old coach workout: %s", wname)
-                except Exception as e:
-                    logger.warning("Failed to delete old workout %s: %s", wname, e)
+        # 1. Delete previous coach-created workout by ID directly (much faster).
+        last_workout_row = session.get(SyncState, "last_coach_workout_id")
+        if last_workout_row and last_workout_row.value:
+            try:
+                client.api.delete_workout(int(last_workout_row.value))
+                logger.info("Deleted previous coach workout ID: %s", last_workout_row.value)
+            except Exception as e:
+                logger.warning("Failed to delete previous workout ID %s: %s", last_workout_row.value, e)
                 
         # 2. Upload
         res = client.api.upload_workout(garmin_payload)
@@ -275,7 +274,12 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         # 3. Schedule for today
         today_str = date.today().isoformat()
         client.api.schedule_workout(new_id, today_str)
-        logger.info("Scheduled workout '%s' for %s", workout_name, today_str)
+        logger.info("Scheduled workout '%s' for %s (ID: %s)", workout_name, today_str, new_id)
+        
+        # 4. Save the new ID so we can delete it next time
+        session.merge(SyncState(key="last_coach_workout_id", value=str(new_id)))
+        session.commit()
+        
         return True
         
     except Exception as e:
