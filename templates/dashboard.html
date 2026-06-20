@@ -59,12 +59,13 @@
   <div class="chart-head" style="margin-bottom:0">
     <h3 style="margin-top: 0; color: var(--accent); font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
       <span>🤖</span> Daily Coach Suggestion
+      <span class="muted" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;">{{ coach_suggestion.created_at.strftime('%H:%M') if coach_suggestion.created_at else '' }}</span>
     </h3>
     <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
   </div>
   <div class="collapsible-content" style="margin-top:0.75rem;">
     <div style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
-      {{ coach_suggestion }}
+      {{ coach_suggestion.content }}
     </div>
   </div>
 </div>
@@ -75,12 +76,13 @@
   <div class="chart-head" style="margin-bottom:0">
     <h3 style="margin-top: 0; color: #3fb950; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
       <span>🥗</span> Nutrition Coach
+      <span class="muted" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;">{{ nutrition_suggestion.created_at.strftime('%H:%M') if nutrition_suggestion.created_at else '' }}</span>
     </h3>
     <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
   </div>
   <div class="collapsible-content" style="margin-top:0.75rem;">
     <div style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
-      {{ nutrition_suggestion }}
+      {{ nutrition_suggestion.content }}
     </div>
   </div>
 </div>

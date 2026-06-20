@@ -473,10 +473,10 @@ def dashboard(request: Request):
         
         today = date.today()
         suggestion = s.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
-        coach_suggestion = suggestion.content if suggestion and suggestion.created_at and suggestion.created_at.date() == today else None
+        coach_suggestion = suggestion if suggestion and suggestion.created_at and suggestion.created_at.date() == today else None
         
         nutr = s.query(CoachMessage).filter_by(role="nutrition").order_by(CoachMessage.created_at.desc()).first()
-        nutrition_suggestion = nutr.content if nutr and nutr.created_at and nutr.created_at.date() == today else None
+        nutrition_suggestion = nutr if nutr and nutr.created_at and nutr.created_at.date() == today else None
 
         # All workouts in the past month (no row cap).
         activities = (
