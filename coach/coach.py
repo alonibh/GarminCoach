@@ -2,7 +2,7 @@
 import json
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -106,7 +106,7 @@ Do NOT use markdown headers or greetings, just give the insight.
     msg = CoachMessage(
         role="suggestion",
         content=suggestion_text,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         data_snapshot=snapshot_json
     )
     session.add(msg)
@@ -136,7 +136,7 @@ Do NOT use markdown headers or greetings, just give the insight.
     msg = CoachMessage(
         role="nutrition",
         content=suggestion_text,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         data_snapshot=snapshot_json
     )
     session.add(msg)
@@ -170,7 +170,7 @@ User Message: {user_text}"""
     user_msg = CoachMessage(
         role="user",
         content=user_text,
-        created_at=datetime.now()
+        created_at=datetime.now(timezone.utc)
     )
     session.add(user_msg)
     
@@ -191,7 +191,7 @@ User Message: {user_text}"""
     asst_msg = CoachMessage(
         role="assistant",
         content=chat_text,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         data_snapshot=snapshot_json,
         pending_action_json=pending_json
     )

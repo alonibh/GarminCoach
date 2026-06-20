@@ -59,7 +59,7 @@
   <div class="chart-head" style="margin-bottom:0">
     <h3 style="margin-top: 0; color: var(--accent); font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
       <span>🤖</span> Daily Coach Suggestion
-      <span class="muted" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;">{{ coach_suggestion.created_at.strftime('%H:%M') if coach_suggestion.created_at else '' }}</span>
+      <span class="muted local-time-only" data-iso="{{ coach_suggestion.created_at.isoformat() + 'Z' if coach_suggestion.created_at else '' }}" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;"></span>
     </h3>
     <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
   </div>
@@ -76,7 +76,7 @@
   <div class="chart-head" style="margin-bottom:0">
     <h3 style="margin-top: 0; color: #3fb950; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
       <span>🥗</span> Nutrition Coach
-      <span class="muted" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;">{{ nutrition_suggestion.created_at.strftime('%H:%M') if nutrition_suggestion.created_at else '' }}</span>
+      <span class="muted local-time-only" data-iso="{{ nutrition_suggestion.created_at.isoformat() + 'Z' if nutrition_suggestion.created_at else '' }}" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;"></span>
     </h3>
     <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
   </div>
@@ -524,6 +524,13 @@ document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]
         el.textContent = d.toLocaleDateString([], {month:'short', day:'numeric'}) + " at " + timeStr;
       }
     }
+  });
+  document.querySelectorAll('.local-time-only').forEach(el => {
+    const isoStr = el.getAttribute('data-iso');
+    if (!isoStr) return;
+    const d = new Date(isoStr);
+    if (isNaN(d)) return;
+    el.textContent = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
   });
 })();
 </script>
