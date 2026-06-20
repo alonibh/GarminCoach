@@ -420,8 +420,10 @@ def run_sync(full: bool = False) -> dict:
         recompute_all()
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
-        pass
+    except Exception as e:
+        summary["errors"].append(f"metrics recompute: {e}")
+        import traceback, logging
+        logging.getLogger(__name__).error("recompute_all failed: %s", traceback.format_exc())
 
     # Generate daily proactive coaching suggestion
     try:

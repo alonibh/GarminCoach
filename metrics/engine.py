@@ -540,17 +540,30 @@ def recompute_all() -> None:
             if h.resting_hr is not None
         }
 
+        # Fallback: median RHR across all known days, so activities on days
+        # without a DailyHealth row still get a training load.
+        rhr_fallback = None
+        if rhr_by_day:
+            sorted_rhr = sorted(rhr_by_day.values())
+            mid = len(sorted_rhr) // 2
+            rhr_fallback = sorted_rhr[mid]
+            log.info("RHR fallback (median): %.0f bpm from %d days", rhr_fallback, len(sorted_rhr))
+
         # Pick ONE TRIMP method for the whole set so the ACWR series stays on a
         # single scale (Banister and Edwards differ ~1.5–2.2×; mixing them makes
         # ACWR spike/drop from the formula switch, not from real load changes).
         activities = session.query(Activity).all()
         method = choose_load_method(activities, rhr_by_day, hr_max)
-        log.info("training-load method for this recompute: %s", method)
+        log.info("training-load method for this recompute: %s (age=%s, hr_max=%s, activities=%d)",
+                 method, age, hr_max, len(activities))
 
         # Per-activity training load using the pinned method (None when that
         # method's inputs are missing — never invented, never cross-scale).
+        computed, skipped = 0, 0
         for act in activities:
             hr_rest = rhr_by_day.get(act.start_time.date()) if act.start_time else None
+            if hr_rest is None:
+                hr_rest = rhr_fallback  # Use median as fallback
             act.training_load = compute_training_load(
                 act.avg_hr,
                 act.duration_s,
@@ -559,6 +572,11 @@ def recompute_all() -> None:
                 is_male=is_male,
                 method=method,
             )
+            if act.training_load is not None:
+                computed += 1
+            else:
+                skipped += 1
+        log.info("training load: %d computed, %d skipped (no inputs)", computed, skipped)
 
         # Daily aggregate metrics.
         recompute_daily_metrics(session)

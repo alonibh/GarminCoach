@@ -24,7 +24,8 @@
     <div class="exercise">
       <div class="exercise-head">
         <span class="exercise-name">{{ ex.name|humanize }}</span>
-        <span class="muted">{{ ex.set_count }} sets</span>
+        <span class="muted">{{ ex.set_count }} sets{% if ex.delta_vol is not none %}
+          {% if ex.delta_vol > 0 %}<span style="color: #3fb950; margin-left: 0.5rem;">▲ +{{ ex.delta_vol }}kg vs last</span>{% elif ex.delta_vol < 0 %}<span style="color: #f85149; margin-left: 0.5rem;">▼ {{ ex.delta_vol }}kg vs last</span>{% else %}<span style="color: #8b949e; margin-left: 0.5rem;">= same as last</span>{% endif %}{% endif %}</span>
       </div>
       <div class="set-pills">
         {% for st in ex.sets %}
