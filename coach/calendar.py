@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import date, datetime, timedelta
 import pytz
 
@@ -17,6 +18,12 @@ def get_upcoming_schedule(days=3) -> list[dict]:
         return []
         
     schedule = []
+    
+    # Use the user's configured timezone so event times match their wall clock.
+    try:
+        local_tz = pytz.timezone(os.getenv("USER_TIMEZONE", "Asia/Jerusalem"))
+    except Exception:
+        local_tz = pytz.utc
     
     # Split by comma to support multiple calendars
     urls = [url.strip() for url in config.ICS_CALENDAR_URL.split(',')]
@@ -43,8 +50,8 @@ def get_upcoming_schedule(days=3) -> list[dict]:
                     
                 schedule.append({
                     "title": e.summary,
-                    "start": e.start.astimezone().strftime("%Y-%m-%d %H:%M"),
-                    "end": e.end.astimezone().strftime("%H:%M")
+                    "start": e.start.astimezone(local_tz).strftime("%Y-%m-%d %H:%M"),
+                    "end": e.end.astimezone(local_tz).strftime("%H:%M")
                 })
             
         # Sort chronologically across all combined calendars
