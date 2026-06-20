@@ -16,17 +16,37 @@ def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
         if not ex or ex == "Activity":
             continue
             
-        # Find the most recent ExerciseSet that matches this category or name
-        # We join with Activity to ensure we get the latest by start_time
-        latest_set = session.query(ExerciseSet).join(Activity).filter(
+        # Get the ID and date of the most recent activity that contains this exercise
+        latest_act = session.query(Activity.id, Activity.start_time).join(ExerciseSet).filter(
             (ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex),
             ExerciseSet.weight_kg > 0
         ).order_by(Activity.start_time.desc()).first()
         
-        if latest_set and latest_set.activity and latest_set.activity.start_time:
-            days_ago = (date.today() - latest_set.activity.start_time.date()).days
-            time_str = "today" if days_ago == 0 else f"{days_ago} days ago"
-            stats[ex] = f"{latest_set.weight_kg}kg for {latest_set.reps} reps ({time_str})"
+        if latest_act:
+            # Fetch all sets for this exercise from that specific activity
+            sets = session.query(ExerciseSet).filter(
+                ExerciseSet.activity_id == latest_act.id,
+                ((ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex)),
+                ExerciseSet.weight_kg > 0
+            ).all()
+            
+            if sets:
+                # Find the best set by Epley 1RM, falling back to raw weight if reps > 12
+                def _score(s):
+                    if s.reps and 1 <= s.reps <= 12:
+                        if s.reps == 1:
+                            return s.weight_kg
+                        return s.weight_kg * (1 + s.reps / 30.0)
+                    return s.weight_kg or 0
+                    
+                best_set = max(sets, key=_score)
+                e1rm = _score(best_set)
+                
+                days_ago = (date.today() - latest_act.start_time.date()).days if latest_act.start_time else 0
+                time_str = "today" if days_ago == 0 else f"{days_ago} days ago"
+                
+                e1rm_str = f" (Est. 1RM: {round(e1rm, 1)}kg)" if best_set.reps and 1 <= best_set.reps <= 12 else ""
+                stats[ex] = f"{best_set.weight_kg}kg for {best_set.reps} reps{e1rm_str} ({time_str})"
             
     return stats
 
@@ -53,12 +73,24 @@ def build_snapshot(session: Session) -> str:
         "upcoming_schedule_14_days": get_upcoming_schedule(days=14)
     }
     
-    # User Profile (Weight & Gender)
+    # User Profile (Weight & Gender & Age)
     gender = session.get(SyncState, "user_gender")
     weight = session.get(SyncState, "user_weight")
-    if gender or weight:
+    birth_date = session.get(SyncState, "user_birth_date")
+    
+    age = "unknown"
+    if birth_date and birth_date.value:
+        try:
+            bd = date.fromisoformat(birth_date.value[:10])
+            today = date.today()
+            age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+        except ValueError:
+            pass
+
+    if gender or weight or age != "unknown":
         snapshot["user_profile"] = {
             "gender": gender.value if gender else "unknown",
+            "age": age,
             "weight_kg": float(weight.value) if weight and weight.value else "unknown"
         }
         
