@@ -165,6 +165,7 @@ def choose_load_method(
     activities: list,
     rhr_by_day: dict[date, float],
     hr_max: float | None,
+    has_rhr_fallback: bool = False,
 ) -> str:
     """Pick ONE TRIMP method for the whole activity set so the ACWR series stays
     on a single scale (per the reviewer's "enforce one method consistently"
@@ -178,6 +179,11 @@ def choose_load_method(
     """
     if hr_max is None:
         return "edwards"
+
+    # If we have a median-RHR fallback, every activity with avg_hr can use
+    # Banister — no need to check per-day availability.
+    if has_rhr_fallback:
+        return "banister"
 
     scorable = [a for a in activities if a.start_time and a.duration_s]
     if not scorable:
@@ -553,7 +559,7 @@ def recompute_all() -> None:
         # single scale (Banister and Edwards differ ~1.5–2.2×; mixing them makes
         # ACWR spike/drop from the formula switch, not from real load changes).
         activities = session.query(Activity).all()
-        method = choose_load_method(activities, rhr_by_day, hr_max)
+        method = choose_load_method(activities, rhr_by_day, hr_max, has_rhr_fallback=bool(rhr_fallback))
         log.info("training-load method for this recompute: %s (age=%s, hr_max=%s, activities=%d)",
                  method, age, hr_max, len(activities))
 
