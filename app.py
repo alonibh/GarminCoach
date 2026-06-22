@@ -1149,22 +1149,8 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
     })
 
 
-# ---------------------------------------------------------------------------
-# ICS calendar feed — serves the scheduled AI workout as a timed event.
 # Subscribe to https://<your-host>/calendar/coach.ics from iCloud/Google Calendar.
 # ---------------------------------------------------------------------------
-
-@app.get("/calendar/inject_test")
-def inject_test_event():
-    import json
-    from db import get_session, SyncState
-    from fastapi.responses import PlainTextResponse
-    
-    with get_session() as session:
-        events = [{"title": "Production Test Workout", "date": "2026-06-24", "start_time": "18:30", "duration_min": 60}]
-        session.merge(SyncState(key="coach_calendar_events", value=json.dumps(events)))
-        session.commit()
-    return PlainTextResponse("INJECTED")
 
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():
