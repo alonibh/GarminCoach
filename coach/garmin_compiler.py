@@ -153,6 +153,78 @@ def reindex_steps(workout_steps: list) -> list:
 # Prefix used for all coach-created workouts, so we can find and delete them.
 _COACH_PREFIX = "\U0001f3cb\ufe0f "  # 🏋️ emoji prefix
 
+# Minimum working weight (kg) to trigger ramp-up sets.  Exercises below this
+# threshold are typically light isolation movements that don't benefit from
+# dedicated warm-up sets (NSCA Essentials of Strength Training, 4th ed.).
+_RAMPUP_WEIGHT_THRESHOLD = 15.0
+
+
+def _get_step_weight(step: dict) -> float:
+    """Extract the working weight (kg) from a workout step.
+
+    Returns 0 for bodyweight / no-weight exercises.
+    """
+    if step.get("type") == "RepeatGroupDTO":
+        for child in step.get("workoutSteps", []):
+            if child.get("stepType", {}).get("stepTypeKey") == "interval":
+                w = child.get("weightValue", -1.0)
+                return w if w > 0 else 0.0
+    elif step.get("type") == "ExecutableStepDTO":
+        w = step.get("weightValue", -1.0)
+        return w if w > 0 else 0.0
+    return 0.0
+
+
+def _get_step_description(step: dict) -> str:
+    """Extract the exercise description/name from a step."""
+    if step.get("type") == "RepeatGroupDTO":
+        for child in step.get("workoutSteps", []):
+            if child.get("stepType", {}).get("stepTypeKey") == "interval":
+                return child.get("description") or ""
+    return step.get("description") or ""
+
+
+def _build_rampup_steps(working_weight: float, description: str,
+                        is_first_compound: bool) -> list[dict]:
+    """Build ramp-up (warm-up) sets for a compound exercise.
+
+    Evidence basis (NSCA Essentials of Strength Training, 4th ed., Ch. 15):
+    - The first compound lift of a session benefits from 2-3 progressively
+      heavier warm-up sets to prime the neuromuscular system and rehearse the
+      motor pattern under load.
+    - Subsequent compound exercises that target *different* muscle groups
+      benefit from at least 1 lighter set.
+    - Ramp-up sets use submaximal loads (50-75% of working weight) with
+      moderate-to-low reps so they don't cause meaningful fatigue.
+
+    Returns a list of RepeatGroupDTO dicts (each 1 set) to prepend.
+    """
+    rampup = []
+
+    if is_first_compound:
+        # Set 1: 50% × 12 — light movement rehearsal
+        w1 = round(working_weight * 0.5 / 2.5) * 2.5  # round to nearest 2.5 kg
+        w1 = max(w1, 2.5)
+        interval1 = build_generic_step(f"Warm-up: {description}", 12, w1)
+        rest1 = build_rest_step(60)
+        rampup.append(build_repeat_group(1, interval1, rest1))
+
+        # Set 2: 75% × 6 — heavier activation
+        w2 = round(working_weight * 0.75 / 2.5) * 2.5
+        w2 = max(w2, 2.5)
+        interval2 = build_generic_step(f"Warm-up: {description}", 6, w2)
+        rest2 = build_rest_step(60)
+        rampup.append(build_repeat_group(1, interval2, rest2))
+    else:
+        # Subsequent compound: 1 lighter set at 60% × 8
+        w = round(working_weight * 0.6 / 2.5) * 2.5
+        w = max(w, 2.5)
+        interval = build_generic_step(f"Warm-up: {description}", 8, w)
+        rest = build_rest_step(60)
+        rampup.append(build_repeat_group(1, interval, rest))
+
+    return rampup
+
 
 def compile_and_schedule(session: Session, payload: dict) -> bool:
     """Compile AI json modification into a real Garmin workout and push it."""
@@ -175,7 +247,7 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         logger.error(f"Failed to parse base workout JSON: {e}")
         return False
         
-    new_steps = []
+    working_steps = []
     
     for mod in payload.get("modifications", []):
         mod_type = mod.get("type")
@@ -204,7 +276,7 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
                         step["endConditionValue"] = float(mod["new_reps"])
                     if "new_weight_kg" in mod:
                         step["weightValue"] = float(mod["new_weight_kg"])
-                new_steps.append(step)
+                working_steps.append(step)
                 
         elif mod_type == "add_new":
             desc = mod.get("description", "Custom Exercise")
@@ -214,7 +286,23 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             
             interval = build_generic_step(desc, reps, weight)
             rest = build_rest_step(60)
-            new_steps.append(build_repeat_group(sets, interval, rest))
+            working_steps.append(build_repeat_group(sets, interval, rest))
+
+    # --- Insert ramp-up sets where warranted (NSCA guidelines) -----------
+    # The first compound exercise (weight >= threshold) gets 2 ramp-up sets;
+    # subsequent heavy exercises get 1 ramp-up set.
+    new_steps = []
+    first_compound_done = False
+
+    for step in working_steps:
+        weight = _get_step_weight(step)
+        if weight >= _RAMPUP_WEIGHT_THRESHOLD:
+            desc = _get_step_description(step)
+            rampups = _build_rampup_steps(weight, desc,
+                                          is_first_compound=not first_compound_done)
+            new_steps.extend(rampups)
+            first_compound_done = True
+        new_steps.append(step)
 
     # Re-index everything perfectly
     new_steps = reindex_steps(new_steps)
