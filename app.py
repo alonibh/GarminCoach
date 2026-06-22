@@ -51,7 +51,7 @@ _COOKIE_NAME = "gc_session"
 _MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
 
 # Paths that don't require auth.
-_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics")
+_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/calendar/inject_test")
 
 
 def _sign_session(username: str) -> str:
