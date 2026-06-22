@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import os
 from sqlalchemy.orm import Session
 
@@ -367,16 +367,29 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         # 4. Save the new ID so we can delete it next time
         session.merge(SyncState(key="last_coach_workout_id", value=str(new_id)))
 
-        # 5. Save event details for the ICS calendar feed so the workout
+        # 5. Append event to the ICS calendar feed list so each workout
         #    appears on iCloud/Google calendar with the correct time.
         #    Estimate ~60 min for a typical strength session.
-        event_data = json.dumps({
+        existing_row = session.get(SyncState, "coach_calendar_events")
+        existing_events = []
+        if existing_row and existing_row.value:
+            try:
+                existing_events = json.loads(existing_row.value)
+            except Exception:
+                existing_events = []
+
+        # Clean up events older than 7 days
+        cutoff = (date.today() - timedelta(days=7)).isoformat()
+        existing_events = [e for e in existing_events if e.get("date", "") >= cutoff]
+
+        # Add the new event
+        existing_events.append({
             "title": workout_name,
             "date": today_str,
             "start_time": suggested_time or "18:30",
             "duration_min": 60,
         })
-        session.merge(SyncState(key="coach_calendar_event", value=event_data))
+        session.merge(SyncState(key="coach_calendar_events", value=json.dumps(existing_events)))
         session.commit()
         
         return True

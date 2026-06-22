@@ -1156,7 +1156,7 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
 
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():
-    """Serve an ICS calendar feed with the currently scheduled workout event.
+    """Serve an ICS calendar feed with all scheduled workout events.
 
     This solves the Garmin limitation where schedule_workout() only accepts a
     date (no time), which causes events to appear as "all day" on iCloud.
@@ -1166,43 +1166,54 @@ def coach_calendar_feed():
     import pytz
     from fastapi.responses import Response
 
+    tz_name = os.getenv("USER_TIMEZONE", "Asia/Jerusalem")
+
     with get_session() as session:
-        row = session.get(SyncState, "coach_calendar_event")
+        row = session.get(SyncState, "coach_calendar_events")
         events_block = ""
 
         if row and row.value:
             try:
-                ev = json.loads(row.value)
-                ev_date = ev.get("date", "")
-                ev_time = ev.get("start_time", "18:30")
-                ev_title = ev.get("title", "Workout")
-                duration_min = ev.get("duration_min", 60)
-
-                # Build timezone-aware start/end
-                local_tz = pytz.timezone(os.getenv("USER_TIMEZONE", "Asia/Jerusalem"))
-                dt_start = datetime.strptime(f"{ev_date} {ev_time}", "%Y-%m-%d %H:%M")
-                dt_start = local_tz.localize(dt_start)
-                dt_end = dt_start + timedelta(minutes=duration_min)
-
-                # Format as iCal timestamps (UTC)
-                dt_start_utc = dt_start.astimezone(pytz.utc)
-                dt_end_utc = dt_end.astimezone(pytz.utc)
-                fmt = "%Y%m%dT%H%M%SZ"
-                now_utc = datetime.now(pytz.utc).strftime(fmt)
-
-                events_block = (
-                    "BEGIN:VEVENT\r\n"
-                    f"UID:garmincoach-workout-{ev_date}@garmincoach\r\n"
-                    f"DTSTAMP:{now_utc}\r\n"
-                    f"DTSTART:{dt_start_utc.strftime(fmt)}\r\n"
-                    f"DTEND:{dt_end_utc.strftime(fmt)}\r\n"
-                    f"SUMMARY:{ev_title}\r\n"
-                    "DESCRIPTION:Scheduled by GarminCoach AI\r\n"
-                    "STATUS:CONFIRMED\r\n"
-                    "END:VEVENT\r\n"
-                )
+                events_list = json.loads(row.value)
             except Exception:
-                pass
+                events_list = []
+
+            local_tz = pytz.timezone(tz_name)
+            fmt = "%Y%m%dT%H%M%SZ"
+            now_utc = datetime.now(pytz.utc).strftime(fmt)
+
+            for ev in events_list:
+                try:
+                    ev_date = ev.get("date", "")
+                    ev_time = ev.get("start_time", "18:30")
+                    ev_title = ev.get("title", "Workout")
+                    duration_min = ev.get("duration_min", 60)
+
+                    # Build timezone-aware start/end
+                    dt_start = datetime.strptime(f"{ev_date} {ev_time}", "%Y-%m-%d %H:%M")
+                    dt_start = local_tz.localize(dt_start)
+                    dt_end = dt_start + timedelta(minutes=duration_min)
+
+                    # Convert to UTC for iCal
+                    dt_start_utc = dt_start.astimezone(pytz.utc)
+                    dt_end_utc = dt_end.astimezone(pytz.utc)
+
+                    # Unique UID per event (date + time combo)
+                    uid = f"garmincoach-{ev_date}-{ev_time.replace(':', '')}@garmincoach"
+
+                    events_block += (
+                        "BEGIN:VEVENT\r\n"
+                        f"UID:{uid}\r\n"
+                        f"DTSTAMP:{now_utc}\r\n"
+                        f"DTSTART:{dt_start_utc.strftime(fmt)}\r\n"
+                        f"DTEND:{dt_end_utc.strftime(fmt)}\r\n"
+                        f"SUMMARY:{ev_title}\r\n"
+                        "DESCRIPTION:Scheduled by GarminCoach AI\r\n"
+                        "STATUS:CONFIRMED\r\n"
+                        "END:VEVENT\r\n"
+                    )
+                except Exception:
+                    continue
 
         ics_content = (
             "BEGIN:VCALENDAR\r\n"
@@ -1211,7 +1222,7 @@ def coach_calendar_feed():
             "CALSCALE:GREGORIAN\r\n"
             "METHOD:PUBLISH\r\n"
             "X-WR-CALNAME:GarminCoach Workouts\r\n"
-            "X-WR-TIMEZONE:Asia/Jerusalem\r\n"
+            f"X-WR-TIMEZONE:{tz_name}\r\n"
             f"{events_block}"
             "END:VCALENDAR\r\n"
         )
