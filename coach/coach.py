@@ -45,6 +45,7 @@ CRITICAL RULES:
 - The abs add-on routine (from https://youtu.be/dJlFmxiL11s): a quick 10-minute circuit that can be appended to any gym session.
 - When recommending a gym day, always recommend one of the three main routines (picking whichever muscle group hasn't been trained the longest), and optionally add the abs circuit at the end.
 - The user also plays recreational soccer — those are separate from gym workouts.
+- PROGRESSIVE OVERLOAD: Check `recent_exercise_stats` for the last 3 times the user performed the exercises in your recommended routine. Use this trend to suggest slightly heavier weight (+2.5kg) or more reps (if they hit the top of the rep range last time) to ensure progressive overload. If they are fatigued (Red Readiness or >1.5 ACWR), suggest matching the last workout or a slight deload instead.
 </training_program>
 
 <warmup_protocol>

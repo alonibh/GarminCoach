@@ -10,43 +10,58 @@ from db import Goal, DailyMetrics, DailyHealth, Sleep, Activity, ExerciseSet, Sy
 from metrics.engine import acwr_label
 
 def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
-    """Find the most recent performance for specific exercises."""
+    """Find up to the 3 most recent performances for specific exercises to show progression."""
     stats = {}
     for ex in unique_exercises:
         if not ex or ex == "Activity":
             continue
             
-        # Get the ID and date of the most recent activity that contains this exercise
-        latest_act = session.query(Activity.id, Activity.start_time).join(ExerciseSet).filter(
+        # Get all activities containing this exercise, ordered by newest first
+        all_acts = session.query(Activity.id, Activity.start_time).join(ExerciseSet).filter(
             (ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex),
             ExerciseSet.weight_kg > 0
-        ).order_by(Activity.start_time.desc()).first()
+        ).order_by(Activity.start_time.desc()).all()
         
-        if latest_act:
-            # Fetch all sets for this exercise from that specific activity
-            sets = session.query(ExerciseSet).filter(
-                ExerciseSet.activity_id == latest_act.id,
-                ((ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex)),
-                ExerciseSet.weight_kg > 0
-            ).all()
-            
-            if sets:
-                # Find the best set by Epley 1RM, falling back to raw weight if reps > 12
-                def _score(s):
-                    if s.reps and 1 <= s.reps <= 12:
-                        if s.reps == 1:
-                            return s.weight_kg
-                        return s.weight_kg * (1 + s.reps / 30.0)
-                    return s.weight_kg or 0
+        # Deduplicate to get the 3 most recent distinct activities
+        seen_ids = set()
+        recent_acts = []
+        for act in all_acts:
+            if act.id not in seen_ids:
+                seen_ids.add(act.id)
+                recent_acts.append(act)
+                if len(recent_acts) == 3:
+                    break
+        
+        if recent_acts:
+            ex_history = []
+            for act in recent_acts:
+                # Fetch all sets for this exercise from that specific activity
+                sets = session.query(ExerciseSet).filter(
+                    ExerciseSet.activity_id == act.id,
+                    ((ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex)),
+                    ExerciseSet.weight_kg > 0
+                ).all()
+                
+                if sets:
+                    # Find the best set by Epley 1RM, falling back to raw weight if reps > 12
+                    def _score(s):
+                        if s.reps and 1 <= s.reps <= 12:
+                            if s.reps == 1:
+                                return s.weight_kg
+                            return s.weight_kg * (1 + s.reps / 30.0)
+                        return s.weight_kg or 0
+                        
+                    best_set = max(sets, key=_score)
+                    e1rm = _score(best_set)
                     
-                best_set = max(sets, key=_score)
-                e1rm = _score(best_set)
-                
-                days_ago = (date.today() - latest_act.start_time.date()).days if latest_act.start_time else 0
-                time_str = "today" if days_ago == 0 else f"{days_ago} days ago"
-                
-                e1rm_str = f" (Est. 1RM: {round(e1rm, 1)}kg)" if best_set.reps and 1 <= best_set.reps <= 12 else ""
-                stats[ex] = f"{best_set.weight_kg}kg for {best_set.reps} reps{e1rm_str} ({time_str})"
+                    days_ago = (date.today() - act.start_time.date()).days if act.start_time else 0
+                    time_str = "today" if days_ago == 0 else f"{days_ago} days ago"
+                    
+                    e1rm_str = f" (Est. 1RM: {round(e1rm, 1)}kg)" if best_set.reps and 1 <= best_set.reps <= 12 else ""
+                    ex_history.append(f"{best_set.weight_kg}kg for {best_set.reps} reps{e1rm_str} ({time_str})")
+            
+            if ex_history:
+                stats[ex] = ex_history
             
     return stats
 
