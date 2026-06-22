@@ -1156,81 +1156,67 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
 
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():
-    """Serve an ICS calendar feed with all scheduled workout events.
-
-    This solves the Garmin limitation where schedule_workout() only accepts a
-    date (no time), which causes events to appear as "all day" on iCloud.
-    By hosting our own ICS feed, we can include DTSTART/DTEND with proper
-    times so the event shows with the suggested workout time.
-    """
+    """Serve an ICS calendar feed with all scheduled workout events."""
     import pytz
     from fastapi.responses import Response
+    from icalendar import Calendar, Event
 
     tz_name = os.getenv("USER_TIMEZONE", "Asia/Jerusalem")
+    local_tz = pytz.timezone(tz_name)
+
+    cal = Calendar()
+    cal.add('prodid', '-//GarminCoach//AI Workout//EN')
+    cal.add('version', '2.0')
+    cal.add('calscale', 'GREGORIAN')
+    cal.add('method', 'PUBLISH')
+    cal.add('x-wr-calname', 'GarminCoach Workouts')
+    cal.add('x-wr-timezone', tz_name)
 
     with get_session() as session:
         row = session.get(SyncState, "coach_calendar_events")
-        events_block = ""
-
         if row and row.value:
             try:
                 events_list = json.loads(row.value)
             except Exception:
                 events_list = []
 
-            local_tz = pytz.timezone(tz_name)
-            fmt = "%Y%m%dT%H%M%SZ"
-            now_utc = datetime.now(pytz.utc).strftime(fmt)
-
-            for ev in events_list:
+            for ev_data in events_list:
                 try:
-                    ev_date = ev.get("date", "")
-                    ev_time = ev.get("start_time", "18:30")
-                    ev_title = ev.get("title", "Workout")
-                    duration_min = ev.get("duration_min", 60)
+                    ev_date = ev_data.get("date", "")
+                    ev_time = ev_data.get("start_time", "18:30")
+                    ev_title = ev_data.get("title", "Workout")
+                    duration_min = ev_data.get("duration_min", 60)
 
-                    # Build timezone-aware start/end
                     dt_start = datetime.strptime(f"{ev_date} {ev_time}", "%Y-%m-%d %H:%M")
                     dt_start = local_tz.localize(dt_start)
                     dt_end = dt_start + timedelta(minutes=duration_min)
 
-                    # Convert to UTC for iCal
-                    dt_start_utc = dt_start.astimezone(pytz.utc)
-                    dt_end_utc = dt_end.astimezone(pytz.utc)
-
-                    # Unique UID per event (date + time combo)
                     uid = f"garmincoach-{ev_date}-{ev_time.replace(':', '')}@garmincoach"
 
-                    events_block += (
-                        "BEGIN:VEVENT\r\n"
-                        f"UID:{uid}\r\n"
-                        f"DTSTAMP:{now_utc}\r\n"
-                        f"DTSTART:{dt_start_utc.strftime(fmt)}\r\n"
-                        f"DTEND:{dt_end_utc.strftime(fmt)}\r\n"
-                        f"SUMMARY:{ev_title}\r\n"
-                        "DESCRIPTION:Scheduled by GarminCoach AI\r\n"
-                        "STATUS:CONFIRMED\r\n"
-                        "END:VEVENT\r\n"
-                    )
+                    event = Event()
+                    event.add('summary', ev_title)
+                    event.add('description', 'Scheduled by GarminCoach AI')
+                    event.add('dtstart', dt_start)
+                    event.add('dtend', dt_end)
+                    event.add('dtstamp', datetime.now(pytz.utc))
+                    event.add('uid', uid)
+                    event.add('status', 'CONFIRMED')
+                    
+                    cal.add_component(event)
                 except Exception:
                     continue
 
-        ics_content = (
-            "BEGIN:VCALENDAR\r\n"
-            "VERSION:2.0\r\n"
-            "PRODID:-//GarminCoach//AI Workout//EN\r\n"
-            "CALSCALE:GREGORIAN\r\n"
-            "METHOD:PUBLISH\r\n"
-            "X-WR-CALNAME:GarminCoach Workouts\r\n"
-            f"X-WR-TIMEZONE:{tz_name}\r\n"
-            f"{events_block}"
-            "END:VCALENDAR\r\n"
-        )
+    ics_content = cal.to_ical().decode("utf-8")
 
     return Response(
         content=ics_content,
-        media_type="text/calendar",
-        headers={"Content-Disposition": "inline; filename=coach.ics"}
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": "inline; filename=coach.ics",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
     )
 
 
