@@ -223,7 +223,7 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     # Format: "🏋️ Upper Body @ 15:30" — includes the suggested time so it
     # shows in calendar views, and the emoji prefix lets us identify and
     # delete previous coach-created workouts.
-    base_name = base_workout.workout_name or "Workout"
+    base_name = base_workout.name or "Workout"
     suggested_time = payload.get("suggested_time", "")
     if suggested_time:
         workout_name = f"{_COACH_PREFIX}{base_name} @ {suggested_time}"
