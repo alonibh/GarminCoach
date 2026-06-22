@@ -1149,6 +1149,78 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
     })
 
 
+# ---------------------------------------------------------------------------
+# ICS calendar feed — serves the scheduled AI workout as a timed event.
+# Subscribe to https://<your-host>/calendar/coach.ics from iCloud/Google Calendar.
+# ---------------------------------------------------------------------------
+
+@app.get("/calendar/coach.ics")
+def coach_calendar_feed():
+    """Serve an ICS calendar feed with the currently scheduled workout event.
+
+    This solves the Garmin limitation where schedule_workout() only accepts a
+    date (no time), which causes events to appear as "all day" on iCloud.
+    By hosting our own ICS feed, we can include DTSTART/DTEND with proper
+    times so the event shows with the suggested workout time.
+    """
+    import pytz
+    from fastapi.responses import Response
+
+    with get_session() as session:
+        row = session.get(SyncState, "coach_calendar_event")
+        events_block = ""
+
+        if row and row.value:
+            try:
+                ev = json.loads(row.value)
+                ev_date = ev.get("date", "")
+                ev_time = ev.get("start_time", "18:30")
+                ev_title = ev.get("title", "Workout")
+                duration_min = ev.get("duration_min", 60)
+
+                # Build timezone-aware start/end
+                local_tz = pytz.timezone(os.getenv("USER_TIMEZONE", "Asia/Jerusalem"))
+                dt_start = datetime.strptime(f"{ev_date} {ev_time}", "%Y-%m-%d %H:%M")
+                dt_start = local_tz.localize(dt_start)
+                dt_end = dt_start + timedelta(minutes=duration_min)
+
+                # Format as iCal timestamps (UTC)
+                dt_start_utc = dt_start.astimezone(pytz.utc)
+                dt_end_utc = dt_end.astimezone(pytz.utc)
+                fmt = "%Y%m%dT%H%M%SZ"
+                now_utc = datetime.now(pytz.utc).strftime(fmt)
+
+                events_block = (
+                    "BEGIN:VEVENT\r\n"
+                    f"UID:garmincoach-workout-{ev_date}@garmincoach\r\n"
+                    f"DTSTAMP:{now_utc}\r\n"
+                    f"DTSTART:{dt_start_utc.strftime(fmt)}\r\n"
+                    f"DTEND:{dt_end_utc.strftime(fmt)}\r\n"
+                    f"SUMMARY:{ev_title}\r\n"
+                    "DESCRIPTION:Scheduled by GarminCoach AI\r\n"
+                    "STATUS:CONFIRMED\r\n"
+                    "END:VEVENT\r\n"
+                )
+            except Exception:
+                pass
+
+        ics_content = (
+            "BEGIN:VCALENDAR\r\n"
+            "VERSION:2.0\r\n"
+            "PRODID:-//GarminCoach//AI Workout//EN\r\n"
+            "CALSCALE:GREGORIAN\r\n"
+            "METHOD:PUBLISH\r\n"
+            "X-WR-CALNAME:GarminCoach Workouts\r\n"
+            "X-WR-TIMEZONE:Asia/Jerusalem\r\n"
+            f"{events_block}"
+            "END:VCALENDAR\r\n"
+        )
+
+    return Response(
+        content=ics_content,
+        media_type="text/calendar",
+        headers={"Content-Disposition": "inline; filename=coach.ics"}
+    )
 
 
 if __name__ == "__main__":

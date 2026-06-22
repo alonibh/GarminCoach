@@ -366,6 +366,17 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         
         # 4. Save the new ID so we can delete it next time
         session.merge(SyncState(key="last_coach_workout_id", value=str(new_id)))
+
+        # 5. Save event details for the ICS calendar feed so the workout
+        #    appears on iCloud/Google calendar with the correct time.
+        #    Estimate ~60 min for a typical strength session.
+        event_data = json.dumps({
+            "title": workout_name,
+            "date": today_str,
+            "start_time": suggested_time or "18:30",
+            "duration_min": 60,
+        })
+        session.merge(SyncState(key="coach_calendar_event", value=event_data))
         session.commit()
         
         return True
