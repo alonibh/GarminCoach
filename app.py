@@ -1191,13 +1191,16 @@ def coach_calendar_feed():
                     dt_start = local_tz.localize(dt_start)
                     dt_end = dt_start + timedelta(minutes=duration_min)
 
+                    dt_start_utc = dt_start.astimezone(pytz.utc)
+                    dt_end_utc = dt_end.astimezone(pytz.utc)
+
                     uid = f"garmincoach-{ev_date}-{ev_time.replace(':', '')}@garmincoach"
 
                     event = Event()
                     event.add('summary', ev_title)
                     event.add('description', 'Scheduled by GarminCoach AI')
-                    event.add('dtstart', dt_start)
-                    event.add('dtend', dt_end)
+                    event.add('dtstart', dt_start_utc)
+                    event.add('dtend', dt_end_utc)
                     event.add('dtstamp', datetime.now(pytz.utc))
                     event.add('uid', uid)
                     event.add('status', 'CONFIRMED')
