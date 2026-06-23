@@ -41,8 +41,9 @@ Day 3 - Back & Triceps:
   Lying Tricep Extension (3×10), Rope Pulldowns (3×12), Reverse Single Arm Extension (3×12)
 
 CRITICAL RULES:
-- Abs is NEVER a standalone workout session. It is always a short 10-minute ADD-ON at the end of one of the three main routines above.
-- The abs add-on routine (from https://youtu.be/dJlFmxiL11s): a quick 10-minute circuit that can be appended to any gym session.
+- NEVER recommend an Abs workout on its own, NO EXCEPTIONS. Abs is strictly a 10-minute ADD-ON at the end of Day 1, Day 2, or Day 3. 
+- If the user is too fatigued or doesn't have time for a main routine, DO NOT recommend just Abs. Recommend a rest day or light cardio instead.
+- The Abs add-on is Pamela Reif's 10-minute bodyweight circuit (https://youtu.be/dJlFmxiL11s) consisting of continuous floor exercises (Crunches, Leg Raises, Russian Twists, Plank, etc.). Do not include equipment exercises like cable crunches or hanging knee raises in the abs add-on.
 - When recommending a gym day, always recommend one of the three main routines (picking whichever muscle group hasn't been trained the longest), and optionally add the abs circuit at the end.
 - The user also plays recreational soccer — those are separate from gym workouts.
 - PROGRESSIVE OVERLOAD: Check `recent_exercise_stats` for the last 3 times the user performed the exercises in your recommended routine. Use this trend to suggest slightly heavier weight (+2.5kg) or more reps (if they hit the top of the rep range last time) to ensure progressive overload. If they are fatigued (Red Readiness or >1.5 ACWR), suggest matching the last workout or a slight deload instead.
