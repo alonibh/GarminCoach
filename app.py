@@ -51,7 +51,7 @@ _COOKIE_NAME = "gc_session"
 _MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
 
 # Paths that don't require auth.
-_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/calendar/inject_test")
+_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/calendar/inject_test", "/calendar/clear_test")
 
 
 def _sign_session(username: str) -> str:
@@ -1151,6 +1151,17 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
 
 # Subscribe to https://<your-host>/calendar/coach.ics from iCloud/Google Calendar.
 # ---------------------------------------------------------------------------
+
+@app.get("/calendar/clear_test")
+def clear_test_event():
+    import json
+    from db import get_session, SyncState
+    from fastapi.responses import PlainTextResponse
+    
+    with get_session() as session:
+        session.merge(SyncState(key="coach_calendar_events", value=json.dumps([])))
+        session.commit()
+    return PlainTextResponse("CLEARED")
 
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():
