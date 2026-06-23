@@ -18,8 +18,7 @@ if [ -f "$SVC" ]; then
   
   if sudo grep -q "gunicorn" "$SVC"; then
     sudo sed -i '/ExecStart=/ s/$/ --timeout 300/' "$SVC"
-  fi
-  if sudo grep -q "uvicorn" "$SVC"; then
+  elif sudo grep -q "uvicorn" "$SVC"; then
     sudo sed -i '/ExecStart=/ s/$/ --timeout-keep-alive 300/' "$SVC"
   fi
   
