@@ -1184,9 +1184,8 @@ def sysinfo():
     import subprocess
     from fastapi.responses import PlainTextResponse
     try:
-        nginx = subprocess.check_output("cat /etc/nginx/sites-available/garmincoach || echo 'no nginx'", shell=True).decode()
-        systemd = subprocess.check_output("cat /etc/systemd/system/garmincoach.service || echo 'no systemd'", shell=True).decode()
-        return PlainTextResponse(f"NGINX:\n{nginx}\n\nSYSTEMD:\n{systemd}")
+        logs = subprocess.check_output("journalctl -u garmincoach.service -n 50 --no-pager || echo 'no logs'", shell=True).decode()
+        return PlainTextResponse(f"LOGS:\n{logs}")
     except Exception as e:
         return PlainTextResponse(str(e))
 
