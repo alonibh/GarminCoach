@@ -1043,7 +1043,7 @@ def clear_chat_history(request: Request):
     
     with get_session() as session:
         # 1. Delete from Garmin Connect
-        client = GarminClient(session)
+        client = GarminClient()
         if client.login():
             last_workout_row = session.get(SyncState, "last_coach_workout_id")
             if last_workout_row and last_workout_row.value:
@@ -1184,7 +1184,7 @@ def sysinfo():
     import subprocess
     from fastapi.responses import PlainTextResponse
     try:
-        logs = subprocess.check_output("journalctl -u garmincoach.service -n 50 --no-pager || echo 'no logs'", shell=True).decode()
+        logs = subprocess.check_output("sudo journalctl -u garmincoach.service -n 100 --no-pager || echo 'no logs'", shell=True).decode()
         return PlainTextResponse(f"LOGS:\n{logs}")
     except Exception as e:
         return PlainTextResponse(str(e))
