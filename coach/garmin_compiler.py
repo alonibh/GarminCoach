@@ -9,7 +9,7 @@ from sync.garmin_client import client
 
 logger = logging.getLogger(__name__)
 
-def build_generic_step(description: str, reps: int, weight_kg: float) -> dict:
+def build_generic_step(description: str, reps: int, weight_kg: float, exercise_name: str = None, category: str = None) -> dict:
     """Build a generic interval step."""
     return {
         "type": "ExecutableStepDTO",
@@ -47,8 +47,8 @@ def build_generic_step(description: str, reps: int, weight_kg: float) -> dict:
         "endConditionZone": None,
         "strokeType": {"strokeTypeId": 0, "strokeTypeKey": None, "displayOrder": 0},
         "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None, "displayOrder": 0},
-        "category": None,
-        "exerciseName": None,
+        "category": category,
+        "exerciseName": exercise_name,
         "workoutProvider": None,
         "providerExerciseSourceId": None,
         "weightValue": weight_kg if weight_kg is not None and weight_kg > 0 else -1.0,
@@ -185,7 +185,7 @@ def _get_step_description(step: dict) -> str:
 
 
 def _build_rampup_steps(working_weight: float, description: str,
-                        is_first_compound: bool) -> list[dict]:
+                        is_first_compound: bool, exercise_name: str = None, category: str = None) -> list[dict]:
     """Build ramp-up (warm-up) sets for a compound exercise.
 
     Evidence basis (NSCA Essentials of Strength Training, 4th ed., Ch. 15):
@@ -205,21 +205,21 @@ def _build_rampup_steps(working_weight: float, description: str,
         # Set 1: 50% × 12 — light movement rehearsal
         w1 = round(working_weight * 0.5 / 2.5) * 2.5  # round to nearest 2.5 kg
         w1 = max(w1, 2.5)
-        interval1 = build_generic_step(f"Warm-up: {description}", 12, w1)
+        interval1 = build_generic_step(f"Warm-up: {description}", 12, w1, exercise_name, category)
         rest1 = build_rest_step(60)
         rampup.append(build_repeat_group(1, interval1, rest1))
 
         # Set 2: 75% × 6 — heavier activation
         w2 = round(working_weight * 0.75 / 2.5) * 2.5
         w2 = max(w2, 2.5)
-        interval2 = build_generic_step(f"Warm-up: {description}", 6, w2)
+        interval2 = build_generic_step(f"Warm-up: {description}", 6, w2, exercise_name, category)
         rest2 = build_rest_step(60)
         rampup.append(build_repeat_group(1, interval2, rest2))
     else:
         # Subsequent compound: 1 lighter set at 60% × 8
         w = round(working_weight * 0.6 / 2.5) * 2.5
         w = max(w, 2.5)
-        interval = build_generic_step(f"Warm-up: {description}", 8, w)
+        interval = build_generic_step(f"Warm-up: {description}", 8, w, exercise_name, category)
         rest = build_rest_step(60)
         rampup.append(build_repeat_group(1, interval, rest))
 
@@ -294,12 +294,22 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     new_steps = []
     first_compound_done = False
 
+    def _get_step_field(step: dict, field: str) -> str:
+        if step.get("type") == "RepeatGroupDTO":
+            for child in step.get("workoutSteps", []):
+                if child.get("stepType", {}).get("stepTypeKey") == "interval":
+                    return child.get(field)
+        return step.get(field)
+
     for step in working_steps:
         weight = _get_step_weight(step)
         if weight >= _RAMPUP_WEIGHT_THRESHOLD:
             desc = _get_step_description(step)
+            ex_name = _get_step_field(step, "exerciseName")
+            cat = _get_step_field(step, "category")
             rampups = _build_rampup_steps(weight, desc,
-                                          is_first_compound=not first_compound_done)
+                                          is_first_compound=not first_compound_done,
+                                          exercise_name=ex_name, category=cat)
             new_steps.extend(rampups)
             first_compound_done = True
         new_steps.append(step)
