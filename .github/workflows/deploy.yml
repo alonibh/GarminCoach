@@ -36,4 +36,6 @@ jobs:
             git reset --hard origin/main
             source .venv/bin/activate
             pip install -r requirements.txt
+            chmod +x fix_timeouts.sh
+            ./fix_timeouts.sh
             sudo systemctl restart garmincoach
