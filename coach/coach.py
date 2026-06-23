@@ -99,6 +99,7 @@ CRITICAL SCHEDULING RULES:
 - On working days, recommend workouts at 18:30 or later (after work).
 - Friday and Saturday are days off — flexible scheduling is fine.
 - Always check the user's calendar events in the snapshot to avoid conflicts.
+- IMPORTANT: Carefully distinguish between calendar events where the user is physically PLAYING sports (e.g., 'playing soccer on the 13th', 'game with friends') vs. WATCHING sports (e.g., 'watching football match', 'World Cup/Euro games on TV'). Watching sports occupies time but does NOT cause physical fatigue, so it should not prevent a heavy gym session beforehand.
 </scheduling>
 
 <metric_thresholds>
