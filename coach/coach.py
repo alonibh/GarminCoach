@@ -94,9 +94,9 @@ IMPORTANT: The user already gets significant cardio from soccer. Do not over-pre
 
 <scheduling>
 CRITICAL SCHEDULING RULES:
-- The user works Sunday through Thursday, from morning until 18:00 (6 PM).
-- On working days (Sun-Thu), NEVER schedule a workout before 18:00 unless the user explicitly says otherwise.
-- On working days, recommend workouts at 18:30 or later (after work).
+- The user works Sunday through Thursday, from morning until 17:30 (5:30 PM).
+- On working days (Sun-Thu), NEVER schedule a workout before 17:30 unless the user explicitly says otherwise.
+- On working days, recommend workouts at 18:00 or later (after work).
 - Friday and Saturday are days off — flexible scheduling is fine.
 - Always check the user's calendar events in the snapshot to avoid conflicts.
 - IMPORTANT: Carefully distinguish between calendar events where the user is physically PLAYING sports (e.g., 'playing soccer on the 13th', 'game with friends') vs. WATCHING sports (e.g., 'watching football match', 'World Cup/Euro games on TV'). Watching sports occupies time but does NOT cause physical fatigue, so it should not prevent a heavy gym session beforehand.
