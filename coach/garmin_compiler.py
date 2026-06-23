@@ -55,6 +55,52 @@ def build_generic_step(description: str, reps: int, weight_kg: float, exercise_n
         "weightUnit": {"unitId": 8, "unitKey": "kilogram", "factor": 1000.0}
     }
 
+def build_cardio_warmup_step() -> dict:
+    """Build a 5-minute generic cardio warm-up step."""
+    return {
+        "type": "ExecutableStepDTO",
+        "stepOrder": 0,
+        "stepType": {
+            "stepTypeId": 1,
+            "stepTypeKey": "warmup",
+            "displayOrder": 1
+        },
+        "childStepId": 0,
+        "description": "5 Min Light Cardio (Treadmill, Bike, Rower)",
+        "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": True
+        },
+        "endConditionValue": 300.0,
+        "preferredEndConditionUnit": None,
+        "endConditionCompare": "",
+        "targetType": {
+            "workoutTargetTypeId": 1,
+            "workoutTargetTypeKey": "no.target",
+            "displayOrder": 1
+        },
+        "targetValueOne": None,
+        "targetValueTwo": None,
+        "targetValueUnit": None,
+        "zoneNumber": None,
+        "secondaryTargetType": None,
+        "secondaryTargetValueOne": None,
+        "secondaryTargetValueTwo": None,
+        "secondaryTargetValueUnit": None,
+        "secondaryZoneNumber": None,
+        "endConditionZone": None,
+        "strokeType": {"strokeTypeId": 0, "strokeTypeKey": None, "displayOrder": 0},
+        "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None, "displayOrder": 0},
+        "category": None,
+        "exerciseName": None,
+        "workoutProvider": None,
+        "providerExerciseSourceId": None,
+        "weightValue": -1.0,
+        "weightUnit": {"unitId": 8, "unitKey": "kilogram", "factor": 1000.0}
+    }
+
 def build_rest_step(time_sec: int = 60) -> dict:
     """Build a generic rest step."""
     return {
@@ -185,43 +231,18 @@ def _get_step_description(step: dict) -> str:
 
 
 def _build_rampup_steps(working_weight: float, description: str,
-                        is_first_compound: bool, exercise_name: str = None, category: str = None) -> list[dict]:
-    """Build ramp-up (warm-up) sets for a compound exercise.
+                        exercise_name: str = None, category: str = None) -> list[dict]:
+    """Build a single ramp-up (warm-up) set for a compound exercise.
 
-    Evidence basis (NSCA Essentials of Strength Training, 4th ed., Ch. 15):
-    - The first compound lift of a session benefits from 2-3 progressively
-      heavier warm-up sets to prime the neuromuscular system and rehearse the
-      motor pattern under load.
-    - Subsequent compound exercises that target *different* muscle groups
-      benefit from at least 1 lighter set.
-    - Ramp-up sets use submaximal loads (50-75% of working weight) with
-      moderate-to-low reps so they don't cause meaningful fatigue.
-
-    Returns a list of RepeatGroupDTO dicts (each 1 set) to prepend.
+    User preference: 1 set at 50% of working weight for 8 reps.
     """
     rampup = []
 
-    if is_first_compound:
-        # Set 1: 50% × 12 — light movement rehearsal
-        w1 = round(working_weight * 0.5 / 2.5) * 2.5  # round to nearest 2.5 kg
-        w1 = max(w1, 2.5)
-        interval1 = build_generic_step(f"Warm-up: {description}", 12, w1, exercise_name, category)
-        rest1 = build_rest_step(60)
-        rampup.append(build_repeat_group(1, interval1, rest1))
-
-        # Set 2: 75% × 6 — heavier activation
-        w2 = round(working_weight * 0.75 / 2.5) * 2.5
-        w2 = max(w2, 2.5)
-        interval2 = build_generic_step(f"Warm-up: {description}", 6, w2, exercise_name, category)
-        rest2 = build_rest_step(60)
-        rampup.append(build_repeat_group(1, interval2, rest2))
-    else:
-        # Subsequent compound: 1 lighter set at 60% × 8
-        w = round(working_weight * 0.6 / 2.5) * 2.5
-        w = max(w, 2.5)
-        interval = build_generic_step(f"Warm-up: {description}", 8, w, exercise_name, category)
-        rest = build_rest_step(60)
-        rampup.append(build_repeat_group(1, interval, rest))
+    w = round(working_weight * 0.5 / 2.5) * 2.5  # round to nearest 2.5 kg
+    w = max(w, 2.5)
+    interval = build_generic_step(f"Warm-up: {description}", 8, w, exercise_name, category)
+    rest = build_rest_step(60)
+    rampup.append(build_repeat_group(1, interval, rest))
 
     return rampup
 
@@ -289,10 +310,9 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             working_steps.append(build_repeat_group(sets, interval, rest))
 
     # --- Insert ramp-up sets where warranted (NSCA guidelines) -----------
-    # The first compound exercise (weight >= threshold) gets 2 ramp-up sets;
-    # subsequent heavy exercises get 1 ramp-up set.
-    new_steps = []
-    first_compound_done = False
+    # The first compound exercise (weight >= threshold) gets 1 ramp-up set;
+    # subsequent heavy exercises get 1 ramp-up set too.
+    new_steps = [build_cardio_warmup_step()]
 
     def _get_step_field(step: dict, field: str) -> str:
         if step.get("type") == "RepeatGroupDTO":
@@ -308,10 +328,8 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             ex_name = _get_step_field(step, "exerciseName")
             cat = _get_step_field(step, "category")
             rampups = _build_rampup_steps(weight, desc,
-                                          is_first_compound=not first_compound_done,
                                           exercise_name=ex_name, category=cat)
             new_steps.extend(rampups)
-            first_compound_done = True
         new_steps.append(step)
 
     # Re-index everything perfectly
