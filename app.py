@@ -51,7 +51,7 @@ _COOKIE_NAME = "gc_session"
 _MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
 
 # Paths that don't require auth.
-_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics")
+_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/sysinfo")
 
 
 def _sign_session(username: str) -> str:
@@ -1148,6 +1148,17 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
         "next_y": next_y, "next_m": next_m
     })
 
+
+@app.get("/sysinfo")
+def sysinfo():
+    import subprocess
+    from fastapi.responses import PlainTextResponse
+    try:
+        nginx = subprocess.check_output("cat /etc/nginx/sites-available/garmincoach || echo 'no nginx'", shell=True).decode()
+        systemd = subprocess.check_output("cat /etc/systemd/system/garmincoach.service || echo 'no systemd'", shell=True).decode()
+        return PlainTextResponse(f"NGINX:\n{nginx}\n\nSYSTEMD:\n{systemd}")
+    except Exception as e:
+        return PlainTextResponse(str(e))
 
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():
