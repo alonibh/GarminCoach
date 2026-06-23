@@ -1035,6 +1035,36 @@ def post_chat_page(request: Request, message: str = Form(...)):
     return RedirectResponse(url="/chat", status_code=303)
 
 
+@app.post("/chat/clear", response_class=RedirectResponse)
+def clear_chat_history(request: Request):
+    """Clear chat history and delete scheduled workouts from Garmin."""
+    from db import CoachMessage, SyncState
+    from sync.garmin_client import GarminClient
+    
+    with get_session() as session:
+        # 1. Delete from Garmin Connect
+        client = GarminClient(session)
+        if client.login():
+            last_workout_row = session.get(SyncState, "last_coach_workout_id")
+            if last_workout_row and last_workout_row.value:
+                try:
+                    client.api.delete_workout(last_workout_row.value)
+                except Exception:
+                    pass
+                session.delete(last_workout_row)
+                
+        # 2. Clear ICS calendar events
+        events_row = session.get(SyncState, "coach_calendar_events")
+        if events_row:
+            session.delete(events_row)
+            
+        # 3. Clear Chat History
+        session.query(CoachMessage).delete()
+        session.commit()
+        
+    return RedirectResponse(url="/chat", status_code=303)
+
+
 @app.post("/chat/{msg_id}/approve", response_class=RedirectResponse)
 def approve_action(request: Request, msg_id: int):
     """Approve a staged action."""

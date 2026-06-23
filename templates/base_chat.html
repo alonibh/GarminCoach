@@ -51,6 +51,9 @@
       <a href="/calendar">Calendar</a>
       <a href="/goal">Goal</a>
       <a href="/chat">Coach Chat</a>
+      <form method="post" action="/chat/clear" style="display: inline; margin: 0; padding: 0;">
+        <button type="submit" style="background: none; border: none; font: inherit; cursor: pointer; color: #f15c6d; text-decoration: none; margin-right: 1rem;" onclick="return confirm('Are you sure you want to delete all chat history and scheduled workouts?')">Clear Chat & Calendar</button>
+      </form>
       <a href="/app-logout" class="logout-link" style="color: #f15c6d;">Sign out</a>
     </nav>
   </header>
