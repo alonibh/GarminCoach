@@ -318,15 +318,21 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
                     return child.get(field)
         return step.get(field)
 
+    seen_categories = set()
+
     for step in working_steps:
         weight = _get_step_weight(step)
-        if weight >= _RAMPUP_WEIGHT_THRESHOLD:
+        cat = _get_step_field(step, "category")
+        
+        # Only do a ramp-up if it's heavy AND we haven't warmed up this muscle group yet.
+        if weight >= _RAMPUP_WEIGHT_THRESHOLD and cat and cat not in seen_categories:
             desc = _get_step_description(step)
             ex_name = _get_step_field(step, "exerciseName")
-            cat = _get_step_field(step, "category")
             rampups = _build_rampup_steps(weight, desc,
                                           exercise_name=ex_name, category=cat)
             new_steps.extend(rampups)
+            seen_categories.add(cat)
+            
         new_steps.append(step)
 
     # Re-index everything perfectly

@@ -59,7 +59,7 @@ Every workout recommendation MUST include a warm-up. Follow ACSM and NSCA eviden
    - Legs & Shoulders day: Leg swings (front/side), bodyweight squats, walking lunges, hip circles
    - Back & Triceps day: Cat-cow, thoracic rotations, light band rows, arm crossovers
 
-3. RAMP-UP SETS: For compound exercises, do exactly 1 warm-up set before the working weight: 50% of working weight × 8 reps.
+3. RAMP-UP SETS: Provide exactly 1 warm-up set (50% of working weight × 8 reps) ONLY for the very first exercise of each muscle group.
 </warmup_protocol>
 
 <cooldown_protocol>
