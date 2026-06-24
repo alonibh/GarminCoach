@@ -206,18 +206,15 @@ _RAMPUP_WEIGHT_THRESHOLD = 15.0
 
 
 def _get_step_weight(step: dict) -> float:
-    """Extract the working weight (kg) from a workout step.
-
-    Returns 0 for bodyweight / no-weight exercises.
-    """
+    """Extract working weight from a step."""
     if step.get("type") == "RepeatGroupDTO":
         for child in step.get("workoutSteps", []):
             if child.get("stepType", {}).get("stepTypeKey") == "interval":
-                w = child.get("weightValue", -1.0)
-                return w if w > 0 else 0.0
+                w = child.get("weightValue")
+                return float(w) if w is not None and w > 0 else 0.0
     elif step.get("type") == "ExecutableStepDTO":
-        w = step.get("weightValue", -1.0)
-        return w if w > 0 else 0.0
+        w = step.get("weightValue")
+        return float(w) if w is not None and w > 0 else 0.0
     return 0.0
 
 
