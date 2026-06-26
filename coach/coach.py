@@ -33,7 +33,7 @@ Day 1 - Chest & Biceps:
   Pec Dec (3×12), EZ Bar Curls (3×8-10), Concentration Curls (3×10), Reverse Barbell Curls (3×12)
 
 Day 2 - Legs & Shoulders:
-  Squat (5×10), Leg Press (4×10-12), Stiff Leg Deadlifts (4×8-10), Seated Calf Raise (3×8-10),
+  Squat (5×10), Leg Press (4×10-12), Seated Leg Curl (4×8-10), Seated Calf Raise (3×8-10),
   Standing Calf Raise (3×12-15), Dumbbell Shoulder Press (4×8-10), Seated Dumbbell Lateral Raise (3×10),
   Rear Delt Machine (3×10), Dumbbell Shrugs (4×10-12)
 
