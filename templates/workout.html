@@ -67,7 +67,11 @@
   <div class="hrz">
     {% for z in hr_zones %}
     <div class="hrz-row">
+      {% if z.zone == 0 %}
+      <span class="hrz-label">Below Z1</span>
+      {% else %}
       <span class="hrz-label">Z{{ z.zone }}{% if z.low_bpm %} <span class="muted">{{ z.low_bpm }}+</span>{% endif %}</span>
+      {% endif %}
       <span class="hrz-track"><span class="hrz-fill hrz-z{{ z.zone }}" style="width: {{ z.pct }}%"></span></span>
       <span class="hrz-time">{{ z.minutes }}m <span class="muted">{{ z.pct }}%</span></span>
     </div>

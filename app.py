@@ -664,7 +664,7 @@ def _cardio_stats(act: Activity) -> list[dict]:
     return [{"label": k, "value": v, "hint": _METRIC_HINTS.get(k)} for k, v in rows]
 
 
-def _hr_zones(activity_id: int) -> list[dict]:
+def _hr_zones(activity_id: int, duration_s: float | None = None) -> list[dict]:
     """Time-in-HR-zone bars for a workout. Live (cached) fetch; returns [] on
     any failure so the page still renders. Each row: zone, low BPM, minutes,
     and pct of the activity's in-zone time (for the bar width)."""
@@ -674,17 +674,32 @@ def _hr_zones(activity_id: int) -> list[dict]:
         raw = client.hr_zones(activity_id) or []
     except Exception:
         return []
-    total = sum((z.get("secsInZone") or 0) for z in raw)
-    if total <= 0:
+    total_z = sum((z.get("secsInZone") or 0) for z in raw)
+    
+    # Use total activity duration if it's larger than the sum of Z1-Z5.
+    base_total = duration_s if duration_s and duration_s > total_z else total_z
+    if base_total <= 0:
         return []
+
     out = []
+    
+    # Add a "Below Z1" pseudo-zone for any remaining time
+    if duration_s and duration_s > total_z + 60:
+        below_secs = duration_s - total_z
+        out.append({
+            "zone": 0,
+            "low_bpm": None,
+            "minutes": round(below_secs / 60),
+            "pct": round(below_secs / base_total * 100),
+        })
+
     for z in raw:
         secs = z.get("secsInZone") or 0
         out.append({
             "zone": z.get("zoneNumber"),
             "low_bpm": round(z.get("zoneLowBoundary")) if z.get("zoneLowBoundary") else None,
             "minutes": round(secs / 60),
-            "pct": round(secs / total * 100),
+            "pct": round(secs / base_total * 100),
         })
     return out
 
@@ -807,7 +822,7 @@ def workout_detail(request: Request, activity_id: int):
             "activity": activity,
             "exercises": exercises,
             "cardio": cardio,
-            "hr_zones": _hr_zones(activity_id),
+            "hr_zones": _hr_zones(activity_id, act.duration_s),
         },
     )
 

@@ -245,6 +245,7 @@ h2, h3 { margin: 0 0 .75rem; }
 .hrz-track { background: #0f1419; border-radius: 6px; height: 16px; overflow: hidden; }
 .hrz-fill { display: block; height: 100%; border-radius: 6px; min-width: 2px; }
 .hrz-time { font-size: .82rem; text-align: right; font-variant-numeric: tabular-nums; }
+.hrz-z0 { background: #5a6b76; }
 .hrz-z1 { background: #4593e6; }   /* easy → hard: blue, teal, green, orange, red */
 .hrz-z2 { background: #3fb9c5; }
 .hrz-z3 { background: #3fb950; }
