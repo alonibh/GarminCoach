@@ -34,7 +34,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # context, strong instruction-following. Override per deployment in .env.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # Output controls for the Gemini REST call (mirrors Claude's max_tokens cap).
-GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.5"))
+GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
+GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.9"))
+GEMINI_TOP_K = int(os.getenv("GEMINI_TOP_K", "40"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 
 # --- Sync ---

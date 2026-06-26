@@ -83,7 +83,8 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
             "generationConfig": {
                 "temperature": config.GEMINI_TEMPERATURE,
                 "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS,
-                "topP": 0.95,
+                "topP": config.GEMINI_TOP_P,
+                "topK": config.GEMINI_TOP_K,
                 "thinkingConfig": {
                     "thinkingBudget": 0,
                 },
