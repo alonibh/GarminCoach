@@ -95,10 +95,14 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
         for attempt in range(1, max_retries + 1):
             resp = requests.post(url, json=payload, headers=headers, timeout=60)
 
-            if resp.status_code in (429, 503) and attempt < max_retries:
-                # Rate limited or temporarily unavailable. Sleep and retry.
-                time.sleep(5 * attempt)
-                continue
+            if not resp.ok and attempt < max_retries:
+                if resp.status_code == 503:
+                    # Temporarily unavailable. Short sleep and retry.
+                    time.sleep(2)
+                    continue
+                elif resp.status_code == 429:
+                    # Rate limited. Fail immediately so the user doesn't wait.
+                    break
 
             # Give a better error message based on the HTTP status code
             if not resp.ok:
