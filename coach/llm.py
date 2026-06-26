@@ -120,6 +120,7 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
             if reason == "MAX_TOKENS":
                 logger.warning("Gemini hit MAX_TOKENS; raise GEMINI_MAX_OUTPUT_TOKENS if this recurs.")
             
+            parts = cand.get("content", {}).get("parts")
             if parts and parts[0].get("text"):
                 text = parts[0]["text"].strip()
                 if reason == "MAX_TOKENS":
