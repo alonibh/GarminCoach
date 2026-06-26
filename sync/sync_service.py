@@ -174,6 +174,11 @@ def _sync_workouts(session: Session) -> None:
     except Exception:
         logger.warning("Failed to fetch workout list from Garmin", exc_info=True)
         return
+    # A None (rather than []) means the call didn't really succeed — treat it
+    # like a failure so we never prune on an ambiguous response.
+    if workouts is None:
+        logger.warning("Garmin returned no workout list; skipping sync/prune.")
+        return
 
     import json
     from datetime import datetime
@@ -207,14 +212,14 @@ def _sync_workouts(session: Session) -> None:
 
         session.add(row)
 
-    # Prune templates the user removed from Garmin. Only prune when the fetch
-    # actually returned workouts, so a transient empty/partial response doesn't
-    # wipe the local library.
-    if seen_ids:
-        stale = session.query(Workout).filter(Workout.workout_id.notin_(seen_ids)).all()
-        for row in stale:
-            logger.info("Pruning workout no longer in Garmin: id=%s ('%s')", row.workout_id, row.name)
-            session.delete(row)
+    # Prune templates the user removed from Garmin. We only reach here on a
+    # successful fetch (failures returned early above), so an empty `seen_ids`
+    # genuinely means "the user has zero workouts" and pruning to empty is
+    # correct — a transient glitch can't reach this point.
+    stale = session.query(Workout).filter(Workout.workout_id.notin_(seen_ids)).all()
+    for row in stale:
+        logger.info("Pruning workout no longer in Garmin: id=%s ('%s')", row.workout_id, row.name)
+        session.delete(row)
 
     session.commit()
 
