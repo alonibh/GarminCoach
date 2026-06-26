@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    event,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -209,7 +210,27 @@ class MetricSnapshot(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
-engine = create_engine(config.DB_URL, future=True)
+# The web request threads and the background sync thread both write to this
+# SQLite file. Without a busy timeout an overlapping write fails immediately
+# with "database is locked"; WAL mode lets readers and a writer coexist.
+engine = create_engine(
+    config.DB_URL,
+    future=True,
+    # 30s busy timeout: wait for a competing writer instead of erroring out.
+    connect_args={"timeout": 30},
+)
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_conn, _record):
+    """Enable WAL + sane durability on every new SQLite connection."""
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")      # concurrent reads during a write
+    cur.execute("PRAGMA synchronous=NORMAL")    # safe with WAL, much faster
+    cur.execute("PRAGMA foreign_keys=ON")       # honor FK cascades (exercise_sets)
+    cur.close()
+
+
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
