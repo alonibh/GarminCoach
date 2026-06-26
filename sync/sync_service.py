@@ -460,7 +460,7 @@ def run_sync(full: bool = False) -> dict:
     try:
         with get_session() as session:
             coach.generate_daily_suggestion(session)
-            coach.generate_nutrition_suggestion(session)
+            # coach.generate_nutrition_suggestion(session)
     except Exception as e:
         summary["errors"].append(f"coach suggestion: {e}")
 
