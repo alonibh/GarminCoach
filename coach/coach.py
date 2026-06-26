@@ -175,6 +175,7 @@ Provide exactly 1-2 short, punchy paragraphs.
 Analyze their exponential sleep debt and EWMA ACWR. Point out any alarming trends or give a green light if their Readiness is primed.
 Review the user's `upcoming_schedule_7_days`. Suggest an exact optimal time window for today's workout based on their free time and `readiness`/`acwr` status. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
 Do NOT use markdown headers or greetings, just give the insight.
+CRITICAL: Do NOT output any JSON blocks or attempt to schedule a workout. Just provide the text analysis.
 """
     raw_response = llm.generate(SYSTEM_PROMPT, prompt)
     suggestion_text, _ = _extract_and_strip_json(raw_response)
@@ -205,6 +206,7 @@ Provide exactly 1 short paragraph.
 Recommend daily macro targets (Protein/Carbs/Fat in grams or percentages) based on today's calorie burn (`total_kcal` and `active_kcal`) and workouts.
 Also suggest a healthy, actionable post-workout meal idea or a rest-day meal idea depending on the day's activity level.
 Do NOT use markdown headers or greetings, just give the insight.
+CRITICAL: Do NOT output any JSON blocks or attempt to schedule a workout. Just provide the text analysis.
 """
     
     raw_response = llm.generate(SYSTEM_PROMPT, prompt)
