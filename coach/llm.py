@@ -102,7 +102,7 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
                     continue
                 elif resp.status_code == 429:
                     # Rate limited. Fail immediately so the user doesn't wait.
-                    break
+                    return "Coach is currently rate-limited by Gemini. Please wait a minute and try again."
 
             # Give a better error message based on the HTTP status code
             if not resp.ok:
