@@ -116,14 +116,18 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
                 return "Coach encountered an empty response from Gemini."
 
             cand = candidates[0]
-            parts = cand.get("content", {}).get("parts")
-            if parts and parts[0].get("text"):
-                return parts[0]["text"].strip()
-
-            # No usable text — explain why instead of a generic "empty response".
             reason = cand.get("finishReason")
             if reason == "MAX_TOKENS":
                 logger.warning("Gemini hit MAX_TOKENS; raise GEMINI_MAX_OUTPUT_TOKENS if this recurs.")
+            
+            if parts and parts[0].get("text"):
+                text = parts[0]["text"].strip()
+                if reason == "MAX_TOKENS":
+                    return text + "\n\n[Coach's reply was cut off (hit the output length limit)]"
+                return text
+
+            # No usable text — explain why instead of a generic "empty response".
+            if reason == "MAX_TOKENS":
                 return "Coach's reply was cut off (hit the output length limit). Try asking a more specific question."
             if reason == "SAFETY":
                 logger.warning("Gemini stopped on SAFETY filter.")
