@@ -5,7 +5,7 @@ import os
 import threading
 from datetime import date, datetime, timedelta
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -50,8 +50,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 _COOKIE_NAME = "gc_session"
 _MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
 
-# Paths that don't require auth.
-_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/sysinfo")
+# Paths that don't require auth. NOTE: /sysinfo is intentionally NOT here — it
+# runs journalctl and returns logs (emails, stack traces), so it must require a
+# session cookie. /calendar/coach.ics stays public because external calendar
+# apps fetch it without cookies (it carries no secrets).
+_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics")
 
 
 def _sign_session(username: str) -> str:
@@ -817,8 +820,13 @@ def edit_set(
             return HTMLResponse("Set not found", status_code=404)
         if exercise_name:
             st.exercise_name = exercise_name
-        st.reps = int(reps) if reps.strip() else st.reps
-        st.weight_kg = float(weight_kg) if weight_kg.strip() else st.weight_kg
+        try:
+            if reps.strip():
+                st.reps = int(reps)
+            if weight_kg.strip():
+                st.weight_kg = float(weight_kg)
+        except ValueError:
+            return HTMLResponse("Reps must be a whole number and weight a number.", status_code=400)
         st.edited = True
         aid = st.activity_id
     return RedirectResponse(f"/workout/{aid}", status_code=303)
@@ -911,9 +919,20 @@ _APP_LOGIN_HTML = """<!doctype html>
 </html>"""
 
 
+def _safe_next(next: str) -> str:
+    """Constrain post-login redirect to a local path, blocking open redirects.
+
+    Accept only paths starting with a single '/'. Reject protocol-relative
+    ('//evil.com'), absolute URLs ('https://evil.com'), and backslash tricks.
+    """
+    if not next or not next.startswith("/") or next.startswith("//") or "\\" in next:
+        return "/"
+    return next
+
+
 @app.get("/app-login", response_class=HTMLResponse)
 def app_login_form(request: Request, next: str = "/"):
-    html = _APP_LOGIN_HTML.format(error_html="", next_url=next)
+    html = _APP_LOGIN_HTML.format(error_html="", next_url=_safe_next(next))
     return HTMLResponse(html)
 
 
@@ -931,9 +950,9 @@ def app_login_submit(
         and secrets.compare_digest(username.strip(), env_user)
         and secrets.compare_digest(password, env_pass)
     ):
-        # Success → set signed session cookie and redirect.
+        # Success → set signed session cookie and redirect (local paths only).
         token = _sign_session(username.strip())
-        response = RedirectResponse(next or "/", status_code=303)
+        response = RedirectResponse(_safe_next(next), status_code=303)
         response.set_cookie(
             _COOKIE_NAME,
             token,
@@ -1105,7 +1124,11 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
     today = date.today()
     y = year or today.year
     m = month or today.month
-    
+
+    # Guard against out-of-range input so monthdatescalendar can't raise a 500.
+    if not (1 <= m <= 12) or not (1 <= y <= 9999):
+        raise HTTPException(status_code=400, detail="Invalid year or month")
+
     # Calculate prev/next month links
     prev_y, prev_m = (y, m - 1) if m > 1 else (y - 1, 12)
     next_y, next_m = (y, m + 1) if m < 12 else (y + 1, 1)

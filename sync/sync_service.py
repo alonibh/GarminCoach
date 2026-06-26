@@ -6,6 +6,7 @@ activity is logged and skipped; the sync continues.
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
@@ -26,6 +27,9 @@ from db import (
     get_session,
 )
 from sync.garmin_client import client
+
+logger = logging.getLogger(__name__)
+
 # Activity type substrings that carry per-set strength detail.
 _STRENGTH_HINTS = ("strength", "weight")
 
@@ -120,6 +124,7 @@ def _sync_exercise_sets(session, activity_id: int) -> None:
     except GarminConnectTooManyRequestsError:
         raise  # let the circuit breaker handle rate limits
     except Exception:
+        logger.warning("Exercise-sets fetch failed for activity %s", activity_id, exc_info=True)
         return  # a single bad activity shouldn't abort the whole sync
     sets = _g(data, "exerciseSets", default=[]) or []
     if not sets:
@@ -157,40 +162,65 @@ def _sync_exercise_sets(session, activity_id: int) -> None:
 
 
 def _sync_workouts(session: Session) -> None:
-    """Fetch user's pre-defined workouts and their deep step structures."""
+    """Fetch user's pre-defined workouts and their deep step structures.
+
+    Reconciles local state with Garmin: upserts every workout Garmin returns
+    and prunes local rows whose workout no longer exists in Garmin (so deleting
+    a template in Garmin Connect removes it here too, instead of accumulating
+    every workout the user has ever created).
+    """
     try:
         workouts = client.api.get_workouts()
     except Exception:
+        logger.warning("Failed to fetch workout list from Garmin", exc_info=True)
         return
-        
+    # A None (rather than []) means the call didn't really succeed — treat it
+    # like a failure so we never prune on an ambiguous response.
+    if workouts is None:
+        logger.warning("Garmin returned no workout list; skipping sync/prune.")
+        return
+
     import json
     from datetime import datetime
-    
+
+    seen_ids = set()
     for w_summary in workouts:
         wid = w_summary.get("workoutId")
         if not wid:
             continue
-            
+        seen_ids.add(wid)
+
         name = w_summary.get("workoutName", "Unnamed Workout")
         sport_type = _g(w_summary, "sportType", "sportTypeKey", default="unknown")
-        
+
         # We only really care about strength, running, cycling, etc., but we can save all
         try:
             full_w = client.api.get_workout_by_id(wid)
             steps_json = json.dumps(full_w.get("workoutSegments", []))
         except Exception:
+            logger.warning("Failed to fetch workout detail for id=%s ('%s')", wid, name, exc_info=True)
             steps_json = "[]"
-            
+
         row = session.query(Workout).filter_by(workout_id=wid).first()
         if not row:
             row = Workout(workout_id=wid, created_at=datetime.now())
-            
+
         row.name = name
         row.sport_type = sport_type
         row.steps_json = steps_json
         row.updated_at = datetime.now()
-        
+
         session.add(row)
+
+    # Prune templates the user removed from Garmin. We only reach here on a
+    # successful fetch (failures returned early above), so an empty `seen_ids`
+    # genuinely means "the user has zero workouts" and pruning to empty is
+    # correct — a transient glitch can't reach this point.
+    stale = session.query(Workout).filter(Workout.workout_id.notin_(seen_ids)).all()
+    for row in stale:
+        logger.info("Pruning workout no longer in Garmin: id=%s ('%s')", row.workout_id, row.name)
+        session.delete(row)
+
     session.commit()
 
 
@@ -214,6 +244,7 @@ def _sync_sleep(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
+        logger.warning("Sleep fetch failed for %s", day, exc_info=True)
         return
     dto = _g(data, "dailySleepDTO", default={}) or {}
     row = session.get(Sleep, day) or Sleep(day=day)
@@ -239,7 +270,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("HRV fetch failed for %s", day, exc_info=True)
 
     try:
         rhr = client.resting_hr(day)
@@ -249,7 +280,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Resting HR fetch failed for %s", day, exc_info=True)
 
     try:
         stress = client.stress(day)
@@ -257,7 +288,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Stress fetch failed for %s", day, exc_info=True)
 
     try:
         bb = client.body_battery(day, day)
@@ -273,7 +304,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Body battery fetch failed for %s", day, exc_info=True)
 
     try:
         steps = client.daily_steps(day, day)
@@ -283,7 +314,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Steps fetch failed for %s", day, exc_info=True)
 
     try:
         summary = client.user_summary(day)
@@ -294,7 +325,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
 
     try:
         readiness_data = client.training_readiness(day)
@@ -304,7 +335,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Training readiness fetch failed for %s", day, exc_info=True)
 
     try:
         status_data = client.training_status(day)
@@ -313,7 +344,7 @@ def _sync_daily_health(session, day: date) -> None:
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
-        pass
+        logger.warning("Training status fetch failed for %s", day, exc_info=True)
 
     session.add(row)
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from db import CoachMessage
 from coach import llm
+from coach.actions import parse_action
 from coach.snapshot import build_snapshot
 
 logger = logging.getLogger(__name__)
@@ -206,8 +207,11 @@ Also suggest a healthy, actionable post-workout meal idea or a rest-day meal ide
 Do NOT use markdown headers or greetings, just give the insight.
 """
     
-    suggestion_text = llm.generate(SYSTEM_PROMPT, prompt)
-    
+    raw_response = llm.generate(SYSTEM_PROMPT, prompt)
+    # Strip any stray ```json``` block so a scheduling payload never leaks into
+    # the nutrition card (the system prompt is shared across coach calls).
+    suggestion_text, _ = _extract_and_strip_json(raw_response)
+
     if _is_error_response(suggestion_text):
         existing = session.query(CoachMessage).filter_by(role="nutrition").order_by(CoachMessage.created_at.desc()).first()
         if existing and existing.created_at and existing.created_at.date() == date.today() and not _is_error_response(existing.content):
@@ -263,9 +267,12 @@ User Message: {user_text}"""
         try:
             payload = json.loads(json_str)
             if payload.get("action") == "schedule_workout":
+                # Validate the full action shape now, not just the `action` key,
+                # so a malformed payload never becomes a clickable "approve".
+                parse_action(payload)
                 pending_json = json_str
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Discarding invalid schedule_workout action: %s", e)
 
     # Save assistant message
     asst_msg = CoachMessage(

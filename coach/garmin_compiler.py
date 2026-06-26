@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from db import Workout
 from sync.garmin_client import client
+from coach.actions import parse_action
 
 logger = logging.getLogger(__name__)
 
@@ -246,10 +247,19 @@ def _build_rampup_steps(working_weight: float, description: str,
 
 def compile_and_schedule(session: Session, payload: dict) -> bool:
     """Compile AI json modification into a real Garmin workout and push it."""
+    # Validate + coerce the untrusted AI payload once. After this, all numeric
+    # fields are real numbers and suggested_time is a valid HH:MM (or None).
+    try:
+        action = parse_action(payload)
+    except Exception as e:
+        logger.error("Invalid schedule_workout payload: %s", e)
+        return False
+    payload = action.model_dump()
+
     base_id = payload.get("base_workout_id")
     if not base_id:
         return False
-        
+
     base_workout = session.query(Workout).filter_by(workout_id=base_id).first()
     if not base_workout:
         logger.error(f"Base workout {base_id} not found.")
@@ -275,25 +285,29 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             if idx is not None and 0 <= idx < len(base_steps):
                 step = json.loads(json.dumps(base_steps[idx]))  # Deep copy
                 
+                # Values are pre-validated numbers or None (omitted -> keep base).
+                new_sets = mod.get("new_sets")
+                new_reps = mod.get("new_reps")
+                new_weight = mod.get("new_weight_kg")
+
                 # Update sets if RepeatGroup
-                if step.get("type") == "RepeatGroupDTO" and "new_sets" in mod:
-                    sets = mod["new_sets"]
-                    step["numberOfIterations"] = sets
-                    step["endConditionValue"] = float(sets)
-                    
+                if step.get("type") == "RepeatGroupDTO" and new_sets is not None:
+                    step["numberOfIterations"] = new_sets
+                    step["endConditionValue"] = float(new_sets)
+
                 # Find inner interval step and update reps/weight
                 if step.get("type") == "RepeatGroupDTO":
                     for child in step.get("workoutSteps", []):
                         if child.get("stepType", {}).get("stepTypeKey") == "interval":
-                            if "new_reps" in mod:
-                                child["endConditionValue"] = float(mod["new_reps"])
-                            if "new_weight_kg" in mod:
-                                child["weightValue"] = float(mod["new_weight_kg"])
+                            if new_reps is not None:
+                                child["endConditionValue"] = float(new_reps)
+                            if new_weight is not None:
+                                child["weightValue"] = float(new_weight)
                 elif step.get("type") == "ExecutableStepDTO":
-                    if "new_reps" in mod:
-                        step["endConditionValue"] = float(mod["new_reps"])
-                    if "new_weight_kg" in mod:
-                        step["weightValue"] = float(mod["new_weight_kg"])
+                    if new_reps is not None:
+                        step["endConditionValue"] = float(new_reps)
+                    if new_weight is not None:
+                        step["weightValue"] = float(new_weight)
                 working_steps.append(step)
                 
         elif mod_type == "add_new":
