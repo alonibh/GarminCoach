@@ -40,7 +40,7 @@ Day 2 - Legs & Shoulders:
   Rear Delt Machine (3×10), Dumbbell Shrugs (4×10-12)
 
 Day 3 - Back & Triceps:
-  Wide Grip Pullups (4×8-12), Lat Pull Downs (4×10), One Arm Dumbbell Row (4×10), T-Bar Rows (4×10),
+  Weighted Wide Pullups (4×8-12), Lat Pull Downs (4×10), One Arm Dumbbell Row (4×10), T-Bar Rows (4×10),
   Lying Tricep Extension (3×10), Rope Pulldowns (3×12), Reverse Single Arm Extension (3×12)
 
 CRITICAL RULES:
@@ -62,8 +62,6 @@ Every workout recommendation MUST include a warm-up. Follow ACSM and NSCA eviden
    - Chest & Biceps day: Arm circles, band pull-aparts, wall slides, wrist circles
    - Legs & Shoulders day: Leg swings (front/side), bodyweight squats, walking lunges, hip circles
    - Back & Triceps day: Cat-cow, thoracic rotations, light band rows, arm crossovers
-
-3. RAMP-UP SETS: Provide exactly 1 warm-up set (50% of working weight × 8 reps) ONLY for the very first exercise of each muscle group. Do not list ramp-up sets in a separate section; list them immediately before the main working sets for that specific exercise.
 </warmup_protocol>
 
 <cooldown_protocol>

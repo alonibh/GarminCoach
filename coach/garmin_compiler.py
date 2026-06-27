@@ -200,11 +200,6 @@ def reindex_steps(workout_steps: list) -> list:
 # Prefix used for all coach-created workouts, so we can find and delete them.
 _COACH_PREFIX = "\U0001f3cb\ufe0f "  # 🏋️ emoji prefix
 
-# Minimum working weight (kg) to trigger ramp-up sets.  Exercises below this
-# threshold are typically light isolation movements that don't benefit from
-# dedicated warm-up sets (NSCA Essentials of Strength Training, 4th ed.).
-_RAMPUP_WEIGHT_THRESHOLD = 0.0
-
 
 def _get_step_weight(step: dict) -> float:
     """Extract working weight from a step."""
@@ -226,23 +221,6 @@ def _get_step_description(step: dict) -> str:
             if child.get("stepType", {}).get("stepTypeKey") == "interval":
                 return child.get("description") or ""
     return step.get("description") or ""
-
-
-def _build_rampup_steps(working_weight: float, description: str,
-                        exercise_name: str = None, category: str = None) -> list[dict]:
-    """Build a single ramp-up (warm-up) set for a compound exercise.
-
-    User preference: 1 set at 50% of working weight for 8 reps.
-    """
-    rampup = []
-
-    w = round(working_weight * 0.5 / 2.5) * 2.5  # round to nearest 2.5 kg
-    w = max(w, 2.5)
-    interval = build_generic_step(f"Warm-up: {description}", 8, w, exercise_name, category)
-    rest = build_rest_step(60)
-    rampup.append(build_repeat_group(1, interval, rest))
-
-    return rampup
 
 
 def compile_and_schedule(session: Session, payload: dict) -> bool:
@@ -331,34 +309,9 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         rest = build_rest_step(60)
         working_steps.append(build_repeat_group(sets, interval, rest))
 
-    # --- Insert ramp-up sets where warranted (NSCA guidelines) -----------
-    # The first compound exercise (weight >= threshold) gets 1 ramp-up set;
-    # subsequent heavy exercises get 1 ramp-up set too.
+    # --- Insert cardio warm-up set (NSCA guidelines) -----------
     new_steps = [build_cardio_warmup_step()]
-
-    def _get_step_field(step: dict, field: str) -> str:
-        if step.get("type") == "RepeatGroupDTO":
-            for child in step.get("workoutSteps", []):
-                if child.get("stepType", {}).get("stepTypeKey") == "interval":
-                    return child.get(field)
-        return step.get(field)
-
-    seen_categories = set()
-
-    for step in working_steps:
-        weight = _get_step_weight(step)
-        cat = _get_step_field(step, "category")
-        
-        # Only do a ramp-up if it's heavy AND we haven't warmed up this muscle group yet.
-        if weight >= _RAMPUP_WEIGHT_THRESHOLD and cat and cat not in seen_categories:
-            desc = _get_step_description(step)
-            ex_name = _get_step_field(step, "exerciseName")
-            rampups = _build_rampup_steps(weight, desc,
-                                          exercise_name=ex_name, category=cat)
-            new_steps.extend(rampups)
-            seen_categories.add(cat)
-            
-        new_steps.append(step)
+    new_steps.extend(working_steps)
 
     # Re-index everything perfectly
     new_steps = reindex_steps(new_steps)
