@@ -338,8 +338,14 @@ def build_snapshot(session: Session) -> str:
 
     # Only strength routines are relevant to gym coaching. Running templates
     # (cardio) are handled separately and were bloating the payload massively.
+    # Exclude coach-created workouts (starting with the emoji prefix) to prevent
+    # the AI from getting confused by its own scheduled workouts.
+    from coach.garmin_compiler import _COACH_PREFIX
     saved_workouts = (
-        session.query(Workout).filter(Workout.sport_type == "strength_training").all()
+        session.query(Workout)
+        .filter(Workout.sport_type == "strength_training")
+        .filter(~Workout.name.startswith(_COACH_PREFIX))
+        .all()
     )
     if saved_workouts:
         unique_exercises = set()
