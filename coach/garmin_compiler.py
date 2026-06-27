@@ -203,7 +203,7 @@ _COACH_PREFIX = "\U0001f3cb\ufe0f "  # 🏋️ emoji prefix
 # Minimum working weight (kg) to trigger ramp-up sets.  Exercises below this
 # threshold are typically light isolation movements that don't benefit from
 # dedicated warm-up sets (NSCA Essentials of Strength Training, 4th ed.).
-_RAMPUP_WEIGHT_THRESHOLD = 15.0
+_RAMPUP_WEIGHT_THRESHOLD = 0.0
 
 
 def _get_step_weight(step: dict) -> float:
@@ -277,48 +277,59 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         
     working_steps = []
     
+    # Map keep_and_modify modifications by index to preserve base workout order
+    mod_map = {}
+    add_new_mods = []
+    
     for mod in payload.get("modifications", []):
-        mod_type = mod.get("type")
-        
-        if mod_type == "keep_and_modify":
+        if mod.get("type") == "keep_and_modify":
             idx = mod.get("index")
-            if idx is not None and 0 <= idx < len(base_steps):
-                step = json.loads(json.dumps(base_steps[idx]))  # Deep copy
-                
-                # Values are pre-validated numbers or None (omitted -> keep base).
-                new_sets = mod.get("new_sets")
-                new_reps = mod.get("new_reps")
-                new_weight = mod.get("new_weight_kg")
+            if idx is not None:
+                mod_map[idx] = mod
+        elif mod.get("type") == "add_new":
+            add_new_mods.append(mod)
 
-                # Update sets if RepeatGroup
-                if step.get("type") == "RepeatGroupDTO" and new_sets is not None:
-                    step["numberOfIterations"] = new_sets
-                    step["endConditionValue"] = float(new_sets)
-
-                # Find inner interval step and update reps/weight
-                if step.get("type") == "RepeatGroupDTO":
-                    for child in step.get("workoutSteps", []):
-                        if child.get("stepType", {}).get("stepTypeKey") == "interval":
-                            if new_reps is not None:
-                                child["endConditionValue"] = float(new_reps)
-                            if new_weight is not None:
-                                child["weightValue"] = float(new_weight)
-                elif step.get("type") == "ExecutableStepDTO":
-                    if new_reps is not None:
-                        step["endConditionValue"] = float(new_reps)
-                    if new_weight is not None:
-                        step["weightValue"] = float(new_weight)
-                working_steps.append(step)
-                
-        elif mod_type == "add_new":
-            desc = mod.get("description", "Custom Exercise")
-            sets = mod.get("sets", 1)
-            reps = mod.get("reps", 10)
-            weight = mod.get("weight_kg", 0)
+    # Iterate over base_steps so the original template order is strictly preserved
+    for idx, base_step in enumerate(base_steps):
+        if idx in mod_map:
+            mod = mod_map[idx]
+            step = json.loads(json.dumps(base_step))  # Deep copy
             
-            interval = build_generic_step(desc, reps, weight)
-            rest = build_rest_step(60)
-            working_steps.append(build_repeat_group(sets, interval, rest))
+            # Values are pre-validated numbers or None (omitted -> keep base).
+            new_sets = mod.get("new_sets")
+            new_reps = mod.get("new_reps")
+            new_weight = mod.get("new_weight_kg")
+
+            # Update sets if RepeatGroup
+            if step.get("type") == "RepeatGroupDTO" and new_sets is not None:
+                step["numberOfIterations"] = new_sets
+                step["endConditionValue"] = float(new_sets)
+
+            # Find inner interval step and update reps/weight
+            if step.get("type") == "RepeatGroupDTO":
+                for child in step.get("workoutSteps", []):
+                    if child.get("stepType", {}).get("stepTypeKey") == "interval":
+                        if new_reps is not None:
+                            child["endConditionValue"] = float(new_reps)
+                        if new_weight is not None:
+                            child["weightValue"] = float(new_weight)
+            elif step.get("type") == "ExecutableStepDTO":
+                if new_reps is not None:
+                    step["endConditionValue"] = float(new_reps)
+                if new_weight is not None:
+                    step["weightValue"] = float(new_weight)
+            working_steps.append(step)
+            
+    # Append any brand new exercises at the end
+    for mod in add_new_mods:
+        desc = mod.get("description", "Custom Exercise")
+        sets = mod.get("sets", 1)
+        reps = mod.get("reps", 10)
+        weight = mod.get("weight_kg", 0)
+        
+        interval = build_generic_step(desc, reps, weight)
+        rest = build_rest_step(60)
+        working_steps.append(build_repeat_group(sets, interval, rest))
 
     # --- Insert ramp-up sets where warranted (NSCA guidelines) -----------
     # The first compound exercise (weight >= threshold) gets 1 ramp-up set;
