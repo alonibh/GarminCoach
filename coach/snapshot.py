@@ -224,7 +224,7 @@ def build_snapshot(session: Session) -> str:
             "resting_hr": latest_health.resting_hr,
             "hrv_overnight": latest_health.hrv_overnight,
             "body_battery_high": latest_health.body_battery_high,
-            "body_battery_low": latest_health.body_battery_low,
+            "body_battery_current": latest_health.body_battery_current,
             "stress_avg": latest_health.stress_avg,
             "total_kcal": getattr(latest_health, "total_kcal", None),
             "active_kcal": getattr(latest_health, "active_kcal", None),

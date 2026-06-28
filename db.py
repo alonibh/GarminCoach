@@ -131,6 +131,7 @@ class DailyHealth(Base):
     hrv_baseline_high: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_high: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_low: Mapped[Optional[float]] = mapped_column(Float)
+    body_battery_current: Mapped[Optional[float]] = mapped_column(Float)
     stress_avg: Mapped[Optional[float]] = mapped_column(Float)
     steps: Mapped[Optional[int]] = mapped_column(Integer)
     step_goal: Mapped[Optional[int]] = mapped_column(Integer)
@@ -263,6 +264,7 @@ _DAILY_HEALTH_ADD_COLUMNS = {
     "hrv_baseline_low": "FLOAT",
     "hrv_baseline_high": "FLOAT",
     "step_goal": "INTEGER",
+    "body_battery_current": "FLOAT",
 }
 
 

@@ -301,6 +301,7 @@ def _sync_daily_health(session, day: date) -> None:
             if levels:
                 row.body_battery_high = max(levels)
                 row.body_battery_low = min(levels)
+                row.body_battery_current = levels[-1]  # most recent reading
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
@@ -460,7 +461,7 @@ def run_sync(full: bool = False) -> dict:
     try:
         with get_session() as session:
             coach.generate_daily_suggestion(session)
-            # coach.generate_nutrition_suggestion(session)
+
     except Exception as e:
         summary["errors"].append(f"coach suggestion: {e}")
 

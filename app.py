@@ -480,12 +480,6 @@ def dashboard(request: Request):
             coach_suggestion = suggestion
         else:
             coach_suggestion = CoachMessage(role="suggestion", content="No suggestion generated for today. Please click 'Sync now' to generate one.")
-        
-        nutr = s.query(CoachMessage).filter_by(role="nutrition").order_by(CoachMessage.created_at.desc()).first()
-        if nutr and nutr.created_at and nutr.created_at.date() == today:
-            nutrition_suggestion = nutr
-        else:
-            nutrition_suggestion = CoachMessage(role="nutrition", content="No nutrition suggestion generated for today. Please click 'Sync now' to generate one.")
 
         # All workouts in the past month (no row cap).
         activities = (
@@ -554,7 +548,6 @@ def dashboard(request: Request):
             "sync_summary": sync_runner.status["summary"],
             "active_goal": active_goal,
             "coach_suggestion": coach_suggestion,
-            "nutrition_suggestion": nutrition_suggestion,
         },
     )
 

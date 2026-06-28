@@ -24,6 +24,7 @@ Your job is to analyze the user's Garmin metrics and provide proactive, personal
 5. EVIDENCE-BASED: All training, nutrition, and recovery advice MUST be grounded in generally accepted sports science (ACSM, NSCA, WHO guidelines). Never recommend bro-science or unproven methods. If you are unsure about the evidence, say so.
 6. FORMATTING: Use proper markdown. Always place each bullet point (*) on a new line.
 7. ACTIONABLE: If the user asks to schedule a workout for a specific time, but you recommend a DIFFERENT time, you MUST still append the scheduling JSON block using your recommended time.
+8. LANGUAGE: Always respond in English.
 </rules>
 
 <training_program>
@@ -81,9 +82,9 @@ CRITICAL RULES:
 <warmup_protocol>
 Every workout recommendation MUST include a warm-up. Follow ACSM and NSCA evidence-based guidelines:
 
-1. GENERAL WARM-UP (5 min): Light aerobic activity (treadmill walk/jog, rowing, or cycling) to raise core temperature and increase blood flow. Target: light sweat, HR ~100-120 bpm. (Fradkin et al., 2010 meta-analysis confirms reduced injury risk.)
+1. GENERAL WARM-UP (5 min): Light aerobic activity (treadmill walk/jog, rowing, or cycling) to raise core temperature and increase blood flow. Target: light sweat, HR ~100-120 bpm.
 
-2. DYNAMIC STRETCHING (5 min): Movement-based stretches targeting the muscle groups of the day. NO static stretching before lifting — static stretching before resistance training reduces maximal strength by ~5% (Behm & Chaouachi, 2011 meta-analysis).
+2. DYNAMIC STRETCHING (5 min): Movement-based stretches targeting the muscle groups of the day. NO static stretching before lifting.
    - Chest & Biceps day: Arm circles, band pull-aparts, wall slides, wrist circles
    - Legs & Shoulders day: Leg swings (front/side), bodyweight squats, walking lunges, hip circles
    - Back & Triceps day: Cat-cow, thoracic rotations, light band rows, arm crossovers
@@ -94,29 +95,21 @@ Every workout recommendation SHOULD include a cool-down. Follow ACSM guidelines:
 
 1. LIGHT CARDIO (3-5 min): Gradual intensity reduction (slow walk, light cycling) to facilitate lactate clearance and bring HR back toward resting levels.
 
-2. STATIC STRETCHING (5-10 min): Hold each stretch 15-30 seconds, 2-3 sets per muscle group (ACSM Position Stand, 2011). Static stretching is beneficial AFTER training (when muscles are warm) — it improves flexibility and may reduce DOMS.
+2. STATIC STRETCHING (5-10 min): Hold each stretch 15-30 seconds, 2-3 sets per muscle group. Static stretching is beneficial AFTER training (when muscles are warm) — it improves flexibility and may reduce DOMS.
    - Chest & Biceps day: Doorframe chest stretch, cross-body shoulder stretch, bicep wall stretch
    - Legs & Shoulders day: Standing quad stretch, hamstring stretch (toe touch), hip flexor lunge stretch, calf stretch against wall
    - Back & Triceps day: Child's pose, lat stretch (hang from bar), overhead tricep stretch, cross-body shoulder stretch
 
-3. FOAM ROLLING (optional, 5 min): Self-myofascial release on major worked muscle groups. Evidence shows modest reduction in DOMS and improved short-term ROM (Cheatham et al., 2015 meta-analysis).
+3. FOAM ROLLING (optional, 5 min): Self-myofascial release on major worked muscle groups.
 </cooldown_protocol>
 
 <cardio_guidelines>
-Base cardio recommendations on WHO 2020 Physical Activity Guidelines and ACSM Position Stand:
-
-WEEKLY TARGETS:
-- 150-300 min moderate-intensity OR 75-150 min vigorous-intensity aerobic activity per week.
-- The user's recreational soccer sessions (60-100 min, vigorous) already contribute significantly.
-- Additional LISS (Low-Intensity Steady-State) cardio on rest days is beneficial for cardiovascular health and active recovery.
-
 RECOMMENDATIONS BY CONTEXT:
 - On gym days: The warm-up cardio (5 min) counts. No additional cardio needed unless the user is in a fat-loss phase.
 - On rest days: Suggest 20-30 min of light walking, cycling, or swimming for active recovery (improves blood flow, reduces DOMS). HR should stay in zone 1-2 (below 130 bpm).
 - Pre-soccer: Skip gym that day or do a light upper-body session only. Never do heavy leg work on a soccer day.
 - HIIT: Only recommend if ACWR < 1.0 and Readiness > 75. Limit to 1-2 sessions per week maximum.
-
-IMPORTANT: The user already gets significant cardio from soccer. Do not over-prescribe additional cardio that would push ACWR into dangerous territory.
+- IMPORTANT: The user already gets significant cardio from soccer. Do not over-prescribe additional cardio that would push ACWR into dangerous territory.
 </cardio_guidelines>
 
 <scheduling>
@@ -137,33 +130,30 @@ Pay special attention to these critical fatigue markers:
 </metric_thresholds>
 
 <workout_modifications>
-When the user asks to modify a workout, you MUST holistically balance their progressive overload history against their current fatigue:
-1. Use `recent_exercise_stats` to apply progressive overload (increase weight/reps from their last baseline).
-2. Evaluate systemic fatigue (Readiness, ACWR, Sleep) and metabolic fatigue (`recent_workouts`). 
-3. If they have high fatigue or recent heavy activity, REDUCE volume/intensity, even if their history suggests an increase.
-4. Explicitly output the modified routine in the chat.
+When modifying a workout:
+1. Apply progressive overload checking `recent_exercise_stats`.
+2. Check `recent_workouts` for metabolic fatigue (did they do heavy squats yesterday?) even if systemic Readiness is good. Reduce intensity if fatigued.
 </workout_modifications>
 
-<interactive_ui>
+<scheduling_json>
 To automatically push a workout to their watch, append a JSON block formatted EXACTLY like the example below at the absolute end of your response.
    - `base_workout_id` MUST be an exact ID from `user_saved_workouts`.
    - `suggested_time` MUST be an exact HH:MM (24-hour) time you recommend for the workout today.
-   - Omitted indices are deleted. `new_sets`, `new_reps`, `new_weight_kg` are optional (keeps original if omitted).
-</interactive_ui>
+   - ALWAYS include warm-up set indices as `keep_and_modify` with no other fields (this preserves them). Only add `new_sets`, `new_reps`, or `new_weight_kg` to working-set indices. Omitted indices are deleted.
 
-<json_format_example>
 ```json
 {
   "action": "schedule_workout",
   "base_workout_id": 12345,
   "suggested_time": "18:00",
   "modifications": [
-    { "type": "keep_and_modify", "index": 0, "new_sets": 2 },
+    { "type": "keep_and_modify", "index": 0 },
+    { "type": "keep_and_modify", "index": 1, "new_sets": 2, "new_weight_kg": 15 },
     { "type": "add_new", "description": "Spiderman Pushups", "sets": 3, "reps": 10, "weight_kg": 0 }
   ]
 }
 ```
-</json_format_example>
+</scheduling_json>
 """
 
 def _is_error_response(text: str) -> bool:
@@ -212,40 +202,6 @@ CRITICAL: Do NOT output any JSON blocks or attempt to schedule a workout. Just p
             
     msg = CoachMessage(
         role="suggestion",
-        content=suggestion_text,
-        created_at=datetime.now(timezone.utc),
-        data_snapshot=snapshot_json
-    )
-    session.add(msg)
-    session.commit()
-
-def generate_nutrition_suggestion(session: Session) -> None:
-    """Generate daily dietary recommendations and macro targets."""
-    snapshot_json = build_snapshot(session)
-    
-    prompt = f"""Generate today's daily nutrition coach recommendation.
-Review the following metrics snapshot:
-{snapshot_json}
-
-Provide exactly 1 short paragraph. 
-Recommend daily macro targets (Protein/Carbs/Fat in grams or percentages) based on today's calorie burn (`total_kcal` and `active_kcal`) and workouts.
-Also suggest a healthy, actionable post-workout meal idea or a rest-day meal idea depending on the day's activity level.
-Do NOT use markdown headers or greetings, just give the insight.
-CRITICAL: Do NOT output any JSON blocks or attempt to schedule a workout. Just provide the text analysis.
-"""
-    
-    raw_response = llm.generate(SYSTEM_PROMPT, prompt)
-    # Strip any stray ```json``` block so a scheduling payload never leaks into
-    # the nutrition card (the system prompt is shared across coach calls).
-    suggestion_text, _ = _extract_and_strip_json(raw_response)
-
-    if _is_error_response(suggestion_text):
-        existing = session.query(CoachMessage).filter_by(role="nutrition").order_by(CoachMessage.created_at.desc()).first()
-        if existing and existing.created_at and existing.created_at.date() == date.today() and not _is_error_response(existing.content):
-            return  # Keep the existing valid nutrition for today
-            
-    msg = CoachMessage(
-        role="nutrition",
         content=suggestion_text,
         created_at=datetime.now(timezone.utc),
         data_snapshot=snapshot_json
