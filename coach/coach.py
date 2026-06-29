@@ -187,14 +187,30 @@ def generate_daily_suggestion(session: Session) -> None:
         
     snapshot_json = build_snapshot(session)
     
-    prompt = f"""Generate today's daily coaching suggestion.
+    hour = datetime.now().hour
+    is_evening = hour >= 17
+
+    if is_evening:
+        time_context = """
+This is an EVENING CHECK-IN.
+1. Recovery & Reflection: Briefly summarize today's training (if any) and current recovery (sleep debt, readiness). Give actionable advice for TONIGHT (e.g., go to bed earlier).
+2. Tomorrow's Calendar: A quick glance at tomorrow's events so the user can mentally prepare.
+3. Tomorrow's Goal: Name the next target muscle group in the rotation (e.g., 'Chest & Biceps'). 
+CRITICAL: Do NOT pick a time, do NOT output any JSON blocks, and do NOT attempt to schedule a workout. Just provide the text analysis in exactly 3 short paragraphs. Ignore the scheduling JSON rule in the system prompt.
+"""
+    else:
+        time_context = """
+This is a MORNING BRIEFING.
+Provide exactly 3 short, punchy paragraphs following the strict formatting rules in your system prompt (Condition, Calendar, Routine).
+You MUST output the scheduling JSON block to schedule today's workout.
+"""
+
+    prompt = f"""Generate the coaching message for the user.
 Review the following metrics snapshot:
 {snapshot_json}
 
-Provide exactly 1-2 short, punchy paragraphs. 
-Analyze their exponential sleep debt and EWMA ACWR. Point out any alarming trends or give a green light if their Readiness is primed. If they are in the ACWR Danger Zone (>1.5) or have high sleep debt, explicitly suggest a rest day or active recovery.
+{time_context}
 Do NOT use markdown headers or greetings, just give the insight.
-CRITICAL: Do NOT output any JSON blocks or attempt to schedule a workout. Just provide the text analysis.
 """
     raw_response = llm.generate(SYSTEM_PROMPT, prompt)
     suggestion_text, _ = _extract_and_strip_json(raw_response)
