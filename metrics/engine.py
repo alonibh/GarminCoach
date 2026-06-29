@@ -23,6 +23,8 @@ from datetime import date, timedelta
 from typing import Optional
 
 from db import Activity, DailyHealth, DailyMetrics, Sleep, SyncState, get_session
+from time_utils import get_local_date
+from collections import defaultdict
 
 log = logging.getLogger(__name__)
 
@@ -203,46 +205,33 @@ def choose_load_method(
 # 2. Acute / chronic load + ACWR
 # ---------------------------------------------------------------------------
 
-def compute_daily_loads(
+def generate_ewma_series(
     daily_load_map: dict[date, float],
-    target_day: date,
-) -> tuple[float | None, float | None, float | None]:
-    """Compute (acute_load, chronic_load, acwr) for *target_day* using EWMA.
-
-    EWMA ACWR per Williams et al. 2016: each day's EWMA is
-    ``Load_today × λ + (1 − λ) × EWMA_yesterday`` with ``λ = 2/(N+1)``
-    (λ_acute = 0.25 for N=7, λ_chronic ≈ 0.069 for N=28). Implemented as the
-    equivalent weighted sum starting at i=0 so that *today's* load is included
-    — the previous version started at i=1, leaving every ratio a day stale.
-
-    The exponential weighting also prevents the artificial drop a rolling
-    window shows when a big session ages out.
-    """
-    def _ewma(days: int) -> float:
-        alpha = 2.0 / (days + 1)
-        total = 0.0
-        weight_sum = 0.0
-        # Look back 3x the window to capture ~95% of the exponential curve.
-        lookback = days * 3
-
-        # i=0 is today (weight 1.0), i=1 yesterday, …
-        for i in range(0, lookback + 1):
-            d = target_day - timedelta(days=i)
-            load = daily_load_map.get(d, 0.0)
-            w = (1.0 - alpha) ** i
-            total += load * w
-            weight_sum += w
-
-        return round(total / weight_sum, 1) if weight_sum > 0 else 0.0
-
-    acute = _ewma(ACUTE_DAYS)
-    chronic = _ewma(CHRONIC_DAYS)
-
-    if chronic == 0.0:
-        return acute, chronic, None
-
-    acwr = round(acute / chronic, 2)
-    return acute, chronic, acwr
+    start_date: date,
+    end_date: date,
+    days: int
+) -> dict[date, float]:
+    """Compute sequential EWMA ACWR over a date range.
+    Uses O(1) running updates rather than O(N^2) reverse lookbacks."""
+    alpha = 2.0 / (days + 1)
+    ewma_series = {}
+    
+    current_ewma = 0.0
+    
+    # We should ideally start seeding from earlier than start_date to let the EWMA warm up,
+    # but the caller passes the data_start as start_date to allow this warmup.
+    current_date = start_date
+    while current_date <= end_date:
+        load = daily_load_map.get(current_date, 0.0)
+        
+        # Today's load is fully included (i=0 weight 1.0 logic from previous)
+        current_ewma = (load * alpha) + (current_ewma * (1.0 - alpha))
+        
+        # We round for storage to match previous behaviour
+        ewma_series[current_date] = round(current_ewma, 1)
+        current_date += timedelta(days=1)
+        
+    return ewma_series
 
 
 # ---------------------------------------------------------------------------
@@ -400,22 +389,26 @@ def _mean_sd(vals: list[float]) -> tuple[float | None, float | None]:
 
 
 def _baselines(
-    health_rows: list[DailyHealth],
+    health_by_day: dict[date, DailyHealth],
     target_day: date,
 ) -> tuple[float | None, float | None, float | None, float | None]:
     """Personal HRV/RHR baseline over the READINESS_BASELINE_DAYS window before
     *target_day* (Plews et al. 2012: a 7-day rolling window tracks acute
     readiness, not long-term fitness drift). Returns
     (hrv_mean, hrv_sd, rhr_mean, rhr_sd)."""
-    cutoff = target_day - timedelta(days=READINESS_BASELINE_DAYS)
     hrv_vals: list[float] = []
     rhr_vals: list[float] = []
-    for h in health_rows:
-        if cutoff <= h.day < target_day:
+    
+    # O(7) lookup instead of O(N) list scan
+    for i in range(1, READINESS_BASELINE_DAYS + 1):
+        d = target_day - timedelta(days=i)
+        h = health_by_day.get(d)
+        if h:
             if h.hrv_overnight is not None:
                 hrv_vals.append(h.hrv_overnight)
             if h.resting_hr is not None:
                 rhr_vals.append(h.resting_hr)
+                
     hrv_mean, hrv_sd = _mean_sd(hrv_vals)
     rhr_mean, rhr_sd = _mean_sd(rhr_vals)
     return hrv_mean, hrv_sd, rhr_mean, rhr_sd
@@ -427,7 +420,7 @@ def recompute_daily_metrics(session) -> None:
     Reads Activity, DailyHealth, and Sleep tables; writes to DailyMetrics.
     Called from ``recompute_all()``.
     """
-    today = date.today()
+    today = get_local_date()
     window_start = today - timedelta(days=RECOMPUTE_WINDOW_DAYS)
     # We need data going back further for baselines and chronic load.
     data_start = today - timedelta(days=RECOMPUTE_WINDOW_DAYS + CHRONIC_DAYS * 3)
@@ -454,24 +447,29 @@ def recompute_daily_metrics(session) -> None:
 
     # --- Pre-compute lookups -----------------------------------------------
     # Daily load map: sum of training_load for all activities on each day.
-    daily_load: dict[date, float] = {}
+    daily_load: dict[date, float] = defaultdict(float)
     for act in activities:
         if act.start_time and act.training_load:
-            d = act.start_time.date()
-            daily_load[d] = daily_load.get(d, 0.0) + act.training_load
+            daily_load[act.start_time.date()] += act.training_load
 
     # Health / sleep by day.
     health_by_day: dict[date, DailyHealth] = {h.day: h for h in health_rows}
     sleep_by_day: dict[date, Sleep] = {s.day: s for s in sleep_rows}
 
+    # Generate the sequential O(1) EWMA series
+    acute_series = generate_ewma_series(daily_load, data_start, today, ACUTE_DAYS)
+    chronic_series = generate_ewma_series(daily_load, data_start, today, CHRONIC_DAYS)
+
     # --- Compute each day in the recompute window --------------------------
     day = window_start
     while day <= today:
         # ACWR
-        acute, chronic, acwr = compute_daily_loads(daily_load, day)
+        acute = acute_series.get(day, 0.0)
+        chronic = chronic_series.get(day, 0.0)
+        acwr = round(acute / chronic, 2) if chronic > 0.0 else None
 
         # Personal HRV/RHR baselines for readiness (7-day rolling mean + SD).
-        hrv_mean, hrv_sd, rhr_mean, rhr_sd = _baselines(health_rows, day)
+        hrv_mean, hrv_sd, rhr_mean, rhr_sd = _baselines(health_by_day, day)
 
         # Today's health + sleep values.
         h = health_by_day.get(day)
@@ -517,7 +515,7 @@ def _user_age(session) -> float | None:
         return None
     try:
         b = date.fromisoformat(bd.value[:10])
-        today = date.today()
+        today = get_local_date()
         return today.year - b.year - ((today.month, today.day) < (b.month, b.day))
     except Exception:
         return None

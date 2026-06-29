@@ -1,0 +1,100 @@
+{
+  "2026-06-27": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  },
+  "2026-06-26": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  },
+  "2026-06-25": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  },
+  "2026-06-24": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  },
+  "2026-06-23": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.4
+  },
+  "2026-06-22": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.4
+  },
+  "2026-06-21": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.4
+  },
+  "2026-06-20": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.4
+  },
+  "2026-06-19": {
+    "readiness": 93.0,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.4
+  },
+  "2026-06-18": {
+    "readiness": 92.0,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.4
+  },
+  "2026-06-17": {
+    "readiness": 88.0,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.3
+  },
+  "2026-06-16": {
+    "readiness": 93.0,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  },
+  "2026-06-15": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  },
+  "2026-06-14": {
+    "readiness": null,
+    "acute": 0.0,
+    "chronic": 0.0,
+    "acwr": null,
+    "sleep_debt": 0.0
+  }
+}

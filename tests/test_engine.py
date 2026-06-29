@@ -23,7 +23,7 @@ from metrics.engine import (
     acwr_label,
     banister_trimp,
     choose_load_method,
-    compute_daily_loads,
+    generate_ewma_series,
     compute_readiness,
     compute_sleep_debt,
     compute_training_load,
@@ -144,8 +144,15 @@ class TestChooseLoadMethod:
 class TestDailyLoads:
     def test_steady_load_acwr_near_one(self):
         today = date(2025, 6, 10)
+        start = today - timedelta(days=40)
         load_map = {today - timedelta(days=i): 10.0 for i in range(0, 40)}
-        acute, chronic, acwr = compute_daily_loads(load_map, today)
+        acute_series = generate_ewma_series(load_map, start, today, 7)
+        chronic_series = generate_ewma_series(load_map, start, today, 28)
+        
+        acute = acute_series.get(today, 0.0)
+        chronic = chronic_series.get(today, 0.0)
+        acwr = round(acute / chronic, 2)
+        
         assert acute == 10.0
         # Chronic EWMA hasn't fully converged over 40 days; ~0.9–1.1 ratio.
         assert 0.9 <= acwr <= 1.1
@@ -154,16 +161,19 @@ class TestDailyLoads:
         # A hard session TODAY must move acute load immediately (regression
         # test for the prior off-by-one that excluded i=0).
         today = date(2025, 6, 10)
-        with_today = compute_daily_loads({today: 100.0}, today)[0]
-        without = compute_daily_loads({today - timedelta(days=1): 100.0}, today)[0]
+        start = today - timedelta(days=1)
+        
+        with_today = generate_ewma_series({today: 100.0}, start, today, 7).get(today, 0.0)
+        without = generate_ewma_series({today - timedelta(days=1): 100.0}, start, today, 7).get(today, 0.0)
         assert with_today > without
 
     def test_all_rest_days(self):
         today = date(2025, 6, 10)
-        acute, chronic, acwr = compute_daily_loads({}, today)
+        start = today - timedelta(days=10)
+        acute = generate_ewma_series({}, start, today, 7).get(today, 0.0)
+        chronic = generate_ewma_series({}, start, today, 28).get(today, 0.0)
         assert acute == 0.0
         assert chronic == 0.0
-        assert acwr is None  # division by zero → None
 
 
 # ---------------------------------------------------------------------------

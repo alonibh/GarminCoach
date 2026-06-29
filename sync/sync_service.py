@@ -118,7 +118,8 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
 
     # The activities_by_date endpoint doesn't actually include RPE/Feel for historical
     # workouts. We need to fetch the full activity details to reliably get them.
-    if new_rpe is None or new_feel is None:
+    # To avoid N+1 HTTP calls on every sync, we only fetch if we don't already have it.
+    if (new_rpe is None or new_feel is None) and (act.rpe is None or act.feel is None):
         try:
             full_act = client.api.get_activity(act_id)
             if full_act and "summaryDTO" in full_act:
@@ -127,8 +128,12 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
         except Exception as e:
             logger.warning("Failed to fetch full activity %s for RPE extraction: %s", act_id, e)
 
-    act.rpe = new_rpe
-    act.feel = new_feel
+    # Only update if we found something new, otherwise preserve existing
+    if new_rpe is not None:
+        act.rpe = new_rpe
+    if new_feel is not None:
+        act.feel = new_feel
+        
     session.add(act)
     return act_id
 

@@ -1,0 +1,19 @@
+Found 16 activities.
+Activity 23408856615 (🏋️ Legs & Shoulders @ 18:00):
+  Summary RPE: None, Feel: None
+  Full RPE: None, Feel: None
+  [!] Found 'rpe' or 'feel' or 'eval' somewhere in the JSON string.
+Activity 23394616071 (Back & Triceps):
+  Summary RPE: None, Feel: None
+  Full RPE: None, Feel: None
+  [!] Found 'rpe' or 'feel' or 'eval' somewhere in the JSON string.
+Activity 23365898180 (Yoga):
+  Summary RPE: None, Feel: None
+  Full RPE: None, Feel: None
+Activity 23353694374 (Chest & Biceps):
+  Summary RPE: None, Feel: None
+  Full RPE: None, Feel: None
+  [!] Found 'rpe' or 'feel' or 'eval' somewhere in the JSON string.
+Activity 23319614423 (Yoga):
+  Summary RPE: None, Feel: None
+  Full RPE: None, Feel: None

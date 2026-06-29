@@ -166,14 +166,22 @@ def _is_error_response(text: str) -> bool:
 
 def _extract_and_strip_json(text: str) -> tuple[str, str | None]:
     """Finds a ```json ... ``` block, parses it, and returns (stripped_text, json_str)."""
-    match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
-    if not match:
-        return text, None
+    match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
+    if match:
+        json_str = match.group(1)
+        stripped = text[:match.start()].strip() + "\n\n" + text[match.end():].strip()
+    else:
+        # Fallback: find the first { and last }
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            json_str = text[start:end+1]
+            stripped = text.replace(json_str, "").replace("```json", "").replace("```", "").strip()
+        else:
+            return text, None
         
     try:
-        json_str = match.group(1)
         json.loads(json_str)  # Verify validity
-        stripped = text[:match.start()].strip() + "\n\n" + text[match.end():].strip()
         return stripped.strip(), json_str
     except Exception as e:
         logger.error(f"Failed to parse intercepted JSON: {e}")
@@ -221,14 +229,16 @@ Do NOT use markdown headers or greetings, just give the insight.
     suggestion_text, _ = _extract_and_strip_json(raw_response)
     
     if _is_error_response(suggestion_text):
+        from time_utils import get_local_date
         existing = session.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
-        if existing and existing.created_at and existing.created_at.date() == date.today() and not _is_error_response(existing.content):
+        if existing and existing.created_at and existing.created_at.date() == get_local_date() and not _is_error_response(existing.content):
             return  # Keep the existing valid suggestion for today
             
+    from time_utils import get_local_now
     msg = CoachMessage(
         role="suggestion",
         content=suggestion_text,
-        created_at=datetime.now(timezone.utc),
+        created_at=get_local_now(),
         data_snapshot=snapshot_json
     )
     session.add(msg)
@@ -236,7 +246,7 @@ Do NOT use markdown headers or greetings, just give the insight.
     
     try:
         from notify.telegram import send_message
-        greeting = "🌅 *Morning Briefing*" if datetime.now().hour < 12 else "🌙 *Evening Check-in*"
+        greeting = "🌅 *Morning Briefing*" if get_local_now().hour < 12 else "🌙 *Evening Check-in*"
         send_message(f"{greeting}\n\n{suggestion_text}")
     except Exception as e:
         import logging
