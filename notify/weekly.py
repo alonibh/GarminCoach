@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 
 def send_weekly_summary() -> None:
     """Run on Sunday evening to generate a weekly summary."""
+    from time_utils import get_local_date
     try:
         with SessionLocal() as db:
-            today = date.today()
+            today = get_local_date()
             seven_days_ago = today - timedelta(days=7)
             
             # Get workouts from the last 7 days

@@ -26,18 +26,20 @@ def schedule_pre_workout_reminder(payload: dict[str, Any]) -> None:
         hour, minute = map(int, time_str.split(":"))
         
         # If compiled in the evening, the target date is tomorrow
-        if datetime.now().hour >= 17:
-            target_date = date.today() + timedelta(days=1)
+        from time_utils import get_local_now, get_local_date, get_local_tz
+        if get_local_now().hour >= 17:
+            target_date = get_local_date() + timedelta(days=1)
         else:
-            target_date = date.today()
+            target_date = get_local_date()
             
-        workout_time = datetime(
+        local_tz = get_local_tz()
+        workout_time = local_tz.localize(datetime(
             target_date.year, target_date.month, target_date.day, hour, minute
-        )
+        ))
         
         reminder_time = workout_time - timedelta(hours=1)
         
-        if reminder_time > datetime.now():
+        if reminder_time > get_local_now():
             sched = start_scheduler()
             if sched:
                 sched.add_job(

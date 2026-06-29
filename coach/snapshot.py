@@ -136,15 +136,17 @@ def build_snapshot(session: Session) -> str:
     constraints = goal_row.custom_input if goal_row else "None."
     
     from coach.calendar import get_upcoming_schedule
+    from time_utils import get_local_now, get_local_tz
     
     try:
-        local_tz = pytz.timezone(os.getenv("USER_TIMEZONE", "Asia/Jerusalem"))
-        local_time = datetime.now(local_tz)
+        local_time = get_local_now()
+        local_tz = get_local_tz()
     except Exception:
         local_time = datetime.now()
+        local_tz = "UTC"
         
     snapshot = {
-        "current_local_time": local_time.strftime("%A, %B %d, %Y %H:%M"),
+        "current_local_time": f"{local_time.strftime('%A, %B %d, %Y %H:%M')} (Timezone: {local_tz})",
         "user_goal": goal_text,
         "user_constraints": constraints,
         "upcoming_schedule_7_days": get_upcoming_schedule(days=7)

@@ -187,7 +187,8 @@ def generate_daily_suggestion(session: Session) -> None:
         
     snapshot_json = build_snapshot(session)
     
-    hour = datetime.now().hour
+    from time_utils import get_local_now
+    hour = get_local_now().hour
     is_evening = hour >= 17
 
     if is_evening:
