@@ -33,6 +33,19 @@ app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
 
+import re
+
+def clean_workout_name(name: str) -> str:
+    if not name:
+        return ""
+    # Remove common emojis at start of name (e.g. "🏋️ ")
+    name = re.sub(r'^[^\w\s]+\s*', '', name)
+    # Remove time suffix (e.g. " @ 18:00")
+    name = re.sub(r'\s*@\s*\d{1,2}:\d{2}\s*$', '', name)
+    return name.strip()
+
+templates.env.filters["clean_name"] = clean_workout_name
+
 
 import hashlib
 import hmac
