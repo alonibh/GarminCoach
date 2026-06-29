@@ -273,8 +273,28 @@ Do NOT use markdown headers or greetings, just give the insight.
     
     try:
         from notify.telegram import send_message
-        greeting = "🌅 *Morning Briefing*" if get_local_now().hour < 12 else "🌙 *Evening Check-in*"
-        send_message(f"{greeting}\n\n{suggestion_text}")
+        now = get_local_now()
+        is_morning = now.hour < 12
+        greeting = "🌅 *Morning Briefing*" if is_morning else "🌙 *Evening Check-in*"
+        
+        # Check if we already generated a valid suggestion for this period today.
+        # If so, we still save the fresh insight to the DB for the dashboard,
+        # but we DO NOT spam the user's phone again.
+        from time_utils import get_local_date
+        today_date = get_local_date()
+        recent = session.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).limit(10).all()
+        
+        already_pushed = False
+        for s in recent:
+            if s.id != msg.id and s.created_at and s.created_at.date() == today_date:
+                if not _is_error_response(s.content):
+                    was_morning = s.created_at.hour < 12
+                    if was_morning == is_morning:
+                        already_pushed = True
+                        break
+                        
+        if not already_pushed:
+            send_message(f"{greeting}\n\n{suggestion_text}")
     except Exception as e:
         import logging
         logging.error(f"Failed to send proactive Telegram notification: {e}")
