@@ -63,7 +63,6 @@ def test_running_workouts_excluded(session):
     assert "Chest & Biceps" in names
     assert "Legs & Shoulders" in names
     assert all("ריצה" not in n for n in names)  # no running templates
-    assert all(w["sport"] == "strength_training" for w in snap["user_saved_workouts"])
 
 
 def test_all_null_metrics_block_dropped(session):

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pytz
+from collections import Counter
 from datetime import date, datetime
 
 from sqlalchemy.orm import Session
@@ -68,7 +69,8 @@ def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
                 sets = session.query(ExerciseSet).filter(
                     ExerciseSet.activity_id == act.id,
                     ((ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex)),
-                    ExerciseSet.weight_kg > 0
+                    ExerciseSet.weight_kg > 0,
+                    ExerciseSet.reps.isnot(None)
                 ).all()
                 
                 if sets:
@@ -87,7 +89,7 @@ def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
                     time_str = "today" if days_ago == 0 else f"{days_ago} days ago"
                     
                     e1rm_str = f" (Est. 1RM: {round(e1rm, 1)}kg)" if best_set.reps and 1 <= best_set.reps <= 12 else ""
-                    ex_history.append(f"{best_set.weight_kg}kg for {best_set.reps} reps{e1rm_str} ({time_str})")
+                    ex_history.append(f"{best_set.weight_kg}kg x{best_set.reps}{e1rm_str} ({time_str})")
             
             if ex_history:
                 stats[ex] = ex_history
@@ -169,14 +171,8 @@ def build_snapshot(session: Session) -> str:
             "weight_kg": float(weight.value) if weight and weight.value else "unknown"
         }
         
-    # Long-term Fitness Metrics
-    vo2max = session.get(MetricSnapshot, "vo2max")
-    fitness_age = session.get(MetricSnapshot, "fitness_age")
-    if vo2max or fitness_age:
-        snapshot["long_term_fitness"] = {
-            "vo2max": vo2max.value if vo2max else "unknown",
-            "fitness_age": fitness_age.value if fitness_age else "unknown"
-        }
+    # Long-term Fitness Metrics (vo2max, fitness_age) omitted — not used
+    # by prompt rules for workout decisions.
     
     today = date.today()
 
@@ -223,7 +219,6 @@ def build_snapshot(session: Session) -> str:
             "data_as_of": _staleness(latest_health.day),
             "resting_hr": latest_health.resting_hr,
             "hrv_overnight": latest_health.hrv_overnight,
-            "body_battery_high": latest_health.body_battery_high,
             "body_battery_current": latest_health.body_battery_current,
             "stress_avg": latest_health.stress_avg,
             "total_kcal": getattr(latest_health, "total_kcal", None),
@@ -244,8 +239,6 @@ def build_snapshot(session: Session) -> str:
             "data_as_of": _staleness(latest_sleep.day),
             "total_hours": round((latest_sleep.total_s or 0) / 3600, 1),
             "sleep_score": latest_sleep.score,
-            "respiration_avg": getattr(latest_sleep, "respiration_avg", None),
-            "sleep_stress_avg": getattr(latest_sleep, "sleep_stress_avg", None),
         }
         pruned = _prune_block(block, keep_keys=("date",))
         if pruned:
@@ -261,6 +254,7 @@ def build_snapshot(session: Session) -> str:
         
     for a in recent_activities:
         w = {
+            "name": a.name,
             "type": a.activity_type,
             "start_time": a.start_time.isoformat() if a.start_time else None,
             "duration_minutes": round(a.duration_s / 60) if a.duration_s else 0,
@@ -269,9 +263,16 @@ def build_snapshot(session: Session) -> str:
         }
         if a.activity_type == "strength_training":
             sets = session.query(ExerciseSet).filter_by(activity_id=a.id).all()
-            if sets:
+            valid_sets = [s for s in sets if s.weight_kg and s.reps is not None]
+            if valid_sets:
+                # Group identical (exercise, weight, reps) into "3×10 @ 15.0kg"
+                counts = Counter(
+                    (_humanize_ex(s.exercise_category), s.weight_kg, s.reps)
+                    for s in valid_sets
+                )
                 w["exercises"] = [
-                    f"{_humanize_ex(s.exercise_category)}: {s.reps} reps @ {s.weight_kg}kg" for s in sets if s.weight_kg
+                    f"{ex}: {cnt}\u00d7{reps} @ {wt}kg"
+                    for (ex, wt, reps), cnt in counts.items()
                 ]
         workouts.append(w)
         
@@ -357,7 +358,6 @@ def build_snapshot(session: Session) -> str:
             user_workouts_data.append({
                 "id": w.workout_id,
                 "name": w.name,
-                "sport": w.sport_type,
                 "steps": parsed
             })
 
