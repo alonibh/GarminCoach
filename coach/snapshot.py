@@ -369,12 +369,19 @@ def build_snapshot(session: Session) -> str:
 
         # Days since each routine was last trained — directly serves the
         # "pick the least-recently-trained muscle group" rule in the prompt.
-        days_since = {
-            k: v for k, v in _days_since_last_trained(session, routine_exercises).items()
-            if v is not None
-        }
+        days_since = _days_since_last_trained(session, routine_exercises)
         if days_since:
-            snapshot["days_since_last_trained"] = days_since
+            history_log = []
+            for routine_name, days in days_since.items():
+                if days is None:
+                    history_log.append(f"'{routine_name}' has never been trained in recorded history.")
+                elif days == 0:
+                    history_log.append(f"'{routine_name}' was trained TODAY (0 days ago).")
+                elif days == 1:
+                    history_log.append(f"'{routine_name}' was trained YESTERDAY (1 day ago).")
+                else:
+                    history_log.append(f"'{routine_name}' was trained {days} days ago.")
+            snapshot["workout_history_log"] = history_log
 
         # Inject the progressive-overload history map.
         if unique_exercises:

@@ -102,7 +102,7 @@ def test_days_since_last_trained(session):
     session.commit()
     from coach.snapshot import build_snapshot
     snap = json.loads(build_snapshot(session))
-    dsl = snap.get("days_since_last_trained", {})
-    assert dsl.get("Chest & Biceps") == 3
-    # Legs never trained -> omitted (None values filtered out).
-    assert "Legs & Shoulders" not in dsl
+    dsl = snap.get("workout_history_log", [])
+    assert "'Chest & Biceps' was trained 3 days ago." in dsl
+    # Legs never trained -> None values now formatted as string.
+    assert "'Legs & Shoulders' has never been trained in recorded history." in dsl

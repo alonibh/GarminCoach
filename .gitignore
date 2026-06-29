@@ -29,3 +29,4 @@ _login.py
 *.db-journal
 *.db-wal
 *.db-shm
+*.tar.gz

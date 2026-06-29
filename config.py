@@ -65,3 +65,8 @@ if APP_USERNAME.strip() and SESSION_SECRET.strip() == _DEFAULT_SESSION_SECRET:
         '  python -c "import secrets; print(secrets.token_hex(32))"\n'
         "and set it in .env, or leave APP_USERNAME blank to disable auth."
     )
+
+# --- Telegram Notifications ---
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "super-secret-telegram-string")

@@ -54,7 +54,7 @@ _MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
 # runs journalctl and returns logs (emails, stack traces), so it must require a
 # session cookie. /calendar/coach.ics stays public because external calendar
 # apps fetch it without cookies (it carries no secrets).
-_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics")
+_PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/telegram/webhook")
 
 
 def _sign_session(username: str) -> str:
@@ -1064,7 +1064,7 @@ def get_chat_page(request: Request):
 def post_chat_page(request: Request, message: str = Form(...)):
     """Handle a new chat message."""
     with get_session() as session:
-        handle_chat(session, message)
+        _, _ = handle_chat(session, message)
     return RedirectResponse(url="/chat", status_code=303)
 
 
@@ -1293,6 +1293,105 @@ def coach_calendar_feed():
             "Expires": "0"
         }
     )
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Handle incoming messages from Telegram."""
+    
+    # 1. Verify Secret Token
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if secret != config.TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    try:
+        data = await request.json()
+        # If it's a callback query from an inline button
+        if "callback_query" in data:
+            callback = data["callback_query"]
+            callback_id = callback.get("id")
+            chat_id = callback.get("message", {}).get("chat", {}).get("id")
+            message_id = callback.get("message", {}).get("message_id")
+            callback_data = callback.get("data", "")
+            
+            from notify import telegram
+            telegram.answer_callback_query(callback_id)
+            
+            if str(chat_id) == config.TELEGRAM_CHAT_ID:
+                if callback_data.startswith("approve_workout_"):
+                    msg_id = int(callback_data.split("_")[-1])
+                    with get_session() as db:
+                        from db import CoachMessage
+                        msg = db.get(CoachMessage, msg_id)
+                        if msg and msg.pending_action_json:
+                            import json
+                            from coach.garmin_compiler import compile_and_schedule
+                            payload = json.loads(msg.pending_action_json)
+                            success = compile_and_schedule(db, payload)
+                            msg.pending_action_json = None
+                            
+                            if success:
+                                msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
+                                telegram.edit_message_text("✅ *Workout successfully approved and scheduled!*", chat_id=str(chat_id), message_id=message_id)
+                            else:
+                                msg.content += "\n\n❌ *Failed to schedule workout on Garmin.*"
+                                telegram.edit_message_text("❌ *Failed to schedule workout on Garmin.*", chat_id=str(chat_id), message_id=message_id)
+                            db.commit()
+                
+                elif callback_data.startswith("reject_workout_"):
+                    msg_id = int(callback_data.split("_")[-1])
+                    with get_session() as db:
+                        from db import CoachMessage
+                        msg = db.get(CoachMessage, msg_id)
+                        if msg:
+                            msg.pending_action_json = None
+                            db.commit()
+                    telegram.edit_message_text("❌ *Workout suggestion dismissed.*", chat_id=str(chat_id), message_id=message_id)
+            
+            return {"status": "ok"}
+            
+        # Regular text message
+        message = data.get("message", {})
+        chat_id = message.get("chat", {}).get("id")
+        text = message.get("text")
+        
+        # We only care about text messages from the authorized chat
+        if text and str(chat_id) == config.TELEGRAM_CHAT_ID:
+            from coach.coach import handle_chat
+            from notify import telegram
+            
+            telegram.send_chat_action(str(chat_id), "typing")
+            
+            # Pass to AI Coach
+            with get_session() as db:
+                response_text, asst_msg = handle_chat(db, text)
+                
+                reply_markup = None
+                if asst_msg.pending_action_json:
+                    reply_markup = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "✅ Approve & Schedule", "callback_data": f"approve_workout_{asst_msg.id}"},
+                                {"text": "❌ Dismiss", "callback_data": f"reject_workout_{asst_msg.id}"}
+                            ]
+                        ]
+                    }
+            
+            # Send response back to Telegram
+            telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)
+            
+    except Exception as e:
+        import logging
+        logging.error(f"Telegram webhook failed: {e}")
+        try:
+            from notify import telegram
+            chat_id = (data.get("message") or {}).get("chat", {}).get("id")
+            if chat_id and str(chat_id) == config.TELEGRAM_CHAT_ID:
+                telegram.send_message(f"⚠️ *Coach Error:*\nAn error occurred while processing your request:\n`{str(e)}`\n\nThis could be a temporary issue with the AI provider (e.g. Rate Limit). Please try again later.", chat_id=str(chat_id))
+        except Exception:
+            pass
+        
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
