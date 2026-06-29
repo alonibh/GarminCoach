@@ -13,6 +13,10 @@
     <span><b>{{ activity.calories|round|int if activity.calories else '—' }}</b> cal</span>
     <span><b>{{ activity.avg_hr|round|int if activity.avg_hr else '—' }}</b> avg HR</span>
     <span><b>{{ activity.max_hr|round|int if activity.max_hr else '—' }}</b> max HR</span>
+    {% if activity.rpe %}<span><b>{{ activity.rpe // 10 }}/10</b> RPE</span>{% endif %}
+    {% if activity.feel is not none %}
+      <span><b>{% if activity.feel >= 75 %}Very Strong{% elif activity.feel >= 50 %}Strong{% elif activity.feel >= 25 %}Normal{% elif activity.feel > 0 %}Weak{% else %}Very Weak{% endif %}</b> Feel</span>
+    {% endif %}
   </div>
 </div>
 
