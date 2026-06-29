@@ -26,7 +26,7 @@ def check_and_notify_rules(metrics: DailyMetrics | None) -> None:
     if acwr is not None and readiness is not None:
         if acwr > 1.5 or readiness < 40:
             messages.append(
-                f"🛑 *High Load Alert*\nYour ACWR is {round(acwr, 2)} and Readiness is {round(readiness, 1)}. "
+                f"🛑 *High Load Alert*\nYour training load is very high and Readiness is {round(readiness, 1)}. "
                 "You are entering the over-training zone. Take it easy over the next 48 hours."
             )
             

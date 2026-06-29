@@ -48,6 +48,7 @@ Data for the past 7 days:
 
 Format as a single paragraph. No greetings, just the summary.
 Use emojis sparingly but effectively.
+CRITICAL: Do NOT output the numeric value for ACWR in the summary. Instead, translate it to a verbal description (e.g., 'optimal load', 'undertraining', 'high load').
 """
             llm = LLMClient()
             summary_text = llm.generate("You are an expert fitness coach.", prompt)
