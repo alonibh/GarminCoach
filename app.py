@@ -715,6 +715,8 @@ def workout_detail(request: Request, activity_id: int):
             "avg_hr": act.avg_hr,
             "max_hr": act.max_hr,
             "is_strength": is_strength,
+            "rpe": act.rpe,
+            "feel": act.feel,
         }
 
         exercises: list[dict] = []
