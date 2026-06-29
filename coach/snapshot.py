@@ -339,8 +339,8 @@ def build_snapshot(session: Session) -> str:
 
     # Only strength routines are relevant to gym coaching. Running templates
     # (cardio) are handled separately and were bloating the payload massively.
-    # Exclude coach-created workouts (starting with the emoji prefix) to prevent
-    # the AI from getting confused by its own scheduled workouts.
+    # Exclude coach-created workouts (starting with the emoji prefix) — those
+    # go into a separate "scheduled_workouts" section below.
     from coach.garmin_compiler import _COACH_PREFIX
     saved_workouts = (
         session.query(Workout)
@@ -388,6 +388,26 @@ def build_snapshot(session: Session) -> str:
             raw_stats = _get_recent_exercise_stats(session, unique_exercises)
             if raw_stats:
                 snapshot["recent_exercise_stats"] = {_humanize_ex(k): v for k, v in raw_stats.items()}
+
+    # 6. Scheduled (planned, NOT completed) workouts — coach-created workouts
+    # that have been pushed to Garmin but haven't been performed yet.
+    # These are kept separate so the AI knows they are PLANNED, not completed.
+    scheduled_workouts = (
+        session.query(Workout)
+        .filter(Workout.sport_type == "strength_training")
+        .filter(Workout.name.startswith(_COACH_PREFIX))
+        .order_by(Workout.created_at.desc())
+        .limit(3)
+        .all()
+    )
+    if scheduled_workouts:
+        snapshot["scheduled_workouts_NOT_completed"] = [
+            {
+                "name": w.name.replace(_COACH_PREFIX, "").strip(),
+                "created_at": w.created_at.isoformat() if w.created_at else None,
+            }
+            for w in scheduled_workouts
+        ]
 
     return _serialize_with_guard(snapshot)
 

@@ -29,10 +29,6 @@ Feature backlog for the GarminCoach app. Priorities may shift as we go.
 
 ## 🟢 Phase 3 — Smart Features
 
-- [ ] **Google Calendar integration (read & write)**
-  - Read the user's calendar to find free time slots for workouts.
-  - Write scheduled workouts directly into the calendar as events.
-  - The AI coach can suggest "You have a free 45-min window at 6pm on Tuesday — want me to schedule a run?"
 
 - [ ] **Nutrition recommendations**
   - Post-workout meal suggestions based on workout type, intensity, and goals.
