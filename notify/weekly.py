@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import func
 
 from db import SessionLocal, Activity, DailyMetrics
-from coach.llm import LLMClient
+from coach.llm import generate
 from notify.telegram import send_message
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,7 @@ Format as a single paragraph. No greetings, just the summary.
 Use emojis sparingly but effectively.
 CRITICAL: Do NOT output the numeric value for ACWR in the summary. Instead, translate it to a verbal description (e.g., 'optimal load', 'undertraining', 'high load').
 """
-            llm = LLMClient()
-            summary_text = llm.generate("You are an expert fitness coach.", prompt)
+            summary_text = generate("You are an expert fitness coach.", prompt)
             
             msg = f"📊 *Weekly Summary*\n\n{summary_text}"
             send_message(msg)
