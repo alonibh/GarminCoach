@@ -15,7 +15,7 @@
     <span><b>{{ activity.max_hr|round|int if activity.max_hr else '—' }}</b> max HR</span>
     {% if activity.rpe %}<span><b>{{ activity.rpe // 10 }}/10</b> RPE</span>{% endif %}
     {% if activity.feel is not none %}
-      <span><b>{% if activity.feel >= 75 %}Very Strong{% elif activity.feel >= 50 %}Strong{% elif activity.feel >= 25 %}Normal{% elif activity.feel > 0 %}Weak{% else %}Very Weak{% endif %}</b> Feel</span>
+      <span><b>{% if activity.feel >= 100 %}Very Strong{% elif activity.feel >= 75 %}Strong{% elif activity.feel >= 50 %}Normal{% elif activity.feel >= 25 %}Weak{% else %}Very Weak{% endif %}</b> Feel</span>
     {% endif %}
   </div>
 </div>
