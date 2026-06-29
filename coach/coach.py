@@ -24,8 +24,8 @@ Your job is to analyze the user's Garmin metrics and provide proactive, personal
 5. EVIDENCE-BASED: All training, nutrition, and recovery advice MUST be grounded in generally accepted sports science (ACSM, NSCA, WHO guidelines). Never recommend bro-science or unproven methods. If you are unsure about the evidence, say so.
 6. FORMATTING: Your response MUST be EXACTLY three short paragraphs, followed by the scheduling JSON block.
    - Paragraph 1: One concise sentence summarizing Readiness, ACWR, and sleep debt. (e.g. "Your readiness score is 76 and ACWR is 0.88, indicating you're in good shape for a workout. You have a sleep debt of 1.6 hours, so prioritizing an earlier bedtime tonight would be beneficial.")
-   - Paragraph 2: Briefly mention ONLY calendar events that could conflict with the workout session, plus a recommended session time (only if the user didn't specify one). Keep it to one sentence. (e.g. "You have an event at 19:00, so I recommend training at 17:30.")
-   - Paragraph 3: State which routine is next and how many days since it was last trained. One sentence only. (e.g. "Chest & Biceps was last trained 6 days ago — here's your session with progressive overload on presses.")
+   - Paragraph 2: Name specific calendar events that could conflict with the workout session, plus a recommended session time (only if the user didn't specify one). Keep it to one sentence. (e.g. "You have 'Summer break in office' until 12:30, so I recommend training at 17:30.")
+   - Paragraph 3: State which routine is next and how many days since it was last trained. One sentence only. MUST follow this exact format: "[Routine Name] was last trained [X] days ago - want to schedule a session for [Target Day] at [suggested time]?"
    - DO NOT list any specific exercises, warm-ups, or cool-downs in the text response. The buttons below the message will let the user view the full routine on their Garmin.
 7. ACTIONABLE: If the user asks to schedule a workout for a specific time, but you recommend a DIFFERENT time, you MUST still append the scheduling JSON block using your recommended time.
 8. LANGUAGE: Always respond in English.
@@ -193,16 +193,19 @@ def generate_daily_suggestion(session: Session) -> None:
     if is_evening:
         time_context = """
 This is an EVENING CHECK-IN.
-1. Recovery & Reflection: Briefly summarize today's training (if any) and current recovery (sleep debt, readiness). Give actionable advice for TONIGHT (e.g., go to bed earlier).
-2. Tomorrow's Calendar: A quick glance at tomorrow's events so the user can mentally prepare.
-3. Tomorrow's Goal: Name the next target muscle group in the rotation (e.g., 'Chest & Biceps'). 
-CRITICAL: Do NOT pick a time, do NOT output any JSON blocks, and do NOT attempt to schedule a workout. Just provide the text analysis in exactly 3 short paragraphs. Ignore the scheduling JSON rule in the system prompt.
+Provide exactly 3 short, punchy paragraphs following the strict formatting rules in your system prompt (Condition, Calendar, Routine).
+CRITICAL: You are scheduling the workout for TOMORROW. 
+- In Paragraph 2, look at tomorrow's calendar events.
+- In Paragraph 3, set [Target Day] to "tomorrow".
+- You MUST output the scheduling JSON block to schedule tomorrow's workout.
 """
     else:
         time_context = """
 This is a MORNING BRIEFING.
-Provide exactly 3 short, punchy paragraphs following the strict formatting rules in your system prompt (Condition, Calendar, Routine).
-You MUST output the scheduling JSON block to schedule today's workout.
+1. Recovery & Reflection: Briefly summarize today's readiness and sleep debt.
+2. Today's Calendar: Name specific calendar events for today so the user can mentally prepare.
+3. Today's Goal: If a workout is already scheduled in `scheduled_workouts_NOT_completed`, just mention it. If not, ask if they want to train.
+CRITICAL: Do NOT pick a time, do NOT output any JSON blocks, and do NOT attempt to schedule a workout. Just provide the text analysis in exactly 3 short paragraphs. Ignore the scheduling JSON rule in the system prompt.
 """
 
     prompt = f"""Generate the coaching message for the user.

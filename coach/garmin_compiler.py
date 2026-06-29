@@ -368,10 +368,15 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             logger.error("Upload succeeded but no workoutId returned.")
             return False
             
-        # 3. Schedule for today
-        today_str = date.today().isoformat()
-        client.api.schedule_workout(new_id, today_str)
-        logger.info("Scheduled workout '%s' for %s (ID: %s)", workout_name, today_str, new_id)
+        # 3. Schedule for today (or tomorrow if evening)
+        if datetime.now().hour >= 17:
+            target_date = date.today() + timedelta(days=1)
+        else:
+            target_date = date.today()
+            
+        target_str = target_date.isoformat()
+        client.api.schedule_workout(new_id, target_str)
+        logger.info("Scheduled workout '%s' for %s (ID: %s)", workout_name, target_str, new_id)
         
         # 4. Save the new ID so we can delete it next time
         session.merge(SyncState(key="last_coach_workout_id", value=str(new_id)))

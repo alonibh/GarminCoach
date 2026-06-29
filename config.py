@@ -41,8 +41,8 @@ GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 
 # --- Sync ---
 INITIAL_BACKFILL_DAYS = int(os.getenv("INITIAL_BACKFILL_DAYS", "90"))
-AUTO_SYNC_HOURS = [
-    int(h) for h in os.getenv("AUTO_SYNC_HOURS", "7,19").split(",") if h.strip()
+AUTO_SYNC_TIMES = [
+    t.strip() for t in os.getenv("AUTO_SYNC_TIMES", "09:30,19:00").split(",") if t.strip()
 ]
 
 # --- App ---

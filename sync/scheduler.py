@@ -28,13 +28,29 @@ def start_scheduler() -> BackgroundScheduler:
     if _scheduler is not None:
         return _scheduler
     sched = BackgroundScheduler(daemon=True)
-    for hour in config.AUTO_SYNC_HOURS:
-        sched.add_job(
-            _scheduled_sync,
-            CronTrigger(hour=hour, minute=0),
-            id=f"autosync_{hour}",
-            replace_existing=True,
-        )
+    for t_str in config.AUTO_SYNC_TIMES:
+        try:
+            hour_str, minute_str = t_str.split(":")
+            hour = int(hour_str)
+            minute = int(minute_str)
+            sched.add_job(
+                _scheduled_sync,
+                CronTrigger(hour=hour, minute=minute),
+                id=f"autosync_{hour}_{minute}",
+                replace_existing=True,
+            )
+        except ValueError:
+            pass
+
+    # Weekly summary (Sundays at 19:05)
+    from notify.weekly import send_weekly_summary
+    sched.add_job(
+        send_weekly_summary,
+        CronTrigger(day_of_week='sun', hour=19, minute=5),
+        id="weekly_summary",
+        replace_existing=True,
+    )
+
     sched.start()
     _scheduler = sched
     return sched

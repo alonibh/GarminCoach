@@ -1331,6 +1331,8 @@ async def telegram_webhook(request: Request):
                             msg.pending_action_json = None
                             
                             if success:
+                                from notify.reminders import schedule_pre_workout_reminder
+                                schedule_pre_workout_reminder(payload)
                                 msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
                                 telegram.edit_message_text("✅ *Workout successfully approved and scheduled!*", chat_id=str(chat_id), message_id=message_id)
                             else:
