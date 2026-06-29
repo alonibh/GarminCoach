@@ -368,14 +368,18 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             logger.error("Upload succeeded but no workoutId returned.")
             return False
             
-        # 3. Schedule for today (or tomorrow if evening)
-        from time_utils import get_local_now, get_local_date
-        if get_local_now().hour >= 17:
-            target_date = get_local_date() + timedelta(days=1)
+        # 3. Schedule for target_date (or today/tomorrow if not provided)
+        target_date_str = payload.get("target_date")
+        if target_date_str:
+            target_str = target_date_str
         else:
-            target_date = get_local_date()
+            from time_utils import get_local_now, get_local_date
+            if get_local_now().hour >= 17:
+                target_date = get_local_date() + timedelta(days=1)
+            else:
+                target_date = get_local_date()
+            target_str = target_date.isoformat()
             
-        target_str = target_date.isoformat()
         client.api.schedule_workout(new_id, target_str)
         logger.info("Scheduled workout '%s' for %s (ID: %s)", workout_name, target_str, new_id)
         

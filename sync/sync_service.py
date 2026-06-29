@@ -113,6 +113,22 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
     act.training_effect_label = raw.get("trainingEffectLabel")
     act.aerobic_te_msg = raw.get("aerobicTrainingEffectMessage")
     act.anaerobic_te_msg = raw.get("anaerobicTrainingEffectMessage")
+    new_rpe = raw.get("directWorkoutRpe")
+    new_feel = raw.get("directWorkoutFeel")
+    
+    # If the user just assigned RPE/Feel for a workout today, and it's tough
+    if not act.rpe and new_rpe is not None:
+        if act.start_time and act.start_time.date() == date.today():
+            if new_rpe >= 80 or (new_feel is not None and new_feel <= 25):
+                try:
+                    from notify.telegram import send_message
+                    act_name = raw.get("activityName", "your session")
+                    send_message(f"🔥 *Wow, {act_name} looked tough!*\n\nYou rated it an RPE of {new_rpe//10}/10. How are you feeling? Did you get enough to eat beforehand? (I'll keep this in mind for tomorrow's recovery).")
+                except Exception as e:
+                    logger.error(f"Failed to send RPE grill message: {e}")
+
+    act.rpe = new_rpe
+    act.feel = new_feel
     session.add(act)
     return act_id
 

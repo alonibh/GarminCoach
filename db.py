@@ -68,6 +68,10 @@ class Activity(Base):
     training_effect_label: Mapped[Optional[str]] = mapped_column(String(32))
     aerobic_te_msg: Mapped[Optional[str]] = mapped_column(String(48))
     anaerobic_te_msg: Mapped[Optional[str]] = mapped_column(String(48))
+    
+    # RPE (Perceived Exertion) and Feel
+    rpe: Mapped[Optional[int]] = mapped_column(Integer)
+    feel: Mapped[Optional[int]] = mapped_column(Integer)
 
     sets: Mapped[list["ExerciseSet"]] = relationship(
         back_populates="activity", cascade="all, delete-orphan"

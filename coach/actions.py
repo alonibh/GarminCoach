@@ -32,7 +32,8 @@ class AddNew(BaseModel):
 class ScheduleWorkoutAction(BaseModel):
     action: Literal["schedule_workout"]
     base_workout_id: int
-    suggested_time: Optional[str] = None
+    target_date: Optional[str] = Field(default=None, description="The date to schedule the workout (YYYY-MM-DD). Use this if the user asks to reschedule to a specific day.")
+    suggested_time: Optional[str] = Field(default=None, description="The time of day in HH:MM format.")
     # Discriminated by `type`; unknown shapes raise rather than silently passing.
     modifications: List[Union[KeepAndModify, AddNew]] = Field(default_factory=list)
 

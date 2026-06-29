@@ -1349,6 +1349,17 @@ async def telegram_webhook(request: Request):
                             msg.pending_action_json = None
                             db.commit()
                     telegram.edit_message_text("❌ *Workout suggestion dismissed.*", chat_id=str(chat_id), message_id=message_id)
+                    
+                elif callback_data.startswith("reschedule_workout_"):
+                    msg_id = int(callback_data.split("_")[-1])
+                    with get_session() as db:
+                        from db import CoachMessage
+                        msg = db.get(CoachMessage, msg_id)
+                        if msg:
+                            msg.content += "\n\n🔄 *User requested to reschedule.*"
+                            db.commit()
+                    telegram.edit_message_text("🔄 *When would you like to reschedule it?* (Reply to this message with a time or day, e.g., 'tomorrow at 18:00')", chat_id=str(chat_id), message_id=message_id)
+
             
             return {"status": "ok"}
             
@@ -1374,6 +1385,9 @@ async def telegram_webhook(request: Request):
                         "inline_keyboard": [
                             [
                                 {"text": "✅ Approve & Schedule", "callback_data": f"approve_workout_{asst_msg.id}"},
+                                {"text": "🔄 Not Today", "callback_data": f"reschedule_workout_{asst_msg.id}"}
+                            ],
+                            [
                                 {"text": "❌ Dismiss", "callback_data": f"reject_workout_{asst_msg.id}"}
                             ]
                         ]

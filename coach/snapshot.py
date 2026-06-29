@@ -261,7 +261,9 @@ def build_snapshot(session: Session) -> str:
             "start_time": a.start_time.isoformat() if a.start_time else None,
             "duration_minutes": round(a.duration_s / 60) if a.duration_s else 0,
             "training_load": getattr(a, "training_load", None),
-            "calories": getattr(a, "calories", None)
+            "calories": getattr(a, "calories", None),
+            "rpe_0_to_100": getattr(a, "rpe", None),
+            "feel_0_to_100": getattr(a, "feel", None)
         }
         if a.activity_type == "strength_training":
             sets = session.query(ExerciseSet).filter_by(activity_id=a.id).all()
