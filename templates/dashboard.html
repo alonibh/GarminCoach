@@ -189,7 +189,7 @@
       {% for a in activities %}
         <tr>
           <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '—' }}</td>
-          <td>{{ a.type|humanize }}</td>
+          <td>{{ a.name if a.type == 'strength_training' else a.type|humanize }}</td>
           <td>{{ a.duration_min }}m</td>
           <td>{{ a.calories|round|int if a.calories else '—' }}</td>
           <td>{{ a.avg_hr|round|int if a.avg_hr else '—' }}</td>
