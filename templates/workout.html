@@ -4,7 +4,7 @@
   <a href="javascript:history.back()" class="btn small" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border);">← Back to Dashboard</a>
 </div>
 <div class="card">
-  <h2>{{ activity.name or activity.type|humanize }}
+  <h2>{{ activity.name|clean_name if activity.name else activity.type|humanize }}
     <span class="type-tag">{{ activity.type|humanize }}</span>
   </h2>
   <p class="muted">{{ activity.start.strftime('%A %b %d, %Y · %H:%M') if activity.start else '' }}</p>
