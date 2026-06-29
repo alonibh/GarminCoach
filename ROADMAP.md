@@ -44,15 +44,14 @@ Feature backlog for the GarminCoach app. Priorities may shift as we go.
   - View past workouts in a calendar grid.
   - Visual week/month calendar showing past workouts and planned sessions.
 
-- [ ] **Push notifications**
-  - Browser push notifications for sync completions, coach suggestions, and workout reminders.
+- [x] **Push notifications (Telegram)**
+  - AI proactive push notifications, recovery alerts, and interactive workout scheduling delivered via Telegram bot integration.
 
 ---
 
 ## 💡 Ideas Parking Lot
 _Drop any future ideas here:_
 
-- **Proactive AI Notifications:** Actively push messages like "Eat a protein bar", "Rest today", or "Ready for heavy lifting this evening".
 - **Smart Activity Recommendations:** Recommend specific activities based on user preferences and goals.
 - **Dynamic Workout Type Suggestions:** Suggest different types of workouts (Yoga, Swim, Cardio, etc.) based on fatigue status, recovery needs, and overall goals, instead of just strength training.
 - Strava integration

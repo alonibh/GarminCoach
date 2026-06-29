@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-06-29 — Telegram Integration & Proactive Notifications
+
+- **Telegram Integration:** Built a complete Telegram bot integration (`notify` module).
+- **Proactive Push Notifications:** AI Coach now sends proactive daily coaching messages and recovery alerts to Telegram via a background cron scheduler.
+- **Interactive Chat Buttons:** Users can now click 'Approve' or 'Dismiss' inline buttons directly in Telegram to schedule or discard suggested workouts.
+- **Typing Indicators:** Added native "typing..." action in Telegram while the AI Coach is generating a workout to improve UX.
+- **Prompt Formatting Constraints:** Tuned the LLM prompts to produce concise, 3-paragraph summaries (Condition, Calendar, Routine).
+- **Hallucination Fixes:** Converted numeric `days_since_last_trained` dict into a static text log in `snapshot.py` to prevent the LLM from hallucinating fake workout history based on past un-executed suggestions.
+- **Sync Fixes:** Resolved an `UnboundLocalError` in the Garmin background sync loop and corrected database column references in the rules engine.
+- **Agent Guidelines:** Created `.agents/AGENTS.md` to persist behavior rules (like automatic commits) for AI coding assistants.
+
 ## 2026-06-20 — Science-based formula overhaul + cleanup
 
 Every computed metric was audited against published sports-science literature
