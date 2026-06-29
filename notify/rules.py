@@ -14,15 +14,15 @@ def check_and_notify_rules(metrics: DailyMetrics | None) -> None:
     messages = []
     
     # 1. Sleep Debt Warning
-    if metrics.sleep_debt_hours is not None and metrics.sleep_debt_hours > 3.0:
+    if metrics.sleep_debt_h is not None and metrics.sleep_debt_h > 3.0:
         messages.append(
-            f"⚠️ *Recovery Alert*\nYour sleep debt has accumulated to {round(metrics.sleep_debt_hours, 1)} hours. "
+            f"⚠️ *Recovery Alert*\nYour sleep debt has accumulated to {round(metrics.sleep_debt_h, 1)} hours. "
             "Consider going to bed 30-60 mins earlier tonight to protect your muscle recovery."
         )
         
     # 2. Over-training Alert
-    acwr = metrics.acwr_ratio
-    readiness = metrics.readiness_score_0_to_100
+    acwr = metrics.acwr
+    readiness = metrics.readiness
     if acwr is not None and readiness is not None:
         if acwr > 1.5 or readiness < 40:
             messages.append(

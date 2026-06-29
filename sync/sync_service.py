@@ -461,8 +461,7 @@ def run_sync(full: bool = False) -> dict:
     try:
         with get_session() as session:
             from db import DailyMetrics
-            from datetime import date
-            metrics = session.query(DailyMetrics).filter_by(date=date.today().isoformat()).first()
+            metrics = session.query(DailyMetrics).filter_by(day=date.today()).first()
             if metrics:
                 from notify.rules import check_and_notify_rules
                 check_and_notify_rules(metrics)
