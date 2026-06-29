@@ -142,7 +142,7 @@ When modifying a workout:
 
 <scheduling_json>
 To automatically push a workout to their watch, append a JSON block formatted EXACTLY like the example below at the absolute end of your response.
-   - `base_workout_id` MUST be an exact ID from `user_saved_workouts`.
+   - `base_workout_id` MUST be an exact ID from `available_routines`.
    - `suggested_time` MUST be an exact HH:MM (24-hour) time you recommend for the workout today.
    - ALWAYS include warm-up set indices as `keep_and_modify` with no other fields (this preserves them). Only add `new_sets`, `new_reps`, or `new_weight_kg` to working-set indices. Omitted indices are deleted.
 
@@ -187,6 +187,33 @@ def _extract_and_strip_json(text: str) -> tuple[str, str | None]:
         logger.error(f"Failed to parse intercepted JSON: {e}")
         return text, None
 
+def _generate_with_retry(system_prompt: str, user_prompt: str, history: list = None, session: Session = None, max_retries: int = 1) -> tuple[str, str | None]:
+    for attempt in range(max_retries + 1):
+        raw_response = llm.generate(system_prompt, user_prompt, history or [])
+        chat_text, json_str = _extract_and_strip_json(raw_response)
+        
+        if not json_str:
+            return chat_text, None
+            
+        try:
+            payload = json.loads(json_str)
+            if payload.get("action") == "schedule_workout":
+                parse_action(payload)
+                from db import Workout
+                if session.query(Workout).filter_by(workout_id=payload.get("base_workout_id")).first() is None:
+                    raise ValueError(f"base_workout_id {payload.get('base_workout_id')} does not exist in available_routines.")
+                return chat_text, json_str
+        except Exception as e:
+            if attempt < max_retries:
+                logger.warning("LLM hallucinated invalid action, retrying: %s", e)
+                error_feedback = f"\n\n[SYSTEM ERROR]: Your generated JSON action was invalid ({e}). Please try again."
+                user_prompt += error_feedback
+            else:
+                logger.warning("Discarding invalid schedule_workout action after retries: %s", e)
+                return chat_text, None
+                
+    return chat_text, None
+
 def generate_daily_suggestion(session: Session) -> None:
     """Generate a daily proactive coaching suggestion if one doesn't exist for today."""
     
@@ -225,8 +252,7 @@ Review the following metrics snapshot:
 {time_context}
 Do NOT use markdown headers or greetings, just give the insight.
 """
-    raw_response = llm.generate(SYSTEM_PROMPT, prompt)
-    suggestion_text, _ = _extract_and_strip_json(raw_response)
+    suggestion_text, json_str = _generate_with_retry(SYSTEM_PROMPT, prompt, session=session)
     
     if _is_error_response(suggestion_text):
         from time_utils import get_local_date
@@ -239,7 +265,8 @@ Do NOT use markdown headers or greetings, just give the insight.
         role="suggestion",
         content=suggestion_text,
         created_at=get_local_now(),
-        data_snapshot=snapshot_json
+        data_snapshot=snapshot_json,
+        pending_action_json=json_str
     )
     session.add(msg)
     session.commit()
@@ -285,28 +312,15 @@ User Message: {user_text}"""
     session.add(user_msg)
     
     # Generate response
-    response = llm.generate(SYSTEM_PROMPT, prompt_with_context, history)
+    chat_text, json_str = _generate_with_retry(SYSTEM_PROMPT, prompt_with_context, history, session=session)
     
-    chat_text, json_str = _extract_and_strip_json(response)
-    pending_json = None
-    if json_str:
-        try:
-            payload = json.loads(json_str)
-            if payload.get("action") == "schedule_workout":
-                # Validate the full action shape now, not just the `action` key,
-                # so a malformed payload never becomes a clickable "approve".
-                parse_action(payload)
-                pending_json = json_str
-        except Exception as e:
-            logger.warning("Discarding invalid schedule_workout action: %s", e)
-
     # Save assistant message
     asst_msg = CoachMessage(
         role="assistant",
         content=chat_text,
         created_at=datetime.now(timezone.utc),
         data_snapshot=snapshot_json,
-        pending_action_json=pending_json
+        pending_action_json=json_str
     )
     session.add(asst_msg)
     session.commit()

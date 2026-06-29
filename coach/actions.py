@@ -16,17 +16,17 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")  # strict HH:MM 24-hour
 class KeepAndModify(BaseModel):
     type: Literal["keep_and_modify"]
     index: int = Field(ge=0)
-    new_sets: Optional[int] = Field(default=None, ge=1)
-    new_reps: Optional[float] = Field(default=None, ge=0)
-    new_weight_kg: Optional[float] = Field(default=None, ge=0)
+    new_sets: Optional[int] = Field(default=None, ge=1, le=10)
+    new_reps: Optional[float] = Field(default=None, ge=0, le=100)
+    new_weight_kg: Optional[float] = Field(default=None, ge=0, le=300)
 
 
 class AddNew(BaseModel):
     type: Literal["add_new"]
     description: str = "Custom Exercise"
-    sets: int = Field(default=1, ge=1)
-    reps: float = Field(default=10, ge=0)
-    weight_kg: float = Field(default=0, ge=0)
+    sets: int = Field(default=1, ge=1, le=10)
+    reps: float = Field(default=10, ge=0, le=100)
+    weight_kg: float = Field(default=0, ge=0, le=300)
 
 
 class ScheduleWorkoutAction(BaseModel):

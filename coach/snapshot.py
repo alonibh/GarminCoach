@@ -1,5 +1,6 @@
 """Fact builder for the AI Coach. Gathers DB metrics into a JSON snapshot."""
 import json
+import yaml
 import logging
 import os
 import pytz
@@ -186,17 +187,21 @@ def build_snapshot(session: Session) -> str:
         d = (today - day).days
         return f"{day.isoformat()} ({d} day{'s' if d != 1 else ''} ago)"
 
-    # 2. Latest Metrics — prefer the most recent row that actually has a
-    # readiness or ACWR value; an all-null "today" row is worse than a slightly
-    # older row with real signal.
-    latest_metrics = (
+    # 2. Latest Metrics — fetch the last 3 days to provide a trend for ACWR.
+    recent_metrics = (
         session.query(DailyMetrics)
         .filter((DailyMetrics.readiness.isnot(None)) | (DailyMetrics.acwr.isnot(None)))
         .order_by(DailyMetrics.day.desc())
-        .first()
-    ) or session.query(DailyMetrics).order_by(DailyMetrics.day.desc()).first()
-    if latest_metrics:
+        .limit(3)
+        .all()
+    )
+    if not recent_metrics:
+        recent_metrics = session.query(DailyMetrics).order_by(DailyMetrics.day.desc()).limit(3).all()
+        
+    if recent_metrics:
+        latest_metrics = recent_metrics[0]
         acwr_val = latest_metrics.acwr
+        
         block = {
             "date": latest_metrics.day.isoformat(),
             "data_as_of": _staleness(latest_metrics.day),
@@ -205,6 +210,7 @@ def build_snapshot(session: Session) -> str:
             "chronic_load_28d": latest_metrics.chronic_load,
             "acwr_ratio": acwr_val,
             "acwr_status": acwr_label(acwr_val) if acwr_val is not None else None,
+            "acwr_3_day_trend": [round(m.acwr, 2) for m in reversed(recent_metrics) if m.acwr is not None],
             "sleep_debt_hours": latest_metrics.sleep_debt_h,
         }
         pruned = _prune_block(block, keep_keys=("date",))
@@ -286,41 +292,6 @@ def build_snapshot(session: Session) -> str:
     # 5. User Pre-defined Workouts
     from db import Workout
 
-    def _parse_workout_steps(steps_json: str) -> list[str]:
-        try:
-            segments = json.loads(steps_json)
-            out = []
-            for seg in segments:
-                for step in seg.get("workoutSteps", []):
-                    if step.get("type") == "ExecutableStepDTO":
-                        if step.get("stepType", {}).get("stepTypeKey") == "rest":
-                            continue
-                        cat = _humanize_ex(step.get("exerciseName") or step.get("category") or "Activity")
-                        reps = step.get("endConditionValue", "")
-                        weight = step.get("weightValue")
-                        cond = step.get("endCondition", {}).get("conditionTypeKey")
-                        w_str = f" @ {weight}kg" if weight and weight > 0 else ""
-                        rep_str = f"{reps} {cond}" if cond else f"{reps} reps"
-                        out.append(f"{len(out)}: {cat}: {rep_str}{w_str}")
-                    elif step.get("type") == "RepeatGroupDTO":
-                        iters = step.get("numberOfIterations", 1)
-                        sub = []
-                        for child in step.get("workoutSteps", []):
-                            if child.get("stepType", {}).get("stepTypeKey") == "rest":
-                                continue
-                            cat = _humanize_ex(child.get("exerciseName") or child.get("category") or "Activity")
-                            reps = child.get("endConditionValue", "")
-                            cond = child.get("endCondition", {}).get("conditionTypeKey")
-                            weight = child.get("weightValue")
-                            w_str = f" @ {weight}kg" if weight and weight > 0 else ""
-                            rep_str = f"{reps} {cond}" if cond else f"{reps} reps"
-                            sub.append(f"{cat} ({rep_str}{w_str})")
-                        if sub:
-                            out.append(f"{len(out)}: {iters}x [ {', '.join(sub)} ]")
-            return out
-        except Exception:
-            return []
-
     def _extract_exercises(steps_json: str) -> set:
         """Raw exercise category/name strings from a workout's step JSON."""
         names = set()
@@ -358,18 +329,13 @@ def build_snapshot(session: Session) -> str:
         user_workouts_data = []
 
         for w in saved_workouts:
-            parsed = _parse_workout_steps(w.steps_json)
-            user_workouts_data.append({
-                "id": w.workout_id,
-                "name": w.name,
-                "steps": parsed
-            })
-
             ex_names = _extract_exercises(w.steps_json)
             unique_exercises |= ex_names
             routine_exercises[w.name] = ex_names
 
-        snapshot["user_saved_workouts"] = user_workouts_data
+        snapshot["available_routines"] = {
+            w.name: w.workout_id for w in saved_workouts
+        }
 
         # Days since each routine was last trained — directly serves the
         # "pick the least-recently-trained muscle group" rule in the prompt.
@@ -419,7 +385,7 @@ def build_snapshot(session: Session) -> str:
 def _serialize_with_guard(snapshot: dict) -> str:
     """Serialize the snapshot, shedding the lowest-value data if it exceeds the
     soft size limit. Never silently truncate — log what was dropped."""
-    out = json.dumps(snapshot, indent=2)
+    out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
     if len(out) <= _SNAPSHOT_SOFT_LIMIT_CHARS:
         return out
 
@@ -429,14 +395,14 @@ def _serialize_with_guard(snapshot: dict) -> str:
     if isinstance(stats, dict):
         trimmed = {k: v[:1] for k, v in stats.items()}
         snapshot["recent_exercise_stats"] = trimmed
-        out = json.dumps(snapshot, indent=2)
+        out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
         logger.warning(
             "Snapshot exceeded %d chars; trimmed recent_exercise_stats to most-recent entry only.",
             _SNAPSHOT_SOFT_LIMIT_CHARS,
         )
     if len(out) > _SNAPSHOT_SOFT_LIMIT_CHARS and "recent_exercise_stats" in snapshot:
         snapshot.pop("recent_exercise_stats", None)
-        out = json.dumps(snapshot, indent=2)
+        out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
         logger.warning("Snapshot still oversized; dropped recent_exercise_stats entirely.")
     return out
 

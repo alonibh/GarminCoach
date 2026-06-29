@@ -5,6 +5,7 @@ metrics blocks dropped, freshness labels added, and days_since_last_trained
 populated. No network — get_upcoming_schedule is monkeypatched.
 """
 import json
+import yaml
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -58,8 +59,8 @@ def _seed_workouts(session):
 def test_running_workouts_excluded(session):
     _seed_workouts(session)
     from coach.snapshot import build_snapshot
-    snap = json.loads(build_snapshot(session))
-    names = [w["name"] for w in snap.get("user_saved_workouts", [])]
+    snap = yaml.safe_load(build_snapshot(session))
+    names = snap.get("available_routines", {}).keys()
     assert "Chest & Biceps" in names
     assert "Legs & Shoulders" in names
     assert all("ריצה" not in n for n in names)  # no running templates
@@ -72,7 +73,7 @@ def test_all_null_metrics_block_dropped(session):
                              chronic_load=0.0, acwr=None, sleep_debt_h=0.0))
     session.commit()
     from coach.snapshot import build_snapshot
-    snap = json.loads(build_snapshot(session))
+    snap = yaml.safe_load(build_snapshot(session))
     # Should not emit an all-null daily_metrics block; flags availability instead.
     assert "daily_metrics" not in snap
     assert snap.get("metrics_available") is False
@@ -84,7 +85,7 @@ def test_metrics_block_kept_when_real(session):
                              chronic_load=100.0, acwr=1.2, sleep_debt_h=0.0))
     session.commit()
     from coach.snapshot import build_snapshot
-    snap = json.loads(build_snapshot(session))
+    snap = yaml.safe_load(build_snapshot(session))
     assert snap["daily_metrics"]["readiness_score_0_to_100"] == 78.0
     assert snap["daily_metrics"]["acwr_ratio"] == 1.2
     assert snap["daily_metrics"]["acwr_status"]  # label present
@@ -101,7 +102,7 @@ def test_days_since_last_trained(session):
                             exercise_name="BENCH_PRESS", reps=10, weight_kg=22.5))
     session.commit()
     from coach.snapshot import build_snapshot
-    snap = json.loads(build_snapshot(session))
+    snap = yaml.safe_load(build_snapshot(session))
     dsl = snap.get("workout_history_log", [])
     assert "'Chest & Biceps' was trained 3 days ago." in dsl
     # Legs never trained -> None values now formatted as string.
