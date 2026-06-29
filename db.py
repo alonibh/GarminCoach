@@ -16,11 +16,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     create_engine,
     event,
+    text,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -96,6 +98,10 @@ class ExerciseSet(Base):
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
 
     activity: Mapped["Activity"] = relationship(back_populates="sets")
+
+    __table_args__ = (
+        Index("ix_exercise_sets_name_activity", "exercise_name", "activity_id"),
+    )
 
 
 class Workout(Base):
@@ -242,6 +248,9 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 def init_db() -> None:
     Base.metadata.create_all(engine)
     _migrate_add_columns()
+    
+    with engine.begin() as conn:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_exercise_sets_name_activity ON exercise_sets (exercise_name, activity_id)"))
 
 
 # SQLite can't add columns via create_all on an existing table, so add any

@@ -241,14 +241,28 @@ def _sync_workouts(session: Session) -> None:
 
 
 def _sync_activities(session: Session, start: date, end: date) -> int:
-    raw_list = client.activities_by_date(start, end)
+    try:
+        raw_list = client.activities_by_date(start, end)
+    except GarminConnectTooManyRequestsError:
+        raise
+        
     count = 0
+    consecutive_429 = 0
     for raw in raw_list or []:
         act_id = _upsert_activity(session, raw)
         if act_id is None:
             continue
         if _is_strength(_g(raw, "activityType", "typeKey", default="") or ""):
-            _sync_exercise_sets(session, act_id)
+            while True:
+                try:
+                    _sync_exercise_sets(session, act_id)
+                    consecutive_429 = 0
+                    break
+                except GarminConnectTooManyRequestsError:
+                    consecutive_429 += 1
+                    if consecutive_429 >= 5:
+                        raise
+                    time.sleep(2)
         count += 1
     return count
 

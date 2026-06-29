@@ -1076,10 +1076,15 @@ def get_chat_page(request: Request):
         return response
 
 @app.post("/chat", response_class=RedirectResponse)
-def post_chat_page(request: Request, message: str = Form(...)):
+async def post_chat_page(request: Request, message: str = Form(...)):
     """Handle a new chat message."""
-    with get_session() as session:
-        _, _ = handle_chat(session, message)
+    from fastapi.concurrency import run_in_threadpool
+    
+    def _do_chat():
+        with get_session() as session:
+            _, _ = handle_chat(session, message)
+            
+    await run_in_threadpool(_do_chat)
     return RedirectResponse(url="/chat", status_code=303)
 
 
@@ -1234,9 +1239,13 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
 @app.get("/sysinfo")
 def sysinfo():
     import subprocess
+    import re
     from fastapi.responses import PlainTextResponse
     try:
-        logs = subprocess.check_output("sudo journalctl -u garmincoach.service -n 100 --no-pager || echo 'no logs'", shell=True).decode()
+        cmd = ["sudo", "journalctl", "-u", "garmincoach.service", "-n", "100", "--no-pager"]
+        logs = subprocess.check_output(cmd).decode("utf-8")
+        # Redact common secrets
+        logs = re.sub(r"(?i)(api_key|token|password|secret)[\s=:\"']+([a-zA-Z0-9_\-\.]+)", r"\1=***REDACTED***", logs)
         return PlainTextResponse(f"LOGS:\n{logs}")
     except Exception as e:
         return PlainTextResponse(str(e))
@@ -1314,6 +1323,11 @@ def coach_calendar_feed():
 async def telegram_webhook(request: Request):
     """Handle incoming messages from Telegram."""
     
+    # 0. Size Limit
+    content_length = request.headers.get('content-length')
+    if content_length and int(content_length) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Payload too large")
+
     # 1. Verify Secret Token
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
     if secret != config.TELEGRAM_WEBHOOK_SECRET:
