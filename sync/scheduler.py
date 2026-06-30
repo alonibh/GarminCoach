@@ -27,7 +27,8 @@ def start_scheduler() -> BackgroundScheduler:
     global _scheduler
     if _scheduler is not None:
         return _scheduler
-    sched = BackgroundScheduler(daemon=True)
+    from time_utils import get_local_tz
+    sched = BackgroundScheduler(daemon=True, timezone=get_local_tz())
     for t_str in config.AUTO_SYNC_TIMES:
         try:
             hour_str, minute_str = t_str.split(":")

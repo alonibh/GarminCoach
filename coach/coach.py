@@ -274,7 +274,7 @@ Do NOT use markdown headers or greetings, just give the insight.
     try:
         from notify.telegram import send_message
         now = get_local_now()
-        is_morning = now.hour < 12
+        is_morning = now.hour < 17
         greeting = "🌅 *Morning Briefing*" if is_morning else "🌙 *Evening Check-in*"
         
         # Check if we already generated a valid suggestion for this period today.
@@ -288,7 +288,7 @@ Do NOT use markdown headers or greetings, just give the insight.
         for s in recent:
             if s.id != msg.id and s.created_at and s.created_at.date() == today_date:
                 if not _is_error_response(s.content):
-                    was_morning = s.created_at.hour < 12
+                    was_morning = s.created_at.hour < 17
                     if was_morning == is_morning:
                         already_pushed = True
                         break

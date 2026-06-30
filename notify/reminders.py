@@ -38,6 +38,7 @@ def schedule_pre_workout_reminder(payload: dict[str, Any]) -> None:
                 target_date = get_local_date()
             
         from time_utils import get_local_tz, get_local_now
+        local_tz = get_local_tz()
         workout_time = local_tz.localize(datetime(
             target_date.year, target_date.month, target_date.day, hour, minute
         ))
