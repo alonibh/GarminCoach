@@ -134,6 +134,22 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
     if new_feel is not None:
         act.feel = new_feel
         
+    if act.hr_zone_seconds is None:
+        try:
+            zones_raw = client.hr_zones(act_id)
+            if zones_raw:
+                import json
+                secs = [0.0] * 5
+                for z in zones_raw:
+                    zn = z.get("zoneNumber")
+                    if zn is not None and 1 <= zn <= 5:
+                        secs[zn - 1] = float(z.get("secsInZone") or 0.0)
+                # Only save if there's actual zone data (sum > 0)
+                if sum(secs) > 0:
+                    act.hr_zone_seconds = json.dumps(secs)
+        except Exception as e:
+            logger.warning("Failed to fetch hr_zones for %s: %s", act_id, e)
+            
     session.add(act)
     return act_id
 

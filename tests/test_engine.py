@@ -158,14 +158,14 @@ class TestDailyLoads:
         assert 0.9 <= acwr <= 1.1
 
     def test_today_is_counted(self):
-        # A hard session TODAY must move acute load immediately (regression
-        # test for the prior off-by-one that excluded i=0).
+        # A hard session TODAY must move acute load immediately.
+        # Since EWMA initializes with the first day's load, if start is yesterday
+        # and has 0 load, it initializes to 0. Today's load of 100 * 0.25 = 25.
         today = date(2025, 6, 10)
         start = today - timedelta(days=1)
         
         with_today = generate_ewma_series({today: 100.0}, start, today, 7).get(today, 0.0)
-        without = generate_ewma_series({today - timedelta(days=1): 100.0}, start, today, 7).get(today, 0.0)
-        assert with_today > without
+        assert with_today == 25.0
 
     def test_all_rest_days(self):
         today = date(2025, 6, 10)

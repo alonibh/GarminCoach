@@ -216,10 +216,9 @@ def generate_ewma_series(
     alpha = 2.0 / (days + 1)
     ewma_series = {}
     
-    current_ewma = 0.0
+    # Initialize with the load of the first available day, not 0.0
+    current_ewma = daily_load_map.get(start_date, 0.0)
     
-    # We should ideally start seeding from earlier than start_date to let the EWMA warm up,
-    # but the caller passes the data_start as start_date to allow this warmup.
     current_date = start_date
     while current_date <= end_date:
         load = daily_load_map.get(current_date, 0.0)
@@ -278,11 +277,11 @@ def _score_sleep(actual_hours: float, target_hours: float,
                  efficiency_pct: float | None = None) -> float:
     """Sleep sub-score from duration (and efficiency when available).
 
-    dur_score anchors 8 h → 100; if sleep efficiency is known, blend
+    dur_score anchors target_hours -> 100; if sleep efficiency is known, blend
     0.6·dur + 0.4·eff (the 0.6/0.4 split is a documented HEURISTIC — no source
     fixes it). Thresholds align with Watson et al. 2015 / Costa et al. 2021.
     """
-    dur_score = _clamp(actual_hours / 8.0 * 100.0)
+    dur_score = _clamp(actual_hours / target_hours * 100.0)
     if efficiency_pct is None:
         return dur_score
     eff_score = _clamp((efficiency_pct - 50.0) / 40.0 * 100.0)
@@ -377,14 +376,15 @@ def acwr_label(acwr: float | None) -> str:
 # ---------------------------------------------------------------------------
 
 def _mean_sd(vals: list[float]) -> tuple[float | None, float | None]:
-    """Sample mean and (population) standard deviation; (None, None) if empty.
+    """Sample mean and standard deviation (with Bessel's correction); (None, None) if empty.
     SD is None when <2 points (no within-person variance to normalize against)."""
     if not vals:
         return None, None
-    mean = sum(vals) / len(vals)
-    if len(vals) < 2:
+    n = len(vals)
+    mean = sum(vals) / n
+    if n < 2:
         return round(mean, 1), None
-    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / (n - 1)
     return round(mean, 1), round(var ** 0.5, 2)
 
 
@@ -568,9 +568,19 @@ def recompute_all() -> None:
             hr_rest = rhr_by_day.get(act.start_time.date()) if act.start_time else None
             if hr_rest is None:
                 hr_rest = rhr_fallback  # Use median as fallback
+                
+            hr_zones = None
+            if act.hr_zone_seconds:
+                import json
+                try:
+                    hr_zones = json.loads(act.hr_zone_seconds)
+                except Exception:
+                    pass
+
             act.training_load = compute_training_load(
                 act.avg_hr,
                 act.duration_s,
+                hr_zone_seconds=hr_zones,
                 hr_rest=hr_rest,
                 hr_max=hr_max,
                 is_male=is_male,

@@ -73,6 +73,9 @@ class Activity(Base):
     
     # RPE (Perceived Exertion) and Feel
     rpe: Mapped[Optional[int]] = mapped_column(Integer)
+    
+    # HR Zones (JSON string of 5 floats for time in zones 1-5, used for Edwards TRIMP)
+    hr_zone_seconds: Mapped[Optional[str]] = mapped_column(Text)
     feel: Mapped[Optional[int]] = mapped_column(Integer)
 
     sets: Mapped[list["ExerciseSet"]] = relationship(
@@ -270,6 +273,9 @@ _ACTIVITY_ADD_COLUMNS = {
     "training_effect_label": "VARCHAR(32)",
     "aerobic_te_msg": "VARCHAR(48)",
     "anaerobic_te_msg": "VARCHAR(48)",
+    "rpe": "INTEGER",
+    "feel": "INTEGER",
+    "hr_zone_seconds": "TEXT",
 }
 
 
