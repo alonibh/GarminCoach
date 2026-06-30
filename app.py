@@ -119,6 +119,40 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(CookieAuthMiddleware)
 
 
+def _localize_message_created_at(created_at: datetime | None) -> datetime | None:
+    """Return a message timestamp in the configured local timezone."""
+    if created_at is None:
+        return None
+
+    from time_utils import get_local_tz
+
+    local_tz = get_local_tz()
+    if created_at.tzinfo is None:
+        return local_tz.localize(created_at)
+    return created_at.astimezone(local_tz)
+
+
+def _ensure_schedule_target_date(payload: dict, msg: CoachMessage) -> dict:
+    """Make date-less schedule actions stable across delayed approval clicks."""
+    if payload.get("target_date"):
+        return payload
+
+    from time_utils import get_local_now
+
+    created_at = _localize_message_created_at(msg.created_at) or get_local_now()
+    target_date = created_at.date()
+    if created_at.hour >= 17:
+        target_date = target_date + timedelta(days=1)
+
+    today = get_local_now().date()
+    if target_date < today:
+        target_date = today
+
+    payload = dict(payload)
+    payload["target_date"] = target_date.isoformat()
+    return payload
+
+
 def _asset_version() -> int:
     """Cache-buster: stylesheet mtime, so a CSS edit forces a fresh fetch."""
     try:
@@ -1129,9 +1163,10 @@ def approve_action(request: Request, msg_id: int):
             payload = json.loads(msg.pending_action_json)
             
             if payload.get("action") == "schedule_workout":
+                payload = _ensure_schedule_target_date(payload, msg)
                 success = compile_and_schedule(session, payload)
-                msg.pending_action_json = None  # Clear pending status
                 if success:
+                    msg.pending_action_json = None  # Clear pending status only after Garmin accepts it.
                     msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
                 else:
                     msg.content += "\n\n❌ *I tried to schedule this workout, but an error occurred while talking to Garmin.*"
@@ -1356,10 +1391,11 @@ async def telegram_webhook(request: Request):
                             import json
                             from coach.garmin_compiler import compile_and_schedule
                             payload = json.loads(msg.pending_action_json)
+                            payload = _ensure_schedule_target_date(payload, msg)
                             success = compile_and_schedule(db, payload)
-                            msg.pending_action_json = None
                             
                             if success:
+                                msg.pending_action_json = None
                                 from notify.reminders import schedule_pre_workout_reminder
                                 schedule_pre_workout_reminder(payload)
                                 msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
