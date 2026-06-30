@@ -227,13 +227,6 @@ def build_snapshot(session: Session) -> str:
             "data_as_of": _staleness(latest_health.day),
             "resting_hr": latest_health.resting_hr,
             "hrv_overnight": latest_health.hrv_overnight,
-            "body_battery_current": latest_health.body_battery_current,
-            "stress_avg": latest_health.stress_avg,
-            "total_kcal": getattr(latest_health, "total_kcal", None),
-            "active_kcal": getattr(latest_health, "active_kcal", None),
-            "bmr_kcal": getattr(latest_health, "bmr_kcal", None),
-            "garmin_training_readiness": getattr(latest_health, "training_readiness", None),
-            "garmin_training_status": getattr(latest_health, "training_status", None),
         }
         pruned = _prune_block(block, keep_keys=("date",))
         if pruned:
