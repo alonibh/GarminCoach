@@ -404,7 +404,7 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         # Add the new event
         existing_events.append({
             "title": workout_name,
-            "date": today_str,
+            "date": target_str,
             "start_time": suggested_time or "18:30",
             "duration_min": 60,
         })
