@@ -354,22 +354,29 @@ def build_snapshot(session: Session) -> str:
 
     # 6. Scheduled (planned, NOT completed) workouts — coach-created workouts
     # that have been pushed to Garmin but haven't been performed yet.
-    # These are kept separate so the AI knows they are PLANNED, not completed.
-    scheduled_workouts = (
-        session.query(Workout)
-        .filter(Workout.sport_type == "strength_training")
-        .filter(Workout.name.startswith(_COACH_PREFIX))
-        .order_by(Workout.created_at.desc())
-        .limit(3)
-        .all()
-    )
-    if scheduled_workouts:
+    # We read this from the projected calendar events to only see future workouts.
+    cal_row = session.get(SyncState, "coach_calendar_events")
+    today_iso = local_time.date().isoformat()
+    scheduled_future = []
+    
+    if cal_row and cal_row.value:
+        try:
+            import json
+            events = json.loads(cal_row.value)
+            for e in events:
+                if e.get("date", "") >= today_iso:
+                    scheduled_future.append(e)
+        except Exception:
+            pass
+            
+    if scheduled_future:
         snapshot["scheduled_workouts_NOT_completed"] = [
             {
-                "name": w.name.replace(_COACH_PREFIX, "").strip(),
-                "created_at": w.created_at.isoformat() if w.created_at else None,
+                "name": e.get("title", "").replace(_COACH_PREFIX, "").strip(),
+                "scheduled_date": e.get("date"),
+                "scheduled_time": e.get("start_time")
             }
-            for w in scheduled_workouts
+            for e in scheduled_future
         ]
 
     return _serialize_with_guard(snapshot)
