@@ -520,13 +520,6 @@ def dashboard(request: Request):
         goal_row = s.get(Goal, 1)
         active_goal = goal_row.goal if goal_row and goal_row.goal else None
         
-        today = date.today()
-        suggestion = s.query(CoachMessage).filter_by(role="suggestion").order_by(CoachMessage.created_at.desc()).first()
-        if suggestion and suggestion.created_at and suggestion.created_at.date() == today:
-            coach_suggestion = suggestion
-        else:
-            coach_suggestion = CoachMessage(role="suggestion", content="No suggestion generated for today. Please click 'Sync now' to generate one.")
-
         # All workouts in the past month (no row cap).
         activities = (
             s.query(Activity)
@@ -593,7 +586,6 @@ def dashboard(request: Request):
             "sync_running": sync_runner.is_running(),
             "sync_summary": sync_runner.status["summary"],
             "active_goal": active_goal,
-            "coach_suggestion": coach_suggestion,
         },
     )
 
