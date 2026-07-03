@@ -817,9 +817,8 @@ tr:last-child td {
 
 .act-icon {
   flex: none;
-  color: var(--accent-strong);
-  font-weight: 800;
-  font-size: .72rem;
+  font-size: .9rem;
+  line-height: 1;
 }
 
 .act-dur {
