@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Setup - GarminCoach{% endblock %}
+
+{% block content %}
+<div class="content-header">
+  <div class="header-left">
+    <h1>Setup</h1>
+    <p class="muted">Review what GarminCoach found, then choose what becomes active.</p>
+  </div>
+</div>
+
+{% if active_program %}
+<div class="card">
+  <h3>Current active plan</h3>
+  <p>{{ active_program.name }} <span class="type-tag">{{ active_program.mode.replace('_', ' ') }}</span></p>
+</div>
+{% endif %}
+
+<div class="grid">
+  <div class="card">
+    <h3>Recent pattern</h3>
+    {% if analysis.activity_patterns %}
+      <table>
+        <thead><tr><th>Activity</th><th>Sessions</th><th>Avg/week</th></tr></thead>
+        <tbody>
+        {% for row in analysis.activity_patterns %}
+          <tr><td>{{ row.label }}</td><td>{{ row.sessions }}</td><td>{{ row.avg_per_week }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No recent Garmin activity pattern found yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Garmin templates</h3>
+    {% if analysis.templates %}
+      <p class="muted">{{ analysis.templates|length }} templates found. Select only the ones you want in the active routine.</p>
+    {% else %}
+      <p class="muted">No Garmin workout templates found yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<form method="post" action="/onboarding">
+  <div class="card">
+    <h3>Profile</h3>
+    <div class="form-grid">
+      <label>Experience
+        <select name="experience_level">
+          {% for value,label in [('', 'Select'), ('beginner','Beginner'), ('intermediate','Intermediate'), ('advanced','Advanced')] %}
+            <option value="{{ value }}" {% if profile.experience_level == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Primary goal
+        <input name="primary_goal" value="{{ profile.primary_goal }}" placeholder="Build muscle, run faster, general fitness">
+      </label>
+      <label>Preferred activities
+        <input name="preferred_activities" value="" placeholder="strength, soccer, running">
+      </label>
+      <label>Equipment
+        <input name="equipment_access" value="" placeholder="gym, dumbbells, bodyweight">
+      </label>
+    </div>
+    <label>Availability
+      <textarea name="availability" rows="2" placeholder="Training days, work hours, usual free windows">{{ profile.availability }}</textarea>
+    </label>
+    <label>Limitations
+      <textarea name="injuries_limitations" rows="2" placeholder="Injuries, movements to avoid, recovery constraints">{{ profile.injuries_limitations }}</textarea>
+    </label>
+    <label>Sport commitments
+      <textarea name="sport_commitments" rows="2" placeholder="Recurring games, races, practices">{{ profile.sport_commitments }}</textarea>
+    </label>
+    <label>Scheduling preferences
+      <textarea name="scheduling_preferences" rows="2" placeholder="Preferred time of day, approval preferences, calendar notes">{{ profile.scheduling_preferences }}</textarea>
+    </label>
+  </div>
+
+  <div class="card">
+    <h3>Plan choice</h3>
+    <div class="form-grid">
+      <label>Mode
+        <select name="plan_mode">
+          <option value="existing_templates">Use selected Garmin templates</option>
+          <option value="known_plan">Use a known external plan</option>
+          <option value="schedule_my_routine" selected>Schedule my routine</option>
+        </select>
+      </label>
+      <label>Plan name
+        <input name="program_name" placeholder="My routine">
+      </label>
+    </div>
+
+    {% if analysis.templates %}
+      <div class="template-list">
+        {% for w in analysis.templates %}
+          <label class="check-row">
+            <input type="checkbox" name="selected_templates" value="{{ w.workout_id }}">
+            <span>{{ w.name }} <small>{{ w.sport_type }}</small></span>
+          </label>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <label>Additional sessions
+      <textarea name="custom_sessions" rows="4" placeholder="One session per line, for example: Easy run&#10;Mobility&#10;Soccer"></textarea>
+    </label>
+  </div>
+
+  <div class="toolbar">
+    <span class="muted">Garmin uploads stay manual approval only.</span>
+    <button class="btn" type="submit">Save active plan</button>
+  </div>
+</form>
+{% endblock %}

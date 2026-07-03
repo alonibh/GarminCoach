@@ -24,7 +24,7 @@ def test_approval_target_date_uses_message_day_before_evening(monkeypatch):
         created_at=datetime(2026, 6, 30, 15, 15),
         pending_action_json=None,
     )
-    payload = {"action": "schedule_workout", "base_workout_id": 1, "suggested_time": "17:30"}
+    payload = {"action": "schedule_workout", "base_workout_id": 1, "suggested_time": "09:30"}
 
     enriched = _ensure_schedule_target_date(payload, msg)
 
@@ -75,7 +75,7 @@ def test_approval_target_date_rolls_stale_message_forward(monkeypatch):
         created_at=datetime(2026, 6, 30, 15, 15),
         pending_action_json=None,
     )
-    payload = {"action": "schedule_workout", "base_workout_id": 1, "suggested_time": "17:30"}
+    payload = {"action": "schedule_workout", "base_workout_id": 1, "suggested_time": "09:30"}
 
     enriched = _ensure_schedule_target_date(payload, msg)
 

@@ -13,17 +13,23 @@ from fastapi.templating import Jinja2Templates
 import config
 from db import (
     Activity,
+    AthleteProfile,
     DailyHealth,
     DailyMetrics,
     ExerciseSet,
     MetricSnapshot,
+    PlannedSession,
+    ProgramSession,
     Sleep,
     SyncState,
+    TrainingProgram,
+    Workout,
     Goal,
     CoachMessage,
     get_session,
     init_db,
 )
+from coach.onboarding import analyze_user_history, active_program, activity_family, program_sessions_for
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
@@ -44,6 +50,7 @@ def clean_workout_name(name: str) -> str:
     return name.strip()
 
 templates.env.filters["clean_name"] = clean_workout_name
+templates.env.filters["activity_family"] = activity_family
 
 
 import hashlib
@@ -519,6 +526,8 @@ def dashboard(request: Request):
     with get_session() as s:
         goal_row = s.get(Goal, 1)
         active_goal = goal_row.goal if goal_row and goal_row.goal else None
+        profile = s.get(AthleteProfile, 1)
+        current_program = active_program(s)
         
         # All workouts in the past month (no row cap).
         activities = (
@@ -586,6 +595,8 @@ def dashboard(request: Request):
             "sync_running": sync_runner.is_running(),
             "sync_summary": sync_runner.status["summary"],
             "active_goal": active_goal,
+            "profile": profile,
+            "active_program": current_program,
         },
     )
 
@@ -1085,6 +1096,150 @@ def post_goal_page(request: Request, goal: str = Form(""), custom_input: str = F
         goal_row.updated_at = datetime.now()
         session.commit()
     return RedirectResponse(url="/", status_code=303)
+
+
+def _split_csv(value: str) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+
+@app.get("/onboarding", response_class=HTMLResponse)
+def get_onboarding(request: Request):
+    """Fresh generic setup. Detection is advisory until the user confirms."""
+    with get_session() as session:
+        profile = session.get(AthleteProfile, 1) or AthleteProfile(id=1)
+        analysis = analyze_user_history(session)
+        current_program = active_program(session)
+        return templates.TemplateResponse(
+            request,
+            "onboarding.html",
+            {
+                "profile": profile,
+                "analysis": analysis,
+                "active_program": current_program,
+            },
+        )
+
+
+@app.post("/onboarding", response_class=RedirectResponse)
+def post_onboarding(
+    request: Request,
+    experience_level: str = Form(""),
+    primary_goal: str = Form(""),
+    preferred_activities: str = Form(""),
+    equipment_access: str = Form(""),
+    availability: str = Form(""),
+    injuries_limitations: str = Form(""),
+    sport_commitments: str = Form(""),
+    scheduling_preferences: str = Form(""),
+    program_name: str = Form(""),
+    plan_mode: str = Form("schedule_my_routine"),
+    selected_templates: list[int] = Form([]),
+    custom_sessions: str = Form(""),
+):
+    """Save profile and create an active program only from explicit choices."""
+    with get_session() as session:
+        profile = session.get(AthleteProfile, 1)
+        if not profile:
+            profile = AthleteProfile(id=1)
+            session.add(profile)
+
+        profile.experience_level = experience_level.strip()
+        profile.primary_goal = primary_goal.strip()
+        profile.preferred_activities = json.dumps(_split_csv(preferred_activities))
+        profile.equipment_access = json.dumps(_split_csv(equipment_access))
+        profile.availability = availability.strip()
+        profile.injuries_limitations = injuries_limitations.strip()
+        profile.sport_commitments = sport_commitments.strip()
+        profile.scheduling_preferences = scheduling_preferences.strip()
+        profile.approval_mode = "manual"
+        profile.onboarding_complete = True
+        profile.updated_at = datetime.now()
+
+        for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
+            existing.active = False
+            existing.updated_at = datetime.now()
+
+        name = program_name.strip() or "My routine"
+        program = TrainingProgram(
+            name=name,
+            mode=plan_mode.strip() or "schedule_my_routine",
+            source_type="external_reference" if plan_mode == "known_plan" else "user_defined",
+            goal_tags=json.dumps(_split_csv(primary_goal)),
+            experience_level=experience_level.strip(),
+            equipment=json.dumps(_split_csv(equipment_access)),
+            active=True,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        session.add(program)
+        session.flush()
+
+        order = 1
+        if selected_templates:
+            templates_by_id = {
+                w.workout_id: w
+                for w in session.query(Workout).filter(Workout.workout_id.in_(selected_templates)).all()
+            }
+            for wid in selected_templates:
+                w = templates_by_id.get(wid)
+                if not w:
+                    continue
+                session.add(
+                    ProgramSession(
+                        program_id=program.id,
+                        name=w.name,
+                        sport_type=w.sport_type,
+                        sequence_order=order,
+                        base_workout_id=w.workout_id,
+                    )
+                )
+                order += 1
+
+        for line in custom_sessions.splitlines():
+            title = line.strip()
+            if not title:
+                continue
+            session.add(
+                ProgramSession(
+                    program_id=program.id,
+                    name=title,
+                    sport_type="general",
+                    sequence_order=order,
+                    duration_min=60,
+                )
+            )
+            order += 1
+
+        session.commit()
+
+    return RedirectResponse(url="/program", status_code=303)
+
+
+@app.get("/program", response_class=HTMLResponse)
+def get_program_page(request: Request):
+    with get_session() as session:
+        profile = session.get(AthleteProfile, 1)
+        current_program = active_program(session)
+        sessions = program_sessions_for(session, current_program.id) if current_program else []
+        today = date.today()
+        through = today + timedelta(days=14)
+        planned = (
+            session.query(PlannedSession)
+            .filter(PlannedSession.target_date >= today)
+            .filter(PlannedSession.target_date <= through)
+            .order_by(PlannedSession.target_date.asc(), PlannedSession.suggested_time.asc())
+            .all()
+        )
+        return templates.TemplateResponse(
+            request,
+            "program.html",
+            {
+                "profile": profile,
+                "program": current_program,
+                "sessions": sessions,
+                "planned": planned,
+            },
+        )
 
 
 @app.get("/calendar", response_class=HTMLResponse)

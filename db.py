@@ -179,6 +179,92 @@ class Goal(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class AthleteProfile(Base):
+    """Structured single-user coaching profile collected during onboarding."""
+
+    __tablename__ = "athlete_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    experience_level: Mapped[str] = mapped_column(String(32), default="")
+    primary_goal: Mapped[str] = mapped_column(String(64), default="")
+    preferred_activities: Mapped[str] = mapped_column(Text, default="")  # JSON list
+    equipment_access: Mapped[str] = mapped_column(Text, default="")  # JSON list
+    availability: Mapped[str] = mapped_column(Text, default="")
+    injuries_limitations: Mapped[str] = mapped_column(Text, default="")
+    sport_commitments: Mapped[str] = mapped_column(Text, default="")
+    scheduling_preferences: Mapped[str] = mapped_column(Text, default="")
+    approval_mode: Mapped[str] = mapped_column(String(32), default="manual")
+    onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class TrainingProgram(Base):
+    """A user-confirmed plan, routine, or schedule-only setup."""
+
+    __tablename__ = "training_programs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    mode: Mapped[str] = mapped_column(String(32), default="schedule_my_routine")
+    source_type: Mapped[str] = mapped_column(String(32), default="user_defined")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    attribution: Mapped[str] = mapped_column(String(255), default="")
+    goal_tags: Mapped[str] = mapped_column(Text, default="")  # JSON list
+    experience_level: Mapped[str] = mapped_column(String(32), default="")
+    days_per_week: Mapped[Optional[int]] = mapped_column(Integer)
+    equipment: Mapped[str] = mapped_column(Text, default="")  # JSON list
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    sessions: Mapped[list["ProgramSession"]] = relationship(
+        back_populates="program", cascade="all, delete-orphan"
+    )
+
+
+class ProgramSession(Base):
+    """A repeatable session inside a user-confirmed program."""
+
+    __tablename__ = "program_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("training_programs.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    sport_type: Mapped[str] = mapped_column(String(64), default="")
+    sequence_order: Mapped[int] = mapped_column(Integer, default=0)
+    focus_tags: Mapped[str] = mapped_column(Text, default="")  # JSON list
+    duration_min: Mapped[Optional[int]] = mapped_column(Integer)
+    base_workout_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+    program: Mapped["TrainingProgram"] = relationship(back_populates="sessions")
+
+
+class PlannedSession(Base):
+    """A dated session in the rolling plan, optionally linked to Garmin."""
+
+    __tablename__ = "planned_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    program_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="SET NULL"), index=True
+    )
+    activity_type: Mapped[str] = mapped_column(String(64), default="")
+    title: Mapped[str] = mapped_column(String(255), default="Workout")
+    target_date: Mapped[date] = mapped_column(Date, index=True)
+    suggested_time: Mapped[str] = mapped_column(String(5), default="")
+    duration_min: Mapped[int] = mapped_column(Integer, default=60)
+    intensity: Mapped[str] = mapped_column(String(32), default="normal")
+    status: Mapped[str] = mapped_column(String(32), default="planned")
+    garmin_workout_id: Mapped[Optional[int]] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32), default="coach")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class CoachMessage(Base):
     __tablename__ = "coach_messages"
 

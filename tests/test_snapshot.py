@@ -1,6 +1,6 @@
 """Tests for build_snapshot (coach/snapshot.py).
 
-Verifies the payload trims correctly: running workouts excluded, all-null
+Verifies the payload trims correctly: Garmin templates are included, all-null
 metrics blocks dropped, freshness labels added, and days_since_last_trained
 populated. No network — get_upcoming_schedule is monkeypatched.
 """
@@ -10,7 +10,16 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from db import Activity, DailyMetrics, ExerciseSet, Workout
+from db import (
+    Activity,
+    AthleteProfile,
+    DailyMetrics,
+    ExerciseSet,
+    PlannedSession,
+    ProgramSession,
+    TrainingProgram,
+    Workout,
+)
 
 
 def _strength_steps(exercise_name: str, category: str) -> str:
@@ -41,14 +50,14 @@ def _no_calendar(monkeypatch):
 
 def _seed_workouts(session):
     session.add(Workout(
-        workout_id=1, name="Chest & Biceps", sport_type="strength_training",
+        workout_id=1, name="Upper Strength", sport_type="strength_training",
         steps_json=_strength_steps("BENCH_PRESS", "BENCH_PRESS"),
     ))
     session.add(Workout(
-        workout_id=2, name="Legs & Shoulders", sport_type="strength_training",
+        workout_id=2, name="Lower Strength", sport_type="strength_training",
         steps_json=_strength_steps("SQUAT", "SQUAT"),
     ))
-    # A running template that must NOT appear in the coach payload.
+    # A running template should appear in the generic Garmin template list.
     session.add(Workout(
         workout_id=99, name="חזרות על ריצה מהירה", sport_type="running",
         steps_json=json.dumps([{"workoutSteps": []}]),
@@ -56,14 +65,14 @@ def _seed_workouts(session):
     session.commit()
 
 
-def test_running_workouts_excluded(session):
+def test_running_workouts_included_as_garmin_templates(session):
     _seed_workouts(session)
     from coach.snapshot import build_snapshot
     snap = yaml.safe_load(build_snapshot(session))
-    names = snap.get("available_routines", {}).keys()
-    assert "Chest & Biceps" in names
-    assert "Legs & Shoulders" in names
-    assert all("ריצה" not in n for n in names)  # no running templates
+    names = {w["name"] for w in snap.get("available_garmin_templates", [])}
+    assert "Upper Strength" in names
+    assert "Lower Strength" in names
+    assert len(names) == 3
 
 
 def test_all_null_metrics_block_dropped(session):
@@ -104,6 +113,42 @@ def test_days_since_last_trained(session):
     from coach.snapshot import build_snapshot
     snap = yaml.safe_load(build_snapshot(session))
     dsl = snap.get("workout_history_log", [])
-    assert "'Chest & Biceps' was trained 3 days ago." in dsl
+    assert "'Upper Strength' was trained 3 days ago." in dsl
     # Legs never trained -> None values now formatted as string.
-    assert "'Legs & Shoulders' has never been trained in recorded history." in dsl
+    assert "'Lower Strength' has never been trained in recorded history." in dsl
+
+
+def test_profile_program_and_rolling_plan_included(session):
+    session.add(AthleteProfile(
+        id=1,
+        experience_level="beginner",
+        primary_goal="general fitness",
+        preferred_activities='["running"]',
+        equipment_access='["outdoor"]',
+        onboarding_complete=True,
+    ))
+    program = TrainingProgram(name="My routine", mode="schedule_my_routine", active=True)
+    session.add(program)
+    session.flush()
+    ps = ProgramSession(program_id=program.id, name="Easy Run", sport_type="running", sequence_order=1)
+    session.add(ps)
+    session.flush()
+    session.add(PlannedSession(
+        program_session_id=ps.id,
+        activity_type="running",
+        title="Easy Run",
+        target_date=date.today(),
+        suggested_time="07:00",
+        duration_min=45,
+        intensity="light",
+        status="approved",
+    ))
+    session.commit()
+
+    from coach.snapshot import build_snapshot
+    snap = yaml.safe_load(build_snapshot(session))
+
+    assert snap["athlete_profile"]["primary_goal"] == "general fitness"
+    assert snap["active_program"]["name"] == "My routine"
+    assert snap["active_program"]["sessions"][0]["name"] == "Easy Run"
+    assert snap["rolling_plan_14_days"][0]["title"] == "Easy Run"

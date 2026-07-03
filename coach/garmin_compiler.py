@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 import os
 from sqlalchemy.orm import Session
 
-from db import Workout
+from db import PlannedSession, Workout
 from sync.garmin_client import client
 from coach.actions import parse_action
 
@@ -233,6 +233,68 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         logger.error("Invalid schedule_workout payload: %s", e)
         return False
     payload = action.model_dump()
+    planned_meta = None
+
+    if payload.get("action") == "schedule_session":
+        planned_meta = {
+            "program_session_id": payload.get("program_session_id"),
+            "activity_type": payload.get("activity_type") or "general",
+            "title": payload.get("title") or "Workout",
+            "target_date": payload.get("target_date"),
+            "suggested_time": payload.get("suggested_time") or "",
+            "duration_min": payload.get("duration_min") or 60,
+            "intensity": payload.get("intensity") or "normal",
+        }
+        if not payload.get("base_workout_id"):
+            try:
+                target_day = date.fromisoformat(planned_meta["target_date"])
+            except Exception:
+                logger.error("Invalid target_date for calendar-only session: %s", planned_meta["target_date"])
+                return False
+
+            session.add(
+                PlannedSession(
+                    program_session_id=planned_meta["program_session_id"],
+                    activity_type=planned_meta["activity_type"],
+                    title=planned_meta["title"],
+                    target_date=target_day,
+                    suggested_time=planned_meta["suggested_time"],
+                    duration_min=planned_meta["duration_min"],
+                    intensity=planned_meta["intensity"],
+                    status="approved",
+                    source="coach",
+                    created_at=datetime.now(),
+                    updated_at=datetime.now(),
+                )
+            )
+
+            from db import SyncState
+            existing_row = session.get(SyncState, "coach_calendar_events")
+            existing_events = []
+            if existing_row and existing_row.value:
+                try:
+                    existing_events = json.loads(existing_row.value)
+                except Exception:
+                    existing_events = []
+            cutoff = (date.today() - timedelta(days=7)).isoformat()
+            existing_events = [e for e in existing_events if e.get("date", "") >= cutoff]
+            existing_events.append({
+                "title": planned_meta["title"],
+                "date": planned_meta["target_date"],
+                "start_time": planned_meta["suggested_time"] or "18:30",
+                "duration_min": planned_meta["duration_min"],
+            })
+            session.merge(SyncState(key="coach_calendar_events", value=json.dumps(existing_events)))
+            session.commit()
+            return True
+
+        payload = {
+            "action": "schedule_workout",
+            "base_workout_id": payload.get("base_workout_id"),
+            "target_date": payload.get("target_date"),
+            "suggested_time": payload.get("suggested_time"),
+            "modifications": payload.get("modifications") or [],
+        }
 
     base_id = payload.get("base_workout_id")
     if not base_id:
@@ -406,9 +468,27 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             "title": workout_name,
             "date": target_str,
             "start_time": suggested_time or "18:30",
-            "duration_min": 60,
+            "duration_min": planned_meta["duration_min"] if planned_meta else 60,
         })
         session.merge(SyncState(key="coach_calendar_events", value=json.dumps(existing_events)))
+
+        if planned_meta:
+            session.add(
+                PlannedSession(
+                    program_session_id=planned_meta["program_session_id"],
+                    activity_type=planned_meta["activity_type"],
+                    title=planned_meta["title"] or base_name,
+                    target_date=date.fromisoformat(target_str),
+                    suggested_time=suggested_time or "18:30",
+                    duration_min=planned_meta["duration_min"],
+                    intensity=planned_meta["intensity"],
+                    status="approved",
+                    garmin_workout_id=new_id,
+                    source="coach",
+                    created_at=datetime.now(),
+                    updated_at=datetime.now(),
+                )
+            )
         session.commit()
         
         return True

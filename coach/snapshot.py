@@ -5,11 +5,26 @@ import logging
 import os
 import pytz
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from db import Goal, DailyMetrics, DailyHealth, Sleep, Activity, ExerciseSet, SyncState, MetricSnapshot
+from db import (
+    Activity,
+    AthleteProfile,
+    DailyHealth,
+    DailyMetrics,
+    ExerciseSet,
+    Goal,
+    MetricSnapshot,
+    PlannedSession,
+    ProgramSession,
+    Sleep,
+    SyncState,
+    TrainingProgram,
+    Workout,
+)
+from coach.onboarding import activity_family, active_program, program_sessions_for
 from metrics.engine import acwr_label
 
 logger = logging.getLogger(__name__)
@@ -39,6 +54,16 @@ def _prune_block(block: dict, keep_keys: tuple = ()) -> dict | None:
     if all(k in keep_keys for k in cleaned):
         return None
     return cleaned
+
+
+def _json_list(value: str | None) -> list:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
     """Find up to the 3 most recent performances for specific exercises to show progression."""
@@ -152,6 +177,50 @@ def build_snapshot(session: Session) -> str:
         "user_constraints": constraints,
         "upcoming_schedule_7_days": get_upcoming_schedule(days=7)
     }
+
+    profile = session.get(AthleteProfile, 1)
+    if profile:
+        snapshot["athlete_profile"] = {
+            "experience_level": profile.experience_level,
+            "primary_goal": profile.primary_goal,
+            "preferred_activities": _json_list(profile.preferred_activities),
+            "equipment_access": _json_list(profile.equipment_access),
+            "availability": profile.availability,
+            "injuries_limitations": profile.injuries_limitations,
+            "sport_commitments": profile.sport_commitments,
+            "scheduling_preferences": profile.scheduling_preferences,
+            "approval_mode": profile.approval_mode or "manual",
+            "onboarding_complete": profile.onboarding_complete,
+        }
+
+    current_program = active_program(session)
+    if current_program:
+        sessions = program_sessions_for(session, current_program.id)
+        snapshot["active_program"] = {
+            "id": current_program.id,
+            "name": current_program.name,
+            "mode": current_program.mode,
+            "source_type": current_program.source_type,
+            "source_url": current_program.source_url,
+            "attribution": current_program.attribution,
+            "goal_tags": _json_list(current_program.goal_tags),
+            "experience_level": current_program.experience_level,
+            "days_per_week": current_program.days_per_week,
+            "equipment": _json_list(current_program.equipment),
+            "sessions": [
+                {
+                    "id": ps.id,
+                    "name": ps.name,
+                    "activity_type": ps.sport_type,
+                    "activity_family": activity_family(ps.sport_type),
+                    "sequence_order": ps.sequence_order,
+                    "focus_tags": _json_list(ps.focus_tags),
+                    "duration_min": ps.duration_min,
+                    "base_workout_id": ps.base_workout_id,
+                }
+                for ps in sessions
+            ],
+        }
     
     # User Profile (Weight & Gender & Age)
     gender = session.get(SyncState, "user_gender")
@@ -283,8 +352,6 @@ def build_snapshot(session: Session) -> str:
         snapshot["recent_workouts"] = workouts
 
     # 5. User Pre-defined Workouts
-    from db import Workout
-
     def _extract_exercises(steps_json: str) -> set:
         """Raw exercise category/name strings from a workout's step JSON."""
         names = set()
@@ -312,23 +379,27 @@ def build_snapshot(session: Session) -> str:
     from coach.garmin_compiler import _COACH_PREFIX
     saved_workouts = (
         session.query(Workout)
-        .filter(Workout.sport_type == "strength_training")
         .filter(~Workout.name.startswith(_COACH_PREFIX))
         .all()
     )
     if saved_workouts:
         unique_exercises = set()
         routine_exercises = {}  # routine name -> raw exercise names (for "days since")
-        user_workouts_data = []
-
         for w in saved_workouts:
             ex_names = _extract_exercises(w.steps_json)
-            unique_exercises |= ex_names
-            routine_exercises[w.name] = ex_names
+            if w.sport_type == "strength_training":
+                unique_exercises |= ex_names
+                routine_exercises[w.name] = ex_names
 
-        snapshot["available_routines"] = {
-            w.name: w.workout_id for w in saved_workouts
-        }
+        snapshot["available_garmin_templates"] = [
+            {
+                "name": w.name,
+                "workout_id": w.workout_id,
+                "activity_type": w.sport_type,
+                "activity_family": activity_family(w.sport_type),
+            }
+            for w in saved_workouts
+        ]
 
         # Days since each routine was last trained — directly serves the
         # "pick the least-recently-trained muscle group" rule in the prompt.
@@ -355,6 +426,30 @@ def build_snapshot(session: Session) -> str:
     # 6. Scheduled (planned, NOT completed) workouts — coach-created workouts
     # that have been pushed to Garmin but haven't been performed yet.
     # We read this from the projected calendar events to only see future workouts.
+    through = local_time.date() + timedelta(days=14)
+    planned = (
+        session.query(PlannedSession)
+        .filter(PlannedSession.target_date >= local_time.date())
+        .filter(PlannedSession.target_date <= through)
+        .order_by(PlannedSession.target_date.asc(), PlannedSession.suggested_time.asc())
+        .all()
+    )
+    if planned:
+        snapshot["rolling_plan_14_days"] = [
+            {
+                "id": p.id,
+                "title": p.title,
+                "activity_type": p.activity_type,
+                "scheduled_date": p.target_date.isoformat(),
+                "scheduled_time": p.suggested_time,
+                "duration_min": p.duration_min,
+                "intensity": p.intensity,
+                "status": p.status,
+                "garmin_workout_id": p.garmin_workout_id,
+            }
+            for p in planned
+        ]
+
     cal_row = session.get(SyncState, "coach_calendar_events")
     today_iso = local_time.date().isoformat()
     scheduled_future = []

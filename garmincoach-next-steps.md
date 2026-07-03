@@ -38,7 +38,7 @@ coach. All pure Python over SQLite, recomputed inside `recompute_all()`, stored 
    prefer **time-in-HR-zone** when available (the client already fetches and caches it
    via `garmin_client.hr_zones()`), falling back to the current avg-HR×duration TRIMP
    when zones are missing. Zone-weighted TRIMP (zone1×1 … zone5×5) is more accurate
-   for stop-start sports like your soccer sessions.
+   for stop-start sports such as soccer or tennis.
 
 2. **Acute / chronic load + ACWR.** For each day with data:
    - `acute_load` = mean daily load over trailing **7 days**

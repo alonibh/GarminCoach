@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Plan - GarminCoach{% endblock %}
+
+{% block content %}
+<div class="content-header">
+  <div class="header-left">
+    <h1>Plan</h1>
+    {% if program %}
+      <p class="muted">{{ program.name }} <span class="type-tag">{{ program.mode.replace('_', ' ') }}</span></p>
+    {% else %}
+      <p class="muted">No active plan yet.</p>
+    {% endif %}
+  </div>
+  <a class="btn-secondary" href="/onboarding">Edit setup</a>
+</div>
+
+{% if not program %}
+  <div class="card">
+    <p class="muted">Start setup to choose templates, a known plan, or your own routine.</p>
+    <a class="btn" href="/onboarding">Start setup</a>
+  </div>
+{% else %}
+  <div class="grid">
+    <div class="card">
+      <h3>Sessions</h3>
+      {% if sessions %}
+        <table>
+          <thead><tr><th>#</th><th>Name</th><th>Type</th><th>Garmin</th></tr></thead>
+          <tbody>
+            {% for s in sessions %}
+              <tr>
+                <td>{{ s.sequence_order }}</td>
+                <td>{{ s.name }}</td>
+                <td>{{ s.sport_type|activity_family }}</td>
+                <td>{% if s.base_workout_id %}Template {{ s.base_workout_id }}{% else %}<span class="muted">Calendar only</span>{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No sessions selected yet.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h3>Profile</h3>
+      {% if profile %}
+        <p><b>Goal:</b> {{ profile.primary_goal or "Not set" }}</p>
+        <p><b>Experience:</b> {{ profile.experience_level or "Not set" }}</p>
+        <p><b>Approval:</b> Garmin scheduling requires manual approval.</p>
+      {% else %}
+        <p class="muted">No profile saved yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Rolling 14-day plan</h3>
+    {% if planned %}
+      <table>
+        <thead><tr><th>Date</th><th>Time</th><th>Session</th><th>Intensity</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for p in planned %}
+            <tr>
+              <td>{{ p.target_date }}</td>
+              <td>{{ p.suggested_time or "TBD" }}</td>
+              <td>{{ p.title }}</td>
+              <td>{{ p.intensity }}</td>
+              <td><span class="badge">{{ p.status }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No planned sessions in the next 14 days yet.</p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

@@ -36,7 +36,7 @@ def test_evening_workout_proposal_is_saved_and_sent(session, monkeypatch):
     _set_evening(monkeypatch)
     session.add(Workout(
         workout_id=1,
-        name="Chest & Biceps",
+        name="Upper Strength",
         sport_type="strength_training",
         steps_json="[]",
     ))
@@ -45,7 +45,7 @@ def test_evening_workout_proposal_is_saved_and_sent(session, monkeypatch):
     response = """
 Tomorrow looks open after work and your recent load is controlled.
 
-Tomorrow's recommendation: normal session Chest & Biceps at 18:30.
+Tomorrow's recommendation: normal session Upper Strength at 18:30.
 
 ```json
 {"action":"schedule_workout","base_workout_id":1,"suggested_time":"18:30","modifications":[]}
@@ -64,6 +64,6 @@ Tomorrow's recommendation: normal session Chest & Biceps at 18:30.
     msg = session.query(CoachMessage).one()
     assert msg.role == "suggestion"
     assert msg.pending_action_json is not None
-    assert "normal session Chest & Biceps" in msg.content
+    assert "normal session Upper Strength" in msg.content
     assert len(sent) == 1
     assert "Evening Check-in" in sent[0]

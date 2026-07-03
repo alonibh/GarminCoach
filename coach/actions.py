@@ -8,9 +8,10 @@ once, so the compiler downstream can assume clean data.
 import re
 from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")  # strict HH:MM 24-hour
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class KeepAndModify(BaseModel):
@@ -47,6 +48,39 @@ class ScheduleWorkoutAction(BaseModel):
         return v.strip()
 
 
-def parse_action(raw: dict) -> ScheduleWorkoutAction:
+class ScheduleSessionAction(BaseModel):
+    action: Literal["schedule_session"]
+    program_session_id: Optional[int] = Field(default=None, ge=1)
+    activity_type: str = Field(default="general", min_length=1, max_length=64)
+    title: str = Field(default="Workout", min_length=1, max_length=255)
+    base_workout_id: Optional[int] = Field(default=None, ge=1)
+    target_date: str = Field(description="The date to schedule the session (YYYY-MM-DD).")
+    suggested_time: Optional[str] = Field(default=None, description="The time of day in HH:MM format.")
+    duration_min: int = Field(default=60, ge=5, le=480)
+    intensity: Literal["recovery", "light", "normal", "hard", "race"] = "normal"
+    modifications: List[Union[KeepAndModify, AddNew]] = Field(default_factory=list)
+
+    @field_validator("target_date")
+    @classmethod
+    def _valid_date(cls, v):
+        if not _DATE_RE.match((v or "").strip()):
+            raise ValueError(f"target_date must be YYYY-MM-DD, got {v!r}")
+        return v.strip()
+
+    @field_validator("suggested_time")
+    @classmethod
+    def _valid_time(cls, v):
+        if v is None or v == "":
+            return None
+        if not _TIME_RE.match(v.strip()):
+            raise ValueError(f"suggested_time must be HH:MM (24-hour), got {v!r}")
+        return v.strip()
+
+
+ActionPayload = Union[ScheduleWorkoutAction, ScheduleSessionAction]
+_ACTION_ADAPTER = TypeAdapter(ActionPayload)
+
+
+def parse_action(raw: dict) -> ActionPayload:
     """Validate a raw action dict. Raises pydantic.ValidationError on bad data."""
-    return ScheduleWorkoutAction.model_validate(raw)
+    return _ACTION_ADAPTER.validate_python(raw)
