@@ -233,11 +233,19 @@ def generate_daily_suggestion(session: Session) -> None:
     if is_evening:
         time_context = """
 This is an EVENING CHECK-IN.
-Provide exactly 3 short, punchy paragraphs following the strict formatting rules in your system prompt (Condition, Calendar, Routine).
-CRITICAL: You are scheduling the workout for TOMORROW. 
-- In Paragraph 2, look at tomorrow's calendar events.
-- In Paragraph 3, set [Target Day] to "tomorrow".
-- You MUST output the scheduling JSON block to schedule tomorrow's workout.
+Your job is to decide whether tomorrow needs an actionable workout proposal.
+
+If a useful workout proposal for tomorrow is NOT needed, output exactly:
+NO_PUSH
+
+Use NO_PUSH when tomorrow should simply be rest, a workout is already scheduled for tomorrow, data is too stale or incomplete to choose well, or there is no meaningful change/action for the user.
+
+If a useful workout proposal IS needed, write exactly 2 short paragraphs in plain English:
+1. Context sentence: Mention only the most relevant signals for tomorrow's plan (today's workout/load, readiness, sleep, HRV, ACWR/load, or tomorrow's calendar). Keep it simple and factual. Use numbers only when they make the recommendation clearer. Do not use jargon like "Zone 2". Do not mention a metric that is missing from the snapshot.
+2. Proposal: State "Tomorrow's recommendation: [push session / normal session / light session] [routine] at [HH:MM]." Choose the time from tomorrow's calendar and the scheduling constraints.
+
+Only explain "why" when it is directly supported by the snapshot. Do not say things like avoiding legs, workout fatigue, or poor recovery unless the relevant data is present.
+CRITICAL: If you propose a workout, you MUST output the scheduling JSON block for tomorrow. If you do not output a valid scheduling JSON block, the evening check-in will not be sent.
 """
     else:
         time_context = """
@@ -259,6 +267,12 @@ Review the following metrics snapshot:
 Do NOT use markdown headers or greetings, just give the insight.
 """
     suggestion_text, json_str = _generate_with_retry(SYSTEM_PROMPT, prompt, session=session)
+
+    # Evening pushes should be actionable: either a schedulable workout proposal
+    # for tomorrow, or silence. Morning remains the daily source of truth.
+    if is_evening and (suggestion_text.strip().upper() == "NO_PUSH" or not json_str):
+        logger.info("Skipping evening check-in because there is no actionable workout proposal.")
+        return
     
     if _is_error_response(suggestion_text):
         from time_utils import get_local_date
