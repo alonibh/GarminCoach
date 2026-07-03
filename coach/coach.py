@@ -4,14 +4,17 @@ import logging
 import re
 from datetime import date, datetime, timezone
 
+import yaml
 from sqlalchemy.orm import Session
 
-from db import CoachMessage
+from db import CoachMessage, DailyHealth, DailyMetrics, Sleep
 from coach import llm
 from coach.actions import parse_action
 from coach.snapshot import build_snapshot
 
 logger = logging.getLogger(__name__)
+
+_MAX_CHAT_HISTORY_CHARS = 8000
 
 SYSTEM_PROMPT = """You are the GarminCoach AI, a world-class, data-driven personal trainer.
 Your job is to analyze the user's Garmin metrics and provide proactive, personalized, and actionable advice.
@@ -127,7 +130,7 @@ CRITICAL SCHEDULING RULES:
 - On working days, recommend workouts at 18:00 or later (after work).
 - Friday and Saturday are days off — flexible scheduling is fine.
 - Always check the user's calendar events in the snapshot to avoid conflicts.
-- IMPORTANT: Carefully distinguish between calendar events where the user is physically PLAYING sports (e.g., 'playing soccer') vs. WATCHING sports on TV. Any event formatted as "Team A Vs Team B" (e.g., "פורטוגל Vs אוזבקיסטן", "הפועל תל אביב Vs מכבי תל אביב") is a televised professional match. Watching matches occupies time but does NOT cause physical fatigue, so it MUST NOT prevent a heavy gym session beforehand.
+- IMPORTANT: Carefully distinguish between calendar events where the user is physically PLAYING sports (e.g., "playing soccer", "כדורגל ב9", or any non-"Vs" soccer/כדורגל event) vs. WATCHING sports on TV. Any event formatted as "Team A Vs Team B" (e.g., "פורטוגל Vs אוזבקיסטן", "הפועל תל אביב Vs מכבי תל אביב") is a televised professional match. Watching matches occupies time but does NOT cause physical fatigue, so it MUST NOT prevent a heavy gym session beforehand.
 </scheduling>
 
 <metric_thresholds>
@@ -135,6 +138,7 @@ Pay special attention to these critical fatigue markers:
 - ACWR: <0.8 Detraining | 0.8-1.3 Optimal | 1.3-1.5 Ramping (caution) | >1.5 Danger Zone (high injury risk).
 - Sleep Debt: > 5.0 hours of accumulated exponential debt requires immediate correction (nap/early bedtime).
 - Readiness (0-100): < 60 prioritize recovery | > 85 prime condition to push hard.
+- If ACWR is <0.8, never describe injury risk as high from workload and do not say a rest day will "bring ACWR down"; underload means recent load is low, so pair low readiness with active recovery, a light technique session, or postponing intensity rather than implying overtraining from load.
 </metric_thresholds>
 
 <workout_modifications>
@@ -167,6 +171,143 @@ To automatically push a workout to their watch, append a JSON block formatted EX
 def _is_error_response(text: str) -> bool:
     return text.startswith("Coach is currently") or text.startswith("Coach encountered")
 
+
+def _format_sleep_minutes(total_s: float) -> str:
+    minutes = int(round(total_s / 60.0))
+    return f"{minutes // 60}h{minutes % 60:02d}m"
+
+
+def _hrv_feedback(session: Session) -> str | None:
+    """Simple verbal HRV feedback for morning briefings."""
+    from time_utils import get_local_date
+
+    today = get_local_date()
+    today_health = session.get(DailyHealth, today)
+    if not (today_health and today_health.hrv_overnight is not None):
+        return None
+
+    hrv = float(today_health.hrv_overnight)
+    if today_health.hrv_baseline_low is not None and hrv < float(today_health.hrv_baseline_low):
+        return "HRV is below your usual range"
+    if today_health.hrv_baseline_high is not None and hrv > float(today_health.hrv_baseline_high):
+        return "HRV is above your usual range"
+
+    prev_health = (
+        session.query(DailyHealth)
+        .filter(DailyHealth.day < today)
+        .filter(DailyHealth.hrv_overnight.isnot(None))
+        .order_by(DailyHealth.day.desc())
+        .first()
+    )
+    if prev_health and prev_health.hrv_overnight is not None:
+        prev_hrv = float(prev_health.hrv_overnight)
+        if abs(hrv - prev_hrv) <= 5:
+            return "HRV looks stable"
+        if hrv < prev_hrv:
+            return "HRV is a bit lower than yesterday"
+        return "HRV is a bit higher than yesterday"
+
+    return "HRV has a usable overnight reading"
+
+
+def _load_feedback(session: Session) -> str | None:
+    """Simple verbal ACWR/load feedback for morning briefings."""
+    from metrics.engine import acwr_label
+
+    latest = (
+        session.query(DailyMetrics)
+        .filter(DailyMetrics.acwr.isnot(None))
+        .order_by(DailyMetrics.day.desc())
+        .first()
+    )
+    if not latest or latest.acwr is None:
+        return None
+
+    label = acwr_label(latest.acwr)
+    if label == "underload":
+        return "training load is on the low side"
+    if label == "balanced":
+        return "training load looks balanced"
+    if label == "elevated":
+        return "training load is elevated"
+    if label:
+        return "training load is spiking"
+    return None
+
+
+def _verbalize_morning_snapshot(snapshot_json: str, session: Session) -> str:
+    """Remove exact HRV/ACWR numbers from the morning prompt payload."""
+    try:
+        snapshot = yaml.safe_load(snapshot_json) or {}
+    except Exception:
+        return snapshot_json
+
+    if not isinstance(snapshot, dict):
+        return snapshot_json
+
+    daily = snapshot.get("daily_metrics")
+    if isinstance(daily, dict):
+        daily.pop("acute_load_7d", None)
+        daily.pop("chronic_load_28d", None)
+        daily.pop("acwr_ratio", None)
+        daily.pop("acwr_3_day_trend", None)
+        feedback = _load_feedback(session)
+        if feedback:
+            daily["load_feedback"] = feedback
+
+    health = snapshot.get("latest_health")
+    if isinstance(health, dict):
+        health.pop("hrv_overnight", None)
+        feedback = _hrv_feedback(session)
+        if feedback:
+            health["hrv_feedback"] = feedback
+
+    trend = snapshot.get("health_trend_7_days")
+    if isinstance(trend, list):
+        for row in trend:
+            if isinstance(row, dict):
+                row.pop("hrv_overnight", None)
+                row.pop("hrv_baseline_low", None)
+                row.pop("hrv_baseline_high", None)
+
+    snapshot["morning_briefing_style"] = (
+        "For HRV and ACWR/load, use simple verbal feedback only. "
+        "Do not include exact HRV milliseconds, ACWR ratios, acute/chronic load numbers, or threshold numbers."
+    )
+    return yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
+
+
+def _morning_short_sleep_opening(session: Session) -> str | None:
+    """Stable factual lead-in for short-but-finalized sleep mornings."""
+    from time_utils import get_local_date
+
+    today = get_local_date()
+    sleep = session.get(Sleep, today)
+    if not (sleep and sleep.total_s and sleep.total_s > 0):
+        return None
+
+    if (sleep.total_s / 3600.0) >= 6.5:
+        return None
+
+    score_part = f", score {int(round(sleep.score))}" if sleep.score is not None else ""
+    first = f"Short night - {_format_sleep_minutes(sleep.total_s)}{score_part}."
+
+    details = []
+    if sleep.deep_s and sleep.deep_s > 0:
+        deep_h = sleep.deep_s / 3600.0
+        quality = "excellent" if deep_h >= 1.5 else "solid" if deep_h >= 1.0 else "light"
+        details.append(f"Deep sleep quality was {quality} ({deep_h:.1f}h)")
+
+    today_health = session.get(DailyHealth, today)
+    if today_health and today_health.hrv_overnight is not None:
+        feedback = _hrv_feedback(session)
+        if feedback:
+            details.append(feedback)
+
+    if not details:
+        return first
+    return first + " " + " and ".join(details) + "."
+
 def _extract_and_strip_json(text: str) -> tuple[str, str | None]:
     """Finds a ```json ... ``` block, parses it, and returns (stripped_text, json_str)."""
     match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
@@ -189,6 +330,24 @@ def _extract_and_strip_json(text: str) -> tuple[str, str | None]:
     except Exception as e:
         logger.error(f"Failed to parse intercepted JSON: {e}")
         return text, None
+
+
+def _trim_history(history: list[dict], max_chars: int = _MAX_CHAT_HISTORY_CHARS) -> list[dict]:
+    """Keep the newest chat turns under a compact character budget."""
+    kept: list[dict] = []
+    used = 0
+    for item in reversed(history):
+        content = str(item.get("content") or "")
+        room = max_chars - used
+        if room <= 0:
+            break
+        if len(content) > room:
+            content = content[-room:]
+        kept.append({"role": item.get("role"), "content": content})
+        used += len(content)
+    kept.reverse()
+    return kept
+
 
 def _generate_with_retry(system_prompt: str, user_prompt: str, history: list = None, session: Session = None, max_retries: int = 1) -> tuple[str, str | None]:
     for attempt in range(max_retries + 1):
@@ -223,12 +382,19 @@ def generate_daily_suggestion(session: Session) -> None:
     # We generate a fresh suggestion every time this is called (both on the
     # automated 4am sync, and whenever the user clicks Manual Sync).
     # The dashboard always shows the most recent suggestion for today.
-        
-    snapshot_json = build_snapshot(session)
-    
+
     from time_utils import get_local_now
     hour = get_local_now().hour
     is_evening = hour >= 17
+    if not is_evening:
+        from metrics.freshness import proactive_metrics_ready
+
+        if not proactive_metrics_ready(session):
+            logger.info("Skipping morning briefing until today's sleep data is finalized.")
+            return
+
+    snapshot_json = build_snapshot(session)
+    prompt_snapshot_json = snapshot_json if is_evening else _verbalize_morning_snapshot(snapshot_json, session)
 
     if is_evening:
         time_context = """
@@ -251,8 +417,8 @@ CRITICAL: If you propose a workout, you MUST output the scheduling JSON block fo
         time_context = """
 This is a MORNING BRIEFING.
 Write exactly 2 or 3 short paragraphs in plain English:
-1. Metrics sentence: Mention only the most relevant signals for today's decision (readiness, sleep, HRV, ACWR/load, or yesterday's workout). Keep it simple and factual. Use numbers only when they make the recommendation clearer. Do not use jargon like "Zone 2". Do not mention a metric that is missing from the snapshot.
-2. Recommendation: Give one clear recommendation for today. If a workout is already listed in `scheduled_workouts_NOT_completed` for today, reference that workout instead of recommending a new one. If training is recommended, state the intensity as exactly one of: "push session", "normal session", or "light session", and name the routine (for example, "Chest & Biceps"). If recovery is the right call, simply recommend resting and say no workout is needed.
+1. Metrics sentence: Mention only the most relevant signals for today's decision (readiness, sleep, HRV, ACWR/load, or yesterday's workout). Keep it simple and factual. Do not use jargon like "Zone 2". Do not mention a metric that is missing from the snapshot. For HRV and ACWR/load, give simple verbal feedback only; never quote exact HRV milliseconds, ACWR ratios, acute/chronic load values, or threshold numbers. If sleep was short (<6.5h) but sleep score is fair-or-better and HRV is near recent values, the FIRST sentence must lead with the sleep context: "Short night - [duration], score [score]..." and include deep sleep if available plus verbal HRV stability. Say "not a sleep red flag" only when the short sleep is offset by stable HRV/sleep quality; still mention any separate load/readiness risk in the next sentence.
+2. Recommendation: Give one clear recommendation for today. If a workout is already listed in `scheduled_workouts_NOT_completed` for today, reference that workout instead of recommending a new one. If training is recommended after short sleep, use a "go with a governor" call: train, but reduce volume or keep it light if the first working sets feel heavier than expected. If training is recommended, state the intensity as exactly one of: "push session", "normal session", or "light session", and name the routine (for example, "Chest & Biceps"). If readiness is low but ACWR/load is on the low side, prefer active recovery or a light session over a full rest day unless sleep/HRV are clearly poor. If recovery is the right call, simply recommend resting and say no workout is needed. If HRV is notably unstable or has dropped, add a short, simple, actionable daily tip to aid recovery (e.g., "drink an extra glass of water today", "do 5 mins of deep breathing", "avoid heavy meals before bed").
 3. Timing: Only if training is recommended, give the best exact time based on the calendar and scheduling constraints. If a workout is already scheduled for today, use its scheduled time.
 
 Only explain "why" when it is directly supported by the snapshot. Do not say things like avoiding legs, workout fatigue, or poor recovery unless the relevant data is present.
@@ -261,12 +427,16 @@ CRITICAL: Do NOT output any JSON blocks and do NOT attempt to schedule a workout
 
     prompt = f"""Generate the coaching message for the user.
 Review the following metrics snapshot:
-{snapshot_json}
+{prompt_snapshot_json}
 
 {time_context}
 Do NOT use markdown headers or greetings, just give the insight.
 """
     suggestion_text, json_str = _generate_with_retry(SYSTEM_PROMPT, prompt, session=session)
+    if not is_evening:
+        opening = _morning_short_sleep_opening(session)
+        if opening and not suggestion_text.lower().startswith("short night"):
+            suggestion_text = f"{opening}\n\n{suggestion_text}"
 
     # Evening pushes should be actionable: either a schedulable workout proposal
     # for tomorrow, or silence. Morning remains the daily source of truth.
@@ -335,6 +505,7 @@ def handle_chat(session: Session, user_text: str) -> str:
     history = []
     for m in recent_msgs:
         history.append({"role": m.role, "content": m.content})
+    history = _trim_history(history)
         
     # Inject the snapshot into the current user prompt invisibly
     prompt_with_context = f"""[SYSTEM: Current Data Snapshot]
