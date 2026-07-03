@@ -4,7 +4,7 @@
 {% if needs_login %}
 <div class="card warn">
   <strong>Not connected to Garmin.</strong>
-  <a href="/login" class="btn">Connect your Garmin account →</a>
+  <a href="/login" class="btn">Connect your Garmin account</a>
 </div>
 {% endif %}
 
@@ -33,7 +33,7 @@
   <div class="muted" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.85rem;">
     <span id="sync-status">
       {% if last_sync_at %}Fetched <span class="time-ago" data-iso="{{ last_sync_at }}"></span>{% else %}Never synced{% endif %}
-      {% if device_last_upload %} · Watch synced <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}
+      {% if device_last_upload %} | Watch synced <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}
     </span>
   </div>
   <div class="dashboard-actions" style="flex-wrap: wrap;">
@@ -44,7 +44,7 @@
       <form method="post" action="/sync/reset" style="margin:0; display: flex; flex: 1 1 auto;">
         <button class="btn small" style="background:#444; color: #fff; width: 100%; white-space: nowrap;" title="Force reset if sync is stuck">Reset</button>
       </form>
-      <button class="btn small" disabled style="white-space: nowrap; flex: 1 1 auto;">Syncing…</button>
+      <button class="btn small" disabled style="white-space: nowrap; flex: 1 1 auto;">Syncing...</button>
     {% else %}
       <form method="post" action="/sync" style="margin:0; display: flex; flex: 1 1 auto;">
         <button class="btn small" style="width: 100%; white-space: nowrap;">Sync now</button>
@@ -53,27 +53,6 @@
     {% endif %}
   </div>
 </div>
-
-{# {% if nutrition_suggestion %}
-<div class="card collapsible-card" data-card="nutrition" style="border-left: 4px solid #3fb950; background: linear-gradient(145deg, #111d13, #08100a);">
-  <div class="chart-head" style="margin-bottom:0">
-    <h3 style="margin-top: 0; color: #3fb950; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
-      <span>🥗</span> Nutrition Coach
-      <span class="muted local-time-only" data-iso="{{ nutrition_suggestion.created_at.isoformat() + 'Z' if nutrition_suggestion.created_at else '' }}" style="margin-left: auto; font-size: 0.75rem; font-weight: normal;"></span>
-    </h3>
-    <button class="collapse-btn" type="button" aria-label="Collapse">–</button>
-  </div>
-  <div class="collapsible-content" style="margin-top:0.75rem;">
-    <div style="margin-bottom: 0; line-height: 1.5; color: var(--fg);">
-      {{ nutrition_suggestion.content }}
-    </div>
-  </div>
-</div>
-{% endif %} #}
-<style>
-.collapsible-card.collapsed .collapsible-content { display: none; }
-.collapsible-card.collapsed { padding-bottom: 1.25rem; }
-</style>
 
 {% if sync_summary %}
 <div class="notice muted">
@@ -86,11 +65,11 @@
 {% macro render_tile(t) %}
   {% if t.is_gauge %}
   <div class="tile tile-gauge">
-    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">ⓘ</span>{% endif %}</div>
+    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">i</span>{% endif %}</div>
     <div class="gauge-wrap">
       <div class="gauge">
         <div class="gauge-arc"></div>
-        <div class="gauge-val-text">{{ t.value|round(1) if t.value is not none else '—' }}<div class="gauge-unit">{{ t.unit }}</div></div>
+        <div class="gauge-val-text">{{ t.value|round(1) if t.value is not none else '-' }}<div class="gauge-unit">{{ t.unit }}</div></div>
         {% if t.bar_pct is not none %}
         <div class="gauge-indicator" style="transform: rotate({{ (t.bar_pct / 100 * 180) - 90 }}deg)">
           <div class="gauge-dot"></div>
@@ -104,20 +83,20 @@
   </div>
   {% else %}
   <div class="tile{% if t.color %} tile-{{ t.color }}{% endif %}">
-    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">ⓘ</span>{% endif %}</div>
+    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">i</span>{% endif %}</div>
     <div class="tile-value">
       {% if t.value is not none %}{{ t.value }}{% if t.unit %}<span class="tile-unit">{{ t.unit }}</span>{% endif %}
         {% if t.trend is not none %}
-          {% if t.trend == 'up' %}<span class="trend up" title="Improved">▲</span>
-          {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">▼</span>
-          {% else %}<span class="trend flat" title="No change">→</span>{% endif %}
+          {% if t.trend == 'up' %}<span class="trend up" title="Improved">Up</span>
+          {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">Down</span>
+          {% else %}<span class="trend flat" title="No change">Flat</span>{% endif %}
         {% endif %}
-      {% else %}<span class="muted">—</span>{% endif %}
+      {% else %}<span class="muted">-</span>{% endif %}
     </div>
     <div class="tile-sub muted">
       {% if t.value is none %}No data yet
       {% else %}
-        {%- if t.prev is not none %}from {{ t.prev }}{% if t.age %} · {% endif %}{% endif -%}
+        {%- if t.prev is not none %}from {{ t.prev }}{% if t.age %} | {% endif %}{% endif -%}
         {%- if t.age %}<span class="acwr-label">{{ t.age }}</span>{% endif -%}
         {%- if t.prev is none and not t.age %}&nbsp;{% endif -%}
       {% endif %}
@@ -142,42 +121,42 @@
 
 <div class="chart-grid">
   <div class="card chart-card" data-chart="sleep">
-    <div class="chart-head"><h3>Sleep (hrs)<span class="info" tabindex="0" data-tip="Total sleep time from your watch. Aim for 7–9 hours consistently — sleep quality and consistency matter more than occasional long nights.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Sleep (hrs)<span class="info" tabindex="0" data-tip="Total sleep time from your watch. Aim for 7-9 hours consistently. Sleep quality and consistency matter more than occasional long nights.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="sleepChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="hrv">
-    <div class="chart-head"><h3>HRV (overnight)<span class="info" tabindex="0" data-tip="Heart Rate Variability — the variation in time between heartbeats, measured overnight. Higher HRV = better recovery and readiness. A drop below your baseline may signal fatigue, stress, or illness.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>HRV (overnight)<span class="info" tabindex="0" data-tip="Heart rate variability: the variation in time between heartbeats, measured overnight. Higher HRV usually means better recovery and readiness.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="hrvChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="rhr">
-    <div class="chart-head"><h3>Resting HR<span class="info" tabindex="0" data-tip="Your lowest sustained heart rate, typically measured during sleep. Lower resting HR generally indicates better cardiovascular fitness. A spike above your baseline can signal fatigue, stress, or dehydration.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Resting HR<span class="info" tabindex="0" data-tip="Your lowest sustained heart rate, typically measured during sleep. A spike above baseline can signal fatigue, stress, or dehydration.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="rhrChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="steps">
-    <div class="chart-head"><h3>Steps<span class="info" tabindex="0" data-tip="Daily step count from your watch. Reflects overall daily movement and non-exercise activity. General guideline: 7,000–10,000 steps/day supports cardiovascular health.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Steps<span class="info" tabindex="0" data-tip="Daily step count from your watch. General guideline: 7,000-10,000 steps per day supports cardiovascular health.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="stepsChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="calories">
-    <div class="chart-head"><h3>Calories<span class="info" tabindex="0" data-tip="Daily caloric expenditure. Shows your Resting (BMR) and Active (Workout/Movement) calories.">ⓘ</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">–</button></div>
+    <div class="chart-head"><h3>Calories<span class="info" tabindex="0" data-tip="Daily caloric expenditure. Shows resting calories (BMR) and active calories from workouts and movement.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="caloriesChart"></canvas></div>
   </div>
 </div>
 
 <div class="card">
   <h3>Recent workouts</h3>
-  <div style="overflow-x: auto;">
+  <div class="table-scroll">
     <table id="activities-table">
       <thead><tr><th>Date</th><th>Type</th><th>Dur</th><th>Cal</th><th>Avg HR</th><th>Load</th><th></th></tr></thead>
       <tbody id="activities-body">
       {% for a in activities %}
         <tr>
-          <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '—' }}</td>
+          <td>{{ a.start.strftime('%b %d %H:%M') if a.start else '-' }}</td>
           <td>{{ a.name|clean_name if a.type == 'strength_training' else a.type|humanize }}</td>
           <td>{{ a.duration_min }}m</td>
-          <td>{{ a.calories|round|int if a.calories else '—' }}</td>
-          <td>{{ a.avg_hr|round|int if a.avg_hr else '—' }}</td>
-          <td>{{ a.load if a.load else '—' }}</td>
-          <td><a href="/workout/{{ a.id }}">details →</a></td>
+          <td>{{ a.calories|round|int if a.calories else '-' }}</td>
+          <td>{{ a.avg_hr|round|int if a.avg_hr else '-' }}</td>
+          <td>{{ a.load if a.load else '-' }}</td>
+          <td><a href="/workout/{{ a.id }}">Details</a></td>
         </tr>
       {% else %}
         <tr><td colspan="7" class="muted text-center">No workouts yet.</td></tr>
@@ -222,7 +201,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Dismiss tooltips on mobile when tapping outside
   document.addEventListener('touchstart', (e) => {
-    // 1. Dismiss CSS info popups (ⓘ)
+    // 1. Dismiss CSS info popups.
     if (!e.target.closest('.info')) {
       const active = document.activeElement;
       if (active && active.classList.contains('info')) {
@@ -453,7 +432,7 @@ stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.act
 function applyCollapse(card, collapsed) {
   card.classList.toggle('collapsed', collapsed);
   const btn = card.querySelector('.collapse-btn');
-  if (btn) { btn.textContent = collapsed ? '+' : '–'; btn.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse'); }
+  if (btn) { btn.textContent = collapsed ? '+' : '-'; btn.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse'); }
 }
 document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]').forEach(card => {
   const key = 'chartCollapsed:' + (card.dataset.chart || card.dataset.card);
@@ -485,7 +464,7 @@ document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]
         clearInterval(timer);
         location.reload();
       }
-    } catch (_) { /* network hiccup — try again next tick */ }
+    } catch (_) { /* network hiccup - try again next tick */ }
   }, POLL_MS);
 })();
 // Format absolute timestamps into user's local timezone dynamically

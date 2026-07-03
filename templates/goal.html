@@ -1,37 +1,37 @@
 {% extends "base.html" %}
+{% block title %}Goal - GarminCoach{% endblock %}
 
 {% block content %}
-<div style="max-width: 600px; margin: 0 auto;">
-  <div class="content-header">
-    <div class="header-left">
-      <h1>Training Goal</h1>
-    </div>
+<div class="content-header">
+  <div class="header-left">
+    <h1>Training Goal</h1>
+    <p class="muted">Set the goal GarminCoach should use for workout planning and Telegram coaching.</p>
   </div>
+</div>
 
-  <div class="card" style="padding: 2rem;">
-    <p class="muted" style="margin-bottom: 1.5rem;">
-      Set your current training goal. GarminCoach uses this to personalize workout planning and Telegram coaching.
-    </p>
+<div class="card section-card">
+  <form method="post" action="/goal" class="form-section">
+    <label class="field">Primary goal
+      <input
+        type="text"
+        name="goal"
+        value="{{ goal.goal }}"
+        placeholder="Run a sub-20 5K, build muscle, maintain fitness"
+      >
+    </label>
 
-  <form method="post" action="/goal">
-    <div style="margin-bottom: 1.5rem;">
-      <label for="goal" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Primary Goal</label>
-      <input type="text" id="goal" name="goal" value="{{ goal.goal }}" 
-             placeholder="e.g., Run a sub-20 5k, Build muscle, or Maintain fitness" 
-             style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg);">
-    </div>
+    <label class="field">Constraints and preferences
+      <textarea
+        name="custom_input"
+        rows="5"
+        placeholder="Training days, injuries, preferred session times, or anything the coach should respect."
+      >{{ goal.custom_input }}</textarea>
+    </label>
 
-    <div style="margin-bottom: 1.5rem;">
-      <label for="custom_input" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Constraints & Preferences</label>
-      <textarea id="custom_input" name="custom_input" rows="4" 
-                placeholder="e.g., I can only work out on Tuesdays and Thursdays. I have a bad left knee."
-                style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); resize: vertical;">{{ goal.custom_input }}</textarea>
-    </div>
-
-    <div style="text-align: right;">
-      <button type="submit" class="btn" style="padding: 0.75rem 1.5rem;">Save Goal</button>
+    <div class="toolbar">
+      <span class="muted">You can update this anytime.</span>
+      <button type="submit" class="btn">Save goal</button>
     </div>
   </form>
-</div>
 </div>
 {% endblock %}

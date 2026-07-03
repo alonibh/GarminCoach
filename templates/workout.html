@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
-<div style="margin-bottom: 1.5rem;">
-  <a href="javascript:history.back()" class="btn small" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border);">← Back to Dashboard</a>
+<div class="toolbar compact">
+  <a href="javascript:history.back()" class="btn-secondary small">Back to dashboard</a>
 </div>
 <div class="card">
   <h2>{{ activity.name|clean_name if activity.name else activity.type|humanize }}
     <span class="type-tag">{{ activity.type|humanize }}</span>
   </h2>
-  <p class="muted">{{ activity.start.strftime('%A %b %d, %Y · %H:%M') if activity.start else '' }}</p>
+  <p class="muted">{{ activity.start.strftime('%A %b %d, %Y at %H:%M') if activity.start else '' }}</p>
   <div class="stats">
     <span><b>{{ activity.duration_min }}</b> min</span>
-    <span><b>{{ activity.calories|round|int if activity.calories else '—' }}</b> cal</span>
-    <span><b>{{ activity.avg_hr|round|int if activity.avg_hr else '—' }}</b> avg HR</span>
-    <span><b>{{ activity.max_hr|round|int if activity.max_hr else '—' }}</b> max HR</span>
+    <span><b>{{ activity.calories|round|int if activity.calories else '-' }}</b> cal</span>
+    <span><b>{{ activity.avg_hr|round|int if activity.avg_hr else '-' }}</b> avg HR</span>
+    <span><b>{{ activity.max_hr|round|int if activity.max_hr else '-' }}</b> max HR</span>
     {% if activity.rpe %}<span><b>{{ activity.rpe // 10 }}/10</b> RPE</span>{% endif %}
     {% if activity.feel is not none %}
       <span><b>{% if activity.feel >= 100 %}Very Strong{% elif activity.feel >= 75 %}Strong{% elif activity.feel >= 50 %}Normal{% elif activity.feel >= 25 %}Weak{% else %}Very Weak{% endif %}</b> Feel</span>
@@ -29,12 +29,12 @@
       <div class="exercise-head">
         <span class="exercise-name">{{ ex.name|humanize }}</span>
         <span class="muted">{{ ex.set_count }} sets{% if ex.delta_vol is not none %}
-          {% if ex.delta_vol > 0 %}<span style="color: #3fb950; margin-left: 0.5rem;">▲ +{{ ex.delta_vol }}kg vs last</span>{% elif ex.delta_vol < 0 %}<span style="color: #f85149; margin-left: 0.5rem;">▼ {{ ex.delta_vol }}kg vs last</span>{% else %}<span style="color: #8b949e; margin-left: 0.5rem;">= same as last</span>{% endif %}{% endif %}</span>
+          {% if ex.delta_vol > 0 %}<span class="trend up">Up {{ ex.delta_vol }}kg vs last</span>{% elif ex.delta_vol < 0 %}<span class="trend down">Down {{ ex.delta_vol }}kg vs last</span>{% else %}<span class="trend flat">Same as last</span>{% endif %}{% endif %}</span>
       </div>
       <div class="set-pills">
         {% for st in ex.sets %}
         <span class="set-pill" title="Set {{ st.index + 1 }}">
-          {% if st.weight_kg %}{{ st.weight_kg }}kg{% else %}BW{% endif %} × {{ st.reps if st.reps else '—' }}{% if st.edited %} *{% endif %}
+          {% if st.weight_kg %}{{ st.weight_kg }}kg{% else %}BW{% endif %} x {{ st.reps if st.reps else '-' }}{% if st.edited %} *{% endif %}
         </span>
         {% endfor %}
       </div>
@@ -52,7 +52,7 @@
     <div class="cardio-grid">
       {% for row in cardio %}
       <div class="cardio-stat">
-        <div class="cardio-label muted">{{ row.label }}{% if row.hint %}<span class="info" tabindex="0" data-tip="{{ row.hint }}">ⓘ</span>{% endif %}</div>
+        <div class="cardio-label muted">{{ row.label }}{% if row.hint %}<span class="info" tabindex="0" data-tip="{{ row.hint }}">i</span>{% endif %}</div>
         <div class="cardio-value">{{ row.value }}</div>
       </div>
       {% endfor %}
@@ -66,7 +66,7 @@
 {% if hr_zones %}
 <div class="card">
   <h3>HR zones <span class="muted">(time in each)</span>
-    <span class="info" tabindex="0" data-tip="How long your heart rate stayed in each zone. Higher zones (Z4–Z5) mean harder effort; the number is the zone's lower BPM boundary.">ⓘ</span>
+    <span class="info" tabindex="0" data-tip="How long your heart rate stayed in each zone. Higher zones (Z4-Z5) mean harder effort; the number is the zone's lower BPM boundary.">i</span>
   </h3>
   <div class="hrz">
     {% for z in hr_zones %}

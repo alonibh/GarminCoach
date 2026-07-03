@@ -5,7 +5,7 @@
 <div class="content-header">
   <div class="header-left">
     <h1>Setup</h1>
-    <p class="muted">Review what GarminCoach found, then choose what becomes active.</p>
+    <p class="muted">Review what GarminCoach found, then choose what should become your active training setup.</p>
   </div>
 </div>
 
@@ -20,6 +20,7 @@
   <div class="card">
     <h3>Recent pattern</h3>
     {% if analysis.activity_patterns %}
+      <div class="table-scroll">
       <table>
         <thead><tr><th>Activity</th><th>Sessions</th><th>Avg/week</th></tr></thead>
         <tbody>
@@ -28,6 +29,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
     {% else %}
       <p class="muted">No recent Garmin activity pattern found yet.</p>
     {% endif %}
@@ -43,52 +45,52 @@
   </div>
 </div>
 
-<form method="post" action="/onboarding">
-  <div class="card">
+<form method="post" action="/onboarding" class="form-section">
+  <div class="card section-card">
     <h3>Profile</h3>
     <div class="form-grid">
-      <label>Experience
+      <label class="field">Experience
         <select name="experience_level">
           {% for value,label in [('', 'Select'), ('beginner','Beginner'), ('intermediate','Intermediate'), ('advanced','Advanced')] %}
             <option value="{{ value }}" {% if profile.experience_level == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </label>
-      <label>Primary goal
-        <input name="primary_goal" value="{{ profile.primary_goal }}" placeholder="Build muscle, run faster, general fitness">
+      <label class="field">Primary goal
+        <input name="primary_goal" value="{{ profile.primary_goal or '' }}" placeholder="Build muscle, run faster, improve general fitness">
       </label>
-      <label>Preferred activities
+      <label class="field">Preferred activities
         <input name="preferred_activities" value="" placeholder="strength, soccer, running">
       </label>
-      <label>Equipment
+      <label class="field">Equipment
         <input name="equipment_access" value="" placeholder="gym, dumbbells, bodyweight">
       </label>
     </div>
-    <label>Availability
-      <textarea name="availability" rows="2" placeholder="Training days, work hours, usual free windows">{{ profile.availability }}</textarea>
+    <label class="field">Availability
+      <textarea name="availability" rows="2" placeholder="Training days, work hours, usual free windows">{{ profile.availability or '' }}</textarea>
     </label>
-    <label>Limitations
-      <textarea name="injuries_limitations" rows="2" placeholder="Injuries, movements to avoid, recovery constraints">{{ profile.injuries_limitations }}</textarea>
+    <label class="field">Limitations
+      <textarea name="injuries_limitations" rows="2" placeholder="Injuries, movements to avoid, recovery constraints">{{ profile.injuries_limitations or '' }}</textarea>
     </label>
-    <label>Sport commitments
-      <textarea name="sport_commitments" rows="2" placeholder="Recurring games, races, practices">{{ profile.sport_commitments }}</textarea>
+    <label class="field">Sport commitments
+      <textarea name="sport_commitments" rows="2" placeholder="Recurring games, races, practices">{{ profile.sport_commitments or '' }}</textarea>
     </label>
-    <label>Scheduling preferences
-      <textarea name="scheduling_preferences" rows="2" placeholder="Preferred time of day, approval preferences, calendar notes">{{ profile.scheduling_preferences }}</textarea>
+    <label class="field">Scheduling preferences
+      <textarea name="scheduling_preferences" rows="2" placeholder="Preferred time of day, approval preferences, calendar notes">{{ profile.scheduling_preferences or '' }}</textarea>
     </label>
   </div>
 
-  <div class="card">
+  <div class="card section-card">
     <h3>Plan choice</h3>
-    <div class="form-grid">
-      <label>Mode
+    <div class="form-grid two">
+      <label class="field">Mode
         <select name="plan_mode">
           <option value="existing_templates">Use selected Garmin templates</option>
           <option value="known_plan">Use a known external plan</option>
           <option value="schedule_my_routine" selected>Schedule my routine</option>
         </select>
       </label>
-      <label>Plan name
+      <label class="field">Plan name
         <input name="program_name" placeholder="My routine">
       </label>
     </div>
@@ -104,7 +106,7 @@
       </div>
     {% endif %}
 
-    <label>Additional sessions
+    <label class="field">Additional sessions
       <textarea name="custom_sessions" rows="4" placeholder="One session per line, for example: Easy run&#10;Mobility&#10;Soccer"></textarea>
     </label>
   </div>

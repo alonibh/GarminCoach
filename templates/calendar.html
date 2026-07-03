@@ -3,9 +3,9 @@
 
 {% block content %}
 <div class="calendar-header">
-  <a href="/calendar?year={{ prev_y }}&month={{ prev_m }}" class="btn-secondary">❮ Prev</a>
+  <a href="/calendar?year={{ prev_y }}&month={{ prev_m }}" class="btn-secondary">Previous</a>
   <h2>{{ month_name }} {{ year }}</h2>
-  <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary">Next ❯</a>
+  <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary">Next</a>
 </div>
 
 <div class="calendar-grid">
@@ -16,7 +16,7 @@
   <div class="weekday-header">Fri</div>
   <div class="weekday-header">Sat</div>
   <div class="weekday-header">Sun</div>
-  
+
   {% for week in weeks %}
     {% for day in week.days %}
       <div class="calendar-cell {% if not day.is_current_month %}other-month{% endif %} {% if day.is_today %}today{% endif %}">
@@ -29,7 +29,7 @@
         <div class="cell-activities">
           {% for act in day.activities %}
             <a href="/workout/{{ act.id }}" class="act-pill">
-              <span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% elif 'soccer' in act.activity_type.lower() %}⚽{% else %}⏱️{% endif %}</span>
+              <span class="act-icon">{% if 'run' in act.activity_type.lower() %}RUN{% elif 'cycl' in act.activity_type.lower() %}BIKE{% elif 'strength' in act.activity_type.lower() %}STR{% elif 'soccer' in act.activity_type.lower() %}SOC{% else %}ACT{% endif %}</span>
               <span class="act-dur">{{ (act.duration_s / 60)|round|int }}m</span>
             </a>
           {% endfor %}
@@ -38,107 +38,4 @@
     {% endfor %}
   {% endfor %}
 </div>
-
-<style>
-.calendar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.calendar-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 10px;
-}
-@media (max-width: 600px) {
-  .calendar-grid {
-    gap: 4px;
-  }
-  .calendar-cell {
-    padding: 4px !important;
-    min-height: 70px !important;
-    border-radius: 6px !important;
-  }
-  .act-pill {
-    padding: 2px !important;
-    font-size: 0.65em !important;
-    border-radius: 4px !important;
-    flex-direction: column !important;
-    gap: 0 !important;
-  }
-  .act-dur {
-    font-size: 0.85em;
-  }
-  .weekday-header {
-    font-size: 0.8em;
-  }
-  .cell-top {
-    margin-bottom: 4px !important;
-  }
-  .date-num {
-    font-size: 0.85em;
-  }
-}
-.weekday-header {
-  text-align: center;
-  font-weight: 600;
-  color: #888;
-  padding: 10px 0;
-}
-.calendar-cell {
-  background: #1e1e1e;
-  border-radius: 12px;
-  min-height: 100px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.other-month {
-  opacity: 0.4;
-}
-.today {
-  border: 1px solid #00E676;
-  background: #1a2a20;
-}
-.cell-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.date-num {
-  font-weight: bold;
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.dot-green { background-color: #00E676; }
-.dot-yellow { background-color: #FFD600; }
-.dot-red { background-color: #FF1744; }
-.cell-activities {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.act-pill {
-  background: #333;
-  color: #eee;
-  padding: 4px 6px;
-  border-radius: 6px;
-  font-size: 0.85em;
-  text-decoration: none;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-}
-.act-pill:hover {
-  background: #444;
-}
-</style>
 {% endblock %}

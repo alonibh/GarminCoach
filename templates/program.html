@@ -24,6 +24,7 @@
     <div class="card">
       <h3>Sessions</h3>
       {% if sessions %}
+        <div class="table-scroll">
         <table>
           <thead><tr><th>#</th><th>Name</th><th>Type</th><th>Garmin</th></tr></thead>
           <tbody>
@@ -37,6 +38,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       {% else %}
         <p class="muted">No sessions selected yet.</p>
       {% endif %}
@@ -57,6 +59,7 @@
   <div class="card">
     <h3>Rolling 14-day plan</h3>
     {% if planned %}
+      <div class="table-scroll">
       <table>
         <thead><tr><th>Date</th><th>Time</th><th>Session</th><th>Intensity</th><th>Status</th></tr></thead>
         <tbody>
@@ -71,6 +74,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     {% else %}
       <p class="muted">No planned sessions in the next 14 days yet.</p>
     {% endif %}

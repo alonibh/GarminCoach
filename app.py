@@ -399,7 +399,7 @@ def _fitness_tiles() -> list[dict]:
                     fa_tile["updated_str"] = f"Updated {lbl}"
             except Exception:
                 pass
-        fa_tile["hint"] = "Garmin's estimate of how old your body performs. Lower is better — a 30-year-old with a fitness age of 22 has above-average cardiovascular fitness."
+        fa_tile["hint"] = "Garmin's estimate of how old your body performs. Lower is better: a 30-year-old with a fitness age of 22 has above-average cardiovascular fitness."
         
         vo2_val = vo2.value if vo2 else None
         vo2_pct, vo2_label = _vo2_max_details(vo2_val, age=age, is_male=is_male)
@@ -480,7 +480,7 @@ def _readiness_tiles() -> list[dict]:
                       else "red" if r_val is not None
                       else None),
             "bar_pct": int(r_val) if r_val is not None else None,
-            "hint": "Daily recovery score (0–100) based on your overnight HRV, resting heart rate, sleep duration, and Body Battery — all compared to your own 60-day personal baselines, not population averages. Green (≥70) = ready to push, yellow (40–69) = moderate, red (<40) = prioritize recovery.",
+            "hint": "Daily recovery score (0-100) based on your overnight HRV, resting heart rate, sleep duration, and Body Battery, all compared to your own 60-day personal baselines. Green (70+) = ready to push, yellow (40-69) = moderate, red (<40) = prioritize recovery.",
         }
 
         # ACWR tile.
@@ -512,7 +512,7 @@ def _readiness_tiles() -> list[dict]:
             "desc": a_desc,
             "color": a_color,
             "bar_pct": a_bar_pct,
-            "hint": "Acute:Chronic Workload Ratio — your last 7 days of training load divided by your last 28 days. Balanced (0.8–1.3) = steady progression. Ramping (1.3–1.5) = building up. Spike (>1.5) = sharp increase, higher injury risk. Detraining (<0.8) = doing less than usual.",
+            "hint": "Acute:Chronic Workload Ratio: your last 7 days of training load divided by your last 28 days. Balanced (0.8-1.3) = steady progression. Ramping (1.3-1.5) = building up. Spike (>1.5) = sharp increase, higher injury risk. Detraining (<0.8) = doing less than usual.",
         }
 
         return [readiness_tile, acwr_tile]
@@ -649,12 +649,12 @@ def _te_label(raw: str | None) -> str | None:
     return " ".join(words).title() or None
 
 
-# Plain-language explanations for the non-obvious metrics (shown via ⓘ hover).
+# Plain-language explanations for the non-obvious metrics shown in hover tips.
 _METRIC_HINTS = {
     "Avg speed": "Average speed over the whole activity, including any time spent stationary.",
     "Max speed": "Fastest instantaneous speed recorded during the activity.",
-    "Moving time": "Time spent actually moving — excludes pauses and standing still.",
-    "Avg cadence": "Steps per minute — your running rhythm. A running metric; less meaningful for stop-start sports.",
+    "Moving time": "Time spent actually moving; excludes pauses and standing still.",
+    "Avg cadence": "Steps per minute, or your running rhythm. This is a running metric and is less meaningful for stop-start sports.",
     "Avg stride": "Average distance covered per step.",
     "Elevation": "Total metres climbed (+) and descended (−) during the activity.",
     "Intensity min": "Garmin Intensity Minutes: time in moderate vs vigorous effort zones. Vigorous counts double toward weekly goals.",
@@ -698,11 +698,11 @@ def _cardio_stats(act: Activity) -> list[dict]:
     if act.lap_count:
         rows.append(("Laps", str(act.lap_count)))
     if act.moderate_intensity_min or act.vigorous_intensity_min:
-        rows.append(("Intensity min", f"{act.moderate_intensity_min or 0} mod · {act.vigorous_intensity_min or 0} vig"))
+        rows.append(("Intensity min", f"{act.moderate_intensity_min or 0} mod | {act.vigorous_intensity_min or 0} vig"))
     te = _te_label(act.aerobic_te_msg)
     if act.training_effect_label or te:
         label = (act.training_effect_label or "").replace("_", " ").title()
-        rows.append(("Training effect", f"{label}{' · ' + te if te else ''}".strip(" ·")))
+        rows.append(("Training effect", f"{label}{' | ' + te if te else ''}".strip(" |")))
     return [{"label": k, "value": v, "hint": _METRIC_HINTS.get(k)} for k, v in rows]
 
 
@@ -930,36 +930,38 @@ _APP_LOGIN_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Login — GarminCoach</title>
+  <title>Login - GarminCoach</title>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0d1117; color: #e6edf3;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0b1117; color: #edf4fb;
       display: flex; align-items: center; justify-content: center;
-      min-height: 100vh;
+      min-height: 100vh; padding: 1.5rem;
     }}
     .login-card {{
-      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
-      padding: 2.5rem; width: 100%; max-width: 380px;
-      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+      background: #17212b; border: 1px solid #2d3a46; border-radius: 8px;
+      padding: 2rem; width: 100%; max-width: 400px;
+      box-shadow: 0 18px 45px rgba(0,0,0,.22);
     }}
-    .login-card h1 {{ font-size: 1.4rem; text-align: center; margin-bottom: .3rem; }}
-    .login-card .sub {{ text-align: center; color: #8b949e; font-size: .85rem; margin-bottom: 1.5rem; }}
-    label {{ display: block; font-size: .85rem; color: #8b949e; margin-bottom: .3rem; margin-top: 1rem; }}
+    .brand-lockup {{ display: flex; align-items: center; justify-content: center; gap: .6rem; margin-bottom: .4rem; }}
+    .brand-mark {{ display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; background: linear-gradient(135deg, #2f81f7, #3fb950); color: #fff; font-weight: 800; font-size: .8rem; }}
+    .login-card h1 {{ font-size: 1.45rem; text-align: center; }}
+    .login-card .sub {{ text-align: center; color: #9aacbc; font-size: .9rem; margin-bottom: 1.5rem; }}
+    label {{ display: block; font-size: .9rem; color: #edf4fb; margin-bottom: .35rem; margin-top: 1rem; font-weight: 650; }}
     input[type=text], input[type=password] {{
-      width: 100%; padding: .65rem .8rem; border-radius: 6px;
-      border: 1px solid #30363d; background: #0d1117; color: #e6edf3;
-      font-size: .95rem; outline: none; transition: border-color .2s;
+      width: 100%; padding: .68rem .75rem; border-radius: 6px;
+      border: 1px solid #2d3a46; background: #0b1117; color: #edf4fb;
+      font-size: 1rem; outline: none; transition: border-color .2s, box-shadow .2s;
     }}
-    input:focus {{ border-color: #58a6ff; }}
+    input:focus {{ border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(47,129,247,.18); }}
     button {{
-      width: 100%; margin-top: 1.5rem; padding: .7rem;
+      width: 100%; margin-top: 1.5rem; padding: .72rem;
       border: none; border-radius: 6px; cursor: pointer;
       font-size: .95rem; font-weight: 600;
-      background: #238636; color: #fff; transition: background .2s;
+      background: #2f81f7; color: #fff; transition: filter .2s;
     }}
-    button:hover {{ background: #2ea043; }}
+    button:hover {{ filter: brightness(1.08); }}
     .error {{
       background: #3d1f1f; border: 1px solid #6e3630; border-radius: 6px;
       padding: .6rem .8rem; margin-bottom: 1rem; font-size: .85rem; color: #f85149;
@@ -968,7 +970,7 @@ _APP_LOGIN_HTML = """<!doctype html>
 </head>
 <body>
   <div class="login-card">
-    <h1>🏃 GarminCoach</h1>
+    <div class="brand-lockup"><span class="brand-mark">GC</span><h1>GarminCoach</h1></div>
     <p class="sub">Sign in to continue</p>
     {error_html}
     <form method="post">
@@ -1063,8 +1065,8 @@ def login_submit(request: Request, password: str = Form(...), mfa: str = Form(""
         msg = str(e)
         if "429" in msg or "rate limit" in msg.lower():
             msg = (
-                "Garmin is rate-limiting your IP (HTTP 429) — too many login "
-                "attempts. Wait 15–60 minutes, then try again. This is a Garmin "
+                "Garmin is rate-limiting your IP (HTTP 429): too many login "
+                "attempts. Wait 15-60 minutes, then try again. This is a Garmin "
                 "throttle, not a wrong password."
             )
         return templates.TemplateResponse(
@@ -1455,11 +1457,11 @@ async def telegram_webhook(request: Request):
                                 msg.pending_action_json = None
                                 from notify.reminders import schedule_pre_workout_reminder
                                 schedule_pre_workout_reminder(payload)
-                                msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
-                                telegram.edit_message_text("✅ *Workout successfully approved and scheduled!*", chat_id=str(chat_id), message_id=message_id)
+                                msg.content += "\n\n*Workout successfully approved, uploaded, and scheduled on your Garmin Calendar.*"
+                                telegram.edit_message_text("*Workout successfully approved and scheduled.*", chat_id=str(chat_id), message_id=message_id)
                             else:
-                                msg.content += "\n\n❌ *Failed to schedule workout on Garmin.*"
-                                telegram.edit_message_text("❌ *Failed to schedule workout on Garmin.*", chat_id=str(chat_id), message_id=message_id)
+                                msg.content += "\n\n*Failed to schedule workout on Garmin.*"
+                                telegram.edit_message_text("*Failed to schedule workout on Garmin.*", chat_id=str(chat_id), message_id=message_id)
                             db.commit()
                 
                 elif callback_data.startswith("reject_workout_"):
@@ -1470,7 +1472,7 @@ async def telegram_webhook(request: Request):
                         if msg:
                             msg.pending_action_json = None
                             db.commit()
-                    telegram.edit_message_text("❌ *Workout suggestion dismissed.*", chat_id=str(chat_id), message_id=message_id)
+                    telegram.edit_message_text("*Workout suggestion dismissed.*", chat_id=str(chat_id), message_id=message_id)
                     
                 elif callback_data.startswith("reschedule_workout_"):
                     msg_id = int(callback_data.split("_")[-1])
@@ -1478,9 +1480,9 @@ async def telegram_webhook(request: Request):
                         from db import CoachMessage
                         msg = db.get(CoachMessage, msg_id)
                         if msg:
-                            msg.content += "\n\n🔄 *User requested to reschedule.*"
+                            msg.content += "\n\n*User requested to reschedule.*"
                             db.commit()
-                    telegram.edit_message_text("🔄 *When would you like to reschedule it?* (Reply to this message with a time or day, e.g., 'tomorrow at 18:00')", chat_id=str(chat_id), message_id=message_id)
+                    telegram.edit_message_text("*When would you like to reschedule it?* Reply with a time or day, for example: tomorrow at 18:00.", chat_id=str(chat_id), message_id=message_id)
 
             
             return {"status": "ok"}
@@ -1506,11 +1508,11 @@ async def telegram_webhook(request: Request):
                     reply_markup = {
                         "inline_keyboard": [
                             [
-                                {"text": "✅ Approve & Schedule", "callback_data": f"approve_workout_{asst_msg.id}"},
-                                {"text": "🔄 Not Today", "callback_data": f"reschedule_workout_{asst_msg.id}"}
+                                {"text": "Approve and schedule", "callback_data": f"approve_workout_{asst_msg.id}"},
+                                {"text": "Not today", "callback_data": f"reschedule_workout_{asst_msg.id}"}
                             ],
                             [
-                                {"text": "❌ Dismiss", "callback_data": f"reject_workout_{asst_msg.id}"}
+                                {"text": "Dismiss", "callback_data": f"reject_workout_{asst_msg.id}"}
                             ]
                         ]
                     }
@@ -1525,7 +1527,7 @@ async def telegram_webhook(request: Request):
             from notify import telegram
             chat_id = (data.get("message") or {}).get("chat", {}).get("id")
             if chat_id and str(chat_id) == config.TELEGRAM_CHAT_ID:
-                telegram.send_message(f"⚠️ *Coach Error:*\nAn error occurred while processing your request:\n`{str(e)}`\n\nThis could be a temporary issue with the AI provider (e.g. Rate Limit). Please try again later.", chat_id=str(chat_id))
+                telegram.send_message(f"*Coach error:*\nAn error occurred while processing your request:\n`{str(e)}`\n\nThis could be a temporary issue with the AI provider, such as a rate limit. Please try again later.", chat_id=str(chat_id))
         except Exception:
             pass
         

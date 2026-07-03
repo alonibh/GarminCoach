@@ -368,7 +368,7 @@ Do NOT use markdown headers or greetings, just give the insight.
         from notify.telegram import send_message
         now = get_local_now()
         is_morning = now.hour < 17
-        greeting = "🌅 *Morning Briefing*" if is_morning else "🌙 *Evening Check-in*"
+        greeting = "*Morning Briefing*" if is_morning else "*Evening Check-in*"
         
         # Check if we already generated a valid suggestion for this period today.
         # If so, we still save the fresh insight to the DB for the dashboard,
