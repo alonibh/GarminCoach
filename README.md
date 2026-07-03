@@ -43,7 +43,7 @@ Python 3.11+.
   ACWR, readiness (HRV/RHR/sleep z-scores vs a personal baseline), sleep debt,
   and strength progression (volume load + Epley estimated-1RM). Every formula is
   science-based and cited — see [`docs/METRICS.md`](docs/METRICS.md).
-- **Phase 3 ✅ — Coach (LLM):** daily suggestions + chat, swappable Ollama/Claude.
+- **Phase 3 ✅ — Coach (LLM):** daily suggestions + Telegram chat, swappable Ollama/Claude.
 - **Phase 4 ✅ — Cloud Security:** HTTP Basic Authentication locking down all routes and data, preparing the app for safe deployment to the public internet (e.g. Oracle Cloud Free Tier).
 - **Phase 5 🚧 — Lifestyle Integration (Planned):** sync to Google/Apple Calendar via `.ics` to suggest workout times, plus dynamic nutrition/food/vitamin suggestions based on goals and current recovery status.
 
@@ -67,7 +67,7 @@ the same wifi).
 
 ## Access Away From Home (Tailscale)
 Install [Tailscale](https://tailscale.com/) on the machine running this app, and on your phone.
-The app automatically binds to `0.0.0.0`, meaning you can open `http://<your-tailscale-ip>:8000` from your phone anywhere in the world to chat with the Coach or check your readiness!
+The app automatically binds to `0.0.0.0`, meaning you can open `http://<your-tailscale-ip>:8000` from your phone anywhere in the world to check your readiness. Coach chat runs through the connected Telegram bot.
 
 ## First login (one time)
 

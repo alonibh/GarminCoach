@@ -27,7 +27,6 @@ from db import (
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
-from coach.coach import handle_chat
 
 app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
@@ -1094,95 +1093,6 @@ def post_goal_page(request: Request, goal: str = Form(""), custom_input: str = F
         goal_row.updated_at = datetime.now()
         session.commit()
     return RedirectResponse(url="/", status_code=303)
-
-
-@app.get("/chat", response_class=HTMLResponse)
-def get_chat_page(request: Request):
-    """AI Coach chat interface."""
-    with get_session() as session:
-        msgs = session.query(CoachMessage).filter(
-            CoachMessage.role.in_(["user", "assistant"])
-        ).order_by(CoachMessage.created_at.asc()).all()
-        response = templates.TemplateResponse(request, "chat.html", {"messages": msgs})
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-
-@app.post("/chat", response_class=RedirectResponse)
-async def post_chat_page(request: Request, message: str = Form(...)):
-    """Handle a new chat message."""
-    from fastapi.concurrency import run_in_threadpool
-    
-    def _do_chat():
-        with get_session() as session:
-            _, _ = handle_chat(session, message)
-            
-    await run_in_threadpool(_do_chat)
-    return RedirectResponse(url="/chat", status_code=303)
-
-
-@app.post("/chat/clear", response_class=RedirectResponse)
-def clear_chat_history(request: Request):
-    """Clear chat history and delete scheduled workouts from Garmin."""
-    from db import CoachMessage, SyncState
-    from sync.garmin_client import GarminClient
-    
-    with get_session() as session:
-        # 1. Delete from Garmin Connect
-        client = GarminClient()
-        if client.login():
-            last_workout_row = session.get(SyncState, "last_coach_workout_id")
-            if last_workout_row and last_workout_row.value:
-                try:
-                    client.api.delete_workout(last_workout_row.value)
-                except Exception:
-                    pass
-                session.delete(last_workout_row)
-                
-        # 2. Clear ICS calendar events
-        events_row = session.get(SyncState, "coach_calendar_events")
-        if events_row:
-            session.delete(events_row)
-            
-        # 3. Clear Chat History
-        session.query(CoachMessage).delete()
-        session.commit()
-        
-    return RedirectResponse(url="/chat", status_code=303)
-
-
-@app.post("/chat/{msg_id}/approve", response_class=RedirectResponse)
-def approve_action(request: Request, msg_id: int):
-    """Approve a staged action."""
-    with get_session() as session:
-        msg = session.get(CoachMessage, msg_id)
-        if msg and msg.pending_action_json:
-            import json
-            from coach.garmin_compiler import compile_and_schedule
-            payload = json.loads(msg.pending_action_json)
-            
-            if payload.get("action") == "schedule_workout":
-                payload = _ensure_schedule_target_date(payload, msg)
-                success = compile_and_schedule(session, payload)
-                if success:
-                    msg.pending_action_json = None  # Clear pending status only after Garmin accepts it.
-                    msg.content += "\n\n✅ *Workout successfully approved, uploaded, and scheduled on your Garmin Calendar!*"
-                else:
-                    msg.content += "\n\n❌ *I tried to schedule this workout, but an error occurred while talking to Garmin.*"
-                session.commit()
-    return RedirectResponse("/chat", status_code=303)
-
-@app.post("/chat/{msg_id}/reject", response_class=RedirectResponse)
-def reject_action(request: Request, msg_id: int):
-    """Reject a staged action."""
-    with get_session() as session:
-        msg = session.get(CoachMessage, msg_id)
-        if msg and msg.pending_action_json:
-            msg.pending_action_json = None
-            msg.content += "\n\n❌ *Workout cancelled by user.*"
-            session.commit()
-    return RedirectResponse("/chat", status_code=303)
 
 
 @app.get("/calendar", response_class=HTMLResponse)

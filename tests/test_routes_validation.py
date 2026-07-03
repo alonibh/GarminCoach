@@ -54,6 +54,12 @@ def test_calendar_valid_month_ok(client):
     assert resp.status_code == 200
 
 
+def test_browser_chat_route_is_not_exposed(client):
+    c, _ = client
+    resp = c.get("/chat", follow_redirects=False)
+    assert resp.status_code == 404
+
+
 def test_set_non_numeric_reps_returns_400(client):
     c, db_module = client
     # Seed an activity + set to edit.
