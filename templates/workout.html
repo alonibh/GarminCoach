@@ -29,7 +29,7 @@
       <div class="exercise-head">
         <span class="exercise-name">{{ ex.name|humanize }}</span>
         <span class="muted">{{ ex.set_count }} sets{% if ex.delta_vol is not none %}
-          {% if ex.delta_vol > 0 %}<span class="trend up">Up {{ ex.delta_vol }}kg vs last</span>{% elif ex.delta_vol < 0 %}<span class="trend down">Down {{ ex.delta_vol }}kg vs last</span>{% else %}<span class="trend flat">Same as last</span>{% endif %}{% endif %}</span>
+          {% if ex.delta_vol > 0 %}<span class="trend up">Up {{ ex.delta_vol }}{{ ex.delta_unit }} vs last</span>{% elif ex.delta_vol < 0 %}<span class="trend down">Down {{ ex.delta_vol|abs }}{{ ex.delta_unit }} vs last</span>{% else %}<span class="trend flat">Same as last</span>{% endif %}{% endif %}</span>
       </div>
       <div class="set-pills">
         {% for st in ex.sets %}

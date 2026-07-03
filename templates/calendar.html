@@ -31,6 +31,7 @@
             <a href="/workout/{{ act.id }}" class="act-pill">
               <span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% elif 'swim' in act.activity_type.lower() %}🏊{% elif 'soccer' in act.activity_type.lower() %}⚽{% elif 'walk' in act.activity_type.lower() %}🚶{% elif 'hik' in act.activity_type.lower() %}🥾{% else %}⚡{% endif %}</span>
               <span class="act-dur">{{ (act.duration_s / 60)|round|int }}m</span>
+              {% if act.name %}<span class="act-name">{{ act.name }}</span>{% endif %}
             </a>
           {% endfor %}
         </div>

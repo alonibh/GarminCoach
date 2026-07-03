@@ -818,6 +818,7 @@ def workout_detail(request: Request, activity_id: int):
                     )
                     if not prev_sets:
                         ex["delta_vol"] = None
+                        ex["delta_unit"] = "kg"
                         ex["delta_best"] = None
                         continue
                     # Group prior sets by activity (newest first), then take the
@@ -854,8 +855,18 @@ def workout_detail(request: Request, activity_id: int):
                     cur_vol = ex["volume_kg"]
                     if prev_vol > 0 and cur_vol > 0:
                         ex["delta_vol"] = round(cur_vol - prev_vol)
+                        ex["delta_unit"] = "kg"
+                    elif prev_vol == 0 and cur_vol == 0:
+                        # Bodyweight exercise — compare total reps instead
+                        prev_reps = sum(ps.reps or 0 for ps in prev_for_ex)
+                        cur_reps = sum(
+                            st["reps"] for st in ex["sets"] if st.get("reps")
+                        )
+                        ex["delta_vol"] = cur_reps - prev_reps  # 0 → "Same as last"
+                        ex["delta_unit"] = " reps"
                     else:
                         ex["delta_vol"] = None
+                        ex["delta_unit"] = "kg"
         else:
             cardio = _cardio_stats(act)
 

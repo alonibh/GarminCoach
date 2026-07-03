@@ -811,6 +811,7 @@ tr:last-child td {
   color: var(--fg);
   text-decoration: none;
   font-size: .8rem;
+  flex-wrap: wrap;
 }
 
 .act-pill:hover { background: var(--card-soft); }
@@ -825,6 +826,17 @@ tr:last-child td {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.act-name {
+  flex: 0 0 100%;
+  font-size: .68rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: -.1rem;
+}
+
 
 code {
   padding: .1rem .3rem;
