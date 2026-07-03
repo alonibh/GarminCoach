@@ -361,7 +361,6 @@ def build_snapshot(session: Session) -> str:
     
     if cal_row and cal_row.value:
         try:
-            import json
             events = json.loads(cal_row.value)
             for e in events:
                 if e.get("date", "") >= today_iso:

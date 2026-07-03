@@ -10,6 +10,7 @@ __pycache__/
 *.db
 *.sqlite
 *.sqlite3
+.codex/local-context.md
 
 # Garmin auth tokens (if ever stored inside the repo instead of ~/.garminconnect)
 garmin_tokens.json
