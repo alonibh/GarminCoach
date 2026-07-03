@@ -13,18 +13,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run tests
-        run: |
-          set +e
-          python -m pytest -q 2>&1 | tee pytest-output.txt
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            tail -n 80 pytest-output.txt | python -c "import sys; msg=sys.stdin.read().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'); print(f'::error title=pytest failed::{msg}')"
-            exit "$status"
-          fi
+        run: python -m pytest -q
 
   deploy:
     needs: test

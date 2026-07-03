@@ -119,6 +119,8 @@ def test_days_since_last_trained(session):
 
 
 def test_profile_program_and_rolling_plan_included(session):
+    from time_utils import get_local_date
+
     session.add(AthleteProfile(
         id=1,
         experience_level="beginner",
@@ -137,7 +139,7 @@ def test_profile_program_and_rolling_plan_included(session):
         program_session_id=ps.id,
         activity_type="running",
         title="Easy Run",
-        target_date=date.today(),
+        target_date=get_local_date(),
         suggested_time="07:00",
         duration_min=45,
         intensity="light",
