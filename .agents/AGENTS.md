@@ -41,3 +41,7 @@ When a task or coding session is complete, you must strictly follow this teardow
    - Write a clear, concise commit message following conventional commit standards (e.g., `feat: add user authentication flow`).
    - Execute the commit: `git commit -m "..."`
    - Push the changes to the remote repository: `git push`
+
+# Communication Rules
+
+- Minimize the thinking output and show only the final outcome. Keep responses concise and direct.
