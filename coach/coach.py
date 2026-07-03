@@ -242,10 +242,13 @@ CRITICAL: You are scheduling the workout for TOMORROW.
     else:
         time_context = """
 This is a MORNING BRIEFING.
-1. Recovery & Reflection: Briefly summarize today's readiness and sleep debt.
-2. Today's Calendar: Name specific calendar events for today so the user can mentally prepare.
-3. Today's Goal: If a workout is already scheduled in `scheduled_workouts_NOT_completed`, just mention it. If not, ask if they want to train.
-CRITICAL: Do NOT pick a time, do NOT output any JSON blocks, and do NOT attempt to schedule a workout. Just provide the text analysis in exactly 3 short paragraphs. Ignore the scheduling JSON rule in the system prompt.
+Write exactly 2 or 3 short paragraphs in plain English:
+1. Metrics sentence: Mention only the most relevant signals for today's decision (readiness, sleep, HRV, ACWR/load, or yesterday's workout). Keep it simple and factual. Use numbers only when they make the recommendation clearer. Do not use jargon like "Zone 2". Do not mention a metric that is missing from the snapshot.
+2. Recommendation: Give one clear recommendation for today. If a workout is already listed in `scheduled_workouts_NOT_completed` for today, reference that workout instead of recommending a new one. If training is recommended, state the intensity as exactly one of: "push session", "normal session", or "light session", and name the routine (for example, "Chest & Biceps"). If recovery is the right call, simply recommend resting and say no workout is needed.
+3. Timing: Only if training is recommended, give the best exact time based on the calendar and scheduling constraints. If a workout is already scheduled for today, use its scheduled time.
+
+Only explain "why" when it is directly supported by the snapshot. Do not say things like avoiding legs, workout fatigue, or poor recovery unless the relevant data is present.
+CRITICAL: Do NOT output any JSON blocks and do NOT attempt to schedule a workout from the morning briefing. Ignore the scheduling JSON rule in the system prompt.
 """
 
     prompt = f"""Generate the coaching message for the user.
