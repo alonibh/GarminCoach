@@ -3,11 +3,6 @@ name: Deploy to Oracle Cloud
 on:
   push:
     branches: [ "main" ]
-name: Deploy to Oracle Cloud
-
-on:
-  push:
-    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
