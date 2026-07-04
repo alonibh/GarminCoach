@@ -187,6 +187,7 @@ class AthleteProfile(Base):
     __tablename__ = "athlete_profile"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    training_type: Mapped[str] = mapped_column(String(32), default="")
     experience_level: Mapped[str] = mapped_column(String(32), default="")
     primary_goal: Mapped[str] = mapped_column(String(64), default="")
     preferred_activities: Mapped[str] = mapped_column(Text, default="")  # JSON list
@@ -381,6 +382,11 @@ _SLEEP_ADD_COLUMNS = {
 }
 
 
+_ATHLETE_PROFILE_ADD_COLUMNS = {
+    "training_type": "VARCHAR(32)",
+}
+
+
 def _migrate_add_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -403,6 +409,12 @@ def _migrate_add_columns() -> None:
         missing_sleep = {k: v for k, v in _SLEEP_ADD_COLUMNS.items() if k not in existing_sleep}
         for col, sqltype in missing_sleep.items():
             conn.execute(text(f"ALTER TABLE sleep ADD COLUMN {col} {sqltype}"))
+
+        # Migrate athlete_profile
+        existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}
+        missing_profile = {k: v for k, v in _ATHLETE_PROFILE_ADD_COLUMNS.items() if k not in existing_profile}
+        for col, sqltype in missing_profile.items():
+            conn.execute(text(f"ALTER TABLE athlete_profile ADD COLUMN {col} {sqltype}"))
 
 
 @contextmanager

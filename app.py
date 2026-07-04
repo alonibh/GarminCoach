@@ -1156,6 +1156,94 @@ def _split_csv(value: str) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
+def _json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return []
+    return [str(v) for v in parsed] if isinstance(parsed, list) else []
+
+
+def _clean_list(values: list[str] | None) -> list[str]:
+    return [v.strip() for v in (values or []) if v and v.strip()]
+
+
+def _line_value(blob: str | None, prefix: str) -> str:
+    if not blob:
+        return ""
+    needle = f"{prefix}:"
+    for line in blob.splitlines():
+        if line.startswith(needle):
+            return line[len(needle):].strip()
+    return ""
+
+
+def _line_list(blob: str | None, prefix: str) -> list[str]:
+    value = _line_value(blob, prefix)
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _format_availability(training_days: list[str], preferred_time: str) -> str:
+    lines = []
+    if training_days:
+        lines.append(f"Training days: {', '.join(training_days)}")
+    if preferred_time:
+        lines.append(f"Preferred time: {preferred_time}")
+    return "\n".join(lines)
+
+
+def _format_scheduling_preferences(options: list[str], notes: str) -> str:
+    lines = []
+    if options:
+        lines.append(f"Scheduling options: {', '.join(options)}")
+    if notes.strip():
+        lines.append(f"Notes: {notes.strip()}")
+    return "\n".join(lines)
+
+
+def _onboarding_form_defaults(
+    profile: AthleteProfile,
+    analysis: dict,
+    current_program: TrainingProgram | None,
+    current_sessions: list[ProgramSession],
+) -> dict:
+    defaults = dict(analysis.get("defaults", {}))
+    if profile and profile.onboarding_complete:
+        defaults["training_type"] = profile.training_type or defaults.get("training_type", "")
+        defaults["experience_level"] = profile.experience_level or defaults.get("experience_level", "")
+        defaults["primary_goal"] = profile.primary_goal or defaults.get("primary_goal", "")
+        preferred = _json_list(profile.preferred_activities)
+        equipment = _json_list(profile.equipment_access)
+        if preferred:
+            defaults["preferred_activities"] = preferred
+        if equipment:
+            defaults["equipment_access"] = equipment
+
+        training_days = _line_list(profile.availability, "Training days")
+        preferred_time = _line_value(profile.availability, "Preferred time")
+        scheduling_options = _line_list(profile.scheduling_preferences, "Scheduling options")
+        scheduling_notes = _line_value(profile.scheduling_preferences, "Notes")
+        if training_days:
+            defaults["training_days"] = training_days
+        if preferred_time:
+            defaults["preferred_time_of_day"] = preferred_time
+        if scheduling_options:
+            defaults["scheduling_options"] = scheduling_options
+        defaults["scheduling_notes"] = scheduling_notes
+
+    if current_program:
+        defaults["program_name"] = current_program.name
+        defaults["plan_mode"] = current_program.mode
+        if current_program.days_per_week:
+            defaults["days_per_week"] = current_program.days_per_week
+        selected = [ps.base_workout_id for ps in current_sessions if ps.base_workout_id]
+        if selected:
+            defaults["selected_templates"] = selected
+    return defaults
+
+
 @app.get("/onboarding", response_class=HTMLResponse)
 def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
@@ -1163,6 +1251,8 @@ def get_onboarding(request: Request):
         profile = session.get(AthleteProfile, 1) or AthleteProfile(id=1)
         analysis = analyze_user_history(session)
         current_program = active_program(session)
+        current_sessions = program_sessions_for(session, current_program.id) if current_program else []
+        form_defaults = _onboarding_form_defaults(profile, analysis, current_program, current_sessions)
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1170,6 +1260,7 @@ def get_onboarding(request: Request):
                 "profile": profile,
                 "analysis": analysis,
                 "active_program": current_program,
+                "form_defaults": form_defaults,
             },
         )
 
@@ -1177,14 +1268,18 @@ def get_onboarding(request: Request):
 @app.post("/onboarding", response_class=RedirectResponse)
 def post_onboarding(
     request: Request,
+    training_type: str = Form(""),
     experience_level: str = Form(""),
     primary_goal: str = Form(""),
-    preferred_activities: str = Form(""),
-    equipment_access: str = Form(""),
-    availability: str = Form(""),
+    preferred_activities: list[str] = Form([]),
+    equipment_access: list[str] = Form([]),
+    training_days: list[str] = Form([]),
+    days_per_week: int = Form(0),
+    preferred_time_of_day: str = Form(""),
     injuries_limitations: str = Form(""),
     sport_commitments: str = Form(""),
-    scheduling_preferences: str = Form(""),
+    scheduling_options: list[str] = Form([]),
+    scheduling_notes: str = Form(""),
     program_name: str = Form(""),
     plan_mode: str = Form("schedule_my_routine"),
     selected_templates: list[int] = Form([]),
@@ -1197,14 +1292,22 @@ def post_onboarding(
             profile = AthleteProfile(id=1)
             session.add(profile)
 
+        preferred_activities_list = _clean_list(preferred_activities)
+        equipment_access_list = _clean_list(equipment_access)
+        training_days_list = _clean_list(training_days)
+        scheduling_options_list = _clean_list(scheduling_options)
+        if "manual_approval" not in scheduling_options_list:
+            scheduling_options_list.insert(0, "manual_approval")
+
+        profile.training_type = training_type.strip()
         profile.experience_level = experience_level.strip()
         profile.primary_goal = primary_goal.strip()
-        profile.preferred_activities = json.dumps(_split_csv(preferred_activities))
-        profile.equipment_access = json.dumps(_split_csv(equipment_access))
-        profile.availability = availability.strip()
+        profile.preferred_activities = json.dumps(preferred_activities_list)
+        profile.equipment_access = json.dumps(equipment_access_list)
+        profile.availability = _format_availability(training_days_list, preferred_time_of_day.strip())
         profile.injuries_limitations = injuries_limitations.strip()
         profile.sport_commitments = sport_commitments.strip()
-        profile.scheduling_preferences = scheduling_preferences.strip()
+        profile.scheduling_preferences = _format_scheduling_preferences(scheduling_options_list, scheduling_notes)
         profile.approval_mode = "manual"
         profile.onboarding_complete = True
         profile.updated_at = datetime.now()
@@ -1218,9 +1321,10 @@ def post_onboarding(
             name=name,
             mode=plan_mode.strip() or "schedule_my_routine",
             source_type="external_reference" if plan_mode == "known_plan" else "user_defined",
-            goal_tags=json.dumps(_split_csv(primary_goal)),
+            goal_tags=json.dumps([primary_goal.strip()] if primary_goal.strip() else []),
             experience_level=experience_level.strip(),
-            equipment=json.dumps(_split_csv(equipment_access)),
+            days_per_week=days_per_week or len(training_days_list) or None,
+            equipment=json.dumps(equipment_access_list),
             active=True,
             created_at=datetime.now(),
             updated_at=datetime.now(),

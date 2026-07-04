@@ -181,6 +181,7 @@ def build_snapshot(session: Session) -> str:
     profile = session.get(AthleteProfile, 1)
     if profile:
         snapshot["athlete_profile"] = {
+            "training_type": profile.training_type,
             "experience_level": profile.experience_level,
             "primary_goal": profile.primary_goal,
             "preferred_activities": _json_list(profile.preferred_activities),

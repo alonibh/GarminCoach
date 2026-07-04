@@ -193,6 +193,35 @@ p { margin: 0 0 1rem; }
   margin-top: 1rem;
 }
 
+.setup-finding {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.setup-total {
+  flex: none;
+  min-width: 140px;
+  text-align: right;
+}
+
+.setup-total span {
+  display: block;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.setup-total small {
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.option-block {
+  margin-top: 1rem;
+}
+
 .form-section {
   display: grid;
   gap: 1rem;
@@ -388,6 +417,11 @@ tr:last-child td {
   margin: 1rem 0;
 }
 
+.template-list.compact {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  margin: .55rem 0 0;
+}
+
 .check-row {
   display: flex;
   align-items: flex-start;
@@ -419,6 +453,17 @@ tr:last-child td {
   margin-top: .15rem;
   color: var(--muted);
   font-size: .78rem;
+}
+
+.readonly-choice {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: .65rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted-strong);
 }
 
 .tile-row {
@@ -981,9 +1026,14 @@ details summary {
 
   .content-header,
   .toolbar,
-  .calendar-header {
+  .calendar-header,
+  .setup-finding {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .setup-total {
+    text-align: left;
   }
 
   .card {

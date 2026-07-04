@@ -114,3 +114,73 @@ def test_manual_sync_forces_recent_fetch(client, monkeypatch):
 
     assert resp.status_code == 303
     assert captured == {"full": False, "force": True}
+
+
+def test_onboarding_renders_history_defaults(client):
+    c, db_module = client
+    from datetime import datetime
+    from db import Activity, Workout
+
+    with db_module.get_session() as s:
+        s.add(Activity(id=8101, activity_type="strength_training", start_time=datetime.now()))
+        s.add(Activity(id=8102, activity_type="strength_training", start_time=datetime.now()))
+        s.add(Activity(id=8103, activity_type="running", start_time=datetime.now()))
+        s.add(Workout(workout_id=8104, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
+
+    resp = c.get("/onboarding")
+
+    assert resp.status_code == 200
+    assert "We found this setup" in resp.text
+    assert "Strength focused" in resp.text
+    assert "Upper Strength" in resp.text
+
+
+def test_onboarding_saves_checkbox_lists_and_program_sessions(client):
+    c, db_module = client
+    import json
+    from db import AthleteProfile, ProgramSession, TrainingProgram, Workout
+
+    with db_module.get_session() as s:
+        s.add(Workout(workout_id=9001, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
+
+    resp = c.post(
+        "/onboarding",
+        data={
+            "training_type": "strength_focused",
+            "experience_level": "intermediate",
+            "primary_goal": "Build strength",
+            "preferred_activities": ["Strength", "Running"],
+            "equipment_access": ["gym", "outdoor"],
+            "training_days": ["Monday", "Wednesday", "Friday"],
+            "days_per_week": "3",
+            "preferred_time_of_day": "evening",
+            "injuries_limitations": "No heavy overhead press",
+            "sport_commitments": "Soccer Saturday",
+            "scheduling_options": ["calendar_aware", "recovery_based"],
+            "scheduling_notes": "Avoid late nights",
+            "program_name": "Strength routine",
+            "plan_mode": "existing_templates",
+            "selected_templates": ["9001"],
+            "custom_sessions": "Mobility",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    with db_module.get_session() as s:
+        profile = s.get(AthleteProfile, 1)
+        assert profile.training_type == "strength_focused"
+        assert json.loads(profile.preferred_activities) == ["Strength", "Running"]
+        assert json.loads(profile.equipment_access) == ["gym", "outdoor"]
+        assert "Training days: Monday, Wednesday, Friday" in profile.availability
+        assert "Preferred time: evening" in profile.availability
+        assert "manual_approval" in profile.scheduling_preferences
+        assert "calendar_aware" in profile.scheduling_preferences
+
+        program = s.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).one()
+        assert program.name == "Strength routine"
+        assert program.days_per_week == 3
+
+        sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
+        assert [ps.name for ps in sessions] == ["Upper Strength", "Mobility"]
+        assert sessions[0].base_workout_id == 9001
