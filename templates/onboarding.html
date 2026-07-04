@@ -37,11 +37,12 @@
 
 <div class="grid">
   <div class="card">
-    <h3>Activity mix</h3>
+    <h3>Activity mix <small class="muted" style="font-size:0.75rem;font-weight:normal">(last 90 days)</small></h3>
     {% if analysis.activity_patterns %}
+      {% set recent_total = analysis.activity_patterns | sum(attribute='sessions') %}
       <div class="history-bars">
         {% for row in analysis.activity_patterns %}
-          {% set pct = (row.sessions / analysis.total_activities * 100) if analysis.total_activities else 0 %}
+          {% set pct = (row.sessions / recent_total * 100) if recent_total else 0 %}
           <div class="history-bar-row">
             <div class="history-bar-label">
               <span>{{ row.label }}</span>
