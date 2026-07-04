@@ -1470,6 +1470,206 @@ def delete_session_exercise(session_id: int, exercise_id: int):
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/session/{session_id}/suggest-from-history")
+def suggest_from_history(session_id: int):
+    """Return exercise suggestions for a session derived from activity history.
+
+    Algorithm:
+    1. Match strength activities to the session name (exact after cleaning, then keyword).
+    2. Take the last 5 matching activities.
+    3. For each exercise_name appearing in ≥ 50% of those activities, aggregate:
+       - sets  : modal count of working sets across sessions
+       - reps  : median reps from the most recent session's working sets
+       - weight: most recent non-zero working-set weight
+       - warmup: sets where weight < 75 % of modal working weight (first in order)
+    4. Return sorted by appearance frequency (most consistent exercise first).
+    """
+    import re as _re
+    import statistics
+
+    def _clean(name: str | None) -> str:
+        if not name:
+            return ""
+        s = _re.sub(r"^[^\w\s]+\s*", "", name)       # strip leading emoji
+        s = _re.sub(r"\s*@\s*\d{1,2}:\d{2}\s*$", "", s)  # strip @ HH:MM
+        s = _re.sub(r"^[A-Z]\s+-\s+", "", s)           # strip "A - " letter prefix
+        return s.strip()
+
+    def _keywords(name: str) -> set[str]:
+        """Split 'Chest & Biceps' → {'chest', 'biceps'} ignoring short words."""
+        parts = _re.split(r"[\s&,/]+", name.lower())
+        return {p for p in parts if len(p) > 2}
+
+    def _detect_warmup_ids(sets_ordered: list) -> set[int]:
+        """Return set of ExerciseSet.id values that are warm-up sets.
+
+        A set is a warm-up when:
+        - It has a valid weight AND
+        - Its weight < 75 % of the modal (working) weight AND
+        - It appears before the first working-weight set (by set_index order).
+        """
+        weighted = [s for s in sets_ordered if s.weight_kg and s.weight_kg > 0]
+        if len(weighted) < 2:
+            return set()
+        weights = [s.weight_kg for s in weighted]
+        # Modal working weight
+        weight_counts: dict[float, int] = {}
+        for w in weights:
+            weight_counts[w] = weight_counts.get(w, 0) + 1
+        working_weight = max(weight_counts, key=weight_counts.__getitem__)
+        threshold = 0.75 * working_weight
+
+        warmup_ids: set[int] = set()
+        found_working = False
+        for s in sets_ordered:
+            if not s.weight_kg or s.weight_kg <= 0:
+                continue
+            if not found_working:
+                if s.weight_kg >= threshold:
+                    found_working = True
+                else:
+                    warmup_ids.add(s.id)
+        return warmup_ids
+
+    with get_session() as db:
+        ps = db.get(ProgramSession, session_id)
+        if not ps:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        cleaned_session = _clean(ps.name)
+        kw = _keywords(cleaned_session)
+
+        # --- Find matching strength activities ---
+        candidates = (
+            db.query(Activity)
+            .filter(Activity.activity_type.ilike("%strength%"))
+            .order_by(Activity.start_time.desc())
+            .limit(200)
+            .all()
+        )
+        matched: list[Activity] = []
+        for act in candidates:
+            act_name = _clean(act.name)
+            # Exact match first, then any keyword overlap
+            if act_name.lower() == cleaned_session.lower():
+                matched.append(act)
+            elif kw and kw.intersection(_keywords(act_name)):
+                matched.append(act)
+            if len(matched) >= 5:
+                break
+
+        if not matched:
+            return JSONResponse([])
+
+        # --- Aggregate exercises across matched sessions ---
+        # Structure: {exercise_name: [{sets, reps, weight, is_warmup, activity_date}]}
+        from collections import defaultdict
+        appearances: dict[str, list[dict]] = defaultdict(list)
+        # Track order by first seen (most recent first)
+        exercise_order: dict[str, int] = {}
+        order_counter = 0
+
+        for act in matched:
+            act_sets = (
+                db.query(ExerciseSet)
+                .filter_by(activity_id=act.id, set_type="ACTIVE")
+                .order_by(ExerciseSet.set_index)
+                .all()
+            )
+            # Group by exercise_name (fall back to exercise_category)
+            by_ex: dict[str, list] = defaultdict(list)
+            for s in act_sets:
+                key = s.exercise_name or s.exercise_category
+                if not key or key == "UNKNOWN":
+                    continue
+                by_ex[key].append(s)
+
+            for ex_name, ex_sets in by_ex.items():
+                warmup_ids = _detect_warmup_ids(ex_sets)
+                working = [s for s in ex_sets if s.id not in warmup_ids]
+                warmup  = [s for s in ex_sets if s.id in warmup_ids]
+
+                if ex_name not in exercise_order:
+                    exercise_order[ex_name] = order_counter
+                    order_counter += 1
+
+                appearances[ex_name].append({
+                    "working_sets": len(working),
+                    "working_reps": [s.reps for s in working if s.reps],
+                    "working_weights": [s.weight_kg for s in working if s.weight_kg],
+                    "warmup_sets": len(warmup),
+                    "warmup_reps": [s.reps for s in warmup if s.reps],
+                    "warmup_weights": [s.weight_kg for s in warmup if s.weight_kg],
+                    "date": act.start_time,
+                })
+
+        n_sessions = len(matched)
+        min_appearances = max(1, (n_sessions + 1) // 2)  # ≥ 50 %
+
+        suggestions = []
+        for ex_name, records in appearances.items():
+            if len(records) < min_appearances:
+                continue
+
+            # Most recent record first (matched list is newest-first)
+            recent = records[0]
+
+            # Modal working set count
+            set_counts = [r["working_sets"] for r in records if r["working_sets"] > 0]
+            modal_sets = max(set(set_counts), key=set_counts.count) if set_counts else 1
+
+            # Median reps from most recent session
+            reps_recent = recent["working_reps"]
+            median_reps = int(statistics.median(reps_recent)) if reps_recent else None
+
+            # Most recent working weight
+            wts = recent["working_weights"]
+            recent_weight = wts[-1] if wts else None  # last (heaviest typical) set
+
+            # Warm-up from most recent session
+            wu_reps_list = recent["warmup_reps"]
+            wu_wts_list  = recent["warmup_weights"]
+            warmup_reps   = int(statistics.median(wu_reps_list)) if wu_reps_list else None
+            warmup_weight = wu_wts_list[0] if wu_wts_list else None  # first (lightest) wu set
+
+            suggestions.append({
+                "exercise_name": ex_name.replace("_", " ").title(),
+                "sets": modal_sets,
+                "reps": median_reps,
+                "weight_kg": recent_weight,
+                "warmup_reps": warmup_reps,
+                "warmup_weight_kg": warmup_weight,
+                "frequency": len(records),
+            })
+
+        # Sort: most consistent exercise first, then by first-seen order
+        suggestions.sort(key=lambda x: (-x["frequency"], exercise_order.get(
+            x["exercise_name"].upper().replace(" ", "_"), 999
+        )))
+
+        return JSONResponse(suggestions)
+
+
+@app.patch("/api/session/{session_id}/addon")
+async def toggle_addon(session_id: int, request: Request):
+    """Toggle the is_addon flag for a program session."""
+    import json as _json
+    body = await request.body()
+    try:
+        payload = _json.loads(body)
+        is_addon = bool(payload.get("is_addon", False))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    with get_session() as db:
+        ps = db.get(ProgramSession, session_id)
+        if not ps:
+            raise HTTPException(status_code=404, detail="Session not found")
+        ps.is_addon = is_addon
+
+    return JSONResponse({"ok": True, "is_addon": is_addon})
+
+
 @app.get("/calendar", response_class=HTMLResponse)
 def get_calendar_page(request: Request, year: int = None, month: int = None):
     """Monthly calendar view with workouts and readiness."""

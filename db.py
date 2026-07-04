@@ -241,6 +241,8 @@ class ProgramSession(Base):
     duration_min: Mapped[Optional[int]] = mapped_column(Integer)
     base_workout_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # If True, this session is a finisher/add-on to another session, not standalone.
+    is_addon: Mapped[bool] = mapped_column(Boolean, default=False)
 
     program: Mapped["TrainingProgram"] = relationship(back_populates="sessions")
     exercises: Mapped[list["SessionExercise"]] = relationship(
@@ -413,6 +415,10 @@ _ATHLETE_PROFILE_ADD_COLUMNS = {
     "training_type": "VARCHAR(32)",
 }
 
+_PROGRAM_SESSION_ADD_COLUMNS = {
+    "is_addon": "INTEGER NOT NULL DEFAULT 0",
+}
+
 
 _SESSION_EXERCISES_CREATE = """
     CREATE TABLE IF NOT EXISTS session_exercises (
@@ -457,6 +463,12 @@ def _migrate_add_columns() -> None:
         missing_profile = {k: v for k, v in _ATHLETE_PROFILE_ADD_COLUMNS.items() if k not in existing_profile}
         for col, sqltype in missing_profile.items():
             conn.execute(text(f"ALTER TABLE athlete_profile ADD COLUMN {col} {sqltype}"))
+
+        # Migrate program_sessions
+        existing_ps = {c["name"] for c in insp.get_columns("program_sessions")}
+        missing_ps = {k: v for k, v in _PROGRAM_SESSION_ADD_COLUMNS.items() if k not in existing_ps}
+        for col, sqltype in missing_ps.items():
+            conn.execute(text(f"ALTER TABLE program_sessions ADD COLUMN {col} {sqltype}"))
 
         # Create session_exercises table if it doesn't exist yet
         conn.execute(text(_SESSION_EXERCISES_CREATE))

@@ -213,14 +213,15 @@ def build_snapshot(session: Session) -> str:
                     "sequence_order": ps.sequence_order,
                     "focus_tags": _json_list(ps.focus_tags),
                     "duration_min": ps.duration_min,
+                    "is_addon": bool(ps.is_addon),
                 }
                 for ps in sessions
             ],
         }
 
         # Inject user-configured base workout templates into the snapshot.
-        # These are the per-session exercise baselines the user set in the
-        # Plan page — the AI uses these instead of raw Garmin template IDs.
+        # Sessions marked is_addon=true are finisher blocks to be appended
+        # to another session, not scheduled as standalone workouts.
         base_templates = []
         for ps in sessions:
             exs = (
@@ -232,6 +233,7 @@ def build_snapshot(session: Session) -> str:
             if exs:
                 base_templates.append({
                     "session": ps.name,
+                    "is_addon": bool(ps.is_addon),
                     "exercises": [
                         {
                             "exercise": ex.exercise_name.replace("_", " ").title(),
@@ -376,6 +378,8 @@ def build_snapshot(session: Session) -> str:
         snapshot["recent_workouts"] = workouts
 
     # 5. User Pre-defined Workouts
+    # Only inject days-since and progressive overload stats — the full template
+    # list is no longer needed since the user defines base workouts in the app.
     def _extract_exercises(steps_json: str) -> set:
         """Raw exercise category/name strings from a workout's step JSON."""
         names = set()
@@ -396,10 +400,6 @@ def build_snapshot(session: Session) -> str:
             pass
         return names
 
-    # Only strength routines are relevant to gym coaching. Running templates
-    # (cardio) are handled separately and were bloating the payload massively.
-    # Exclude coach-created workouts (starting with the emoji prefix) — those
-    # go into a separate "scheduled_workouts" section below.
     from coach.garmin_compiler import _COACH_PREFIX
     saved_workouts = (
         session.query(Workout)
@@ -407,23 +407,11 @@ def build_snapshot(session: Session) -> str:
         .all()
     )
     if saved_workouts:
-        unique_exercises = set()
-        routine_exercises = {}  # routine name -> raw exercise names (for "days since")
+        routine_exercises = {}
         for w in saved_workouts:
             ex_names = _extract_exercises(w.steps_json)
             if w.sport_type == "strength_training":
-                unique_exercises |= ex_names
                 routine_exercises[w.name] = ex_names
-
-        snapshot["available_garmin_templates"] = [
-            {
-                "name": w.name,
-                "workout_id": w.workout_id,
-                "activity_type": w.sport_type,
-                "activity_family": activity_family(w.sport_type),
-            }
-            for w in saved_workouts
-        ]
 
         # Days since each routine was last trained — directly serves the
         # "pick the least-recently-trained muscle group" rule in the prompt.
@@ -442,6 +430,9 @@ def build_snapshot(session: Session) -> str:
             snapshot["workout_history_log"] = history_log
 
         # Inject the progressive-overload history map.
+        unique_exercises: set[str] = set()
+        for ex_set in routine_exercises.values():
+            unique_exercises |= ex_set
         if unique_exercises:
             raw_stats = _get_recent_exercise_stats(session, unique_exercises)
             if raw_stats:

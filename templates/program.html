@@ -91,9 +91,13 @@
         <span class="plan-session-num">{{ s.sequence_order }}</span>
         <span>{{ s.name }}</span>
         <span class="plan-session-type muted">{{ s.sport_type | activity_family }}</span>
+        <button class="btn-addon-toggle {% if s.is_addon %}is-addon{% endif %}" onclick="toggleAddon({{ s.id }}, this)">
+          {% if s.is_addon %}+ Add-on{% else %}● Standalone{% endif %}
+        </button>
       </div>
       <div class="plan-template-actions">
         <span class="plan-save-status muted" id="save-status-{{ s.id }}"></span>
+        <button class="btn-ghost btn-sm" onclick="importFromHistory({{ s.id }})" id="import-btn-{{ s.id }}" title="Import from history">↓ Import</button>
         <button class="btn btn-sm" onclick="saveSession({{ s.id }})">Save</button>
       </div>
     </div>
@@ -128,30 +132,7 @@
   </div>
   {% endfor %}
 
-  {# ── Rolling 14-day plan ── #}
-  <div class="card" style="margin-top: 1.5rem;">
-    <h3>Rolling 14-day plan</h3>
-    {% if planned %}
-      <div class="table-scroll">
-      <table>
-        <thead><tr><th>Date</th><th>Time</th><th>Session</th><th>Intensity</th><th>Status</th></tr></thead>
-        <tbody>
-          {% for p in planned %}
-            <tr>
-              <td>{{ p.target_date }}</td>
-              <td>{{ p.suggested_time or "TBD" }}</td>
-              <td>{{ p.title }}</td>
-              <td>{{ p.intensity }}</td>
-              <td><span class="badge">{{ p.status }}</span></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      </div>
-    {% else %}
-      <p class="muted">No planned sessions in the next 14 days yet. Ask the coach in Telegram to schedule your routine.</p>
-    {% endif %}
-  </div>
+  {% endfor %}
 
 {% endif %}
 
@@ -215,6 +196,9 @@ async function saveSession(sessionId) {
       statusEl.textContent = '✓ Saved';
       statusEl.className = 'plan-save-status success';
       setTimeout(() => { statusEl.textContent = ''; }, 2500);
+      
+      // Remove history badges
+      rows.forEach(tr => tr.classList.remove('from-history'));
     } else {
       statusEl.textContent = '✗ Error';
       statusEl.className = 'plan-save-status danger';
@@ -224,5 +208,94 @@ async function saveSession(sessionId) {
     statusEl.className = 'plan-save-status danger';
   }
 }
+
+async function toggleAddon(sessionId, btn) {
+  const isAddon = !btn.classList.contains('is-addon');
+  try {
+    const res = await fetch(`/api/session/${sessionId}/addon`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_addon: isAddon }),
+    });
+    if (res.ok) {
+      if (isAddon) {
+        btn.classList.add('is-addon');
+        btn.textContent = '+ Add-on';
+      } else {
+        btn.classList.remove('is-addon');
+        btn.textContent = '● Standalone';
+      }
+    }
+  } catch (e) {
+    console.error("Toggle addon failed", e);
+  }
+}
+
+async function importFromHistory(sessionId, silent = false) {
+  const tbody = document.getElementById('tbody-' + sessionId);
+  const importBtn = document.getElementById('import-btn-' + sessionId);
+  
+  if (!silent && tbody.children.length > 0) {
+    if (!confirm("This will replace your current exercises with those from history. Continue?")) {
+      return;
+    }
+  }
+
+  if (importBtn) importBtn.textContent = "…";
+
+  try {
+    const res = await fetch(`/api/session/${sessionId}/suggest-from-history`);
+    if (res.ok) {
+      const suggestions = await res.json();
+      if (suggestions.length === 0) {
+        if (!silent) alert("No matching history found for this session.");
+        if (importBtn) {
+          importBtn.textContent = "↓ Import";
+          importBtn.disabled = true;
+          importBtn.title = "No matching history found";
+        }
+        return;
+      }
+      
+      tbody.innerHTML = '';
+      suggestions.forEach(ex => {
+        const tr = document.createElement('tr');
+        tr.className = 'from-history';
+        
+        let notes = '';
+        if (ex.warmup_reps && ex.warmup_weight_kg) {
+          notes = `WU: 1x${ex.warmup_reps} @ ${ex.warmup_weight_kg}kg`;
+        }
+        
+        tr.innerHTML = `
+          <td><input type="text" class="ex-name" list="garmin-exercises-list" value="${ex.exercise_name}" placeholder="Exercise…" autocomplete="off"></td>
+          <td><input type="number" class="ex-sets" value="${ex.sets || ''}" min="1" max="20" placeholder="—"></td>
+          <td><input type="number" class="ex-reps" value="${ex.reps || ''}" min="1" max="100" placeholder="—"></td>
+          <td><input type="number" class="ex-weight" value="${ex.weight_kg || ''}" min="0" max="500" step="0.5" placeholder="BW"></td>
+          <td><input type="text" class="ex-notes" value="${notes}" placeholder="—"></td>
+          <td><button class="btn-icon btn-danger" onclick="removeRow(this)" title="Remove">✕</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      
+      if (!silent) saveSession(sessionId); // Auto-save on manual import
+    }
+  } catch (e) {
+    console.error("Import from history failed", e);
+  } finally {
+    if (importBtn && !importBtn.disabled) importBtn.textContent = "↓ Import";
+  }
+}
+
+// Auto-fill empty sessions on load
+window.addEventListener('DOMContentLoaded', () => {
+  const sessionIds = Array.from(document.querySelectorAll('.plan-template-card')).map(c => c.id.replace('session-card-', ''));
+  sessionIds.forEach(id => {
+    const tbody = document.getElementById('tbody-' + id);
+    if (tbody && tbody.children.length === 0) {
+      importFromHistory(id, true);
+    }
+  });
+});
 </script>
 {% endblock %}

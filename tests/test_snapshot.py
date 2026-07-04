@@ -65,16 +65,6 @@ def _seed_workouts(session):
     session.commit()
 
 
-def test_running_workouts_included_as_garmin_templates(session):
-    _seed_workouts(session)
-    from coach.snapshot import build_snapshot
-    snap = yaml.safe_load(build_snapshot(session))
-    names = {w["name"] for w in snap.get("available_garmin_templates", [])}
-    assert "Upper Strength" in names
-    assert "Lower Strength" in names
-    assert len(names) == 3
-
-
 def test_all_null_metrics_block_dropped(session):
     _seed_workouts(session)
     # A metrics row with no real signal at all.

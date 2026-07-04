@@ -1328,8 +1328,56 @@ details summary {
 .plan-save-status.success { color: var(--success); }
 .plan-save-status.danger  { color: var(--danger); }
 
+/* Add-on toggle */
+.btn-addon-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: .25rem .6rem;
+  border-radius: var(--radius-sm);
+  font-size: .75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  margin-left: auto;
+}
+
+.btn-addon-toggle.is-addon {
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+}
+
+.btn-addon-toggle.is-addon:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* History rows */
+tr.from-history td {
+  background: rgba(33, 150, 243, 0.05);
+}
+
+tr.from-history td:first-child::before {
+  content: "From history";
+  position: absolute;
+  top: -6px;
+  left: 6px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--surface);
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+.plan-exercise-table td { position: relative; }
+
 @media (max-width: 640px) {
   .plan-template-header { flex-direction: column; align-items: flex-start; }
+  .btn-addon-toggle { margin-left: 0; margin-top: .5rem; }
   .plan-exercise-table th:nth-child(5),
   .plan-exercise-table td:nth-child(5) { display: none; }
 }
