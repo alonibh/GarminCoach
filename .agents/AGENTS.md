@@ -21,6 +21,3 @@
 - After each change you make, you must make sure you didn't break anything, that the new change actually works, and all tests pass. If new tests are needed, add them.
 - Follow `.agents/rules/git-test-workflow.md` for the full Git, test, cleanup, commit, and push protocol.
 
-# Communication Rules
-
-- Minimize the thinking output and show only the final outcome. Keep responses concise and direct.
