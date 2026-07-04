@@ -210,6 +210,21 @@ def _morning_short_sleep_opening(session: Session) -> str | None:
         return first
     return first + " " + " and ".join(details) + "."
 
+
+def telegram_workout_reply_markup(message_id: int) -> dict:
+    """Inline actions for any approval-ready workout/session proposal."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Approve and schedule", "callback_data": f"approve_workout_{message_id}"},
+                {"text": "Different time", "callback_data": f"reschedule_workout_{message_id}"},
+            ],
+            [
+                {"text": "Dismiss", "callback_data": f"reject_workout_{message_id}"},
+            ],
+        ]
+    }
+
 def _extract_and_strip_json(text: str) -> tuple[str, str | None]:
     """Finds a ```json ... ``` block, parses it, and returns (stripped_text, json_str)."""
     match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
@@ -298,6 +313,7 @@ def generate_daily_suggestion(session: Session) -> None:
 
     snapshot_json = build_snapshot(session)
     prompt_snapshot_json = snapshot_json if is_evening else _verbalize_morning_snapshot(snapshot_json, session)
+    morning_opening = None if is_evening else _morning_short_sleep_opening(session)
 
     if is_evening:
         time_context = """
@@ -317,16 +333,24 @@ Only explain "why" when it is directly supported by the snapshot. Do not say thi
 CRITICAL: If you propose a workout, you MUST output the scheduling JSON block for tomorrow. If you do not output a valid scheduling JSON block, the evening check-in will not be sent.
 """
     else:
+        fixed_opening_rule = ""
+        if morning_opening:
+            fixed_opening_rule = f"""
+A fixed first sentence will be prepended by the app:
+"{morning_opening}"
+Do not repeat the sleep duration, sleep score, deep sleep detail, or HRV detail from that sentence. Use the body for readiness/load, the recommendation, the exact workout time, and today's calendar events.
+"""
         time_context = """
 This is a MORNING BRIEFING.
 Write exactly 2 or 3 short paragraphs in plain English:
-1. Metrics sentence: Mention only the most relevant signals for today's decision (readiness, sleep, HRV, ACWR/load, or yesterday's workout). Keep it simple and factual. Do not use jargon like "Zone 2". Do not mention a metric that is missing from the snapshot. For HRV and ACWR/load, give simple verbal feedback only; never quote exact HRV milliseconds, ACWR ratios, acute/chronic load values, or threshold numbers. If sleep was short (<6.5h) but sleep score is fair-or-better and HRV is near recent values, the FIRST sentence must lead with the sleep context: "Short night - [duration], score [score]..." and include deep sleep if available plus verbal HRV stability. Say "not a sleep red flag" only when the short sleep is offset by stable HRV/sleep quality; still mention any separate load/readiness risk in the next sentence.
+1. Metrics sentence: Mention each relevant metric at most once for today's decision (readiness, sleep debt, HRV, ACWR/load, or yesterday's workout). Keep it simple and factual. Do not use jargon like "Zone 2". Do not mention a metric that is missing from the snapshot. For HRV and ACWR/load, give simple verbal feedback only; never quote exact HRV milliseconds, ACWR ratios, acute/chronic load values, or threshold numbers. If no fixed first sentence is provided and sleep was short (<6.5h) but sleep score is fair-or-better and HRV is near recent values, the FIRST sentence must lead with the sleep context: "Short night - [duration], score [score]..." and include deep sleep if available plus verbal HRV stability. Say "not a sleep red flag" only when the short sleep is offset by stable HRV/sleep quality; still mention any separate load/readiness risk in the next sentence.
 2. Recommendation: Give one clear recommendation for today. If a workout is already listed in `scheduled_workouts_NOT_completed` or `rolling_plan_14_days` for today, reference that session instead of recommending a new one. If training is recommended after short sleep, use a "go with a governor" call: train, but reduce volume or keep it light if the first working sets feel heavier than expected. If training is recommended, state the intensity as exactly one of: "recovery session", "light session", "normal session", or "hard session", and name the confirmed session/activity. If readiness is low but ACWR/load is on the low side, prefer active recovery or a light session over a full rest day unless sleep/HRV are clearly poor. If recovery is the right call, simply recommend resting and say no workout is needed. If HRV is notably unstable or has dropped, add a short, simple, actionable daily tip to aid recovery (e.g., "drink an extra glass of water today", "do 5 mins of deep breathing", "avoid heavy meals before bed").
-3. Timing: Only if training is recommended, give the best exact time based on the calendar and scheduling constraints. If a workout is already scheduled for today, use its scheduled time.
+3. Timing and calendar: If training is recommended, give one exact workout time in HH:MM based on today's calendar and scheduling constraints; do not give only a broad time window. Also state today's calendar events by name and time so the user does not need to check the calendar manually. If there are no calendar events today in the snapshot, say the calendar looks open. If a workout is already scheduled for today, use its scheduled time.
 
 Only explain "why" when it is directly supported by the snapshot. Do not say things like avoiding legs, workout fatigue, or poor recovery unless the relevant data is present.
-CRITICAL: Do NOT output any JSON blocks and do NOT attempt to schedule a workout from the morning briefing. Ignore the scheduling JSON rule in the system prompt.
-"""
+CRITICAL: If you recommend training today, you MUST output one valid scheduling JSON block for today with `target_date` set to today's date and `suggested_time` set to your exact recommended time. The user must still approve it before scheduling.
+CRITICAL: Do not repeat the same sleep score, sleep duration, readiness score, or HRV/load feedback in multiple paragraphs.
+""" + fixed_opening_rule
 
     prompt = f"""Generate the coaching message for the user.
 Review the following metrics snapshot:
@@ -336,10 +360,8 @@ Review the following metrics snapshot:
 Do NOT use markdown headers or greetings, just give the insight.
 """
     suggestion_text, json_str = _generate_with_retry(SYSTEM_PROMPT, prompt, session=session)
-    if not is_evening:
-        opening = _morning_short_sleep_opening(session)
-        if opening and not suggestion_text.lower().startswith("short night"):
-            suggestion_text = f"{opening}\n\n{suggestion_text}"
+    if morning_opening and not suggestion_text.lower().startswith("short night"):
+        suggestion_text = f"{morning_opening}\n\n{suggestion_text}"
 
     # Evening pushes should be actionable: either a schedulable workout proposal
     # for tomorrow, or silence. Morning remains the daily source of truth.
@@ -387,7 +409,8 @@ Do NOT use markdown headers or greetings, just give the insight.
                         break
                         
         if not already_pushed:
-            send_message(f"{greeting}\n\n{suggestion_text}")
+            reply_markup = telegram_workout_reply_markup(msg.id) if msg.pending_action_json else None
+            send_message(f"{greeting}\n\n{suggestion_text}", reply_markup=reply_markup)
     except Exception as e:
         import logging
         logging.error(f"Failed to send proactive Telegram notification: {e}")

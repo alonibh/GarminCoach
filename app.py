@@ -1650,7 +1650,7 @@ async def telegram_webhook(request: Request):
         
         # We only care about text messages from the authorized chat
         if text and str(chat_id) == config.TELEGRAM_CHAT_ID:
-            from coach.coach import handle_chat
+            from coach.coach import handle_chat, telegram_workout_reply_markup
             from notify import telegram
             
             telegram.send_chat_action(str(chat_id), "typing")
@@ -1661,17 +1661,7 @@ async def telegram_webhook(request: Request):
                 
                 reply_markup = None
                 if asst_msg.pending_action_json:
-                    reply_markup = {
-                        "inline_keyboard": [
-                            [
-                                {"text": "Approve and schedule", "callback_data": f"approve_workout_{asst_msg.id}"},
-                                {"text": "Not today", "callback_data": f"reschedule_workout_{asst_msg.id}"}
-                            ],
-                            [
-                                {"text": "Dismiss", "callback_data": f"reject_workout_{asst_msg.id}"}
-                            ]
-                        ]
-                    }
+                    reply_markup = telegram_workout_reply_markup(asst_msg.id)
             
             # Send response back to Telegram
             telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)
