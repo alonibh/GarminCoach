@@ -446,17 +446,17 @@ def _readiness_tiles() -> list[dict]:
             .order_by(DailyMetrics.day.desc())
             .first()
         )
-        # Readiness depends on finalized overnight data. If today's sleep/HRV
-        # is not ready yet, use the most recent completed readiness row instead
-        # of showing a misleading poor score.
-        max_readiness_day = today if overnight_ready else today - timedelta(days=1)
-        latest_readiness = (
-            s.query(DailyMetrics)
-            .filter(DailyMetrics.day <= max_readiness_day)
-            .filter(DailyMetrics.readiness.isnot(None))
-            .order_by(DailyMetrics.day.desc())
-            .first()
-        )
+        # Readiness answers "how recovered am I today?", so yesterday's value
+        # is not a useful fallback. Hide it until today's overnight data is
+        # finalized.
+        latest_readiness = None
+        if overnight_ready:
+            latest_readiness = (
+                s.query(DailyMetrics)
+                .filter(DailyMetrics.day == today)
+                .filter(DailyMetrics.readiness.isnot(None))
+                .first()
+            )
         # Previous day for trend arrows.
         prev = None
         if latest_readiness:
@@ -472,7 +472,9 @@ def _readiness_tiles() -> list[dict]:
         r_val = latest_readiness.readiness if latest_readiness else None
         
         r_desc = ""
-        if r_val is not None:
+        if not overnight_ready:
+            r_desc = "Waiting for overnight watch data."
+        elif r_val is not None:
             if r_val >= 70:
                 r_desc = "Ready to push."
             elif r_val >= 40:

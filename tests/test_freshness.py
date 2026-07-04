@@ -82,7 +82,7 @@ def _bound_session(session):
     yield session
 
 
-def test_dashboard_uses_last_ready_readiness_when_today_is_unready(session, monkeypatch):
+def test_dashboard_hides_readiness_when_today_is_unready(session, monkeypatch):
     import app as app_module
 
     today = date.today()
@@ -95,8 +95,9 @@ def test_dashboard_uses_last_ready_readiness_when_today_is_unready(session, monk
 
     readiness, acwr = app_module._readiness_tiles()
 
-    assert readiness["value"] == 72
-    assert readiness["age"] == "1 day ago"
+    assert readiness["value"] is None
+    assert readiness["age"] is None
+    assert readiness["desc"] == "Waiting for overnight watch data."
     assert acwr["value"] == 0.5
 
 
