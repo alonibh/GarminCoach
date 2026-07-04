@@ -1,22 +1,23 @@
 # Rules for Agents
 
-- Project context:
-  - GarminCoach is a personal Garmin Connect health/fitness dashboard with AI coaching.
-  - Backend: Python 3, FastAPI, Uvicorn. Frontend: Jinja2 templates, HTML, static files.
-  - Database: local SQLite file (`garmincoach.db`) with schema and migrations handled in `db.py` via `init_db()` and `_migrate_add_columns()`. There is no external database server.
-  - AI integration: currently configured for Gemini 2.5 Flash, with support for Claude and local Ollama models.
-  - Local project root on Windows: `C:\Projects\garmincoach`.
-  - Main local deployment script: `C:\Projects\garmincoach\deploy.ps1`.
-  - Local-only deployment details may be available in `.codex/local-context.md`; do not commit that file.
-- Infrastructure and deployment:
-  - Production runs on an Ubuntu VM; no DNS name is configured.
-  - Deployment is lightweight/script-based. `deploy.ps1` bundles the app into `garmincoach.tar.gz`, excluding virtualenvs, `__pycache__`, and the database, uploads the archive plus `setup.sh` with `scp`, then runs `setup.sh` over SSH.
-  - `setup.sh` runs remotely to update system packages, extract the archive, create/update `.venv`, install `requirements.txt`, and configure `iptables`.
-  - The app runs as systemd service `garmincoach.service`.
-  - Uvicorn listens on port `8000`; HTTP port `80` is mapped to `8000` with `iptables` PREROUTING so Uvicorn does not run as root.
-  - Runtime configuration is in `.env`, with `.env.example` as the template. It includes Garmin credentials, LLM API keys, sync intervals, session secrets, and optional Telegram bot settings.
-- Always commit and push all relevant changes to GitHub after every chat/piece of work.
-- Discard (revert) changes that are not relevant or were abandoned during testing.
-- ALWAYS verify the deployment after pushing code and restarting the remote server. You must check the service logs (`sudo journalctl -u garmincoach -n 50`) and perform a quick smoke test (e.g. `curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/`) to ensure the server didn't crash on startup.
-- After each change you make, you must make sure you didn't break anything, that the new change actually works, and all tests pass. If new tests are needed, add them.
-- Follow `.agents/rules/git-test-workflow.md` for the full Git, test, cleanup, commit, and push protocol.
+## Project Context
+- GarminCoach is a personal Garmin Connect health/fitness dashboard with AI coaching.
+- **Backend**: Python 3, FastAPI, Uvicorn. **Frontend**: Jinja2 templates + vanilla HTML/CSS/JS in `static/`.
+- **Packages**: `coach/` (LLM, snapshot, calendar, actions), `sync/` (Garmin client, scheduler, sync service), `metrics/` (engine, freshness), `notify/` (Telegram, reminders, weekly).
+- **Database**: local SQLite (`garmincoach.db`); schema/migrations in `db.py` → `init_db()` + `_migrate_add_columns()`. No external DB server.
+- **AI**: `coach/llm.py` supports `gemini` (default in prod: `gemini-2.5-flash`), `claude` (`claude-haiku-4-5`), and `ollama`. Provider set via `LLM_PROVIDER` in `.env`.
+- **Config**: `.env` (from `.env.example`). Holds Garmin creds, LLM keys, sync schedule, session secret, optional Telegram settings.
+- **Local root**: `C:\Projects\garmincoach`. Deployment script: `deploy.ps1`.
+- Local-only details in `.codex/local-context.md` — **do not commit**.
+
+## Infrastructure
+- Prod: Ubuntu VM, systemd service `garmincoach.service`, Uvicorn on port `8000`, iptables maps `80 → 8000`.
+- Deploy: `deploy.ps1` → tarballs app (excludes venvs, `__pycache__`, DB) → `scp` to VM → remote `setup.sh` (installs deps, restarts service).
+
+## Workflow Rules
+1. **Test first**: Run `python -m pytest tests/ -x -q` before committing. Fix all failures.
+2. **Commit & push**: Commit all relevant changes and push to GitHub at the end of every session. Revert/discard abandoned changes.
+3. **Verify deployment**: After restarting the remote service, always check:
+   - Logs: `sudo journalctl -u garmincoach -n 50`
+   - Smoke test: `curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/`
+4. **No regressions**: If a change could break something, add a test for it.
