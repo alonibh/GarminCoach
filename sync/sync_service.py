@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,102 @@ def _set_state(session, key: str, value: str) -> None:
         row.value = value
     else:
         session.add(SyncState(key=key, value=value))
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_state_dt(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _is_in_cooldown(session) -> tuple[bool, Optional[datetime]]:
+    cooldown_until = _parse_state_dt(_get_state(session, "garmin_cooldown_until"))
+    if cooldown_until and cooldown_until > _utc_now():
+        return True, cooldown_until
+    return False, None
+
+
+def _note_rate_limited(session) -> datetime:
+    until = _utc_now() + timedelta(minutes=config.GARMIN_429_COOLDOWN_MINUTES)
+    _set_state(session, "garmin_cooldown_until", until.isoformat(timespec="seconds"))
+    return until
+
+
+def _clear_cooldown(session) -> None:
+    if _get_state(session, "garmin_cooldown_until"):
+        _set_state(session, "garmin_cooldown_until", "")
+
+
+def _device_upload_iso_from_payload(dev: dict | None) -> str:
+    upload_ms = (dev or {}).get("lastUsedDeviceUploadTime")
+    if not upload_ms:
+        return ""
+    return datetime.fromtimestamp(upload_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds")
+
+
+def _latest_activity_marker(raw: dict | None) -> tuple[str, str]:
+    if not raw:
+        return "", ""
+    act_id = raw.get("activityId")
+    start = raw.get("startTimeLocal") or raw.get("startTimeGMT") or ""
+    return (str(act_id) if act_id is not None else "", str(start or ""))
+
+
+def _preflight(session) -> dict:
+    """Cheap Garmin metadata check used to avoid heavy syncs."""
+    _set_state(session, "last_sync_check_at", _utc_now().isoformat(timespec="seconds"))
+
+    dev = client.device_last_used()
+    device_upload = _device_upload_iso_from_payload(dev)
+    _set_state(session, "device_last_upload", device_upload)
+
+    recent = client.recent_activities(limit=1)
+    latest_id, latest_start = _latest_activity_marker((recent or [None])[0])
+
+    previous_upload = _get_state(session, "last_processed_device_upload") or ""
+    previous_id = _get_state(session, "last_seen_activity_id") or ""
+    previous_start = _get_state(session, "last_seen_activity_start") or ""
+
+    return {
+        "device_upload": device_upload,
+        "latest_activity_id": latest_id,
+        "latest_activity_start": latest_start,
+        "device_changed": bool(device_upload and device_upload != previous_upload),
+        "activity_changed": bool(
+            (latest_id and latest_id != previous_id)
+            or (latest_start and latest_start != previous_start)
+        ),
+    }
+
+
+def _store_preflight_markers(session, preflight: dict) -> None:
+    if preflight.get("device_upload"):
+        _set_state(session, "last_processed_device_upload", preflight["device_upload"])
+    if preflight.get("latest_activity_id"):
+        _set_state(session, "last_seen_activity_id", preflight["latest_activity_id"])
+    if preflight.get("latest_activity_start"):
+        _set_state(session, "last_seen_activity_start", preflight["latest_activity_start"])
+
+
+def _workouts_due(session, full: bool) -> bool:
+    if full:
+        return True
+    if session.query(Workout).count() == 0:
+        return True
+    last = _parse_state_dt(_get_state(session, "last_workouts_sync_at"))
+    if not last:
+        return True
+    return (_utc_now() - last) >= timedelta(hours=config.WORKOUT_SYNC_INTERVAL_HOURS)
 
 
 # --- activities + strength sets ------------------------------------------
@@ -299,6 +395,20 @@ def _sync_sleep(session, day: date) -> None:
         return
     dto = _g(data, "dailySleepDTO", default={}) or {}
     row = session.get(Sleep, day) or Sleep(day=day)
+    row.sleep_start_time = (
+        _parse_dt(dto.get("sleepStartTimestampGMT"))
+        or _parse_dt(dto.get("sleepStartTimestampLocal"))
+        or _parse_dt(dto.get("sleepStartTimestamp"))
+        or _parse_dt(dto.get("startTimeGMT"))
+        or _parse_dt(dto.get("startTimeLocal"))
+    )
+    row.sleep_end_time = (
+        _parse_dt(dto.get("sleepEndTimestampGMT"))
+        or _parse_dt(dto.get("sleepEndTimestampLocal"))
+        or _parse_dt(dto.get("sleepEndTimestamp"))
+        or _parse_dt(dto.get("endTimeGMT"))
+        or _parse_dt(dto.get("endTimeLocal"))
+    )
     row.total_s = dto.get("sleepTimeSeconds")
     row.deep_s = dto.get("deepSleepSeconds")
     row.light_s = dto.get("lightSleepSeconds")
@@ -408,10 +518,38 @@ def run_sync(full: bool = False) -> dict:
     Returns a summary dict for display in the UI.
     """
     today = date.today()
-    summary = {"activities": 0, "days": 0, "errors": []}
+    summary = {"activities": 0, "days": 0, "errors": [], "skipped": False}
+    preflight = None
 
     with get_session() as session:
+        in_cooldown, cooldown_until = _is_in_cooldown(session)
+        if in_cooldown:
+            summary["skipped"] = True
+            summary["errors"].append(
+                "Garmin is in local cooldown after a 429 until "
+                f"{cooldown_until.isoformat(timespec='seconds') if cooldown_until else 'later'}."
+            )
+            return summary
+
         last = _get_state(session, "last_sync_through")
+        if not full:
+            try:
+                preflight = _preflight(session)
+                if last and not preflight["device_changed"] and not preflight["activity_changed"]:
+                    summary["skipped"] = True
+                    summary["reason"] = "No new Garmin device upload or activity since the last sync."
+                    return summary
+            except GarminConnectTooManyRequestsError as e:
+                until = _note_rate_limited(session)
+                summary["skipped"] = True
+                summary["errors"].append(
+                    "Rate limited during Garmin preflight. Cooling down until "
+                    f"{until.isoformat(timespec='seconds')}: {e}"
+                )
+                return summary
+            except Exception as e:
+                summary["errors"].append(f"Preflight: {e}")
+
         if full or not last:
             start = today - timedelta(days=config.INITIAL_BACKFILL_DAYS)
         else:
@@ -421,14 +559,24 @@ def run_sync(full: bool = False) -> dict:
         try:
             summary["activities"] = _sync_activities(session, start, today)
         except GarminConnectTooManyRequestsError as e:
+            until = _note_rate_limited(session)
             summary["errors"].append(f"Rate limited on activities: {e}")
+            summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+            return summary
         except Exception as e:
             summary["errors"].append(f"Activities: {e}")
 
-        try:
-            _sync_workouts(session)
-        except Exception as e:
-            summary["errors"].append(f"Workouts: {e}")
+        if _workouts_due(session, full):
+            try:
+                _sync_workouts(session)
+                _set_state(session, "last_workouts_sync_at", _utc_now().isoformat(timespec="seconds"))
+            except GarminConnectTooManyRequestsError as e:
+                until = _note_rate_limited(session)
+                summary["errors"].append(f"Rate limited on workouts: {e}")
+                summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+                return summary
+            except Exception as e:
+                summary["errors"].append(f"Workouts: {e}")
 
         # Circuit breaker: if Garmin is rate-limiting, don't grind through 90
         # days of doomed calls — abort fast with a clear message.
@@ -447,6 +595,7 @@ def run_sync(full: bool = False) -> dict:
                 consecutive_429 += 1
                 summary["errors"].append(f"Rate limited at {day}: {e}")
                 if consecutive_429 >= 5:
+                    _note_rate_limited(session)
                     summary["errors"].append(
                         "Aborted: Garmin is rate-limiting your IP (429). Wait "
                         "15–60 min, then click Sync now again. Already-synced "
@@ -470,22 +619,20 @@ def run_sync(full: bool = False) -> dict:
         # Only stamp "last synced" if real data came through, so a sync that
         # failed immediately doesn't look successful in the UI.
         if summary["activities"] or summary["days"]:
-            from datetime import timezone
             _set_state(
-                session, "last_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
+                session, "last_sync_at", _utc_now().isoformat(timespec="seconds")
             )
+            _clear_cooldown(session)
 
         # Store the watch's last upload time so the dashboard can show both
         # the fetched time and the true device sync time.
         try:
-            from datetime import timezone
-            dev = client.device_last_used()
-            upload_ms = dev.get("lastUsedDeviceUploadTime")
-            if upload_ms:
-                ts = datetime.fromtimestamp(upload_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds")
-                _set_state(session, "device_last_upload", ts)
-            else:
-                _set_state(session, "device_last_upload", "")
+            if preflight is None:
+                preflight = _preflight(session)
+            if summary["activities"] or summary["days"]:
+                _store_preflight_markers(session, preflight)
+        except GarminConnectTooManyRequestsError:
+            _note_rate_limited(session)
         except Exception:
             pass
 
@@ -493,6 +640,12 @@ def run_sync(full: bool = False) -> dict:
     # them instantly without live Garmin calls. Safe to fail.
     try:
         _snapshot_summary_metrics()
+    except GarminConnectTooManyRequestsError as e:
+        with get_session() as session:
+            until = _note_rate_limited(session)
+        summary["errors"].append(
+            f"Rate limited on metric snapshot; cooling down until {until.isoformat(timespec='seconds')}: {e}"
+        )
     except Exception as e:
         summary["errors"].append(f"metric snapshot: {e}")
 

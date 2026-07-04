@@ -95,6 +95,12 @@ class GarminClient:
     def activities_by_date(self, start: date, end: date) -> list[dict]:
         return self.api.get_activities_by_date(start.isoformat(), end.isoformat())
 
+    def recent_activities(self, limit: int = 1) -> list[dict]:
+        return self.api.get_activities(0, limit) or []
+
+    def activity_count(self) -> int:
+        return self.api.count_activities()
+
     def exercise_sets(self, activity_id: int) -> dict:
         """Per-set strength detail: exercise name/category, reps, weight, rest."""
         return self.api.get_activity_exercise_sets(activity_id)

@@ -124,6 +124,8 @@ class Sleep(Base):
     __tablename__ = "sleep"
 
     day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sleep_start_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    sleep_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
     total_s: Mapped[Optional[float]] = mapped_column(Float)
     deep_s: Mapped[Optional[float]] = mapped_column(Float)
     light_s: Mapped[Optional[float]] = mapped_column(Float)
@@ -373,6 +375,12 @@ _DAILY_HEALTH_ADD_COLUMNS = {
 }
 
 
+_SLEEP_ADD_COLUMNS = {
+    "sleep_start_time": "DATETIME",
+    "sleep_end_time": "DATETIME",
+}
+
+
 def _migrate_add_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -389,6 +397,12 @@ def _migrate_add_columns() -> None:
         missing_dh = {k: v for k, v in _DAILY_HEALTH_ADD_COLUMNS.items() if k not in existing_dh}
         for col, sqltype in missing_dh.items():
             conn.execute(text(f"ALTER TABLE daily_health ADD COLUMN {col} {sqltype}"))
+
+        # Migrate sleep
+        existing_sleep = {c["name"] for c in insp.get_columns("sleep")}
+        missing_sleep = {k: v for k, v in _SLEEP_ADD_COLUMNS.items() if k not in existing_sleep}
+        for col, sqltype in missing_sleep.items():
+            conn.execute(text(f"ALTER TABLE sleep ADD COLUMN {col} {sqltype}"))
 
 
 @contextmanager
