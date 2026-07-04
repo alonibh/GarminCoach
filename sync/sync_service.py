@@ -46,10 +46,24 @@ def _g(d: Any, *keys, default=None):
     return cur
 
 
-def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+def _parse_dt(s: Any) -> Optional[datetime]:
     if not s:
         return None
-        
+
+    if isinstance(s, (int, float)):
+        # Garmin sometimes returns epoch milliseconds for sleep timestamps.
+        # Very small values are seconds; current epoch-ms values are 13 digits.
+        ts = float(s)
+        if ts > 10_000_000_000:
+            ts /= 1000.0
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+        except (OSError, OverflowError, ValueError):
+            return None
+
+    if not isinstance(s, str):
+        return None
+
     try:
         # Garmin occasionally adds time zone offsets (e.g. +03:00 or Z)
         # We want the literal wall-clock time as a naive datetime.

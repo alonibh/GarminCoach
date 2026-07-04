@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from garminconnect import GarminConnectTooManyRequestsError
 
-from db import SyncState, Workout
+from db import Sleep, SyncState, Workout
 import sync.sync_service as svc
 
 
@@ -27,6 +27,41 @@ def _wire_common(monkeypatch, session):
 
 def _device_payload(dt):
     return {"lastUsedDeviceUploadTime": int(dt.timestamp() * 1000)}
+
+
+def test_parse_dt_accepts_garmin_epoch_milliseconds():
+    ts = int(datetime(2026, 7, 4, 4, 30, tzinfo=timezone.utc).timestamp() * 1000)
+
+    parsed = svc._parse_dt(ts)
+
+    assert parsed == datetime(2026, 7, 4, 4, 30)
+
+
+def test_sync_sleep_accepts_numeric_sleep_timestamps(session, monkeypatch):
+    day = date(2026, 7, 4)
+    start_ms = int(datetime(2026, 7, 3, 21, 30, tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime(2026, 7, 4, 4, 30, tzinfo=timezone.utc).timestamp() * 1000)
+    monkeypatch.setattr(
+        svc.client,
+        "sleep",
+        lambda day: {
+            "dailySleepDTO": {
+                "sleepStartTimestampGMT": start_ms,
+                "sleepEndTimestampGMT": end_ms,
+                "sleepTimeSeconds": 7 * 3600,
+                "sleepScores": {"overall": {"value": 82}},
+            }
+        },
+    )
+
+    svc._sync_sleep(session, day)
+    session.commit()
+
+    row = session.get(Sleep, day)
+    assert row.sleep_start_time == datetime(2026, 7, 3, 21, 30)
+    assert row.sleep_end_time == datetime(2026, 7, 4, 4, 30)
+    assert row.total_s == 7 * 3600
+    assert row.score == 82
 
 
 def test_delta_sync_skips_when_device_and_activity_unchanged(session, monkeypatch):
