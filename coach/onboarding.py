@@ -223,6 +223,7 @@ def _routine_from_history(activities: list[Activity]) -> dict[str, Any]:
                 "summary": f"{names[repeated[0]]} completed strength sessions look like a full-body routine.",
                 "sessions": [_session_row("Full body strength", "Strength")],
             }
+        repeated = [name for name in repeated if name != "Strength"]
         if len(repeated) >= 2:
             earliest = {}
             for activity in strength:

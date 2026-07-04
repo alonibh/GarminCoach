@@ -80,6 +80,21 @@ def test_repeated_strength_names_detect_ab_split(session):
     ]
 
 
+def test_generic_strength_name_is_not_a_split_slot(session):
+    names = ["Strength", "Chest & Biceps", "Legs & Shoulders", "Back & Triceps"]
+    for idx, name in enumerate(names + names):
+        _activity(session, idx + 1, "strength_training", 8 - idx, name)
+    session.commit()
+
+    analysis = analyze_user_history(session)
+
+    assert [s["name"] for s in analysis["routine"]["sessions"]] == [
+        "A - Chest & Biceps",
+        "B - Legs & Shoulders",
+        "C - Back & Triceps",
+    ]
+
+
 def test_single_repeated_strength_name_detects_full_body(session):
     for idx in range(3):
         _activity(session, idx + 1, "strength_training", idx, "\U0001f3cb\ufe0f Strength @ 18:00")
