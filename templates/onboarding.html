@@ -14,13 +14,6 @@
   </div>
 </div>
 
-{% if active_program %}
-<div class="card">
-  <h3>Current active plan</h3>
-  <p>{{ active_program.name }} <span class="type-tag">{{ active_program.mode.replace('_', ' ') }}</span></p>
-</div>
-{% endif %}
-
 <div class="card setup-finding">
   <div>
     <h3>Workout history</h3>
