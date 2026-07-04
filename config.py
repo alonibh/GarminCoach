@@ -42,7 +42,7 @@ GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 # --- Sync ---
 INITIAL_BACKFILL_DAYS = int(os.getenv("INITIAL_BACKFILL_DAYS", "90"))
 AUTO_SYNC_TIMES = [
-    t.strip() for t in os.getenv("AUTO_SYNC_TIMES", "09:30,19:00").split(",") if t.strip()
+    t.strip() for t in os.getenv("AUTO_SYNC_TIMES", "19:00").split(",") if t.strip()
 ]
 GARMIN_429_COOLDOWN_MINUTES = int(os.getenv("GARMIN_429_COOLDOWN_MINUTES", "30"))
 WORKOUT_SYNC_INTERVAL_HOURS = int(os.getenv("WORKOUT_SYNC_INTERVAL_HOURS", "24"))
