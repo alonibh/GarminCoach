@@ -488,6 +488,14 @@ def recompute_daily_metrics(session) -> None:
             rhr, rhr_mean, rhr_sd,
             sleep_hours, SLEEP_TARGET_HOURS, sleep_eff,
         )
+        if day == get_local_date():
+            try:
+                from metrics.freshness import proactive_metrics_ready
+
+                if not proactive_metrics_ready(session):
+                    readiness = None
+            except Exception:
+                readiness = None
 
         # Sleep debt: trailing 14 days, newest first.
         sleep_hist: list[float | None] = []

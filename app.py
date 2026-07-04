@@ -438,25 +438,36 @@ def _readiness_tiles() -> list[dict]:
     """Readiness + ACWR tiles from the latest DailyMetrics row."""
     with get_session() as s:
         today = date.today()
-        # Latest row (today or most recent day with data).
-        latest = (
+        # Latest row (today or most recent day with data) for load/ACWR.
+        latest_metrics = (
             s.query(DailyMetrics)
             .filter(DailyMetrics.day <= today)
             .order_by(DailyMetrics.day.desc())
             .first()
         )
+        # Readiness depends on finalized overnight data. If today's sleep/HRV
+        # is not ready yet, use the most recent completed readiness row instead
+        # of showing a misleading poor score.
+        latest_readiness = (
+            s.query(DailyMetrics)
+            .filter(DailyMetrics.day <= today)
+            .filter(DailyMetrics.readiness.isnot(None))
+            .order_by(DailyMetrics.day.desc())
+            .first()
+        )
         # Previous day for trend arrows.
         prev = None
-        if latest:
+        if latest_readiness:
             prev = (
                 s.query(DailyMetrics)
-                .filter(DailyMetrics.day < latest.day)
+                .filter(DailyMetrics.day < latest_readiness.day)
+                .filter(DailyMetrics.readiness.isnot(None))
                 .order_by(DailyMetrics.day.desc())
                 .first()
             )
 
         # Readiness tile.
-        r_val = latest.readiness if latest else None
+        r_val = latest_readiness.readiness if latest_readiness else None
         
         r_desc = ""
         if r_val is not None:
@@ -472,7 +483,7 @@ def _readiness_tiles() -> list[dict]:
             "value": int(r_val) if r_val is not None else None,
             "unit": "",
             "prev": None,
-            "age": _age_label(latest.day.isoformat()) if latest else None,
+            "age": _age_label(latest_readiness.day.isoformat()) if latest_readiness else None,
             "trend": None,
             "desc": r_desc,
             "color": ("green" if r_val and r_val >= 70
@@ -484,7 +495,7 @@ def _readiness_tiles() -> list[dict]:
         }
 
         # ACWR tile.
-        a_val = latest.acwr if latest else None
+        a_val = latest_metrics.acwr if latest_metrics else None
         # Color zones: green (balanced), yellow (ramping/detraining), red (spike).
         a_color = None
         a_desc = ""
@@ -518,6 +529,49 @@ def _readiness_tiles() -> list[dict]:
         return [readiness_tile, acwr_tile]
 
 
+def _overnight_metrics_ready(session) -> bool:
+    try:
+        from metrics.freshness import proactive_metrics_ready
+
+        return proactive_metrics_ready(session)
+    except Exception:
+        return False
+
+
+def _dashboard_health_series(health: list[DailyHealth], overnight_ready: bool) -> list[dict]:
+    today = date.today()
+    out = []
+    for h in health:
+        today_unready = h.day == today and not overnight_ready
+        out.append(
+            {
+                "day": h.day.isoformat(),
+                "rhr": None if today_unready else h.resting_hr,
+                "hrv": None if today_unready else h.hrv_overnight,
+                "hrv_baseline_low": None if today_unready else h.hrv_baseline_low,
+                "hrv_baseline_high": None if today_unready else h.hrv_baseline_high,
+                "bb_low": h.body_battery_low,
+                "steps": h.steps,
+                "step_goal": h.step_goal,
+                "total_kcal": h.total_kcal,
+                "active_kcal": h.active_kcal,
+                "bmr_kcal": h.bmr_kcal,
+            }
+        )
+    return out
+
+
+def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[dict]:
+    today = date.today()
+    out = []
+    for sl in sleep:
+        hours = None
+        if sl.total_s and sl.total_s > 0 and (sl.day != today or overnight_ready):
+            hours = round(sl.total_s / 3600, 1)
+        out.append({"day": sl.day.isoformat(), "hours": hours, "score": sl.score})
+    return out
+
+
 # --- routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -545,6 +599,7 @@ def dashboard(request: Request):
         sleep = (
             s.query(Sleep).filter(Sleep.day >= since).order_by(Sleep.day.asc()).all()
         )
+        overnight_ready = _overnight_metrics_ready(s)
         # Detach for template use
         activities = [
             {
@@ -559,26 +614,8 @@ def dashboard(request: Request):
             }
             for a in activities
         ]
-        health_series = [
-            {
-                "day": h.day.isoformat(),
-                "rhr": h.resting_hr,
-                "hrv": h.hrv_overnight,
-                "hrv_baseline_low": h.hrv_baseline_low,
-                "hrv_baseline_high": h.hrv_baseline_high,
-                "bb_low": h.body_battery_low,
-                "steps": h.steps,
-                "step_goal": h.step_goal,
-                "total_kcal": h.total_kcal,
-                "active_kcal": h.active_kcal,
-                "bmr_kcal": h.bmr_kcal,
-            }
-            for h in health
-        ]
-        sleep_series = [
-            {"day": sl.day.isoformat(), "hours": round((sl.total_s or 0) / 3600, 1), "score": sl.score}
-            for sl in sleep
-        ]
+        health_series = _dashboard_health_series(health, overnight_ready)
+        sleep_series = _dashboard_sleep_series(sleep, overnight_ready)
 
     return templates.TemplateResponse(
         request,
