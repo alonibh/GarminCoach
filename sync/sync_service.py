@@ -512,7 +512,7 @@ def _sync_daily_health(session, day: date) -> None:
 
 
 # --- orchestration --------------------------------------------------------
-def run_sync(full: bool = False) -> dict:
+def run_sync(full: bool = False, force: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 
     Returns a summary dict for display in the UI.
@@ -532,7 +532,7 @@ def run_sync(full: bool = False) -> dict:
             return summary
 
         last = _get_state(session, "last_sync_through")
-        if not full:
+        if not full and not force:
             try:
                 preflight = _preflight(session)
                 if last and not preflight["device_changed"] and not preflight["activity_changed"]:

@@ -56,7 +56,11 @@
 
 {% if sync_summary %}
 <div class="notice muted">
+  {% if sync_summary.skipped %}
+  Sync skipped{% if sync_summary.reason %}: {{ sync_summary.reason }}{% else %}.{% endif %}
+  {% else %}
   Synced {{ sync_summary.activities or 0 }} activities, {{ sync_summary.days or 0 }} days.
+  {% endif %}
   {% if sync_summary.errors %}<details style="display:inline"><summary>{{ sync_summary.errors|length }} warnings</summary>
   <ul>{% for e in sync_summary.errors[:10] %}<li>{{ e }}</li>{% endfor %}</ul></details>{% endif %}
 </div>

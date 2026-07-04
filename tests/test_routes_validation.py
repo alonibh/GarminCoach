@@ -96,3 +96,21 @@ def test_safe_next_blocks_open_redirect(client):
     assert app_module._safe_next("/dashboard") == "/dashboard"
     assert app_module._safe_next("") == "/"
     assert app_module._safe_next("/\\evil") == "/"
+
+
+def test_manual_sync_forces_recent_fetch(client, monkeypatch):
+    c, _ = client
+    import app as app_module
+
+    captured = {}
+    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
+    monkeypatch.setattr(
+        app_module.sync_runner,
+        "try_start_sync",
+        lambda full, force=False: captured.update({"full": full, "force": force}) or True,
+    )
+
+    resp = c.post("/sync", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert captured == {"full": False, "force": True}

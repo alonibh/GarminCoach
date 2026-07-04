@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from garminconnect import GarminConnectTooManyRequestsError
 
@@ -51,6 +51,35 @@ def test_delta_sync_skips_when_device_and_activity_unchanged(session, monkeypatc
 
     assert summary["skipped"] is True
     assert called["activities"] == 0
+
+
+def test_forced_sync_bypasses_delta_skip_but_not_full_backfill(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
+    _state(session, "last_sync_through", today.isoformat())
+    _state(session, "last_processed_device_upload", upload)
+    _state(session, "last_seen_activity_id", "101")
+    _state(session, "last_seen_activity_start", "2026-07-03 18:00:00")
+    _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+    monkeypatch.setattr(svc.client, "device_last_used", lambda: _device_payload(datetime.fromisoformat(upload)))
+    monkeypatch.setattr(
+        svc.client,
+        "recent_activities",
+        lambda limit=1: [{"activityId": 101, "startTimeLocal": "2026-07-03 18:00:00"}],
+    )
+
+    seen = {"start": None, "sleep": 0}
+    monkeypatch.setattr(svc, "_sync_activities", lambda session, start, end: seen.__setitem__("start", start) or 0)
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *args: seen.__setitem__("sleep", seen["sleep"] + 1))
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda *args: None)
+
+    summary = svc.run_sync(full=False, force=True)
+
+    assert summary["skipped"] is False
+    assert seen["sleep"] > 0
+    assert seen["start"] == today - timedelta(days=3)
 
 
 def test_new_device_upload_triggers_normal_sync(session, monkeypatch):

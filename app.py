@@ -954,7 +954,7 @@ def sync_now(full: bool = Form(False)):
     # Can't sync without an authenticated Garmin session — send to login.
     if not client.is_authenticated():
         return RedirectResponse("/login", status_code=303)
-    sync_runner.try_start_sync(full)
+    sync_runner.try_start_sync(full, force=not full)
     return RedirectResponse("/", status_code=303)
 
 

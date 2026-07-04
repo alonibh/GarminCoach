@@ -61,7 +61,7 @@ def is_running() -> bool:
     return True
 
 
-def try_start_sync(full: bool) -> bool:
+def try_start_sync(full: bool, force: bool = False) -> bool:
     """Start a background sync iff none is running. Returns True if started."""
     if is_running():
         return False
@@ -72,7 +72,7 @@ def try_start_sync(full: bool) -> bool:
     status["running"] = True
     status["started_at"] = now
     
-    threading.Thread(target=_run, args=(full,), daemon=True).start()
+    threading.Thread(target=_run, args=(full, force), daemon=True).start()
     return True
 
 
@@ -83,9 +83,9 @@ def reset() -> None:
     status["started_at"] = None
 
 
-def _run(full: bool) -> None:
+def _run(full: bool, force: bool = False) -> None:
     try:
-        status["summary"] = run_sync(full=full)
+        status["summary"] = run_sync(full=full, force=force)
     except Exception as e:
         log.exception("Sync failed with unhandled exception")
         status["summary"] = {"errors": [str(e)]}
