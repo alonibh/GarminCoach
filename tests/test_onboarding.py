@@ -1,15 +1,16 @@
 from datetime import datetime, timedelta
 
-from coach.onboarding import analyze_user_history
+from coach.onboarding import analyze_user_history, routine_sessions_for_setup
 from db import Activity, Workout
 
 
-def _activity(session, activity_id: int, activity_type: str, days_ago: int) -> None:
+def _activity(session, activity_id: int, activity_type: str, days_ago: int, name: str = "") -> None:
     session.add(
         Activity(
             id=activity_id,
             activity_type=activity_type,
             start_time=datetime.now() - timedelta(days=days_ago),
+            name=name,
         )
     )
 
@@ -32,9 +33,21 @@ def test_no_history_defaults_to_low_history(session):
     assert analysis["defaults"]["primary_goal"] == "General fitness"
     assert analysis["defaults"]["days_per_week"] == 3
     assert analysis["total_activities"] == 0
+    assert analysis["routine"]["detected"] is False
 
 
-def test_strength_history_selects_strength_defaults_and_templates(session):
+def test_thin_history_falls_back_to_preferred_activities(session):
+    _activity(session, 1, "strength_training", 1, "Chest & Biceps")
+    session.commit()
+
+    analysis = analyze_user_history(session)
+    sessions = routine_sessions_for_setup(analysis, ["Strength", "Running"])
+
+    assert analysis["routine"]["detected"] is False
+    assert [s["name"] for s in sessions] == ["Full body strength", "Running"]
+
+
+def test_strength_history_selects_strength_defaults_without_templates(session):
     for idx in range(10):
         _activity(session, idx + 1, "strength_training", idx * 3)
     _activity(session, 20, "running", 8)
@@ -47,8 +60,48 @@ def test_strength_history_selects_strength_defaults_and_templates(session):
     assert analysis["classification"]["training_type"] == "strength_focused"
     assert analysis["defaults"]["primary_goal"] == "Build strength"
     assert "Strength" in analysis["defaults"]["preferred_activities"]
-    assert analysis["defaults"]["plan_mode"] == "existing_templates"
-    assert analysis["defaults"]["selected_templates"] == [502, 501]
+    assert analysis["defaults"]["plan_mode"] == "schedule_my_routine"
+    assert analysis["defaults"]["selected_templates"] == []
+
+
+def test_repeated_strength_names_detect_ab_split(session):
+    names = ["Chest & Biceps", "Back & Triceps", "Legs & Shoulders"]
+    for idx, name in enumerate(names + names):
+        _activity(session, idx + 1, "strength_training", 6 - idx, name)
+    session.commit()
+
+    analysis = analyze_user_history(session)
+
+    assert analysis["routine"]["detected"] is True
+    assert [s["name"] for s in analysis["routine"]["sessions"]] == [
+        "A - Chest & Biceps",
+        "B - Back & Triceps",
+        "C - Legs & Shoulders",
+    ]
+
+
+def test_single_repeated_strength_name_detects_full_body(session):
+    for idx in range(3):
+        _activity(session, idx + 1, "strength_training", idx, "\U0001f3cb\ufe0f Strength @ 18:00")
+    session.commit()
+
+    analysis = analyze_user_history(session)
+
+    assert analysis["routine"]["detected"] is True
+    assert [s["name"] for s in analysis["routine"]["sessions"]] == ["Full body strength"]
+
+
+def test_mixed_sport_history_detects_sport_sessions(session):
+    for idx in range(3):
+        _activity(session, idx + 1, "running", idx)
+    for idx in range(2):
+        _activity(session, idx + 20, "cycling", idx + 3)
+    session.commit()
+
+    analysis = analyze_user_history(session)
+
+    assert analysis["routine"]["detected"] is True
+    assert [s["name"] for s in analysis["routine"]["sessions"]] == ["Running", "Cycling"]
 
 
 def test_endurance_history_is_classified_from_all_history(session):

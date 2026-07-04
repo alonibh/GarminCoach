@@ -4,16 +4,13 @@
 {% block content %}
 {% set d = form_defaults %}
 {% set classification = analysis.classification %}
-{% set selected_templates = d.selected_templates or [] %}
 {% set selected_activities = d.preferred_activities or [] %}
-{% set selected_equipment = d.equipment_access or [] %}
-{% set selected_days = d.training_days or [] %}
-{% set selected_options = d.scheduling_options or [] %}
+{% set routine = analysis.routine %}
 
 <div class="content-header">
   <div class="header-left">
     <h1>Setup</h1>
-    <p class="muted">Review the setup GarminCoach inferred from your history, then adjust anything that does not fit.</p>
+    <p class="muted">GarminCoach looks for a repeatable routine in completed workouts, then fills gaps from your preferences.</p>
   </div>
 </div>
 
@@ -26,7 +23,7 @@
 
 <div class="card setup-finding">
   <div>
-    <h3>We found this setup</h3>
+    <h3>Workout history</h3>
     <p>
       <span class="badge">{{ classification.label }}</span>
       <span class="type-tag">{{ classification.confidence_label }} confidence</span>
@@ -35,68 +32,56 @@
   </div>
   <div class="setup-total">
     <span>{{ analysis.total_activities }}</span>
-    <small>synced activities read</small>
+    <small>completed activities used</small>
   </div>
 </div>
 
 <div class="grid">
   <div class="card">
-    <h3>Recent pattern</h3>
+    <h3>Activity mix</h3>
     {% if analysis.activity_patterns %}
-      <div class="table-scroll">
-      <table>
-        <thead><tr><th>Activity</th><th>Sessions</th><th>Avg/week</th></tr></thead>
-        <tbody>
+      <div class="history-bars">
         {% for row in analysis.activity_patterns %}
-          <tr><td>{{ row.label }}</td><td>{{ row.sessions }}</td><td>{{ row.avg_per_week }}</td></tr>
+          {% set pct = (row.sessions / analysis.total_activities * 100) if analysis.total_activities else 0 %}
+          <div class="history-bar-row">
+            <div class="history-bar-label">
+              <span>{{ row.label }}</span>
+              <small>{{ row.sessions }} sessions</small>
+            </div>
+            <div class="history-bar-track">
+              <span style="width: {{ pct }}%"></span>
+            </div>
+          </div>
         {% endfor %}
-        </tbody>
-      </table>
       </div>
     {% else %}
-      <p class="muted">No recent Garmin activity pattern found yet.</p>
+      <p class="muted">No completed Garmin activity pattern found yet.</p>
     {% endif %}
   </div>
 
   <div class="card">
-    <h3>Garmin templates</h3>
-    {% if analysis.templates %}
-      <p class="muted">{{ analysis.templates|length }} templates found. Recommended templates are preselected below.</p>
-    {% else %}
-      <p class="muted">No Garmin workout templates found yet.</p>
+    <h3>Routine</h3>
+    <p class="muted">{{ routine.summary }}</p>
+    {% if not routine.detected %}
+      <p class="muted">For now, the saved routine will be based on Preferred activities.</p>
+    {% endif %}
+    {% if setup_sessions %}
+      <div class="routine-list">
+        {% for session in setup_sessions %}
+          <span>{{ session.name }} <small>{{ session.activity_family }}</small></span>
+        {% endfor %}
+      </div>
     {% endif %}
   </div>
 </div>
 
 <form method="post" action="/onboarding" class="form-section">
   <input type="hidden" name="training_type" value="{{ d.training_type }}">
-  <input type="hidden" name="scheduling_options" value="manual_approval">
+  <input type="hidden" name="experience_level" value="{{ d.experience_level }}">
+  <input type="hidden" name="program_name" value="{{ d.program_name or 'My routine' }}">
 
   <div class="card section-card">
-    <h3>Profile</h3>
-    <div class="form-grid">
-      <label class="field">Experience
-        <select name="experience_level">
-          {% for value,label in [('beginner','Beginner'), ('intermediate','Intermediate'), ('advanced','Advanced')] %}
-            <option value="{{ value }}" {% if d.experience_level == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="field">Primary goal
-        <select name="primary_goal">
-          {% for value in ['Build strength', 'Improve endurance', 'Balanced fitness', 'Support sport performance', 'General fitness'] %}
-            <option value="{{ value }}" {% if d.primary_goal == value %}selected{% endif %}>{{ value }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="field">Training days per week
-        <select name="days_per_week">
-          {% for value in [1,2,3,4,5,6] %}
-            <option value="{{ value }}" {% if d.days_per_week == value %}selected{% endif %}>{{ value }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
+    <h3>Essentials</h3>
 
     <div class="option-block">
       <div class="field-label">Preferred activities</div>
@@ -110,105 +95,18 @@
       </div>
     </div>
 
-    <div class="option-block">
-      <div class="field-label">Equipment</div>
-      <div class="template-list compact">
-        {% for value,label in [('gym','Gym'), ('dumbbells','Dumbbells'), ('bodyweight','Bodyweight'), ('outdoor','Outdoor')] %}
-          <label class="check-row">
-            <input type="checkbox" name="equipment_access" value="{{ value }}" {% if value in selected_equipment %}checked{% endif %}>
-            <span>{{ label }}</span>
-          </label>
-        {% endfor %}
-      </div>
-    </div>
+    <label class="field">Goal
+      <input name="primary_goal" value="{{ d.primary_goal or '' }}" placeholder="Build strength, improve endurance, stay consistent">
+    </label>
 
     <label class="field">Limitations
-      <textarea name="injuries_limitations" rows="2" placeholder="Injuries, movements to avoid, recovery constraints">{{ profile.injuries_limitations or '' }}</textarea>
-    </label>
-    <label class="field">Sport commitments
-      <textarea name="sport_commitments" rows="2" placeholder="Recurring games, races, practices">{{ profile.sport_commitments or '' }}</textarea>
-    </label>
-  </div>
-
-  <div class="card section-card">
-    <h3>Schedule</h3>
-    <div class="form-grid two">
-      <label class="field">Preferred time
-        <select name="preferred_time_of_day">
-          {% for value,label in [('morning','Morning'), ('midday','Midday'), ('evening','Evening'), ('night','Night')] %}
-            <option value="{{ value }}" {% if d.preferred_time_of_day == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="field">
-        <span class="field-label">Garmin approval</span>
-        <span class="readonly-choice">Manual approval required</span>
-      </div>
-    </div>
-
-    <div class="option-block">
-      <div class="field-label">Training days</div>
-      <div class="template-list compact">
-        {% for value in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] %}
-          <label class="check-row">
-            <input type="checkbox" name="training_days" value="{{ value }}" {% if value in selected_days %}checked{% endif %}>
-            <span>{{ value }}</span>
-          </label>
-        {% endfor %}
-      </div>
-    </div>
-
-    <div class="option-block">
-      <div class="field-label">Scheduling preferences</div>
-      <div class="template-list compact">
-        {% for value,label in [('calendar_aware','Use calendar openings'), ('recovery_based','Adjust for recovery'), ('avoid_back_to_back','Avoid back-to-back hard days')] %}
-          <label class="check-row">
-            <input type="checkbox" name="scheduling_options" value="{{ value }}" {% if value in selected_options %}checked{% endif %}>
-            <span>{{ label }}</span>
-          </label>
-        {% endfor %}
-      </div>
-    </div>
-
-    <label class="field">Scheduling notes
-      <textarea name="scheduling_notes" rows="2" placeholder="Work hours, blocked times, or anything unusual">{{ d.scheduling_notes or '' }}</textarea>
-    </label>
-  </div>
-
-  <div class="card section-card">
-    <h3>Plan choice</h3>
-    <div class="form-grid two">
-      <label class="field">Mode
-        <select name="plan_mode">
-          {% for value,label in [('existing_templates','Use selected Garmin templates'), ('schedule_my_routine','Schedule my routine'), ('known_plan','Use a known external plan')] %}
-            <option value="{{ value }}" {% if d.plan_mode == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="field">Plan name
-        <input name="program_name" value="{{ d.program_name or 'My routine' }}" placeholder="My routine">
-      </label>
-    </div>
-
-    {% if analysis.templates %}
-      <div class="template-list">
-        {% for w in analysis.templates %}
-          <label class="check-row">
-            <input type="checkbox" name="selected_templates" value="{{ w.workout_id }}" {% if w.workout_id in selected_templates %}checked{% endif %}>
-            <span>{{ w.name }} <small>{{ w.activity_family }}</small></span>
-          </label>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    <label class="field">Additional sessions
-      <textarea name="custom_sessions" rows="4" placeholder="One session per line, for example: Easy run&#10;Mobility&#10;Soccer"></textarea>
+      <textarea name="injuries_limitations" rows="3" placeholder="Injuries, movements to avoid, recovery constraints">{{ goal.custom_input or profile.injuries_limitations or '' }}</textarea>
     </label>
   </div>
 
   <div class="toolbar">
     <span class="muted">Garmin uploads stay manual approval only.</span>
-    <button class="btn" type="submit">Save active plan</button>
+    <button class="btn" type="submit">Save setup</button>
   </div>
 </form>
 {% endblock %}

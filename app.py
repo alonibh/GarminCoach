@@ -29,7 +29,14 @@ from db import (
     get_session,
     init_db,
 )
-from coach.onboarding import analyze_user_history, active_program, activity_family, program_sessions_for
+from coach.onboarding import (
+    analyze_user_history,
+    active_program,
+    activity_family,
+    clean_session_name,
+    program_sessions_for,
+    routine_sessions_for_setup,
+)
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
@@ -1130,28 +1137,6 @@ def login_submit(request: Request, password: str = Form(...), mfa: str = Form(""
     return RedirectResponse("/", status_code=303)
 
 
-@app.get("/goal", response_class=HTMLResponse)
-def get_goal_page(request: Request):
-    """View and edit the user goal."""
-    with get_session() as session:
-        goal_row = session.get(Goal, 1) or Goal(id=1, goal="", custom_input="")
-        return templates.TemplateResponse(request, "goal.html", {"goal": goal_row})
-
-@app.post("/goal", response_class=RedirectResponse)
-def post_goal_page(request: Request, goal: str = Form(""), custom_input: str = Form("")):
-    """Save the user goal."""
-    with get_session() as session:
-        goal_row = session.get(Goal, 1)
-        if not goal_row:
-            goal_row = Goal(id=1)
-            session.add(goal_row)
-        goal_row.goal = goal
-        goal_row.custom_input = custom_input
-        goal_row.updated_at = datetime.now()
-        session.commit()
-    return RedirectResponse(url="/", status_code=303)
-
-
 def _split_csv(value: str) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
@@ -1205,15 +1190,18 @@ def _format_scheduling_preferences(options: list[str], notes: str) -> str:
 
 def _onboarding_form_defaults(
     profile: AthleteProfile,
+    goal: Goal | None,
     analysis: dict,
     current_program: TrainingProgram | None,
     current_sessions: list[ProgramSession],
 ) -> dict:
     defaults = dict(analysis.get("defaults", {}))
+    if goal and goal.goal:
+        defaults["primary_goal"] = goal.goal
     if profile and profile.onboarding_complete:
         defaults["training_type"] = profile.training_type or defaults.get("training_type", "")
         defaults["experience_level"] = profile.experience_level or defaults.get("experience_level", "")
-        defaults["primary_goal"] = profile.primary_goal or defaults.get("primary_goal", "")
+        defaults["primary_goal"] = defaults.get("primary_goal") or profile.primary_goal or ""
         preferred = _json_list(profile.preferred_activities)
         equipment = _json_list(profile.equipment_access)
         if preferred:
@@ -1249,18 +1237,22 @@ def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
     with get_session() as session:
         profile = session.get(AthleteProfile, 1) or AthleteProfile(id=1)
+        goal = session.get(Goal, 1) or Goal(id=1, goal="", custom_input="")
         analysis = analyze_user_history(session)
         current_program = active_program(session)
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
-        form_defaults = _onboarding_form_defaults(profile, analysis, current_program, current_sessions)
+        form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
+        setup_sessions = routine_sessions_for_setup(analysis, form_defaults.get("preferred_activities", []))
         return templates.TemplateResponse(
             request,
             "onboarding.html",
             {
                 "profile": profile,
+                "goal": goal,
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
+                "setup_sessions": setup_sessions,
             },
         )
 
@@ -1285,46 +1277,51 @@ def post_onboarding(
     selected_templates: list[int] = Form([]),
     custom_sessions: str = Form(""),
 ):
-    """Save profile and create an active program only from explicit choices."""
+    """Save essentials and create an active routine from history or preferences."""
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
         if not profile:
             profile = AthleteProfile(id=1)
             session.add(profile)
 
+        analysis = analyze_user_history(session)
         preferred_activities_list = _clean_list(preferred_activities)
-        equipment_access_list = _clean_list(equipment_access)
-        training_days_list = _clean_list(training_days)
-        scheduling_options_list = _clean_list(scheduling_options)
-        if "manual_approval" not in scheduling_options_list:
-            scheduling_options_list.insert(0, "manual_approval")
+        routine_sessions = routine_sessions_for_setup(analysis, preferred_activities_list)
 
-        profile.training_type = training_type.strip()
+        profile.training_type = training_type.strip() or analysis["classification"]["training_type"]
         profile.experience_level = experience_level.strip()
         profile.primary_goal = primary_goal.strip()
         profile.preferred_activities = json.dumps(preferred_activities_list)
-        profile.equipment_access = json.dumps(equipment_access_list)
-        profile.availability = _format_availability(training_days_list, preferred_time_of_day.strip())
+        profile.equipment_access = json.dumps([])
+        profile.availability = ""
         profile.injuries_limitations = injuries_limitations.strip()
-        profile.sport_commitments = sport_commitments.strip()
-        profile.scheduling_preferences = _format_scheduling_preferences(scheduling_options_list, scheduling_notes)
+        profile.sport_commitments = ""
+        profile.scheduling_preferences = "Scheduling options: manual_approval"
         profile.approval_mode = "manual"
         profile.onboarding_complete = True
         profile.updated_at = datetime.now()
+
+        goal_row = session.get(Goal, 1)
+        if not goal_row:
+            goal_row = Goal(id=1)
+            session.add(goal_row)
+        goal_row.goal = primary_goal.strip()
+        goal_row.custom_input = injuries_limitations.strip()
+        goal_row.updated_at = datetime.now()
 
         for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
             existing.active = False
             existing.updated_at = datetime.now()
 
-        name = program_name.strip() or "My routine"
+        name = program_name.strip() or analysis["defaults"].get("program_name") or "My routine"
         program = TrainingProgram(
             name=name,
-            mode=plan_mode.strip() or "schedule_my_routine",
-            source_type="external_reference" if plan_mode == "known_plan" else "user_defined",
+            mode="schedule_my_routine",
+            source_type="user_defined",
             goal_tags=json.dumps([primary_goal.strip()] if primary_goal.strip() else []),
             experience_level=experience_level.strip(),
-            days_per_week=days_per_week or len(training_days_list) or None,
-            equipment=json.dumps(equipment_access_list),
+            days_per_week=None,
+            equipment=json.dumps([]),
             active=True,
             created_at=datetime.now(),
             updated_at=datetime.now(),
@@ -1332,37 +1329,23 @@ def post_onboarding(
         session.add(program)
         session.flush()
 
-        order = 1
-        if selected_templates:
-            templates_by_id = {
-                w.workout_id: w
-                for w in session.query(Workout).filter(Workout.workout_id.in_(selected_templates)).all()
-            }
-            for wid in selected_templates:
-                w = templates_by_id.get(wid)
-                if not w:
-                    continue
-                session.add(
-                    ProgramSession(
-                        program_id=program.id,
-                        name=w.name,
-                        sport_type=w.sport_type,
-                        sequence_order=order,
-                        base_workout_id=w.workout_id,
-                    )
-                )
-                order += 1
+        template_lookup = {
+            clean_session_name(w.name).lower(): w
+            for w in session.query(Workout).filter(~Workout.name.startswith("\U0001f3cb\ufe0f ")).all()
+        }
 
-        for line in custom_sessions.splitlines():
-            title = line.strip()
-            if not title:
-                continue
+        order = 1
+        for routine in routine_sessions:
+            title = routine["name"]
+            template_key = re.sub(r"^[A-Z]\s+-\s+", "", clean_session_name(title)).lower()
+            template = template_lookup.get(template_key)
             session.add(
                 ProgramSession(
                     program_id=program.id,
                     name=title,
-                    sport_type="general",
+                    sport_type=template.sport_type if template else routine["sport_type"],
                     sequence_order=order,
+                    base_workout_id=template.workout_id if template else None,
                     duration_min=60,
                 )
             )
