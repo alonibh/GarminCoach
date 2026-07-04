@@ -438,6 +438,7 @@ def _readiness_tiles() -> list[dict]:
     """Readiness + ACWR tiles from the latest DailyMetrics row."""
     with get_session() as s:
         today = date.today()
+        overnight_ready = _overnight_metrics_ready(s)
         # Latest row (today or most recent day with data) for load/ACWR.
         latest_metrics = (
             s.query(DailyMetrics)
@@ -448,9 +449,10 @@ def _readiness_tiles() -> list[dict]:
         # Readiness depends on finalized overnight data. If today's sleep/HRV
         # is not ready yet, use the most recent completed readiness row instead
         # of showing a misleading poor score.
+        max_readiness_day = today if overnight_ready else today - timedelta(days=1)
         latest_readiness = (
             s.query(DailyMetrics)
-            .filter(DailyMetrics.day <= today)
+            .filter(DailyMetrics.day <= max_readiness_day)
             .filter(DailyMetrics.readiness.isnot(None))
             .order_by(DailyMetrics.day.desc())
             .first()

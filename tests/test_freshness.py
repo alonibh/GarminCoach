@@ -88,9 +88,10 @@ def test_dashboard_uses_last_ready_readiness_when_today_is_unready(session, monk
     today = date.today()
     yesterday = today - timedelta(days=1)
     session.add(DailyMetrics(day=yesterday, readiness=72, acute_load=10, chronic_load=10, acwr=1.0))
-    session.add(DailyMetrics(day=today, readiness=None, acute_load=5, chronic_load=10, acwr=0.5))
+    session.add(DailyMetrics(day=today, readiness=18, acute_load=5, chronic_load=10, acwr=0.5))
     session.commit()
     monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(app_module, "_overnight_metrics_ready", lambda session: False)
 
     readiness, acwr = app_module._readiness_tiles()
 
