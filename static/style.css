@@ -1129,3 +1129,208 @@ details summary {
   .cell-top { margin-bottom: .25rem; }
   .date-num { font-size: .8rem; }
 }
+
+/* ── Plan page ─────────────────────────────────────── */
+
+.plan-profile-card p { margin-bottom: .65rem; }
+
+.plan-profile-stats {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-top: .75rem;
+}
+
+.plan-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.plan-stat-value {
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--fg);
+}
+
+.plan-stat-label {
+  font-size: .75rem;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-top: .1rem;
+}
+
+/* Sessions pill list */
+.plan-sessions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin-top: .25rem;
+}
+
+.plan-session-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .5rem .8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: .9rem;
+}
+
+.plan-session-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.plan-session-name { font-weight: 700; }
+.plan-session-type { font-size: .8rem; }
+
+/* Template card */
+.plan-template-card {
+  padding: 1.35rem;
+  margin-bottom: 1rem;
+}
+
+.plan-template-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+}
+
+.plan-template-title {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.plan-template-actions {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-shrink: 0;
+}
+
+/* Exercise table */
+.plan-exercise-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .88rem;
+  margin-bottom: .85rem;
+}
+
+.plan-exercise-table th {
+  text-align: left;
+  padding: .4rem .5rem;
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.plan-exercise-table td {
+  padding: .3rem .35rem;
+  vertical-align: middle;
+}
+
+.plan-exercise-table tr:not(:last-child) td {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.plan-exercise-table input {
+  min-height: 36px;
+  padding: .4rem .55rem;
+  font-size: .88rem;
+}
+
+.plan-exercise-table input[type="number"] {
+  text-align: center;
+}
+
+/* Buttons */
+.btn-sm {
+  min-height: 34px;
+  padding: .38rem .75rem;
+  font-size: .84rem;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .45rem .7rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+
+.btn-ghost:hover {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+.add-ex-btn { margin-top: .25rem; }
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: .8rem;
+  transition: background .15s, color .15s;
+}
+
+.btn-icon.btn-danger {
+  color: var(--danger);
+}
+
+.btn-icon.btn-danger:hover {
+  background: rgba(241, 92, 109, .15);
+  border-color: rgba(241, 92, 109, .35);
+}
+
+/* Save status feedback */
+.plan-save-status {
+  font-size: .84rem;
+  font-weight: 600;
+  transition: opacity .3s;
+}
+
+.plan-save-status.success { color: var(--success); }
+.plan-save-status.danger  { color: var(--danger); }
+
+@media (max-width: 640px) {
+  .plan-template-header { flex-direction: column; align-items: flex-start; }
+  .plan-exercise-table th:nth-child(5),
+  .plan-exercise-table td:nth-child(5) { display: none; }
+}
+

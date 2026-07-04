@@ -20,6 +20,7 @@ from db import (
     MetricSnapshot,
     PlannedSession,
     ProgramSession,
+    SessionExercise,
     Sleep,
     SyncState,
     TrainingProgram,
@@ -1350,10 +1351,7 @@ def post_onboarding(
                 )
             )
             order += 1
-
-        session.commit()
-
-    return RedirectResponse(url="/program", status_code=303)
+        return RedirectResponse(url="/program", status_code=303)
 
 
 @app.get("/program", response_class=HTMLResponse)
@@ -1362,6 +1360,47 @@ def get_program_page(request: Request):
         profile = session.get(AthleteProfile, 1)
         current_program = active_program(session)
         sessions = program_sessions_for(session, current_program.id) if current_program else []
+
+        # Load exercises for each session, keyed by session id
+        exercises_by_session: dict[int, list] = {}
+        for ps in sessions:
+            exs = (
+                session.query(SessionExercise)
+                .filter_by(program_session_id=ps.id)
+                .order_by(SessionExercise.order_index)
+                .all()
+            )
+            exercises_by_session[ps.id] = [
+                {
+                    "id": ex.id,
+                    "exercise_name": ex.exercise_name,
+                    "sets": ex.sets,
+                    "reps": ex.reps,
+                    "weight_kg": ex.weight_kg,
+                    "order_index": ex.order_index,
+                    "notes": ex.notes,
+                }
+                for ex in exs
+            ]
+
+        # User physical profile (from Garmin sync)
+        gender_row = session.get(SyncState, "user_gender")
+        weight_row = session.get(SyncState, "user_weight")
+        birth_row = session.get(SyncState, "user_birth_date")
+        age = None
+        if birth_row and birth_row.value:
+            try:
+                bd = date.fromisoformat(birth_row.value[:10])
+                today_date = date.today()
+                age = today_date.year - bd.year - ((today_date.month, today_date.day) < (bd.month, bd.day))
+            except ValueError:
+                pass
+        user_physical = {
+            "gender": gender_row.value if gender_row and gender_row.value else None,
+            "weight_kg": float(weight_row.value) if weight_row and weight_row.value else None,
+            "age": age,
+        }
+
         today = date.today()
         through = today + timedelta(days=14)
         planned = (
@@ -1376,11 +1415,59 @@ def get_program_page(request: Request):
             "program.html",
             {
                 "profile": profile,
+                "user_physical": user_physical,
                 "program": current_program,
                 "sessions": sessions,
+                "exercises_by_session": exercises_by_session,
                 "planned": planned,
             },
         )
+
+
+@app.post("/api/session/{session_id}/exercises")
+async def save_session_exercises(session_id: int, request: Request):
+    """Full-replace the exercise list for a program session."""
+    import json as _json
+    body = await request.body()
+    try:
+        rows = _json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    with get_session() as db:
+        ps = db.get(ProgramSession, session_id)
+        if not ps:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Delete existing exercises for this session
+        db.query(SessionExercise).filter_by(program_session_id=session_id).delete()
+
+        for i, row in enumerate(rows):
+            ex = SessionExercise(
+                program_session_id=session_id,
+                exercise_name=str(row.get("exercise_name", "")).strip(),
+                sets=int(row["sets"]) if row.get("sets") is not None else None,
+                reps=int(row["reps"]) if row.get("reps") is not None else None,
+                weight_kg=float(row["weight_kg"]) if row.get("weight_kg") is not None and row["weight_kg"] != "" else None,
+                order_index=i,
+                notes=str(row.get("notes", "")),
+            )
+            db.add(ex)
+
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/session/{session_id}/exercises/{exercise_id}")
+def delete_session_exercise(session_id: int, exercise_id: int):
+    """Delete a single exercise row from a session."""
+    with get_session() as db:
+        ex = db.query(SessionExercise).filter_by(
+            id=exercise_id, program_session_id=session_id
+        ).first()
+        if not ex:
+            raise HTTPException(status_code=404, detail="Exercise not found")
+        db.delete(ex)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/calendar", response_class=HTMLResponse)

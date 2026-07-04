@@ -19,6 +19,7 @@ from db import (
     MetricSnapshot,
     PlannedSession,
     ProgramSession,
+    SessionExercise,
     Sleep,
     SyncState,
     TrainingProgram,
@@ -182,7 +183,6 @@ def build_snapshot(session: Session) -> str:
     if profile:
         snapshot["athlete_profile"] = {
             "training_type": profile.training_type,
-            "experience_level": profile.experience_level,
             "primary_goal": profile.primary_goal,
             "preferred_activities": _json_list(profile.preferred_activities),
             "equipment_access": _json_list(profile.equipment_access),
@@ -190,7 +190,6 @@ def build_snapshot(session: Session) -> str:
             "injuries_limitations": profile.injuries_limitations,
             "sport_commitments": profile.sport_commitments,
             "scheduling_preferences": profile.scheduling_preferences,
-            "approval_mode": profile.approval_mode or "manual",
             "onboarding_complete": profile.onboarding_complete,
         }
 
@@ -202,10 +201,7 @@ def build_snapshot(session: Session) -> str:
             "name": current_program.name,
             "mode": current_program.mode,
             "source_type": current_program.source_type,
-            "source_url": current_program.source_url,
-            "attribution": current_program.attribution,
             "goal_tags": _json_list(current_program.goal_tags),
-            "experience_level": current_program.experience_level,
             "days_per_week": current_program.days_per_week,
             "equipment": _json_list(current_program.equipment),
             "sessions": [
@@ -217,11 +213,38 @@ def build_snapshot(session: Session) -> str:
                     "sequence_order": ps.sequence_order,
                     "focus_tags": _json_list(ps.focus_tags),
                     "duration_min": ps.duration_min,
-                    "base_workout_id": ps.base_workout_id,
                 }
                 for ps in sessions
             ],
         }
+
+        # Inject user-configured base workout templates into the snapshot.
+        # These are the per-session exercise baselines the user set in the
+        # Plan page — the AI uses these instead of raw Garmin template IDs.
+        base_templates = []
+        for ps in sessions:
+            exs = (
+                session.query(SessionExercise)
+                .filter_by(program_session_id=ps.id)
+                .order_by(SessionExercise.order_index)
+                .all()
+            )
+            if exs:
+                base_templates.append({
+                    "session": ps.name,
+                    "exercises": [
+                        {
+                            "exercise": ex.exercise_name.replace("_", " ").title(),
+                            "sets": ex.sets,
+                            "reps": ex.reps,
+                            "weight_kg": ex.weight_kg,
+                            **(({"notes": ex.notes}) if ex.notes else {}),
+                        }
+                        for ex in exs
+                    ],
+                })
+        if base_templates:
+            snapshot["base_workout_templates"] = base_templates
     
     # User Profile (Weight & Gender & Age)
     gender = session.get(SyncState, "user_gender")

@@ -6,7 +6,7 @@
   <div class="header-left">
     <h1>Plan</h1>
     {% if program %}
-      <p class="muted">{{ program.name }} <span class="type-tag">{{ program.mode.replace('_', ' ') }}</span></p>
+      <p class="muted">{{ program.name }}</p>
     {% else %}
       <p class="muted">No active plan yet.</p>
     {% endif %}
@@ -16,47 +16,120 @@
 
 {% if not program %}
   <div class="card">
-    <p class="muted">Start setup to choose templates, a known plan, or your own routine.</p>
+    <p class="muted">Start setup to define your routine.</p>
     <a class="btn" href="/onboarding">Start setup</a>
   </div>
 {% else %}
-  <div class="grid">
-    <div class="card">
-      <h3>Sessions</h3>
-      {% if sessions %}
-        <div class="table-scroll">
-        <table>
-          <thead><tr><th>#</th><th>Name</th><th>Type</th><th>Garmin</th></tr></thead>
-          <tbody>
-            {% for s in sessions %}
-              <tr>
-                <td>{{ s.sequence_order }}</td>
-                <td>{{ s.name }}</td>
-                <td>{{ s.sport_type|activity_family }}</td>
-                <td>{% if s.base_workout_id %}Template {{ s.base_workout_id }}{% else %}<span class="muted">Calendar only</span>{% endif %}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        </div>
-      {% else %}
-        <p class="muted">No sessions selected yet.</p>
-      {% endif %}
-    </div>
 
-    <div class="card">
-      <h3>Profile</h3>
-      {% if profile %}
-        <p><b>Goal:</b> {{ profile.primary_goal or "Not set" }}</p>
-        <p><b>Experience:</b> {{ profile.experience_level or "Not set" }}</p>
-        <p><b>Approval:</b> Garmin scheduling requires manual approval.</p>
-      {% else %}
-        <p class="muted">No profile saved yet.</p>
+  {# ── Profile card ── #}
+  <div class="card plan-profile-card">
+    <h3>Profile</h3>
+    {% if profile %}
+      {% if profile.primary_goal %}
+        <p><b>Goal:</b> {{ profile.primary_goal }}</p>
       {% endif %}
-    </div>
+      <div class="plan-profile-stats">
+        {% if user_physical.age %}
+          <div class="plan-stat">
+            <span class="plan-stat-value">{{ user_physical.age }}</span>
+            <span class="plan-stat-label">years old</span>
+          </div>
+        {% endif %}
+        {% if user_physical.weight_kg %}
+          <div class="plan-stat">
+            <span class="plan-stat-value">{{ user_physical.weight_kg | int }}</span>
+            <span class="plan-stat-label">kg</span>
+          </div>
+        {% endif %}
+        {% if user_physical.gender %}
+          <div class="plan-stat">
+            <span class="plan-stat-value">{{ user_physical.gender | capitalize }}</span>
+            <span class="plan-stat-label">gender</span>
+          </div>
+        {% endif %}
+        {% if not user_physical.age and not user_physical.weight_kg and not user_physical.gender %}
+          <p class="muted">Physical stats will appear after a Garmin sync.</p>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="muted">No profile saved yet.</p>
+    {% endif %}
   </div>
 
+  {# ── Sessions overview ── #}
   <div class="card">
+    <h3>Sessions</h3>
+    {% if sessions %}
+      <div class="plan-sessions-list">
+        {% for s in sessions %}
+          <div class="plan-session-badge">
+            <span class="plan-session-num">{{ s.sequence_order }}</span>
+            <span class="plan-session-name">{{ s.name }}</span>
+            <span class="plan-session-type muted">{{ s.sport_type | activity_family }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No sessions selected yet.</p>
+    {% endif %}
+  </div>
+
+  {# ── Workout templates per session ── #}
+  <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Workout Templates</h2>
+  <p class="muted" style="margin-top: -.5rem; margin-bottom: 1.25rem;">
+    Define the base exercises, sets and weights for each session.
+    The AI coach will use these as the starting point for workout suggestions in Telegram.
+  </p>
+
+  {# Datalist for exercise autocomplete #}
+  <datalist id="garmin-exercises-list"></datalist>
+
+  {% for s in sessions %}
+  <div class="card plan-template-card" id="session-card-{{ s.id }}">
+    <div class="plan-template-header">
+      <div class="plan-template-title">
+        <span class="plan-session-num">{{ s.sequence_order }}</span>
+        <span>{{ s.name }}</span>
+        <span class="plan-session-type muted">{{ s.sport_type | activity_family }}</span>
+      </div>
+      <div class="plan-template-actions">
+        <span class="plan-save-status muted" id="save-status-{{ s.id }}"></span>
+        <button class="btn btn-sm" onclick="saveSession({{ s.id }})">Save</button>
+      </div>
+    </div>
+
+    <table class="plan-exercise-table" id="table-{{ s.id }}">
+      <thead>
+        <tr>
+          <th style="width:42%">Exercise</th>
+          <th style="width:12%">Sets</th>
+          <th style="width:12%">Reps</th>
+          <th style="width:16%">Weight (kg)</th>
+          <th style="width:12%">Notes</th>
+          <th style="width:6%"></th>
+        </tr>
+      </thead>
+      <tbody id="tbody-{{ s.id }}">
+        {% set ex_list = exercises_by_session.get(s.id, []) %}
+        {% for ex in ex_list %}
+        <tr data-ex-id="{{ ex.id }}">
+          <td><input type="text" class="ex-name" value="{{ ex.exercise_name }}" list="garmin-exercises-list" placeholder="Exercise…" autocomplete="off"></td>
+          <td><input type="number" class="ex-sets" value="{{ ex.sets or '' }}" min="1" max="20" placeholder="—"></td>
+          <td><input type="number" class="ex-reps" value="{{ ex.reps or '' }}" min="1" max="100" placeholder="—"></td>
+          <td><input type="number" class="ex-weight" value="{{ ex.weight_kg or '' }}" min="0" max="500" step="0.5" placeholder="BW"></td>
+          <td><input type="text" class="ex-notes" value="{{ ex.notes or '' }}" placeholder="—"></td>
+          <td><button class="btn-icon btn-danger" onclick="removeRow(this)" title="Remove">✕</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <button class="btn-ghost add-ex-btn" onclick="addRow({{ s.id }})">+ Add exercise</button>
+  </div>
+  {% endfor %}
+
+  {# ── Rolling 14-day plan ── #}
+  <div class="card" style="margin-top: 1.5rem;">
     <h3>Rolling 14-day plan</h3>
     {% if planned %}
       <div class="table-scroll">
@@ -76,8 +149,80 @@
       </table>
       </div>
     {% else %}
-      <p class="muted">No planned sessions in the next 14 days yet.</p>
+      <p class="muted">No planned sessions in the next 14 days yet. Ask the coach in Telegram to schedule your routine.</p>
     {% endif %}
   </div>
+
 {% endif %}
+
+<script src="/static/garmin_exercises.js"></script>
+<script>
+// Populate datalist from exercise list
+(function() {
+  const dl = document.getElementById('garmin-exercises-list');
+  if (!dl || typeof GARMIN_EXERCISES_FLAT === 'undefined') return;
+  GARMIN_EXERCISES_FLAT.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    dl.appendChild(opt);
+  });
+})();
+
+function addRow(sessionId) {
+  const tbody = document.getElementById('tbody-' + sessionId);
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-ex-id', '');
+  tr.innerHTML = `
+    <td><input type="text" class="ex-name" list="garmin-exercises-list" placeholder="Exercise…" autocomplete="off"></td>
+    <td><input type="number" class="ex-sets" min="1" max="20" placeholder="—"></td>
+    <td><input type="number" class="ex-reps" min="1" max="100" placeholder="—"></td>
+    <td><input type="number" class="ex-weight" min="0" max="500" step="0.5" placeholder="BW"></td>
+    <td><input type="text" class="ex-notes" placeholder="—"></td>
+    <td><button class="btn-icon btn-danger" onclick="removeRow(this)" title="Remove">✕</button></td>
+  `;
+  tbody.appendChild(tr);
+  tr.querySelector('.ex-name').focus();
+}
+
+function removeRow(btn) {
+  btn.closest('tr').remove();
+}
+
+async function saveSession(sessionId) {
+  const tbody = document.getElementById('tbody-' + sessionId);
+  const rows = [...tbody.querySelectorAll('tr')];
+  const statusEl = document.getElementById('save-status-' + sessionId);
+
+  const payload = rows.map((tr, i) => ({
+    exercise_name: tr.querySelector('.ex-name').value.trim(),
+    sets: tr.querySelector('.ex-sets').value !== '' ? parseInt(tr.querySelector('.ex-sets').value) : null,
+    reps: tr.querySelector('.ex-reps').value !== '' ? parseInt(tr.querySelector('.ex-reps').value) : null,
+    weight_kg: tr.querySelector('.ex-weight').value !== '' ? parseFloat(tr.querySelector('.ex-weight').value) : null,
+    notes: tr.querySelector('.ex-notes').value.trim(),
+    order_index: i,
+  })).filter(r => r.exercise_name);
+
+  statusEl.textContent = 'Saving…';
+  statusEl.className = 'plan-save-status muted';
+
+  try {
+    const res = await fetch(`/api/session/${sessionId}/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      statusEl.textContent = '✓ Saved';
+      statusEl.className = 'plan-save-status success';
+      setTimeout(() => { statusEl.textContent = ''; }, 2500);
+    } else {
+      statusEl.textContent = '✗ Error';
+      statusEl.className = 'plan-save-status danger';
+    }
+  } catch (e) {
+    statusEl.textContent = '✗ Network error';
+    statusEl.className = 'plan-save-status danger';
+  }
+}
+</script>
 {% endblock %}

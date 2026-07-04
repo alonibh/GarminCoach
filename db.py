@@ -243,6 +243,33 @@ class ProgramSession(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
 
     program: Mapped["TrainingProgram"] = relationship(back_populates="sessions")
+    exercises: Mapped[list["SessionExercise"]] = relationship(
+        back_populates="program_session", cascade="all, delete-orphan",
+        order_by="SessionExercise.order_index"
+    )
+
+
+class SessionExercise(Base):
+    """User-defined baseline exercise for a program session.
+    
+    The AI coach uses these as the starting point when suggesting a workout,
+    instead of pulling from Garmin templates.
+    """
+
+    __tablename__ = "session_exercises"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    program_session_id: Mapped[int] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="CASCADE"), index=True
+    )
+    exercise_name: Mapped[str] = mapped_column(String(128))  # Garmin exercise enum value
+    sets: Mapped[Optional[int]] = mapped_column(Integer)
+    reps: Mapped[Optional[int]] = mapped_column(Integer)
+    weight_kg: Mapped[Optional[float]] = mapped_column(Float)  # None = bodyweight
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+    program_session: Mapped["ProgramSession"] = relationship(back_populates="exercises")
 
 
 class PlannedSession(Base):
@@ -387,6 +414,21 @@ _ATHLETE_PROFILE_ADD_COLUMNS = {
 }
 
 
+_SESSION_EXERCISES_CREATE = """
+    CREATE TABLE IF NOT EXISTS session_exercises (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        program_session_id INTEGER NOT NULL
+            REFERENCES program_sessions(id) ON DELETE CASCADE,
+        exercise_name VARCHAR(128) NOT NULL,
+        sets INTEGER,
+        reps INTEGER,
+        weight_kg FLOAT,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT ''
+    )
+"""
+
+
 def _migrate_add_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -415,6 +457,9 @@ def _migrate_add_columns() -> None:
         missing_profile = {k: v for k, v in _ATHLETE_PROFILE_ADD_COLUMNS.items() if k not in existing_profile}
         for col, sqltype in missing_profile.items():
             conn.execute(text(f"ALTER TABLE athlete_profile ADD COLUMN {col} {sqltype}"))
+
+        # Create session_exercises table if it doesn't exist yet
+        conn.execute(text(_SESSION_EXERCISES_CREATE))
 
 
 @contextmanager
