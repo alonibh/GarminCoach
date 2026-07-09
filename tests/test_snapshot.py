@@ -144,3 +144,33 @@ def test_profile_program_and_rolling_plan_included(session):
     assert snap["active_program"]["name"] == "My routine"
     assert snap["active_program"]["sessions"][0]["name"] == "Easy Run"
     assert snap["rolling_plan_14_days"][0]["title"] == "Easy Run"
+
+
+def test_calendar_titles_keep_unicode_in_snapshot(session, monkeypatch):
+    import coach.calendar as cal
+    from coach.snapshot import build_snapshot
+
+    hebrew_title = "\u05e2\u05e8\u05d1 \u05e7\u05d9\u05e6\u05d5\u05df"
+    monkeypatch.setattr(cal, "get_upcoming_schedule", lambda days=7: [{
+        "title": hebrew_title,
+        "start": "2026-07-08 18:00",
+        "end": "19:00",
+    }])
+
+    snapshot = build_snapshot(session)
+
+    assert hebrew_title in snapshot
+    assert "\\u05" not in snapshot
+
+
+def test_morning_snapshot_rewrite_keeps_unicode(session):
+    from coach.coach import _verbalize_morning_snapshot
+
+    hebrew_title = "\u05e2\u05e8\u05d1 \u05e7\u05d9\u05e6\u05d5\u05df"
+    snapshot = _verbalize_morning_snapshot(
+        f"upcoming_schedule_7_days:\n- title: {hebrew_title}\n",
+        session,
+    )
+
+    assert hebrew_title in snapshot
+    assert "\\u05" not in snapshot

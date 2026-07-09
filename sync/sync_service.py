@@ -678,12 +678,6 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
     # Generate daily proactive coaching suggestion
     try:
         with get_session() as session:
-            from db import DailyMetrics
-            metrics = session.query(DailyMetrics).filter_by(day=date.today()).first()
-            if metrics:
-                from notify.rules import check_and_notify_rules
-                check_and_notify_rules(metrics)
-                
             coach.generate_daily_suggestion(session)
 
     except Exception as e:

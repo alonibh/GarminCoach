@@ -494,7 +494,7 @@ def build_snapshot(session: Session) -> str:
 def _serialize_with_guard(snapshot: dict) -> str:
     """Serialize the snapshot, shedding the lowest-value data if it exceeds the
     soft size limit. Never silently truncate — log what was dropped."""
-    out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
+    out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False, allow_unicode=True)
     if len(out) <= _SNAPSHOT_SOFT_LIMIT_CHARS:
         return out
 
@@ -504,14 +504,14 @@ def _serialize_with_guard(snapshot: dict) -> str:
     if isinstance(stats, dict):
         trimmed = {k: v[:1] for k, v in stats.items()}
         snapshot["recent_exercise_stats"] = trimmed
-        out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
+        out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False, allow_unicode=True)
         logger.warning(
             "Snapshot exceeded %d chars; trimmed recent_exercise_stats to most-recent entry only.",
             _SNAPSHOT_SOFT_LIMIT_CHARS,
         )
     if len(out) > _SNAPSHOT_SOFT_LIMIT_CHARS and "recent_exercise_stats" in snapshot:
         snapshot.pop("recent_exercise_stats", None)
-        out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False)
+        out = yaml.dump(snapshot, default_flow_style=False, sort_keys=False, allow_unicode=True)
         logger.warning("Snapshot still oversized; dropped recent_exercise_stats entirely.")
     return out
 

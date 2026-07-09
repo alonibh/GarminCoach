@@ -1,0 +1,85 @@
+{
+  "captured_at": "2026-07-09T17:58:11.887Z",
+  "lane": "GC-TG-A",
+  "bot": "@AlonGarminCoach_bot",
+  "scenarios": [
+    {
+      "id": "GC-TG-A-PREFLIGHT-CAPABILITIES",
+      "prompt": "What can you do for me as a training coach? [already present when Codex began GarminCoach Telegram pass]",
+      "sent_at": "2026-07-09T17:58:11.880Z",
+      "response": "I can help you with your goal to build muscle mass, gain visible abs, and stay in general cardio shape. Specifically, I can:\n\n1.  Analyze your training data: I'll look at your readiness, load, and recovery to give you personalized advice. For example, your current readiness is low (43) with a sleep debt of 3.9 hours, suggesting today might be better for recovery.\n2.  Manage your \"Strength routine\": You have a routine with Chest & Biceps, Legs & Shoulders, Abs, and Back & Triceps. I can help you schedule these sessions, making sure they fit your calendar and recovery needs.\n3.  Suggest and schedule workouts: Based on your goals and current status, I can recommend specific workouts and, with your approval, schedule them on your Garmin calendar. I'll also consider your constraints (no workouts before 17:30 on weekdays, no workouts after 20:00 ever, and no workouts after 18:00 on Fridays).\n\nHow would you like to start? Perhaps we can look at scheduling your next strength session, or discuss your recovery given your current readiness?",
+      "response_message_count": 1,
+      "realData": "yes or claimed yes; review response",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "none observed"
+    },
+    {
+      "id": "GC-TG-A-PREFLIGHT-AUTOMATIONS",
+      "prompt": "Automated GarminCoach Telegram alerts already visible in chat when Codex began this pass.",
+      "sent_at": "2026-07-09T17:58:11.892Z",
+      "response": "Recovery Alert\nYour sleep debt has accumulated to 3.9 hours. Consider going to bed 30-60 mins earlier tonight to protect your muscle recovery.\n\n---\n\nEvening Check-in\n\nYour readiness is low at 43, and you have a sleep debt of 3.9 hours. Your ACWR is in an underload state, indicating you could safely increase your training load.\n\nTomorrow's recommendation: Normal strength training - A - Chest & Biceps at 17:30.\n22:00\nApprove and schedule\nDifferent time\nDismiss\n\n---\n\nRecovery Alert\nYour sleep debt has accumulated to 4.5 hours. Consider going to bed 30-60 mins earlier tonight to protect your muscle recovery.\n\n---\n\nMorning Briefing\n\nShort night - 6h27m, score 76. Deep sleep quality was excellent (1.7h) and HRV looks stable. Your readiness score is 69, and your training load is on the low side, indicating you are currently underloaded.\n\nGiven your underload status and stable HRV, a normal session of \"A - Chest & Biceps\" is recommended to help you progress towards your muscle mass goal.\n\nYour calendar shows \"ישיבה אצל אלדר\" at 20:00. Considering your constraints of no workouts before 17:30 and no workouts after 20:00, the best time for your workout is 17:30.\n09:30\nApprove and schedule\nDifferent time\nDismiss",
+      "response_message_count": 4,
+      "realData": "yes; live alerting based on sleep/readiness/load/calendar",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "inline buttons observed: Approve and schedule / Different time / Dismiss"
+    },
+    {
+      "id": "DISC-01-GC-TG-A",
+      "prompt": "/start",
+      "sent_at": "2026-07-09T17:58:36.199Z",
+      "response": "Coach is currently rate-limited by Gemini. Please wait a minute and try again.",
+      "response_message_count": 1,
+      "realData": "unclear/no",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "none observed"
+    },
+    {
+      "id": "DISC-02-GC-TG-A",
+      "prompt": "/help",
+      "sent_at": "2026-07-09T17:58:50.759Z",
+      "response": "Coach is currently rate-limited by Gemini. Please wait a minute and try again.",
+      "response_message_count": 1,
+      "realData": "unclear/no",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "none observed"
+    },
+    {
+      "id": "DISC-04-GC-TG-A",
+      "prompt": "What data do you currently have access to about me?",
+      "sent_at": "2026-07-09T17:59:03.436Z",
+      "response": "Coach is currently rate-limited by Gemini. Please wait a minute and try again.",
+      "response_message_count": 1,
+      "realData": "unclear/no",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "none observed"
+    },
+    {
+      "id": "DISC-05-GC-TG-A",
+      "prompt": "What premium features do you support?",
+      "sent_at": "2026-07-09T17:59:17.172Z",
+      "response": "Coach is currently rate-limited by Gemini. Please wait a minute and try again.",
+      "response_message_count": 1,
+      "realData": "unclear/no",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "none observed"
+    },
+    {
+      "id": "DISC-07-GC-TG-A-RETRY1",
+      "prompt": "What should I ask you every morning?",
+      "sent_at": "2026-07-09T18:00:59.972Z",
+      "response": "Coach is currently rate-limited by Gemini. Please wait a minute and try again.",
+      "response_message_count": 1,
+      "realData": "unclear/no",
+      "syntheticOnly": "no",
+      "missingData": "not obvious",
+      "ux": "none observed"
+    }
+  ],
+  "updated_at": "2026-07-09T18:00:59.981Z"
+}
