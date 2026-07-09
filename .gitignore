@@ -19,6 +19,16 @@ garmin_tokens.json
 # Temp / scratch
 _login.py
 *.log
+mcp_out.json
+mcp_tools.json
+mcp_runner.py
+mcp_tester.py
+gc_runner.py
+port.py
+port_flows.py
+docs/athletedata-comparison-*.md
+docs/athletedata-*-raw-*.json
+docs/garmincoach-telegram-raw-*.json
 
 # OS / editor
 .DS_Store
