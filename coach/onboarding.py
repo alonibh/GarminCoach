@@ -405,6 +405,16 @@ def active_program(session: Session) -> TrainingProgram | None:
     )
 
 
+def latest_draft_program(session: Session) -> TrainingProgram | None:
+    return (
+        session.query(TrainingProgram)
+        .filter(TrainingProgram.status == "draft")
+        .filter(TrainingProgram.active.is_(False))
+        .order_by(TrainingProgram.id.desc())
+        .first()
+    )
+
+
 def program_sessions_for(session: Session, program_id: int) -> list[ProgramSession]:
     return (
         session.query(ProgramSession)

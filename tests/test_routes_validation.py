@@ -148,7 +148,7 @@ def test_goal_route_and_nav_removed(client):
     assert 'href="/goal"' not in nav.text
 
 
-def test_onboarding_saves_checkbox_lists_and_program_sessions(client):
+def test_onboarding_creates_reviewable_program_proposal(client):
     c, db_module = client
     import json
     from db import AthleteProfile, Goal, ProgramSession, TrainingProgram, Workout
@@ -184,29 +184,30 @@ def test_onboarding_saves_checkbox_lists_and_program_sessions(client):
         profile = s.get(AthleteProfile, 1)
         assert profile.training_type == "strength_focused"
         assert json.loads(profile.preferred_activities) == ["Strength", "Running"]
-        assert json.loads(profile.equipment_access) == []
-        assert profile.availability == ""
-        assert "manual_approval" in profile.scheduling_preferences
-        assert "calendar_aware" not in profile.scheduling_preferences
+        assert json.loads(profile.equipment_access) == ["gym", "outdoor"]
+        assert "Monday" in profile.availability
+        assert "calendar_aware" in profile.scheduling_preferences
 
         goal = s.get(Goal, 1)
         assert goal.goal == "Build strength"
         assert goal.custom_input == "No heavy overhead press"
 
-        program = s.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).one()
-        assert program.name == "Strength routine"
-        assert program.mode == "schedule_my_routine"
-        assert program.days_per_week is None
+        program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
+        assert program.name == "Strength to support your sport · 2 days"
+        assert program.mode == "curated_strength"
+        assert program.days_per_week == 3
+        assert program.active is False
+        assert "without assigning dates" in program.rationale
 
         sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
-        assert [ps.name for ps in sessions] == ["Full body strength", "Running"]
-        assert [ps.base_workout_id for ps in sessions] == [None, None]
+        assert [ps.name for ps in sessions] == ["Strength A", "Strength B"]
+        assert all(ps.base_workout_id is None for ps in sessions)
 
 
-def test_onboarding_links_detected_routine_to_exact_template_names(client):
+def test_onboarding_proposal_is_reviewed_before_activation(client):
     c, db_module = client
     from datetime import datetime, timedelta
-    from db import Activity, ProgramSession, Workout
+    from db import Activity, ProgramSession, TrainingProgram
 
     with db_module.get_session() as s:
         for idx, name in enumerate(["Upper Strength", "Lower Strength", "Upper Strength", "Lower Strength"]):
@@ -216,8 +217,6 @@ def test_onboarding_links_detected_routine_to_exact_template_names(client):
                 start_time=datetime.now() - timedelta(days=4 - idx),
                 name=name,
             ))
-        s.add(Workout(workout_id=9001, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
-        s.add(Workout(workout_id=9002, name="Lower Strength", sport_type="strength_training", steps_json="[]"))
 
     resp = c.post(
         "/onboarding",
@@ -231,6 +230,18 @@ def test_onboarding_links_detected_routine_to_exact_template_names(client):
 
     assert resp.status_code == 303
     with db_module.get_session() as s:
-        sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
-        assert [ps.name for ps in sessions] == ["A - Upper Strength", "B - Lower Strength"]
-        assert [ps.base_workout_id for ps in sessions] == [9001, 9002]
+        program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
+        program_id = program.id
+        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 2
+
+    review = c.get(f"/program?proposal={program_id}")
+    assert review.status_code == 200
+    assert "Review your program" in review.text
+    assert "Approve program" in review.text
+
+    approved = c.post(f"/program/{program_id}/approve", follow_redirects=False)
+    assert approved.status_code == 303
+    with db_module.get_session() as s:
+        program = s.get(TrainingProgram, program_id)
+        assert program.active is True
+        assert program.status == "active"

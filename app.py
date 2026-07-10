@@ -35,9 +35,10 @@ from coach.onboarding import (
     active_program,
     activity_family,
     clean_session_name,
+    latest_draft_program,
     program_sessions_for,
-    routine_sessions_for_setup,
 )
+from coach.programs import recommend_program
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
@@ -1243,7 +1244,6 @@ def get_onboarding(request: Request):
         current_program = active_program(session)
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
         form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
-        setup_sessions = routine_sessions_for_setup(analysis, form_defaults.get("preferred_activities", []))
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1253,7 +1253,6 @@ def get_onboarding(request: Request):
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
-                "setup_sessions": setup_sessions,
             },
         )
 
@@ -1278,7 +1277,7 @@ def post_onboarding(
     selected_templates: list[int] = Form([]),
     custom_sessions: str = Form(""),
 ):
-    """Save essentials and create an active routine from history or preferences."""
+    """Save setup and create a reviewable, undated program proposal."""
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
         if not profile:
@@ -1287,17 +1286,29 @@ def post_onboarding(
 
         analysis = analyze_user_history(session)
         preferred_activities_list = _clean_list(preferred_activities)
-        routine_sessions = routine_sessions_for_setup(analysis, preferred_activities_list)
+        equipment_list = _clean_list(equipment_access)
+        requested_days = min(4, max(2, days_per_week or analysis["defaults"].get("days_per_week", 3)))
+        proposal = recommend_program(
+            goal=primary_goal.strip(),
+            preferred_activities=preferred_activities_list,
+            equipment=equipment_list,
+            sport_commitments=sport_commitments,
+            limitations=injuries_limitations,
+            days_per_week=requested_days,
+            history_summary=analysis["classification"]["reason"],
+        )
 
         profile.training_type = training_type.strip() or analysis["classification"]["training_type"]
         profile.experience_level = experience_level.strip()
         profile.primary_goal = primary_goal.strip()
         profile.preferred_activities = json.dumps(preferred_activities_list)
-        profile.equipment_access = json.dumps([])
-        profile.availability = ""
+        profile.equipment_access = json.dumps(equipment_list)
+        profile.availability = _format_availability(_clean_list(training_days), preferred_time_of_day)
         profile.injuries_limitations = injuries_limitations.strip()
-        profile.sport_commitments = ""
-        profile.scheduling_preferences = "Scheduling options: manual_approval"
+        profile.sport_commitments = sport_commitments.strip()
+        profile.scheduling_preferences = _format_scheduling_preferences(
+            _clean_list(scheduling_options) or ["manual_approval"], scheduling_notes
+        )
         profile.approval_mode = "manual"
         profile.onboarding_complete = True
         profile.updated_at = datetime.now()
@@ -1310,55 +1321,64 @@ def post_onboarding(
         goal_row.custom_input = injuries_limitations.strip()
         goal_row.updated_at = datetime.now()
 
-        for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
-            existing.active = False
+        for existing in session.query(TrainingProgram).filter(TrainingProgram.status == "draft").all():
+            existing.status = "archived"
             existing.updated_at = datetime.now()
 
-        name = program_name.strip() or analysis["defaults"].get("program_name") or "My routine"
+        name = proposal["name"]
         program = TrainingProgram(
             name=name,
-            mode="schedule_my_routine",
-            source_type="user_defined",
-            goal_tags=json.dumps([primary_goal.strip()] if primary_goal.strip() else []),
+            mode="curated_strength",
+            source_type="curated_archetype",
+            source_url=proposal["source_url"],
+            attribution=proposal["attribution"],
+            goal_tags=json.dumps([primary_goal.strip(), proposal["key"]]),
             experience_level=experience_level.strip(),
-            days_per_week=None,
-            equipment=json.dumps([]),
-            active=True,
+            days_per_week=requested_days,
+            equipment=json.dumps(equipment_list),
+            active=False,
+            status="draft",
+            rationale=proposal["rationale"],
             created_at=datetime.now(),
             updated_at=datetime.now(),
         )
         session.add(program)
         session.flush()
 
-        template_lookup = {
-            clean_session_name(w.name).lower(): w
-            for w in session.query(Workout).filter(~Workout.name.startswith("\U0001f3cb\ufe0f ")).all()
-        }
-
-        order = 1
-        for routine in routine_sessions:
-            title = routine["name"]
-            template_key = re.sub(r"^[A-Z]\s+-\s+", "", clean_session_name(title)).lower()
-            template = template_lookup.get(template_key)
-            session.add(
-                ProgramSession(
-                    program_id=program.id,
-                    name=title,
-                    sport_type=template.sport_type if template else routine["sport_type"],
-                    sequence_order=order,
-                    base_workout_id=template.workout_id if template else None,
-                    duration_min=60,
-                )
+        for order, routine in enumerate(proposal["sessions"], start=1):
+            planned_session = ProgramSession(
+                program_id=program.id,
+                name=routine["name"],
+                sport_type=routine["sport_type"],
+                sequence_order=order,
+                focus_tags=json.dumps(routine["focus_tags"]),
+                duration_min=routine["duration_min"],
             )
-            order += 1
-        return RedirectResponse(url="/program", status_code=303)
+            session.add(planned_session)
+            session.flush()
+            for exercise_order, exercise in enumerate(routine["exercises"]):
+                session.add(
+                    SessionExercise(
+                        program_session_id=planned_session.id,
+                        exercise_name=exercise["exercise_name"],
+                        sets=exercise["sets"],
+                        reps=exercise["reps"],
+                        order_index=exercise_order,
+                        notes=exercise.get("notes", ""),
+                    )
+                )
+        return RedirectResponse(url=f"/program?proposal={program.id}", status_code=303)
 
 
 @app.get("/program", response_class=HTMLResponse)
-def get_program_page(request: Request):
+def get_program_page(request: Request, proposal: int | None = None):
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
-        current_program = active_program(session)
+        active = active_program(session)
+        draft = session.get(TrainingProgram, proposal) if proposal else latest_draft_program(session)
+        if draft and draft.status != "draft":
+            draft = None
+        current_program = draft or active
         sessions = program_sessions_for(session, current_program.id) if current_program else []
 
         # Load exercises for each session, keyed by session id
@@ -1417,11 +1437,30 @@ def get_program_page(request: Request):
                 "profile": profile,
                 "user_physical": user_physical,
                 "program": current_program,
+                "active_program": active,
+                "is_draft": bool(current_program and current_program.status == "draft"),
                 "sessions": sessions,
                 "exercises_by_session": exercises_by_session,
                 "planned": planned,
             },
         )
+
+
+@app.post("/program/{program_id}/approve")
+def approve_program(program_id: int):
+    """Activate a reviewed program. Dates are still decided session by session."""
+    with get_session() as session:
+        program = session.get(TrainingProgram, program_id)
+        if not program or program.status != "draft":
+            raise HTTPException(status_code=404, detail="Program proposal not found")
+        for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
+            existing.active = False
+            existing.status = "archived"
+            existing.updated_at = datetime.now()
+        program.active = True
+        program.status = "active"
+        program.updated_at = datetime.now()
+    return RedirectResponse(url="/program", status_code=303)
 
 
 @app.post("/api/session/{session_id}/exercises")

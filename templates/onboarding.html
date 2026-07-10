@@ -10,7 +10,7 @@
 <div class="content-header">
   <div class="header-left">
     <h1>Setup</h1>
-    <p class="muted">GarminCoach looks for a repeatable routine in completed workouts, then fills gaps from your preferences.</p>
+    <p class="muted">GarminCoach uses your history and preferences to create an undated program for you to review.</p>
   </div>
 </div>
 
@@ -53,25 +53,15 @@
   </div>
 
   <div class="card">
-    <h3>Routine</h3>
+    <h3>How your program is chosen</h3>
     <p class="muted">{{ routine.summary }}</p>
-    {% if not routine.detected %}
-      <p class="muted">For now, the saved routine will be based on Preferred activities.</p>
-    {% endif %}
-    {% if setup_sessions %}
-      <div class="routine-list">
-        {% for session in setup_sessions %}
-          <span>{{ session.name }} <small>{{ session.activity_family }}</small></span>
-        {% endfor %}
-      </div>
-    {% endif %}
+    <p class="muted">You will get an editable program proposal next. It will not put workouts on dates until you approve a session later.</p>
   </div>
 </div>
 
 <form method="post" action="/onboarding" class="form-section">
   <input type="hidden" name="training_type" value="{{ d.training_type }}">
   <input type="hidden" name="experience_level" value="{{ d.experience_level }}">
-  <input type="hidden" name="program_name" value="{{ d.program_name or 'My routine' }}">
 
   <div class="card section-card">
     <h3>Essentials</h3>
@@ -92,14 +82,38 @@
       <input name="primary_goal" value="{{ d.primary_goal or '' }}" placeholder="Build strength, improve endurance, stay consistent">
     </label>
 
+    <label class="field">Strength sessions per week
+      <select name="days_per_week">
+        {% for value in [2, 3, 4] %}
+          <option value="{{ value }}" {% if (d.days_per_week or 3) == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="option-block">
+      <div class="field-label">Equipment available</div>
+      <div class="template-list compact">
+        {% for value in ['gym', 'dumbbells', 'bodyweight'] %}
+          <label class="check-row">
+            <input type="checkbox" name="equipment_access" value="{{ value }}" {% if value in (d.equipment_access or []) %}checked{% endif %}>
+            <span>{{ value | capitalize }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <label class="field">Recurring sport or commitment
+      <textarea name="sport_commitments" rows="2" placeholder="For example: Soccer on Saturday afternoons">{{ profile.sport_commitments or '' }}</textarea>
+    </label>
+
     <label class="field">Limitations
       <textarea name="injuries_limitations" rows="3" placeholder="Injuries, movements to avoid, recovery constraints">{{ goal.custom_input or profile.injuries_limitations or '' }}</textarea>
     </label>
   </div>
 
   <div class="toolbar">
-    <span class="muted">Garmin uploads stay manual approval only.</span>
-    <button class="btn" type="submit">Save setup</button>
+    <span class="muted">You will review and approve the program before it becomes active.</span>
+    <button class="btn" type="submit">Create program proposal</button>
   </div>
 </form>
 {% endblock %}

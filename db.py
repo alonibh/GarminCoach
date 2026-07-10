@@ -217,6 +217,9 @@ class TrainingProgram(Base):
     days_per_week: Mapped[Optional[int]] = mapped_column(Integer)
     equipment: Mapped[str] = mapped_column(Text, default="")  # JSON list
     active: Mapped[bool] = mapped_column(Boolean, default=False)
+    # draft -> active only after the athlete reviews and approves it.
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    rationale: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
@@ -420,6 +423,12 @@ _PROGRAM_SESSION_ADD_COLUMNS = {
 }
 
 
+_TRAINING_PROGRAM_ADD_COLUMNS = {
+    "status": "VARCHAR(16) NOT NULL DEFAULT 'draft'",
+    "rationale": "TEXT NOT NULL DEFAULT ''",
+}
+
+
 _SESSION_EXERCISES_CREATE = """
     CREATE TABLE IF NOT EXISTS session_exercises (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -469,6 +478,20 @@ def _migrate_add_columns() -> None:
         missing_ps = {k: v for k, v in _PROGRAM_SESSION_ADD_COLUMNS.items() if k not in existing_ps}
         for col, sqltype in missing_ps.items():
             conn.execute(text(f"ALTER TABLE program_sessions ADD COLUMN {col} {sqltype}"))
+
+        # Migrate training_programs
+        existing_programs = {c["name"] for c in insp.get_columns("training_programs")}
+        missing_programs = {
+            k: v for k, v in _TRAINING_PROGRAM_ADD_COLUMNS.items()
+            if k not in existing_programs
+        }
+        for col, sqltype in missing_programs.items():
+            conn.execute(text(f"ALTER TABLE training_programs ADD COLUMN {col} {sqltype}"))
+        # Existing programs predate proposal review and were already active.
+        conn.execute(text(
+            "UPDATE training_programs SET status = 'active' "
+            "WHERE active = 1 AND status = 'draft'"
+        ))
 
         # Create session_exercises table if it doesn't exist yet
         conn.execute(text(_SESSION_EXERCISES_CREATE))

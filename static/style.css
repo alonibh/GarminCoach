@@ -1134,6 +1134,18 @@ details summary {
 
 .plan-profile-card p { margin-bottom: .65rem; }
 
+.plan-proposal-card {
+  border-color: rgba(47, 129, 247, .7);
+  background: linear-gradient(135deg, rgba(47, 129, 247, .13), var(--card));
+}
+
+.plan-proposal-card form {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
 .plan-profile-stats {
   display: flex;
   gap: 1.5rem;

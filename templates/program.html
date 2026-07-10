@@ -4,7 +4,7 @@
 {% block content %}
 <div class="content-header">
   <div class="header-left">
-    <h1>Plan</h1>
+    <h1>{% if is_draft %}Review your program{% else %}Plan{% endif %}</h1>
     {% if program %}
       <p class="muted">{{ program.name }}</p>
     {% else %}
@@ -20,6 +20,20 @@
     <a class="btn" href="/onboarding">Start setup</a>
   </div>
 {% else %}
+
+  {% if is_draft %}
+  <div class="card plan-proposal-card">
+    <span class="badge">Program proposal</span>
+    <h3>Review before activating</h3>
+    <p>{{ program.rationale }}</p>
+    <p class="muted">This program is undated. GarminCoach will suggest the next session and time later; nothing is scheduled by approving it now.</p>
+    {% if program.attribution %}<p class="muted">{{ program.attribution }}</p>{% endif %}
+    <form method="post" action="/program/{{ program.id }}/approve">
+      <button class="btn" type="submit">Approve program</button>
+      {% if active_program %}<a class="btn-secondary" href="/program">Keep current active plan</a>{% endif %}
+    </form>
+  </div>
+  {% endif %}
 
   {# ── Profile card ── #}
   <div class="card plan-profile-card">
@@ -78,7 +92,7 @@
   <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Workout Templates</h2>
   <p class="muted" style="margin-top: -.5rem; margin-bottom: 1.25rem;">
     Define the base exercises, sets and weights for each session.
-    The AI coach will use these as the starting point for workout suggestions in Telegram.
+    Edit the starting point now. GarminCoach will use the approved version when it suggests future sessions.
   </p>
 
   {# Datalist for exercise autocomplete #}
