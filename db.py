@@ -190,9 +190,12 @@ class AthleteProfile(Base):
     training_type: Mapped[str] = mapped_column(String(32), default="")
     experience_level: Mapped[str] = mapped_column(String(32), default="")
     primary_goal: Mapped[str] = mapped_column(String(64), default="")
+    goal_detail: Mapped[str] = mapped_column(Text, default="")
     preferred_activities: Mapped[str] = mapped_column(Text, default="")  # JSON list
+    activity_preferences: Mapped[str] = mapped_column(Text, default="")  # JSON roles/frequencies
     equipment_access: Mapped[str] = mapped_column(Text, default="")  # JSON list
     availability: Mapped[str] = mapped_column(Text, default="")
+    timing_preferences: Mapped[str] = mapped_column(Text, default="")  # JSON timing constraints
     injuries_limitations: Mapped[str] = mapped_column(Text, default="")
     sport_commitments: Mapped[str] = mapped_column(Text, default="")
     scheduling_preferences: Mapped[str] = mapped_column(Text, default="")
@@ -244,6 +247,9 @@ class ProgramSession(Base):
     duration_min: Mapped[Optional[int]] = mapped_column(Integer)
     base_workout_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # coach_strength | activity_anchor | optional_recovery
+    session_role: Mapped[str] = mapped_column(String(32), default="coach_strength")
+    target_frequency: Mapped[int] = mapped_column(Integer, default=1)
     # If True, this session is a finisher/add-on to another session, not standalone.
     is_addon: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -416,10 +422,15 @@ _SLEEP_ADD_COLUMNS = {
 
 _ATHLETE_PROFILE_ADD_COLUMNS = {
     "training_type": "VARCHAR(32)",
+    "goal_detail": "TEXT NOT NULL DEFAULT ''",
+    "activity_preferences": "TEXT NOT NULL DEFAULT ''",
+    "timing_preferences": "TEXT NOT NULL DEFAULT ''",
 }
 
 _PROGRAM_SESSION_ADD_COLUMNS = {
     "is_addon": "INTEGER NOT NULL DEFAULT 0",
+    "session_role": "VARCHAR(32) NOT NULL DEFAULT 'coach_strength'",
+    "target_frequency": "INTEGER NOT NULL DEFAULT 1",
 }
 
 

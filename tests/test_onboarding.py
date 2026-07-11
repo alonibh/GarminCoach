@@ -30,8 +30,8 @@ def test_no_history_defaults_to_low_history(session):
     analysis = analyze_user_history(session)
 
     assert analysis["classification"]["training_type"] == "low_history"
-    assert analysis["defaults"]["primary_goal"] == "General fitness"
-    assert analysis["defaults"]["days_per_week"] == 3
+    assert analysis["defaults"]["primary_goal"] == "Feel fitter & more consistent"
+    assert analysis["defaults"]["days_per_week"] == 2
     assert analysis["total_activities"] == 0
     assert analysis["routine"]["detected"] is False
 
@@ -58,7 +58,7 @@ def test_strength_history_selects_strength_defaults_without_templates(session):
     analysis = analyze_user_history(session)
 
     assert analysis["classification"]["training_type"] == "strength_focused"
-    assert analysis["defaults"]["primary_goal"] == "Build strength"
+    assert analysis["defaults"]["primary_goal"] == "Build strength & muscle"
     assert "Strength" in analysis["defaults"]["preferred_activities"]
     assert analysis["defaults"]["plan_mode"] == "schedule_my_routine"
     assert analysis["defaults"]["selected_templates"] == []
@@ -119,19 +119,25 @@ def test_mixed_sport_history_detects_sport_sessions(session):
     assert [s["name"] for s in analysis["routine"]["sessions"]] == ["Running", "Cycling"]
 
 
-def test_endurance_history_is_classified_from_all_history(session):
-    for idx in range(8):
-        _activity(session, idx + 1, "running", idx * 45)
-    _activity(session, 20, "cycling", 140)
-    _activity(session, 21, "strength_training", 1)
+def test_recent_routine_uses_one_90_day_dataset_while_background_keeps_all_history(session):
+    for idx in range(27):
+        _activity(session, idx + 1, "strength_training", 100 + idx)
+    for idx in range(16):
+        _activity(session, 100 + idx, "strength_training", idx * 4)
+    for idx in range(3):
+        _activity(session, 130 + idx, "yoga", 10 + idx)
+        _activity(session, 140 + idx, "soccer", 20 + idx)
+    _activity(session, 150, "indoor_cardio", 5)
     session.commit()
 
     analysis = analyze_user_history(session)
 
-    assert analysis["classification"]["training_type"] == "endurance_focused"
-    assert analysis["defaults"]["primary_goal"] == "Improve endurance"
-    assert analysis["total_activities"] == 10
-    assert len(analysis["activity_patterns"]) < analysis["total_activities"]
+    assert analysis["classification"]["training_type"] == "strength_focused"
+    assert analysis["total_activities"] == 23
+    assert sum(row["sessions"] for row in analysis["activity_patterns"]) == 23
+    assert analysis["recent_routine"]["total_activities"] == 23
+    assert analysis["training_background"]["total_activities"] == 50
+    assert analysis["training_background"]["experience_level"] == "intermediate"
 
 
 def test_mixed_strength_and_cardio_history(session):
@@ -143,7 +149,7 @@ def test_mixed_strength_and_cardio_history(session):
     analysis = analyze_user_history(session)
 
     assert analysis["classification"]["training_type"] == "mixed_fitness"
-    assert analysis["defaults"]["primary_goal"] == "Balanced fitness"
+    assert analysis["defaults"]["primary_goal"] == "Feel fitter & more consistent"
 
 
 def test_sport_recreational_history(session):
@@ -156,4 +162,4 @@ def test_sport_recreational_history(session):
     analysis = analyze_user_history(session)
 
     assert analysis["classification"]["training_type"] == "sport_recreational"
-    assert analysis["defaults"]["primary_goal"] == "Support sport performance"
+    assert analysis["defaults"]["primary_goal"] == "Improve a sport/activity"

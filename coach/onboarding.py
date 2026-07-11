@@ -40,11 +40,11 @@ TRAINING_TYPE_LABELS = {
 }
 
 GOAL_BY_TYPE = {
-    "strength_focused": "Build strength",
-    "endurance_focused": "Improve endurance",
-    "mixed_fitness": "Balanced fitness",
-    "sport_recreational": "Support sport performance",
-    "low_history": "General fitness",
+    "strength_focused": "Build strength & muscle",
+    "endurance_focused": "Improve a sport/activity",
+    "mixed_fitness": "Feel fitter & more consistent",
+    "sport_recreational": "Improve a sport/activity",
+    "low_history": "Feel fitter & more consistent",
 }
 
 PROGRAM_BY_TYPE = {
@@ -316,24 +316,32 @@ def _preferred_time_of_day(activities: list[Activity]) -> str:
     return buckets.most_common(1)[0][0] if buckets else "evening"
 
 
+def _coach_strength_budget(activities: list[Activity]) -> int:
+    strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
+    if not strength:
+        return 2
+    weekly_strength = len(strength) / _history_span_weeks(strength)
+    return min(4, max(2, round(weekly_strength)))
+
+
 def _build_defaults(
-    activities: list[Activity],
+    recent_activities: list[Activity],
+    all_activities: list[Activity],
     templates: list[Workout],
     classification: dict[str, Any],
 ) -> dict[str, Any]:
     training_type = classification["training_type"]
-    usable = _usable_completed_activities(activities)
+    usable = _usable_completed_activities(recent_activities)
+    background = _usable_completed_activities(all_activities)
     counts = Counter(activity_family(a.activity_type) for a in usable)
-    total = len(usable)
-    avg_per_week = total / _history_span_weeks(activities)
+    background_avg_per_week = len(background) / _history_span_weeks(background)
     preferred = _preferred_activities(training_type, counts)
-    days_per_week = min(6, max(1, round(avg_per_week))) if total else 3
-    if training_type == "low_history":
-        days_per_week = 3
+    days_per_week = _coach_strength_budget(recent_activities)
 
     return {
         "training_type": training_type,
-        "experience_level": _experience_level(total, avg_per_week, len(templates)),
+        # Experience is deliberately long-term background, not current routine.
+        "experience_level": _experience_level(len(background), background_avg_per_week, len(templates)),
         "primary_goal": GOAL_BY_TYPE[training_type],
         "preferred_activities": preferred,
         "equipment_access": _equipment_defaults(training_type, preferred, templates),
@@ -341,8 +349,8 @@ def _build_defaults(
         "plan_mode": "schedule_my_routine",
         "selected_templates": [],
         "days_per_week": days_per_week,
-        "training_days": _preferred_weekdays(activities, days_per_week),
-        "preferred_time_of_day": _preferred_time_of_day(activities),
+        "training_days": _preferred_weekdays(usable, days_per_week),
+        "preferred_time_of_day": _preferred_time_of_day(usable),
         "scheduling_options": ["manual_approval", "calendar_aware", "recovery_based"],
     }
 
@@ -377,22 +385,46 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
         }
         for w in templates
     ]
-    classification = _classify_history(all_activities)
-    defaults = _build_defaults(all_activities, templates, classification)
-    completed_activities = _usable_completed_activities(all_activities)
-    routine = _routine_from_history(completed_activities)
+    # The onboarding screen describes the athlete's current routine, so every
+    # visible count and classification uses the same recent window.
+    classification = _classify_history(recent_activities)
+    defaults = _build_defaults(recent_activities, all_activities, templates, classification)
+    recent_completed = _usable_completed_activities(recent_activities)
+    all_completed = _usable_completed_activities(all_activities)
+    recent_patterns = _activity_patterns(recent_activities)
+    routine = _routine_from_history(recent_completed)
+    activity_preferences = []
+    for row in recent_patterns:
+        if row["label"] == "Strength":
+            continue
+        activity_preferences.append({
+            "name": row["label"],
+            "default_role": "optional_recovery" if row["label"] == "Yoga / mobility" else "activity_anchor",
+            "target_frequency": min(7, max(1, round(row["avg_per_week"]))),
+        })
 
     return {
         "lookback_days": lookback_days,
-        "activity_patterns": _activity_patterns(recent_activities),
+        "activity_patterns": recent_patterns,
         "all_activity_patterns": _activity_patterns(all_activities),
         "classification": classification,
         "defaults": defaults,
         "routine": routine,
         "templates": template_rows,
-        "has_history": bool(completed_activities),
+        "has_history": bool(recent_completed),
         "has_templates": bool(template_rows),
-        "total_activities": len(completed_activities),
+        "total_activities": len(recent_completed),
+        "recent_routine": {
+            "window_days": lookback_days,
+            "total_activities": len(recent_completed),
+            "classification": classification,
+            "activity_patterns": recent_patterns,
+        },
+        "training_background": {
+            "total_activities": len(all_completed),
+            "experience_level": defaults["experience_level"],
+        },
+        "activity_preferences": activity_preferences,
     }
 
 

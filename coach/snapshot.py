@@ -66,6 +66,16 @@ def _json_list(value: str | None) -> list:
         return []
     return parsed if isinstance(parsed, list) else []
 
+
+def _json_object(value: str | None) -> dict:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
 def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
     """Find up to the 3 most recent performances for specific exercises to show progression."""
     stats = {}
@@ -184,9 +194,12 @@ def build_snapshot(session: Session) -> str:
         snapshot["athlete_profile"] = {
             "training_type": profile.training_type,
             "primary_goal": profile.primary_goal,
+            "goal_detail": profile.goal_detail,
             "preferred_activities": _json_list(profile.preferred_activities),
+            "activity_preferences": _json_list(profile.activity_preferences),
             "equipment_access": _json_list(profile.equipment_access),
             "availability": profile.availability,
+            "timing_preferences": _json_object(profile.timing_preferences),
             "injuries_limitations": profile.injuries_limitations,
             "sport_commitments": profile.sport_commitments,
             "scheduling_preferences": profile.scheduling_preferences,
@@ -213,6 +226,9 @@ def build_snapshot(session: Session) -> str:
                     "sequence_order": ps.sequence_order,
                     "focus_tags": _json_list(ps.focus_tags),
                     "duration_min": ps.duration_min,
+                    "session_role": ps.session_role,
+                    "target_frequency": ps.target_frequency,
+                    "notes": ps.notes,
                     "is_addon": bool(ps.is_addon),
                 }
                 for ps in sessions

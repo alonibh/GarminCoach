@@ -131,7 +131,8 @@ def test_onboarding_renders_history_defaults(client):
     resp = c.get("/onboarding")
 
     assert resp.status_code == 200
-    assert "From Garmin" in resp.text
+    assert "Recent routine · last 90 days" in resp.text
+    assert "Recent activity mix · last 90 days" in resp.text
     assert "Strength focused" in resp.text
     assert "Garmin templates" not in resp.text
     assert "Additional sessions" not in resp.text
@@ -202,20 +203,19 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         data={
             "training_type": "strength_focused",
             "experience_level": "intermediate",
-            "primary_goal": "Build strength",
-            "preferred_activities": ["Strength", "Running"],
+            "primary_goal": "Build strength & muscle",
+            "goal_detail": "Stronger for soccer",
+            "preferred_activities": ["Strength"],
+            "activity_names": ["Running", "Soccer"],
+            "activity_roles": ["regular_anchor", "priority_activity"],
+            "activity_target_frequencies": ["2", "1"],
+            "activity_notes": ["Easy runs", "Saturday"],
             "equipment_access": ["gym", "outdoor"],
-            "training_days": ["Monday", "Wednesday", "Friday"],
             "days_per_week": "3",
-            "preferred_time_of_day": "evening",
+            "acceptable_windows": ["morning", "evening"],
+            "hard_latest_time": "21:00",
+            "calendar_preference": "calendar_first",
             "injuries_limitations": "No heavy overhead press",
-            "sport_commitments": "Soccer Saturday",
-            "scheduling_options": ["calendar_aware", "recovery_based"],
-            "scheduling_notes": "Avoid late nights",
-            "program_name": "Strength routine",
-            "plan_mode": "existing_templates",
-            "selected_templates": ["9001"],
-            "custom_sessions": "Mobility",
         },
         follow_redirects=False,
     )
@@ -224,13 +224,20 @@ def test_onboarding_creates_reviewable_program_proposal(client):
     with db_module.get_session() as s:
         profile = s.get(AthleteProfile, 1)
         assert profile.training_type == "strength_focused"
-        assert json.loads(profile.preferred_activities) == ["Strength", "Running"]
+        assert json.loads(profile.preferred_activities) == ["Strength", "Running", "Soccer"]
+        assert profile.goal_detail == "Stronger for soccer"
+        assert json.loads(profile.activity_preferences)[1]["name"] == "Soccer"
+        assert json.loads(profile.activity_preferences)[1]["activity_role"] == "priority_activity"
+        assert json.loads(profile.timing_preferences) == {
+            "acceptable_windows": ["morning", "evening"],
+            "hard_latest_time": "21:00",
+            "calendar_preference": "calendar_first",
+        }
         assert json.loads(profile.equipment_access) == ["gym", "outdoor"]
-        assert "Monday" in profile.availability
-        assert "calendar_aware" in profile.scheduling_preferences
+        assert "morning" in profile.availability
 
         goal = s.get(Goal, 1)
-        assert goal.goal == "Build strength"
+        assert goal.goal == "Build strength & muscle"
         assert goal.custom_input == "No heavy overhead press"
 
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
@@ -241,14 +248,15 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         assert "without assigning dates" in program.rationale
 
         sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
-        assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C"]
+        assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C", "Running", "Soccer"]
+        assert [ps.session_role for ps in sessions[-2:]] == ["activity_anchor", "activity_anchor"]
         assert all(ps.base_workout_id is None for ps in sessions)
 
 
 def test_onboarding_proposal_is_reviewed_before_activation(client):
     c, db_module = client
     from datetime import datetime, timedelta
-    from db import Activity, ProgramSession, TrainingProgram
+    from db import Activity, PlannedSession, ProgramSession, TrainingProgram
 
     with db_module.get_session() as s:
         for idx, name in enumerate(["Upper Strength", "Lower Strength", "Upper Strength", "Lower Strength"]):
@@ -263,7 +271,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         "/onboarding",
         data={
             "training_type": "strength_focused",
-            "primary_goal": "Build strength",
+            "primary_goal": "Build strength & muscle",
             "preferred_activities": ["Strength"],
         },
         follow_redirects=False,
@@ -287,12 +295,14 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         program = s.get(TrainingProgram, program_id)
         assert program.active is True
         assert program.status == "active"
+        assert s.query(PlannedSession).count() == 0
         session_id = s.query(ProgramSession).filter_by(program_id=program_id).first().id
 
     active_page = c.get("/program?view=active")
     assert active_page.status_code == 200
     assert "This remains editable" in active_page.text
     assert "Adjust profile" in active_page.text
+    assert "Nothing scheduled yet" in active_page.text
 
     edited = c.post(
         f"/api/session/{session_id}/exercises",
@@ -304,3 +314,25 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         exercise = s.query(SessionExercise).filter_by(program_session_id=session_id).one()
         assert exercise.exercise_name == "Goblet Squat"
         assert exercise.sets == 2
+
+
+def test_activity_anchor_can_be_edited_without_scheduling(client):
+    c, db_module = client
+    from db import AthleteProfile, ProgramSession, TrainingProgram
+
+    with db_module.get_session() as s:
+        profile = AthleteProfile(id=1, onboarding_complete=True)
+        program = TrainingProgram(name="Test", status="active", active=True, days_per_week=2)
+        s.add_all([profile, program])
+        s.flush()
+        anchor = ProgramSession(program_id=program.id, name="Soccer", session_role="activity_anchor", target_frequency=1)
+        s.add(anchor)
+        s.flush()
+        anchor_id = anchor.id
+
+    response = c.patch(f"/api/session/{anchor_id}/anchor", json={"target_frequency": 2, "notes": "Wednesday league"})
+    assert response.status_code == 200
+    with db_module.get_session() as s:
+        anchor = s.get(ProgramSession, anchor_id)
+        assert anchor.target_frequency == 2
+        assert anchor.notes == "Wednesday league"

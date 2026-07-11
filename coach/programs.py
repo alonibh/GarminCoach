@@ -98,7 +98,7 @@ def recommend_program(
     goal: str,
     preferred_activities: list[str],
     equipment: list[str],
-    sport_commitments: str,
+    activity_anchors: list[dict[str, Any]],
     limitations: str,
     days_per_week: int,
     session_duration_min: int,
@@ -107,7 +107,7 @@ def recommend_program(
     """Return one deterministic, editable starting program and its rationale."""
     activities = {value.lower() for value in preferred_activities}
     has_gym = "gym" in {value.lower() for value in equipment}
-    supports_sport = bool(sport_commitments.strip()) or bool(activities & {"soccer", "running", "cycling", "swimming"})
+    supports_sport = bool(activity_anchors) or bool(activities & {"soccer", "running", "cycling", "swimming"})
 
     if not has_gym:
         key = "minimal_equipment_2"
@@ -123,6 +123,8 @@ def recommend_program(
     template = PROGRAMS[key]
     sessions = deepcopy(template["sessions"])
     for session in sessions:
+        session["session_role"] = "coach_strength"
+        session["target_frequency"] = 1
         session["duration_min"] = session_duration_min
         if session_duration_min <= 45:
             session["exercises"] = session["exercises"][:3]
@@ -131,8 +133,11 @@ def recommend_program(
         history_summary,
         f"It starts with {len(sessions)} strength sessions in sequence, without assigning dates.",
     ]
-    if supports_sport:
-        reasons.append("Your other sport stays in the picture, so this keeps strength work sustainable around it.")
+    if activity_anchors:
+        anchor_names = ", ".join(anchor["name"] for anchor in activity_anchors)
+        reasons.append(f"{anchor_names} stays in your plan as a training anchor, so strength work can adapt around it.")
+    elif supports_sport:
+        reasons.append("Your regular sport stays in the picture, so strength work can adapt around it.")
     if not has_gym:
         reasons.append("It uses minimal equipment because gym access was not selected.")
     if session_duration_min <= 45:
@@ -149,10 +154,30 @@ def recommend_program(
         reasons.append("Your limitations are saved for review before progression or scheduling.")
     reasons.append("Starting weights stay open unless recent Garmin strength data provides a trustworthy baseline.")
 
+    for anchor in activity_anchors:
+        role = anchor.get("role", "activity_anchor")
+        if role not in {"activity_anchor", "optional_recovery"}:
+            continue
+        name = str(anchor.get("name", "Activity")).strip()
+        if not name:
+            continue
+        sessions.append({
+            "name": name,
+            "sport_type": name.lower().replace(" / ", "_").replace(" ", "_"),
+            "duration_min": None,
+            "focus_tags": ["activity", "anchor" if role == "activity_anchor" else "recovery"],
+            "exercises": [],
+            "session_role": role,
+            "target_frequency": max(1, min(7, int(anchor.get("target_frequency", 1)))),
+            "notes": str(anchor.get("note", "")).strip(),
+        })
+
     return {
         "key": key,
         "name": template["name"],
         "sessions": sessions,
+        "strength_session_count": len(template["sessions"]),
+        "activity_anchor_count": len(activity_anchors),
         "attribution": ACSM_ATTRIBUTION,
         "source_url": ACSM_SOURCE_URL,
         "rationale": " ".join(part for part in reasons if part),
