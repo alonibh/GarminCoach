@@ -4,14 +4,15 @@
 {% block content %}
 <div class="content-header">
   <div class="header-left">
-    <h1>{% if is_draft %}Review your program{% else %}Plan{% endif %}</h1>
+    <span class="eyebrow">{% if is_draft %}Step 3 of 3{% else %}Your training direction{% endif %}</span>
+    <h1>{% if is_draft %}Review your program 🧭{% else %}Your plan{% endif %}</h1>
     {% if program %}
       <p class="muted">{{ program.name }}</p>
     {% else %}
       <p class="muted">No active plan yet.</p>
     {% endif %}
   </div>
-  <a class="btn-secondary" href="/onboarding">Edit setup</a>
+  <a class="btn-secondary" href="/onboarding">{% if is_draft %}← Adjust answers{% else %}Adjust profile{% endif %}</a>
 </div>
 
 {% if not program %}
@@ -21,27 +22,39 @@
   </div>
 {% else %}
 
+  {% if just_approved %}
+  <div class="card success-card">
+    <div class="feature-icon" aria-hidden="true">✓</div>
+    <div><h3>Your program is active</h3><p>You are ready. No workout has been scheduled yet—GarminCoach will suggest the next useful session when the timing is right.</p></div>
+  </div>
+  {% endif %}
+
   {% if is_draft %}
   <div class="card plan-proposal-card">
     <span class="badge">Program proposal</span>
-    <h3>Review before activating</h3>
+    <h3>Here’s the starting point we recommend</h3>
     <p>{{ program.rationale }}</p>
     <p class="muted">This program is undated. GarminCoach will suggest the next session and time later; nothing is scheduled by approving it now.</p>
     {% if program.attribution %}<p class="muted">{{ program.attribution }}</p>{% endif %}
     <form method="post" action="/program/{{ program.id }}/approve">
-      <button class="btn" type="submit">Approve program</button>
-      {% if active_program %}<a class="btn-secondary" href="/program">Keep current active plan</a>{% endif %}
+      <button class="btn" type="submit">Approve this program</button>
+      {% if active_program %}<a class="btn-secondary" href="/program?view=active">Keep current active plan</a>{% endif %}
     </form>
   </div>
   {% endif %}
 
   {# ── Profile card ── #}
   <div class="card plan-profile-card">
-    <h3>Profile</h3>
+    <div class="profile-card-heading"><h3>What this plan is built around</h3><a href="/onboarding">Edit</a></div>
     {% if profile %}
       {% if profile.primary_goal %}
         <p><b>Goal:</b> {{ profile.primary_goal }}</p>
       {% endif %}
+      {% if profile.experience_level %}<p><b>Experience:</b> {{ profile.experience_level | capitalize }}</p>{% endif %}
+      {% if profile_equipment %}<p><b>Equipment:</b> {{ profile_equipment | join(', ') | title }}</p>{% endif %}
+      {% if profile.sport_commitments %}<p><b>Recurring sport:</b> {{ profile.sport_commitments }}</p>{% endif %}
+      {% if profile.injuries_limitations %}<p><b>Protected constraints:</b> {{ profile.injuries_limitations }}</p>{% endif %}
+      {% if profile.availability %}<p class="muted profile-availability">{{ profile.availability | replace('\n', ' · ') }}</p>{% endif %}
       <div class="plan-profile-stats">
         {% if user_physical.age %}
           <div class="plan-stat">
@@ -88,11 +101,25 @@
     {% endif %}
   </div>
 
+  {% if not is_draft %}
+  <div class="card next-session-empty">
+    <span class="card-kicker">Next session</span>
+    <h3>Nothing scheduled yet</h3>
+    <p>GarminCoach will propose one session and time at a time. You stay in control of every date.</p>
+  </div>
+  <div class="card calendar-status-card">
+    <span class="feature-icon" aria-hidden="true">📅</span>
+    <div>
+      <h3>{% if calendar_connected %}Calendar connected{% else %}Calendar connection comes next{% endif %}</h3>
+      <p>{% if calendar_connected %}Your availability will be considered when suggesting session times.{% else %}You can add a personal calendar before daily session suggestions are enabled.{% endif %}</p>
+    </div>
+  </div>
+  {% endif %}
+
   {# ── Workout templates per session ── #}
   <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Workout Templates</h2>
   <p class="muted" style="margin-top: -.5rem; margin-bottom: 1.25rem;">
-    Define the base exercises, sets and weights for each session.
-    Edit the starting point now. GarminCoach will use the approved version when it suggests future sessions.
+    {% if is_draft %}Change exercises, sets or reps before approval.{% else %}This remains editable. Save any exercise, set or rep changes here, or adjust your profile to create a revised proposal.{% endif %}
   </p>
 
   {# Datalist for exercise autocomplete #}

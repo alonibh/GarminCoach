@@ -101,6 +101,7 @@ def recommend_program(
     sport_commitments: str,
     limitations: str,
     days_per_week: int,
+    session_duration_min: int,
     history_summary: str,
 ) -> dict[str, Any]:
     """Return one deterministic, editable starting program and its rationale."""
@@ -110,7 +111,7 @@ def recommend_program(
 
     if not has_gym:
         key = "minimal_equipment_2"
-    elif supports_sport:
+    elif supports_sport and days_per_week <= 2:
         key = "sport_support_2"
     elif days_per_week >= 4:
         key = "upper_lower_4"
@@ -121,6 +122,10 @@ def recommend_program(
 
     template = PROGRAMS[key]
     sessions = deepcopy(template["sessions"])
+    for session in sessions:
+        session["duration_min"] = session_duration_min
+        if session_duration_min <= 45:
+            session["exercises"] = session["exercises"][:3]
     reasons = [
         f"Your goal is {goal or 'to build a consistent strength routine'}.",
         history_summary,
@@ -130,6 +135,8 @@ def recommend_program(
         reasons.append("Your other sport stays in the picture, so this keeps strength work sustainable around it.")
     if not has_gym:
         reasons.append("It uses minimal equipment because gym access was not selected.")
+    if session_duration_min <= 45:
+        reasons.append(f"Sessions are trimmed to fit your {session_duration_min}-minute limit.")
 
     if "overhead" in limitations.lower():
         for session in sessions:
@@ -140,6 +147,7 @@ def recommend_program(
         reasons.append("Overhead pressing was removed from the starting plan based on your limitation.")
     elif limitations.strip():
         reasons.append("Your limitations are saved for review before progression or scheduling.")
+    reasons.append("Starting weights stay open unless recent Garmin strength data provides a trustworthy baseline.")
 
     return {
         "key": key,

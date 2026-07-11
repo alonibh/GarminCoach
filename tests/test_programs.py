@@ -8,7 +8,8 @@ def test_sport_commitment_selects_conservative_two_day_strength_program():
         equipment=["gym"],
         sport_commitments="Soccer every Saturday",
         limitations="",
-        days_per_week=3,
+        days_per_week=2,
+        session_duration_min=60,
         history_summary="Strength is the most common activity.",
     )
 
@@ -25,11 +26,13 @@ def test_no_gym_access_selects_minimal_equipment_program():
         sport_commitments="",
         limitations="",
         days_per_week=4,
+        session_duration_min=30,
         history_summary="There are few synced activities.",
     )
 
     assert proposal["key"] == "minimal_equipment_2"
     assert proposal["sessions"][0]["exercises"][0]["exercise_name"] == "BODYWEIGHT_SQUAT"
+    assert len(proposal["sessions"][0]["exercises"]) == 3
 
 
 def test_overhead_limitation_removes_overhead_press_from_template():
@@ -40,6 +43,7 @@ def test_overhead_limitation_removes_overhead_press_from_template():
         sport_commitments="",
         limitations="No heavy overhead press",
         days_per_week=3,
+        session_duration_min=60,
         history_summary="Strength is the most common activity.",
     )
 

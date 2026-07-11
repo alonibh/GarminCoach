@@ -17,6 +17,7 @@ def client(monkeypatch):
     monkeypatch.setattr(scheduler, "start_scheduler", lambda: None)
     import sync.garmin_client as gc
     monkeypatch.setattr(gc.client, "login", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(gc.client, "is_authenticated", lambda: True, raising=False)
 
     # Point the shared DB at an isolated in-memory database.
     from sqlalchemy import create_engine
@@ -130,7 +131,7 @@ def test_onboarding_renders_history_defaults(client):
     resp = c.get("/onboarding")
 
     assert resp.status_code == 200
-    assert "Workout history" in resp.text
+    assert "From Garmin" in resp.text
     assert "Strength focused" in resp.text
     assert "Garmin templates" not in resp.text
     assert "Additional sessions" not in resp.text
@@ -138,7 +139,7 @@ def test_onboarding_renders_history_defaults(client):
     assert "Upper Strength" not in resp.text
 
 
-def test_goal_route_and_nav_removed(client):
+def test_goal_route_and_setup_nav_removed(client):
     c, _ = client
 
     resp = c.get("/goal", follow_redirects=False)
@@ -146,6 +147,46 @@ def test_goal_route_and_nav_removed(client):
 
     assert resp.status_code == 404
     assert 'href="/goal"' not in nav.text
+    nav_html = nav.text.split("<nav>", 1)[1].split("</nav>", 1)[0]
+    assert ">Setup<" not in nav_html
+    assert 'href="/program"' in nav_html
+
+
+def test_garmin_login_starts_sync_and_redirects_to_onboarding(client, monkeypatch):
+    c, _ = client
+    import app as app_module
+
+    started = {}
+    monkeypatch.setattr(app_module.client, "login", lambda **kwargs: None)
+    monkeypatch.setattr(
+        app_module.sync_runner,
+        "try_start_sync",
+        lambda full, force=False: started.update({"full": full, "force": force}) or True,
+    )
+
+    response = c.post("/login", data={"password": "temporary", "mfa": ""}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/onboarding"
+    assert started == {"full": True, "force": False}
+
+
+def test_dashboard_routes_new_user_through_connection_and_onboarding(client, monkeypatch):
+    c, _ = client
+    import app as app_module
+
+    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: False)
+    disconnected = c.get("/", follow_redirects=False)
+    assert disconnected.status_code == 303
+    assert disconnected.headers["location"] == "/login"
+
+    onboarding = c.get("/onboarding")
+    assert "Connect Garmin" in onboarding.text
+
+    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
+    connected = c.get("/", follow_redirects=False)
+    assert connected.status_code == 303
+    assert connected.headers["location"] == "/onboarding"
 
 
 def test_onboarding_creates_reviewable_program_proposal(client):
@@ -193,14 +234,14 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         assert goal.custom_input == "No heavy overhead press"
 
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
-        assert program.name == "Strength to support your sport · 2 days"
+        assert program.name == "Full body strength · 3 days"
         assert program.mode == "curated_strength"
         assert program.days_per_week == 3
         assert program.active is False
         assert "without assigning dates" in program.rationale
 
         sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
-        assert [ps.name for ps in sessions] == ["Strength A", "Strength B"]
+        assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C"]
         assert all(ps.base_workout_id is None for ps in sessions)
 
 
@@ -237,11 +278,29 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     review = c.get(f"/program?proposal={program_id}")
     assert review.status_code == 200
     assert "Review your program" in review.text
-    assert "Approve program" in review.text
+    assert "Approve this program" in review.text
 
     approved = c.post(f"/program/{program_id}/approve", follow_redirects=False)
     assert approved.status_code == 303
+    assert approved.headers["location"] == "/program?view=active&approved=1"
     with db_module.get_session() as s:
         program = s.get(TrainingProgram, program_id)
         assert program.active is True
         assert program.status == "active"
+        session_id = s.query(ProgramSession).filter_by(program_id=program_id).first().id
+
+    active_page = c.get("/program?view=active")
+    assert active_page.status_code == 200
+    assert "This remains editable" in active_page.text
+    assert "Adjust profile" in active_page.text
+
+    edited = c.post(
+        f"/api/session/{session_id}/exercises",
+        json=[{"exercise_name": "Goblet Squat", "sets": 2, "reps": 10, "weight_kg": 12}],
+    )
+    assert edited.status_code == 200
+    with db_module.get_session() as s:
+        from db import SessionExercise
+        exercise = s.query(SessionExercise).filter_by(program_session_id=session_id).one()
+        assert exercise.exercise_name == "Goblet Squat"
+        assert exercise.sets == 2

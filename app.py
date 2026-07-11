@@ -589,11 +589,15 @@ def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[d
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     needs_login = not client.is_authenticated()
+    if needs_login:
+        return RedirectResponse("/login", status_code=303)
     since = date.today() - timedelta(days=90)
     with get_session() as s:
         goal_row = s.get(Goal, 1)
         active_goal = goal_row.goal if goal_row and goal_row.goal else None
         profile = s.get(AthleteProfile, 1)
+        if not profile or not profile.onboarding_complete:
+            return RedirectResponse("/onboarding", status_code=303)
         current_program = active_program(s)
         
         # All workouts in the past month (no row cap).
@@ -1136,7 +1140,7 @@ def login_submit(request: Request, password: str = Form(...), mfa: str = Form(""
 
     # Only reached if login genuinely authenticated. Kick off initial backfill.
     sync_runner.try_start_sync(full=True)
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/onboarding", status_code=303)
 
 
 def _split_csv(value: str) -> list[str]:
@@ -1172,12 +1176,21 @@ def _line_list(blob: str | None, prefix: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-def _format_availability(training_days: list[str], preferred_time: str) -> str:
+def _format_availability(
+    training_days: list[str],
+    preferred_time: str,
+    session_duration_min: int = 0,
+    latest_training_time: str = "",
+) -> str:
     lines = []
     if training_days:
         lines.append(f"Training days: {', '.join(training_days)}")
     if preferred_time:
         lines.append(f"Preferred time: {preferred_time}")
+    if session_duration_min:
+        lines.append(f"Maximum session: {session_duration_min} minutes")
+    if latest_training_time:
+        lines.append(f"Never train after: {latest_training_time}")
     return "\n".join(lines)
 
 
@@ -1213,12 +1226,21 @@ def _onboarding_form_defaults(
 
         training_days = _line_list(profile.availability, "Training days")
         preferred_time = _line_value(profile.availability, "Preferred time")
+        session_duration = _line_value(profile.availability, "Maximum session")
+        latest_training_time = _line_value(profile.availability, "Never train after")
         scheduling_options = _line_list(profile.scheduling_preferences, "Scheduling options")
         scheduling_notes = _line_value(profile.scheduling_preferences, "Notes")
         if training_days:
             defaults["training_days"] = training_days
         if preferred_time:
             defaults["preferred_time_of_day"] = preferred_time
+        if session_duration:
+            try:
+                defaults["session_duration_min"] = int(session_duration.split()[0])
+            except (TypeError, ValueError):
+                pass
+        if latest_training_time:
+            defaults["latest_training_time"] = latest_training_time
         if scheduling_options:
             defaults["scheduling_options"] = scheduling_options
         defaults["scheduling_notes"] = scheduling_notes
@@ -1253,8 +1275,25 @@ def get_onboarding(request: Request):
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
+                "garmin_connected": client.is_authenticated(),
+                "sync_running": sync_runner.is_running(),
+                "is_editing": bool(profile.onboarding_complete),
             },
         )
+
+
+@app.get("/onboarding/status")
+def onboarding_status():
+    """Small polling payload for the sync-first onboarding screen."""
+    with get_session() as session:
+        analysis = analyze_user_history(session)
+    return JSONResponse({
+        "running": sync_runner.is_running(),
+        "total_activities": analysis["total_activities"],
+        "classification": analysis["classification"],
+        "activity_patterns": analysis["activity_patterns"],
+        "last_sync_at": _last_sync_at(),
+    })
 
 
 @app.post("/onboarding", response_class=RedirectResponse)
@@ -1268,6 +1307,8 @@ def post_onboarding(
     training_days: list[str] = Form([]),
     days_per_week: int = Form(0),
     preferred_time_of_day: str = Form(""),
+    session_duration_min: int = Form(60),
+    latest_training_time: str = Form(""),
     injuries_limitations: str = Form(""),
     sport_commitments: str = Form(""),
     scheduling_options: list[str] = Form([]),
@@ -1288,6 +1329,7 @@ def post_onboarding(
         preferred_activities_list = _clean_list(preferred_activities)
         equipment_list = _clean_list(equipment_access)
         requested_days = min(4, max(2, days_per_week or analysis["defaults"].get("days_per_week", 3)))
+        requested_duration = min(180, max(20, session_duration_min))
         proposal = recommend_program(
             goal=primary_goal.strip(),
             preferred_activities=preferred_activities_list,
@@ -1295,6 +1337,7 @@ def post_onboarding(
             sport_commitments=sport_commitments,
             limitations=injuries_limitations,
             days_per_week=requested_days,
+            session_duration_min=requested_duration,
             history_summary=analysis["classification"]["reason"],
         )
 
@@ -1303,7 +1346,12 @@ def post_onboarding(
         profile.primary_goal = primary_goal.strip()
         profile.preferred_activities = json.dumps(preferred_activities_list)
         profile.equipment_access = json.dumps(equipment_list)
-        profile.availability = _format_availability(_clean_list(training_days), preferred_time_of_day)
+        profile.availability = _format_availability(
+            _clean_list(training_days),
+            preferred_time_of_day,
+            requested_duration,
+            latest_training_time.strip(),
+        )
         profile.injuries_limitations = injuries_limitations.strip()
         profile.sport_commitments = sport_commitments.strip()
         profile.scheduling_preferences = _format_scheduling_preferences(
@@ -1371,11 +1419,20 @@ def post_onboarding(
 
 
 @app.get("/program", response_class=HTMLResponse)
-def get_program_page(request: Request, proposal: int | None = None):
+def get_program_page(
+    request: Request,
+    proposal: int | None = None,
+    view: str = "",
+    approved: int = 0,
+):
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
+        if not profile or not profile.onboarding_complete:
+            return RedirectResponse("/onboarding", status_code=303)
         active = active_program(session)
-        draft = session.get(TrainingProgram, proposal) if proposal else latest_draft_program(session)
+        draft = None
+        if view != "active":
+            draft = session.get(TrainingProgram, proposal) if proposal else latest_draft_program(session)
         if draft and draft.status != "draft":
             draft = None
         current_program = draft or active
@@ -1439,6 +1496,9 @@ def get_program_page(request: Request, proposal: int | None = None):
                 "program": current_program,
                 "active_program": active,
                 "is_draft": bool(current_program and current_program.status == "draft"),
+                "just_approved": bool(approved),
+                "calendar_connected": bool(config.ICS_CALENDAR_URL),
+                "profile_equipment": _json_list(profile.equipment_access) if profile else [],
                 "sessions": sessions,
                 "exercises_by_session": exercises_by_session,
                 "planned": planned,
@@ -1460,7 +1520,7 @@ def approve_program(program_id: int):
         program.active = True
         program.status = "active"
         program.updated_at = datetime.now()
-    return RedirectResponse(url="/program", status_code=303)
+    return RedirectResponse(url="/program?view=active&approved=1", status_code=303)
 
 
 @app.post("/api/session/{session_id}/exercises")
