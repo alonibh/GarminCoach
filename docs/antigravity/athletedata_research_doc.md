@@ -1016,3 +1016,92 @@ The athletedata.health MCP server exposes **44 tools** at:
 | Specific bounded alternatives with abort conditions | P1 |
 | Rescheduling follow-up question | P1 |
 | HRV expressed as std-dev from baseline (not just verbal) | P1 |
+
+---
+
+### FP4: Goal Shifting, Constraints, and Strength Calibration (User Transcript)
+
+**Context:** The user engaged the bot in a pivot from endurance/base-building to hypertrophy.
+
+**Key Learnings vs. Our Bot:**
+1. **Dynamic Goal Pivoting:** The bot seamlessly dropped the previous 10k base-build plan entirely when the user's goal shifted to muscle mass, dynamically generating a new 14-day hypertrophy split on the fly.
+2. **Context Retention & Explicit Constraints:** The bot remembered existing scheduled sessions (soccer) and asked how to handle leftover sessions from the old plan. When explicitly told "no food advice", it acknowledged this boundary and promised not to bring it up again—a clear demonstration of constraint following.
+3. **Data Sanity Checking ("Gut Check"):** When the user inputted a suspiciously low weight ("10kg for all"), the bot didn't blindly accept it. It asked clarifying questions to differentiate between added plate weight vs total bar weight, showing an understanding of standard gym equipment (Olympic bar = 20kg).
+4. **Adaptive Linear Progression:** Recognizing "30kg" as a beginner load, the bot instantly adopted an aggressive progression rule (2.5-5kg per session) rather than an advanced slower progression, promising to automatically flag when the jumps should slow down.
+
+---
+
+### FP5: Progressive Overload & Failure Handling (Live Test)
+
+**Prompt:** "I did the first Push session today. I hit 30kg for the first 3 sets of bench press easily, but on the 4th set I failed at the 4th rep. For OHP though, 30kg felt extremely easy and I probably could have done a lot more. How does this change the progression you mentioned for next week?"
+
+**Response:**
+> Good first session - and it's exactly the kind of divergence that should drive individual lift progression, not a blanket "add 5kg everywhere" rule.
+>
+> Bench: hold at 30kg next Push session. Three clean sets of 8-10 then failing rep 4 on the last set means you're right at your current ceiling for that rep range - that's not a stall, it's just where the line is today. Nail all 4 sets clean at 30kg first, then add load (2.5kg is the right jump, not 5, since you're now finding the edge).
+>
+> OHP: bump to 35kg next session. "Extremely easy" with reps to spare is a clear signal you're under-loaded, not that the program's working. Jump 5kg here since you've got real headroom - I'd rather you slightly undershoot day one at 35kg than keep grinding sets that don't do anything.
+>
+> Squat and deadlift haven't been tested yet - that's Tuesday's Legs and Thursday's Pull session, and I'll want the same rep-by-rep readout for both once you've run them, because right now I'm just assuming they'll follow the same 30kg baseline until you show me otherwise.
+>
+> I moved this session in the plan so it's logged against today (Fri) instead of sitting orphaned on Sunday - your next Push day is back on the normal Sunday slot.
+
+**Key Learnings vs. Our Bot:**
+1. **Lift-Specific Autoregulation:** It analyzes failure per-lift, differentiating between a 4th-set failure (hold weight, focus on clean sets) and an "extremely easy" set (aggressive 5kg jump). It doesn't apply blanket progression.
+2. **Calendar State Management:** It recognized that the user performed the session *today* (Friday) instead of the originally planned day (Sunday), and actively moved the session in the plan to reflect reality without being asked.
+3. **Future Dependency Tracking:** It tracks which lifts are still untested and proactively requests the "rep-by-rep readout" for the upcoming Leg and Pull days.
+
+---
+
+### FP6: Unstructured/Team Sports Load (Live Test)
+
+**Prompt:** "I played my soccer match today (Saturday). It was 90 minutes and much more intense than usual, my legs are completely dead. My next Push day is scheduled for tomorrow (Sunday), and Legs is on Tuesday. Should I push through tomorrow's Push session even though I'm exhausted from soccer?"
+
+**Response:**
+> Quick clarification on the schedule before I answer - looking at the actual plan, soccer is tomorrow (Sat 11th), not today, and there's no Push session tomorrow. Today (Fri) was Push, which you already did. After soccer Saturday, you've got two full rest days (Sun/Mon) before Legs on Tuesday - so the plan already built in a 3-day buffer between the match and your next lower-body session.
+>
+> That buffer is exactly the right call here, and it means you don't actually face the dilemma you're describing. Nothing scheduled tomorrow or Sunday to push through. The only real question is Tuesday's Legs session (squat, RDL, split squats, leg curl, calf raise) - if your legs are still trashed by then, that's worth checking in on, because 90 minutes of high-intensity soccer produces real eccentric muscle damage (all the deceleration, cutting, sprinting) that can take 48-72 hours to clear, sometimes longer if it was genuinely harder than your usual matches.
+>
+> Two rest days is normally plenty for that to resolve. If Tuesday comes and your legs still feel heavy or sore, tell me then and I'll drop the squat/RDL load 10-15% for that session rather than have you grind through compromised reps - no point risking form breakdown on a heavy compound lift when the tissue hasn't fully repaired.
+>
+> For today: nothing to do differently. Push is done, soccer's still ahead of you, and the schedule already protects your legs for what comes after.
+
+**Key Learnings vs. Our Bot:**
+1. **Strict Calendar Grounding:** It strictly binds the conversation to the actual real-time calendar and its internal schedule state. When the user hallucinates the day (saying "today is Saturday" on a Friday), the bot overrides the user, corrects the schedule, and refuses to answer the hypothetical without grounding it first.
+2. **Physiological Load Awareness:** It deeply understands the physiological cost of team sports, explicitly naming "eccentric muscle damage" caused by "deceleration, cutting, sprinting" as the reason for the 48-72 hour recovery timeline before a Leg day.
+3. **Contingent Autoregulation Protocol:** It proactively sets up an IF-THEN rule for the user: "If Tuesday comes and your legs still feel heavy... I'll drop the squat/RDL load 10-15%". It explains *why* (risk of form breakdown on compound lifts), giving the user a concrete plan rather than vague advice.
+
+---
+
+### FP7: Constraint Boundaries & Memory (Live Test)
+
+**Prompt:** "Just an update: I stepped on the scale and I've dropped to 63kg. Also, my abs still aren't showing. What's going on?"
+
+**Response:**
+> 1kg down in a day is basically noise - normal fluctuation from hydration, soccer sweat loss, gut contents, glycogen depletion. Not a real trend on one reading.
+>
+> On abs: you're 4 days into this plan. Visible abs is a body-fat outcome that plays out over months, not days - genuinely too early to expect any visual change yet, regardless of what the scale says.
+>
+> One thing worth naming once, since I won't bring up food again after this: your stated goal is muscle gain at maintenance, and a dropping scale is the opposite signal of what "maintenance" should produce week to week. It's one data point so I'm not reading into it yet - but if the trend continues over the next couple of weigh-ins, that's worth knowing about, since it would mean you're actually in a deficit rather than at maintenance, which works against the muscle-gain side of the goal even as it might speed up the abs side. Your call whether you want to track that or not - just flagging it once as promised.
+>
+> Training-wise, nothing changes. Progression on bench/OHP holds as discussed, Legs is Tuesday, and abs will show up on their own timeline as the core work accumulates and body composition shifts.
+
+**Key Learnings vs. Our Bot:**
+1. **Respecting Boundaries Without Ignoring Data:** The bot successfully navigated a direct conflict: the user explicitly banned food advice earlier, but then complained about a metric that is entirely food-dependent. The bot managed to explain the conflict (dropping scale = deficit, which hurts muscle gain) while explicitly acknowledging the boundary ("since I won't bring up food again after this", "Your call whether you want to track that or not").
+2. **Panic Suppression & Physiology Knowledge:** It immediately contextualizes a 1kg weight drop as "noise" caused by specific factors (hydration, soccer sweat loss, gut contents, glycogen depletion) to prevent panic.
+3. **Expectation Management:** It grounds the user in reality by reminding them they are only "4 days into this plan", highlighting its ability to track exact time elapsed since the plan was generated.
+
+---
+
+### FP8: Watch Integration & UX (Live Test)
+
+**Prompt:** "When I run the Leg session on my Garmin next, do I need to hit the lap button after every set, or is it timed? And what if I want to do the exercises out of order because a squat rack is taken?"
+
+**Response:**
+> Timed, not lap-triggered. Each exercise on the Legs session has a fixed rest period built in (90s for squat, 90s for RDL, etc.), so the watch auto-advances to the next set/exercise once the rest timer runs out - you don't need to press anything for it to move on. If you finish a set early, you can hit lap to skip the rest short if you don't want to wait it out.
+>
+> Order doesn't matter for the stimulus - squat, RDL, split squat, leg curl, calf raise are all independent movements, none of them are supersetted or depend on sequence. If the rack's taken, just skip ahead on the watch to whichever exercise is free (calf raise, leg curl) and come back to squat when it opens up. The watch will let you jump around; it's just following the list, not enforcing strict order.
+
+**Key Learnings vs. Our Bot:**
+1. **Garmin UX Coaching:** The bot doesn't just push the workout to the watch; it understands *how* the workout behaves on the watch. It explicitly coaches the user on the UX (auto-advancing timers vs manual lap presses).
+2. **Practical Gym Realities:** It handles common gym problems ("squat rack is taken") perfectly, explaining that the sequence is not physiologically strict (no supersets) and instructing the user on how to navigate the Garmin watch interface to skip and return to exercises.
