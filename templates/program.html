@@ -53,7 +53,6 @@
       {% if profile.goal_detail %}<p><b>Goal detail:</b> {{ profile.goal_detail }}</p>{% endif %}
       {% if profile.experience_level %}<p><b>Experience:</b> {{ profile.experience_level | capitalize }}</p>{% endif %}
       {% if profile_equipment %}<p><b>Equipment:</b> {{ profile_equipment | join(', ') | title }}</p>{% endif %}
-      {% if profile_activity_preferences %}<p><b>Activity roles:</b> {% for activity in profile_activity_preferences %}{{ activity.name }} — {{ (activity.activity_role or activity.role) | replace('_', ' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
       {% if profile.injuries_limitations %}<p><b>Protected constraints:</b> {{ profile.injuries_limitations }}</p>{% endif %}
       {% if profile.availability %}<p class="muted profile-availability">{{ profile.availability | replace('\n', ' · ') }}</p>{% endif %}
       <div class="plan-profile-stats">
@@ -87,14 +86,14 @@
   {# ── Sessions overview ── #}
   <div class="card">
     <h3>Target weekly mix</h3>
-    <p class="muted">{{ strength_sessions | sum(attribute='target_frequency') }} coach-added strength session{% if strength_sessions | sum(attribute='target_frequency') != 1 %}s{% endif %}. Activity anchors are your sessions to do; GarminCoach adapts strength around them.</p>
+    <p class="muted">{{ strength_sessions | sum(attribute='target_frequency') }} gym strength session{% if strength_sessions | sum(attribute='target_frequency') != 1 %}s{% endif %}. Recent Garmin activity and calendar events are considered later when a session is suggested.</p>
     {% if sessions %}
       <div class="plan-sessions-list">
         {% for s in sessions %}
           <div class="plan-session-badge">
             <span class="plan-session-num">{{ s.sequence_order }}</span>
             <span class="plan-session-name">{{ s.name }}</span>
-            <span class="plan-session-type muted">{% if s.session_role == 'coach_strength' %}Coach strength{% elif s.session_role == 'optional_recovery' %}Optional recovery{% else %}Activity anchor{% endif %} · {{ s.target_frequency }}× / week</span>
+            <span class="plan-session-type muted">Gym strength · {{ s.target_frequency }}× / week</span>
           </div>
         {% endfor %}
       </div>
@@ -102,19 +101,6 @@
       <p class="muted">No sessions selected yet.</p>
     {% endif %}
   </div>
-
-  {% if activity_anchors or recovery_sessions %}
-  <div class="card">
-    <h3>Activity anchors</h3>
-    <p class="muted">These are not prescribed workouts. Adjust their weekly target or add a short note whenever life changes.</p>
-    {% for s in activity_anchors + recovery_sessions %}
-    <div class="form-grid two" id="anchor-card-{{ s.id }}">
-      <div><b>{{ s.name }}</b><p class="muted">{% if s.session_role == 'optional_recovery' %}Optional / recovery{% else %}Regular activity anchor{% endif %}</p></div>
-      <div class="plan-template-actions"><label class="field">Target each week <select id="anchor-frequency-{{ s.id }}">{% for value in range(1, 8) %}<option value="{{ value }}" {% if value == s.target_frequency %}selected{% endif %}>{{ value }} time{% if value > 1 %}s{% endif %}</option>{% endfor %}</select></label><label class="field">Note <input id="anchor-notes-{{ s.id }}" value="{{ s.notes or '' }}" placeholder="Optional"></label><span class="plan-save-status muted" id="anchor-status-{{ s.id }}"></span><button class="btn btn-sm" type="button" onclick="saveAnchor({{ s.id }})">Save</button></div>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
 
   {% if not is_draft %}
   <div class="card next-session-empty">
@@ -221,18 +207,6 @@ function addRow(sessionId) {
 
 function removeRow(btn) {
   btn.closest('tr').remove();
-}
-
-async function saveAnchor(sessionId) {
-  const status = document.getElementById('anchor-status-' + sessionId);
-  status.textContent = 'Saving…';
-  try {
-    const res = await fetch(`/api/session/${sessionId}/anchor`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({target_frequency: document.getElementById('anchor-frequency-' + sessionId).value, notes: document.getElementById('anchor-notes-' + sessionId).value}),
-    });
-    status.textContent = res.ok ? '✓ Saved' : '✕ Error';
-  } catch (e) { status.textContent = '✕ Network error'; }
 }
 
 async function saveSession(sessionId) {

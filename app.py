@@ -1157,16 +1157,6 @@ def _json_list(value: str | None) -> list[str]:
     return [str(v) for v in parsed] if isinstance(parsed, list) else []
 
 
-def _json_records(value: str | None) -> list[dict]:
-    if not value:
-        return []
-    try:
-        parsed = json.loads(value)
-    except Exception:
-        return []
-    return [row for row in parsed if isinstance(row, dict)] if isinstance(parsed, list) else []
-
-
 def _json_object(value: str | None) -> dict:
     if not value:
         return {}
@@ -1249,17 +1239,7 @@ def _onboarding_form_defaults(
         defaults["training_type"] = profile.training_type or defaults.get("training_type", "")
         defaults["experience_level"] = profile.experience_level or defaults.get("experience_level", "")
         defaults["primary_goal"] = defaults.get("primary_goal") or profile.primary_goal or ""
-        preferred = _json_list(profile.preferred_activities)
-        equipment = _json_list(profile.equipment_access)
-        if preferred:
-            defaults["preferred_activities"] = preferred
-        if equipment:
-            defaults["equipment_access"] = equipment
-
         defaults["goal_detail"] = profile.goal_detail or ""
-        saved_activities = _json_records(profile.activity_preferences)
-        if saved_activities:
-            defaults["activity_preferences"] = saved_activities
         timing = _json_object(profile.timing_preferences)
         if timing:
             defaults["acceptable_windows"] = timing.get("acceptable_windows", [])
@@ -1305,13 +1285,6 @@ def get_onboarding(request: Request):
         current_program = active_program(session)
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
         form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
-        inferred_activities = analysis.get("activity_preferences", [])
-        saved_activities = form_defaults.get("activity_preferences", [])
-        if saved_activities:
-            by_name = {str(row.get("name", "")).lower(): row for row in inferred_activities}
-            for row in saved_activities:
-                by_name[str(row.get("name", "")).lower()] = row
-            inferred_activities = list(by_name.values())
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1321,7 +1294,6 @@ def get_onboarding(request: Request):
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
-                "activity_preferences": inferred_activities,
                 "garmin_connected": client.is_authenticated(),
                 "sync_running": sync_runner.is_running(),
                 "is_editing": bool(profile.onboarding_complete),
@@ -1352,16 +1324,6 @@ def post_onboarding(
     experience_level: str = Form(""),
     primary_goal: str = Form(""),
     goal_detail: str = Form(""),
-    preferred_activities: list[str] = Form([]),
-    activity_names: list[str] = Form([]),
-    activity_roles: list[str] = Form([]),
-    activity_target_frequencies: list[int] = Form([]),
-    activity_notes: list[str] = Form([]),
-    other_activity_name: str = Form(""),
-    other_activity_role: str = Form("regular_anchor"),
-    other_activity_target_frequency: int = Form(1),
-    other_activity_note: str = Form(""),
-    equipment_access: list[str] = Form([]),
     days_per_week: int = Form(0),
     session_duration_min: int = Form(60),
     acceptable_windows: list[str] = Form([]),
@@ -1377,38 +1339,10 @@ def post_onboarding(
             session.add(profile)
 
         analysis = analyze_user_history(session)
-        anchors = []
-        for index, name in enumerate(_clean_list(activity_names)):
-            submitted_role = activity_roles[index] if index < len(activity_roles) else "exclude"
-            if submitted_role == "exclude":
-                continue
-            role = "optional_recovery" if submitted_role == "optional_recovery" else "activity_anchor"
-            frequency = activity_target_frequencies[index] if index < len(activity_target_frequencies) else 1
-            note = activity_notes[index] if index < len(activity_notes) else ""
-            anchors.append({
-                "name": name,
-                "role": role,
-                "activity_role": submitted_role,
-                "target_frequency": min(7, max(1, int(frequency or 1))),
-                "note": note.strip(),
-            })
-        if other_activity_name.strip() and other_activity_role != "exclude":
-            anchors.append({
-                "name": other_activity_name.strip(),
-                "role": "optional_recovery" if other_activity_role == "optional_recovery" else "activity_anchor",
-                "activity_role": other_activity_role,
-                "target_frequency": min(7, max(1, int(other_activity_target_frequency or 1))),
-                "note": other_activity_note.strip(),
-            })
-        preferred_activities_list = list(dict.fromkeys(["Strength", *_clean_list(preferred_activities), *(row["name"] for row in anchors)]))
-        equipment_list = _clean_list(equipment_access)
         requested_days = min(4, max(2, days_per_week or analysis["defaults"].get("days_per_week", 3)))
         requested_duration = min(180, max(20, session_duration_min))
         proposal = recommend_program(
             goal=primary_goal.strip(),
-            preferred_activities=preferred_activities_list,
-            equipment=equipment_list,
-            activity_anchors=anchors,
             limitations=injuries_limitations,
             days_per_week=requested_days,
             session_duration_min=requested_duration,
@@ -1419,9 +1353,7 @@ def post_onboarding(
         profile.experience_level = experience_level.strip()
         profile.primary_goal = primary_goal.strip()
         profile.goal_detail = goal_detail.strip()
-        profile.preferred_activities = json.dumps(preferred_activities_list)
-        profile.activity_preferences = json.dumps(anchors)
-        profile.equipment_access = json.dumps(equipment_list)
+        profile.equipment_access = json.dumps(["gym"])
         valid_windows = [value for value in _clean_list(acceptable_windows) if value in {"morning", "midday", "evening", "weekend"}]
         calendar_preference = calendar_preference if calendar_preference in {"calendar_first", "preferences_first"} else "calendar_first"
         profile.availability = _format_timing_availability(valid_windows, requested_duration, hard_latest_time.strip())
@@ -1431,7 +1363,6 @@ def post_onboarding(
             "calendar_preference": calendar_preference,
         })
         profile.injuries_limitations = injuries_limitations.strip()
-        profile.sport_commitments = ", ".join(row["name"] for row in anchors if row["role"] == "activity_anchor")
         profile.scheduling_preferences = "Scheduling options: manual_approval"
         profile.approval_mode = "manual"
         profile.onboarding_complete = True
@@ -1459,7 +1390,7 @@ def post_onboarding(
             goal_tags=json.dumps([primary_goal.strip(), proposal["key"]]),
             experience_level=experience_level.strip(),
             days_per_week=requested_days,
-            equipment=json.dumps(equipment_list),
+            equipment=json.dumps(["gym"]),
             active=False,
             status="draft",
             rationale=proposal["rationale"],
@@ -1517,8 +1448,6 @@ def get_program_page(
         current_program = draft or active
         sessions = program_sessions_for(session, current_program.id) if current_program else []
         strength_sessions = [item for item in sessions if item.session_role == "coach_strength"]
-        activity_anchors = [item for item in sessions if item.session_role == "activity_anchor"]
-        recovery_sessions = [item for item in sessions if item.session_role == "optional_recovery"]
 
         # Load exercises for each session, keyed by session id
         exercises_by_session: dict[int, list] = {}
@@ -1583,9 +1512,6 @@ def get_program_page(
                 "profile_equipment": _json_list(profile.equipment_access) if profile else [],
                 "sessions": sessions,
                 "strength_sessions": strength_sessions,
-                "activity_anchors": activity_anchors,
-                "recovery_sessions": recovery_sessions,
-                "profile_activity_preferences": _json_records(profile.activity_preferences),
                 "exercises_by_session": exercises_by_session,
                 "planned": planned,
             },
@@ -1641,28 +1567,6 @@ async def save_session_exercises(session_id: int, request: Request):
             )
             db.add(ex)
 
-    return JSONResponse({"ok": True})
-
-
-@app.patch("/api/session/{session_id}/anchor")
-async def save_activity_anchor(session_id: int, request: Request):
-    """Save the editable frequency and note for a user-owned activity anchor."""
-    try:
-        payload = json.loads(await request.body())
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    with get_session() as db:
-        program_session = db.get(ProgramSession, session_id)
-        if not program_session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if program_session.session_role not in {"activity_anchor", "optional_recovery"}:
-            raise HTTPException(status_code=400, detail="Session is not an activity anchor")
-        try:
-            frequency = int(payload.get("target_frequency", program_session.target_frequency))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Target frequency must be a number")
-        program_session.target_frequency = min(7, max(1, frequency))
-        program_session.notes = str(payload.get("notes", "")).strip()
     return JSONResponse({"ok": True})
 
 

@@ -177,96 +177,6 @@ def _preferred_activities(training_type: str, counts: Counter[str]) -> list[str]
     return ["Strength", "Running", "Walking"]
 
 
-def build_fallback_routine(preferred_activities: list[str]) -> list[dict[str, Any]]:
-    preferred = [p for p in dict.fromkeys(preferred_activities) if p]
-    if not preferred:
-        preferred = ["Strength", "Running", "Walking"]
-    return [
-        {
-            "name": "Full body strength" if activity == "Strength" else activity,
-            "sport_type": activity.lower().replace(" / mobility", "").replace(" ", "_"),
-            "activity_family": activity,
-            "base_workout_id": None,
-        }
-        for activity in preferred[:4]
-    ]
-
-
-def _session_row(name: str, family: str) -> dict[str, Any]:
-    return {
-        "name": name,
-        "sport_type": family.lower().replace(" / mobility", "").replace(" ", "_"),
-        "activity_family": family,
-        "base_workout_id": None,
-    }
-
-
-def _routine_from_history(activities: list[Activity]) -> dict[str, Any]:
-    usable = _usable_completed_activities(activities)
-    if len(usable) < 3:
-        return {
-            "detected": False,
-            "summary": "Not enough completed activity history to trust a routine pattern yet.",
-            "sessions": [],
-        }
-
-    strength = [a for a in usable if activity_family(a.activity_type) == "Strength"]
-    if len(strength) >= 3:
-        names = Counter(
-            clean_session_name(a.name) or "Strength"
-            for a in strength
-        )
-        repeated = [name for name, count in names.items() if count >= 2]
-        if len(repeated) == 1 and names[repeated[0]] >= 3:
-            return {
-                "detected": True,
-                "summary": f"{names[repeated[0]]} completed strength sessions look like a full-body routine.",
-                "sessions": [_session_row("Full body strength", "Strength")],
-            }
-        repeated = [name for name in repeated if name != "Strength"]
-        if len(repeated) >= 2:
-            earliest = {}
-            for activity in strength:
-                name = clean_session_name(activity.name) or "Strength"
-                if name in repeated:
-                    earliest[name] = min(earliest.get(name, activity.start_time), activity.start_time)
-            ordered = sorted(repeated, key=lambda n: earliest[n])
-            return {
-                "detected": True,
-                "summary": f"Found a repeating {len(ordered)}-session strength split in completed workouts.",
-                "sessions": [
-                    _session_row(f"{SPLIT_LETTERS[idx]} - {name}", "Strength")
-                    for idx, name in enumerate(ordered[:6])
-                ],
-            }
-
-    families = Counter(activity_family(a.activity_type) for a in usable)
-    sport_sessions = [
-        _session_row(family, family)
-        for family, count in families.most_common()
-        if family != "Strength" and count >= 2
-    ]
-    if sport_sessions:
-        return {
-            "detected": True,
-            "summary": "Found recurring non-strength activities in completed history.",
-            "sessions": sport_sessions[:4],
-        }
-
-    return {
-        "detected": False,
-        "summary": "Completed activities are too sparse or inconsistent to form a reliable routine pattern.",
-        "sessions": [],
-    }
-
-
-def routine_sessions_for_setup(analysis: dict[str, Any], preferred_activities: list[str]) -> list[dict[str, Any]]:
-    routine = analysis.get("routine", {})
-    if routine.get("detected") and routine.get("sessions"):
-        return routine["sessions"]
-    return build_fallback_routine(preferred_activities)
-
-
 def _equipment_defaults(training_type: str, preferred: list[str], templates: list[Workout]) -> list[str]:
     equipment = []
     if "Strength" in preferred or any(activity_family(w.sport_type) == "Strength" for w in templates):
@@ -332,7 +242,7 @@ def _build_defaults(
 ) -> dict[str, Any]:
     training_type = classification["training_type"]
     usable = _usable_completed_activities(recent_activities)
-    background = _usable_completed_activities(all_activities)
+    background = [a for a in _usable_completed_activities(all_activities) if activity_family(a.activity_type) == "Strength"]
     counts = Counter(activity_family(a.activity_type) for a in usable)
     background_avg_per_week = len(background) / _history_span_weeks(background)
     preferred = _preferred_activities(training_type, counts)
@@ -344,7 +254,7 @@ def _build_defaults(
         "experience_level": _experience_level(len(background), background_avg_per_week, len(templates)),
         "primary_goal": GOAL_BY_TYPE[training_type],
         "preferred_activities": preferred,
-        "equipment_access": _equipment_defaults(training_type, preferred, templates),
+        "equipment_access": ["gym"],
         "program_name": PROGRAM_BY_TYPE[training_type],
         "plan_mode": "schedule_my_routine",
         "selected_templates": [],
@@ -392,24 +302,12 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
     recent_completed = _usable_completed_activities(recent_activities)
     all_completed = _usable_completed_activities(all_activities)
     recent_patterns = _activity_patterns(recent_activities)
-    routine = _routine_from_history(recent_completed)
-    activity_preferences = []
-    for row in recent_patterns:
-        if row["label"] == "Strength":
-            continue
-        activity_preferences.append({
-            "name": row["label"],
-            "default_role": "optional_recovery" if row["label"] == "Yoga / mobility" else "activity_anchor",
-            "target_frequency": min(7, max(1, round(row["avg_per_week"]))),
-        })
-
     return {
         "lookback_days": lookback_days,
         "activity_patterns": recent_patterns,
         "all_activity_patterns": _activity_patterns(all_activities),
         "classification": classification,
         "defaults": defaults,
-        "routine": routine,
         "templates": template_rows,
         "has_history": bool(recent_completed),
         "has_templates": bool(template_rows),
@@ -424,7 +322,6 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
             "total_activities": len(all_completed),
             "experience_level": defaults["experience_level"],
         },
-        "activity_preferences": activity_preferences,
     }
 
 
@@ -451,6 +348,7 @@ def program_sessions_for(session: Session, program_id: int) -> list[ProgramSessi
     return (
         session.query(ProgramSession)
         .filter(ProgramSession.program_id == program_id)
+        .filter(ProgramSession.session_role == "coach_strength")
         .order_by(ProgramSession.sequence_order.asc(), ProgramSession.id.asc())
         .all()
     )

@@ -131,12 +131,14 @@ def test_onboarding_renders_history_defaults(client):
     resp = c.get("/onboarding")
 
     assert resp.status_code == 200
-    assert "Recent routine · last 90 days" in resp.text
+    assert "Recent training context · last 90 days" in resp.text
     assert "Recent activity mix · last 90 days" in resp.text
     assert "Strength focused" in resp.text
     assert "Garmin templates" not in resp.text
     assert "Additional sessions" not in resp.text
     assert "Training days" not in resp.text
+    assert "Activity anchors" not in resp.text
+    assert "equipment_access" not in resp.text
     assert "Upper Strength" not in resp.text
 
 
@@ -205,12 +207,6 @@ def test_onboarding_creates_reviewable_program_proposal(client):
             "experience_level": "intermediate",
             "primary_goal": "Build strength & muscle",
             "goal_detail": "Stronger for soccer",
-            "preferred_activities": ["Strength"],
-            "activity_names": ["Running", "Soccer"],
-            "activity_roles": ["regular_anchor", "priority_activity"],
-            "activity_target_frequencies": ["2", "1"],
-            "activity_notes": ["Easy runs", "Saturday"],
-            "equipment_access": ["gym", "outdoor"],
             "days_per_week": "3",
             "acceptable_windows": ["morning", "evening"],
             "hard_latest_time": "21:00",
@@ -224,16 +220,13 @@ def test_onboarding_creates_reviewable_program_proposal(client):
     with db_module.get_session() as s:
         profile = s.get(AthleteProfile, 1)
         assert profile.training_type == "strength_focused"
-        assert json.loads(profile.preferred_activities) == ["Strength", "Running", "Soccer"]
         assert profile.goal_detail == "Stronger for soccer"
-        assert json.loads(profile.activity_preferences)[1]["name"] == "Soccer"
-        assert json.loads(profile.activity_preferences)[1]["activity_role"] == "priority_activity"
         assert json.loads(profile.timing_preferences) == {
             "acceptable_windows": ["morning", "evening"],
             "hard_latest_time": "21:00",
             "calendar_preference": "calendar_first",
         }
-        assert json.loads(profile.equipment_access) == ["gym", "outdoor"]
+        assert json.loads(profile.equipment_access) == ["gym"]
         assert "morning" in profile.availability
 
         goal = s.get(Goal, 1)
@@ -248,8 +241,8 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         assert "without assigning dates" in program.rationale
 
         sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
-        assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C", "Running", "Soccer"]
-        assert [ps.session_role for ps in sessions[-2:]] == ["activity_anchor", "activity_anchor"]
+        assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C"]
+        assert all(ps.session_role == "coach_strength" for ps in sessions)
         assert all(ps.base_workout_id is None for ps in sessions)
 
 
@@ -272,7 +265,6 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         data={
             "training_type": "strength_focused",
             "primary_goal": "Build strength & muscle",
-            "preferred_activities": ["Strength"],
         },
         follow_redirects=False,
     )
@@ -281,7 +273,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     with db_module.get_session() as s:
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
         program_id = program.id
-        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 2
+        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 4
 
     review = c.get(f"/program?proposal={program_id}")
     assert review.status_code == 200
@@ -316,7 +308,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         assert exercise.sets == 2
 
 
-def test_activity_anchor_can_be_edited_without_scheduling(client):
+def test_active_program_hides_legacy_non_gym_sessions(client):
     c, db_module = client
     from db import AthleteProfile, ProgramSession, TrainingProgram
 
@@ -325,14 +317,12 @@ def test_activity_anchor_can_be_edited_without_scheduling(client):
         program = TrainingProgram(name="Test", status="active", active=True, days_per_week=2)
         s.add_all([profile, program])
         s.flush()
-        anchor = ProgramSession(program_id=program.id, name="Soccer", session_role="activity_anchor", target_frequency=1)
-        s.add(anchor)
-        s.flush()
-        anchor_id = anchor.id
+        s.add_all([
+            ProgramSession(program_id=program.id, name="Gym", session_role="coach_strength"),
+            ProgramSession(program_id=program.id, name="Soccer", session_role="activity_anchor"),
+        ])
 
-    response = c.patch(f"/api/session/{anchor_id}/anchor", json={"target_frequency": 2, "notes": "Wednesday league"})
+    response = c.get("/program?view=active")
     assert response.status_code == 200
-    with db_module.get_session() as s:
-        anchor = s.get(ProgramSession, anchor_id)
-        assert anchor.target_frequency == 2
-        assert anchor.notes == "Wednesday league"
+    assert "Gym strength" in response.text
+    assert "Activity anchors" not in response.text

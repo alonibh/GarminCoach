@@ -195,13 +195,10 @@ def build_snapshot(session: Session) -> str:
             "training_type": profile.training_type,
             "primary_goal": profile.primary_goal,
             "goal_detail": profile.goal_detail,
-            "preferred_activities": _json_list(profile.preferred_activities),
-            "activity_preferences": _json_list(profile.activity_preferences),
             "equipment_access": _json_list(profile.equipment_access),
             "availability": profile.availability,
             "timing_preferences": _json_object(profile.timing_preferences),
             "injuries_limitations": profile.injuries_limitations,
-            "sport_commitments": profile.sport_commitments,
             "scheduling_preferences": profile.scheduling_preferences,
             "onboarding_complete": profile.onboarding_complete,
         }

@@ -115,20 +115,19 @@ def test_profile_program_and_rolling_plan_included(session):
         id=1,
         experience_level="beginner",
         primary_goal="general fitness",
-        preferred_activities='["running"]',
-        equipment_access='["outdoor"]',
+        equipment_access='["gym"]',
         onboarding_complete=True,
     ))
     program = TrainingProgram(name="My routine", mode="schedule_my_routine", active=True)
     session.add(program)
     session.flush()
-    ps = ProgramSession(program_id=program.id, name="Easy Run", sport_type="running", sequence_order=1)
+    ps = ProgramSession(program_id=program.id, name="Full body A", sport_type="strength_training", sequence_order=1)
     session.add(ps)
     session.flush()
     session.add(PlannedSession(
         program_session_id=ps.id,
-        activity_type="running",
-        title="Easy Run",
+        activity_type="strength_training",
+        title="Full body A",
         target_date=get_local_date(),
         suggested_time="07:00",
         duration_min=45,
@@ -142,8 +141,8 @@ def test_profile_program_and_rolling_plan_included(session):
 
     assert snap["athlete_profile"]["primary_goal"] == "general fitness"
     assert snap["active_program"]["name"] == "My routine"
-    assert snap["active_program"]["sessions"][0]["name"] == "Easy Run"
-    assert snap["rolling_plan_14_days"][0]["title"] == "Easy Run"
+    assert snap["active_program"]["sessions"][0]["name"] == "Full body A"
+    assert snap["rolling_plan_14_days"][0]["title"] == "Full body A"
 
 
 def test_calendar_titles_keep_unicode_in_snapshot(session, monkeypatch):

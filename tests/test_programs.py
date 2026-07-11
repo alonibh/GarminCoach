@@ -1,12 +1,9 @@
 from coach.programs import recommend_program
 
 
-def test_activity_anchor_selects_conservative_two_day_strength_program():
+def test_sport_goal_selects_conservative_two_day_gym_program():
     proposal = recommend_program(
-        goal="Build strength",
-        preferred_activities=["Strength", "Soccer"],
-        equipment=["gym"],
-        activity_anchors=[{"name": "Soccer", "role": "activity_anchor", "target_frequency": 1}],
+        goal="Improve a sport/activity",
         limitations="",
         days_per_week=2,
         session_duration_min=60,
@@ -14,36 +11,27 @@ def test_activity_anchor_selects_conservative_two_day_strength_program():
     )
 
     assert proposal["key"] == "sport_support_2"
-    assert len(proposal["sessions"]) == 3
-    assert proposal["sessions"][-1]["session_role"] == "activity_anchor"
-    assert proposal["sessions"][-1]["target_frequency"] == 1
-    assert proposal["sessions"][-1]["exercises"] == []
+    assert len(proposal["sessions"]) == 2
+    assert all(session["session_role"] == "coach_strength" for session in proposal["sessions"])
     assert "without assigning dates" in proposal["rationale"]
 
 
-def test_no_gym_access_selects_minimal_equipment_program():
+def test_short_session_trims_gym_program():
     proposal = recommend_program(
         goal="Stay consistent",
-        preferred_activities=["Walking"],
-        equipment=["bodyweight"],
-        activity_anchors=[],
         limitations="",
         days_per_week=4,
         session_duration_min=30,
         history_summary="There are few synced activities.",
     )
 
-    assert proposal["key"] == "minimal_equipment_2"
-    assert proposal["sessions"][0]["exercises"][0]["exercise_name"] == "BODYWEIGHT_SQUAT"
+    assert proposal["key"] == "upper_lower_4"
     assert len(proposal["sessions"][0]["exercises"]) == 3
 
 
 def test_overhead_limitation_removes_overhead_press_from_template():
     proposal = recommend_program(
         goal="Build strength",
-        preferred_activities=["Strength"],
-        equipment=["gym"],
-        activity_anchors=[],
         limitations="No heavy overhead press",
         days_per_week=3,
         session_duration_min=60,

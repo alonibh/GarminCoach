@@ -1,112 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Build your plan - GarminCoach{% endblock %}
-
 {% block content %}
 {% set d = form_defaults %}
 {% set classification = analysis.classification %}
-{% set selected_equipment = d.equipment_access or [] %}
 {% set goal_values = ['Build strength & muscle', 'Improve a sport/activity', 'Feel fitter & more consistent'] %}
 {% set selected_goal = d.primary_goal if d.primary_goal in goal_values else 'Feel fitter & more consistent' %}
 {% set selected_windows = d.acceptable_windows or [] %}
-
 <div class="onboarding-shell">
-  <div class="content-header onboarding-heading">
-    <div class="header-left">
-      <span class="eyebrow">Your coaching setup</span>
-      <h1>{% if is_editing %}Adjust your plan{% else %}Let's build a plan that fits your life{% endif %}</h1>
-      <p class="muted">Garmin provides the history. You provide the intent. Nothing is scheduled until you approve it.</p>
-    </div>
-  </div>
-
-  <ol class="onboarding-steps" aria-label="Onboarding progress">
-    <li class="{% if garmin_connected %}done{% else %}active{% endif %}"><span>1</span><div><b>Connect</b><small>Garmin data</small></div></li>
-    <li class="{% if garmin_connected %}active{% endif %}"><span>2</span><div><b>Tell us</b><small>Goals & constraints</small></div></li>
-    <li><span>3</span><div><b>Review</b><small>Your program</small></div></li>
-  </ol>
-
+  <div class="content-header onboarding-heading"><div class="header-left"><span class="eyebrow">Your coaching setup</span><h1>{% if is_editing %}Adjust your plan{% else %}Let's build a gym plan that fits your life{% endif %}</h1><p class="muted">Garmin provides context for recovery and timing. You choose the gym plan. Nothing is scheduled until you approve it.</p></div></div>
+  <ol class="onboarding-steps" aria-label="Onboarding progress"><li class="{% if garmin_connected %}done{% else %}active{% endif %}"><span>1</span><div><b>Connect</b><small>Garmin data</small></div></li><li class="{% if garmin_connected %}active{% endif %}"><span>2</span><div><b>Tell us</b><small>Gym goals & constraints</small></div></li><li><span>3</span><div><b>Review</b><small>Your gym plan</small></div></li></ol>
   {% if not garmin_connected %}
-  <div class="card onboarding-welcome"><div class="feature-icon" aria-hidden="true">⌚</div><div><h2>Start with your real training history</h2><p>Connect Garmin so we can learn your activities, routine, strength sessions and recovery baseline. Your password is never stored.</p><a class="btn" href="/login">Connect Garmin</a></div></div>
+  <div class="card onboarding-welcome"><div class="feature-icon" aria-hidden="true">⌚</div><div><h2>Start with your real training history</h2><p>Connect Garmin so we can use recent activity and recovery data to make safer gym-workout suggestions. Your password is never stored.</p><a class="btn" href="/login">Connect Garmin</a></div></div>
   {% else %}
-  <div class="sync-banner {% if sync_running %}is-running{% else %}is-ready{% endif %}" id="sync-banner"><div class="sync-pulse" aria-hidden="true"></div><div><b id="sync-title">{% if sync_running %}Garmin is learning your history…{% else %}Garmin history is ready{% endif %}</b><p id="sync-copy">{% if sync_running %}Fill in your preferences while the sync runs. We'll wait before creating the program.{% else %}We found {{ analysis.total_activities }} recent activities to learn from.{% endif %}</p></div></div>
-
-  <div class="grid onboarding-findings">
-    <div class="card">
-      <span class="card-kicker">⌚ Recent routine · last 90 days</span>
-      <h3 id="classification-label">{{ classification.label }}</h3>
-      <p class="muted" id="classification-reason">{{ classification.reason }}</p>
-      <div class="activity-count"><strong id="activity-count">{{ analysis.total_activities }}</strong><span>completed activities</span></div>
-      <p class="field-hint" id="training-background">Training background: {{ analysis.training_background.total_activities }} synced activities · {{ analysis.training_background.experience_level | capitalize }} experience</p>
-    </div>
-    <div class="card"><span class="card-kicker">↗ Recent activity mix · last 90 days</span><div class="history-bars" id="activity-patterns">{% for row in analysis.activity_patterns %}<div class="history-bar-row"><div class="history-bar-label"><span>{{ row.label }}</span><small>{{ row.sessions }} sessions</small></div><div class="history-bar-track"><span style="width: {{ (row.sessions / (analysis.activity_patterns | sum(attribute='sessions')) * 100) if analysis.activity_patterns else 0 }}%"></span></div></div>{% else %}<p class="muted">Activity patterns will appear as the sync completes.</p>{% endfor %}</div></div>
-  </div>
-
-  <form method="post" action="/onboarding" class="form-section onboarding-form" id="onboarding-form">
-    <input type="hidden" name="training_type" value="{{ d.training_type }}">
-    <input type="hidden" name="preferred_activities" value="Strength">
-
-    <section class="card section-card">
-      <div class="section-heading"><span class="section-emoji" aria-hidden="true">🎯</span><div><h2>What are we working toward?</h2><p>Pick one main direction. You can change it later.</p></div></div>
-      <div class="choice-grid goal-grid">
-        {% for value, copy in [('Build strength & muscle', 'Build useful strength and sustainable muscle.'), ('Improve a sport/activity', 'Support the activity that matters most to you.'), ('Feel fitter & more consistent', 'Build a balanced routine you can maintain.')] %}
-        <label class="choice-card"><input type="radio" name="primary_goal" value="{{ value }}" {% if selected_goal == value %}checked{% endif %} required><span><b>{{ value }}</b><small>{{ copy }}</small></span></label>
-        {% endfor %}
-      </div>
-      <label class="field">Anything more specific? <input name="goal_detail" value="{{ d.goal_detail or '' }}" placeholder="Optional — e.g. get stronger for soccer this season"></label>
-      <div class="form-grid two">
-        <label class="field">Your current strength experience<select name="experience_level">{% for value, label in [('beginner','Beginner'),('intermediate','Intermediate'),('advanced','Advanced')] %}<option value="{{ value }}" {% if d.experience_level == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><span class="field-hint">Training background informs this, not just the recent 90 days.</span></label>
-        <label class="field">How many coach-added strength sessions fit in a normal week?<select name="days_per_week">{% for value in [2, 3, 4] %}<option value="{{ value }}" {% if (d.days_per_week or 2) == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select><span class="field-hint">This is your training-volume and recovery budget, not a calendar schedule.</span></label>
-      </div>
-    </section>
-
-    <section class="card section-card">
-      <div class="section-heading"><span class="section-emoji" aria-hidden="true">🧭</span><div><h2>What should stay in your plan?</h2><p>GarminCoach will preserve these as anchors and adapt strength around them. It will not prescribe their sport workouts.</p></div></div>
-      <div id="activity-roles">
-        {% for activity in activity_preferences %}
-        {% set saved_role = activity.activity_role or activity.default_role or 'regular_anchor' %}
-        <div class="form-grid activity-role-row">
-          <input type="hidden" name="activity_names" value="{{ activity.name }}">
-          <label class="field"><b>{{ activity.name }}</b><select name="activity_roles"><option value="priority_activity" {% if saved_role == 'priority_activity' %}selected{% endif %}>Priority activity</option><option value="regular_anchor" {% if saved_role == 'regular_anchor' %}selected{% endif %}>Regular anchor</option><option value="optional_recovery" {% if saved_role == 'optional_recovery' %}selected{% endif %}>Optional / recovery</option><option value="exclude" {% if saved_role == 'exclude' %}selected{% endif %}>Exclude from plan</option></select></label>
-          <label class="field">Target each week<select name="activity_target_frequencies">{% for value in range(1, 8) %}<option value="{{ value }}" {% if value == (activity.target_frequency or 1) %}selected{% endif %}>{{ value }} time{% if value > 1 %}s{% endif %}</option>{% endfor %}</select></label>
-          <label class="field">Note <input name="activity_notes" value="{{ activity.note or '' }}" placeholder="Optional exception"></label>
-        </div>
-        {% else %}<p class="muted">No regular non-strength activity found yet. Add one below if it belongs in your week.</p>{% endfor %}
-      </div>
-      <div class="form-grid activity-role-row add-activity-row"><label class="field">Add an activity<input name="other_activity_name" placeholder="e.g. Soccer, running, yoga"></label><label class="field">Role<select name="other_activity_role"><option value="priority_activity">Priority activity</option><option value="regular_anchor" selected>Regular anchor</option><option value="optional_recovery">Optional / recovery</option><option value="exclude">Exclude from plan</option></select></label><label class="field">Target each week<select name="other_activity_target_frequency">{% for value in range(1, 8) %}<option value="{{ value }}">{{ value }} time{% if value > 1 %}s{% endif %}</option>{% endfor %}</select></label><label class="field">Note<input name="other_activity_note" placeholder="Optional exception"></label></div>
-    </section>
-
-    <section class="card section-card">
-      <div class="section-heading"><span class="section-emoji" aria-hidden="true">🏋️</span><div><h2>What can you realistically do?</h2><p>Keep this honest—the useful plan is the one that fits.</p></div></div>
-      <div class="choice-grid compact">{% for value in ['gym', 'dumbbells', 'bodyweight'] %}<label class="choice-card compact"><input type="checkbox" name="equipment_access" value="{{ value }}" {% if value in selected_equipment %}checked{% endif %}><span><b>{{ value | capitalize }}</b></span></label>{% endfor %}</div>
-      <div class="form-grid two"><label class="field">Maximum strength-session length<select name="session_duration_min">{% for value in [30, 45, 60, 75, 90] %}<option value="{{ value }}" {% if (d.session_duration_min or 60) == value %}selected{% endif %}>{{ value }} minutes</option>{% endfor %}</select></label></div>
-    </section>
-
-    <section class="card section-card">
-      <div class="section-heading"><span class="section-emoji" aria-hidden="true">🗓️</span><div><h2>When can we suggest training?</h2><p>Your calendar chooses the suitable time later. These are your boundaries and tie-breakers.</p></div></div>
-      <div class="choice-grid compact">{% for value, label in [('morning','Morning'), ('midday','Midday'), ('evening','Evening'), ('weekend','Weekend')] %}<label class="choice-card compact"><input type="checkbox" name="acceptable_windows" value="{{ value }}" {% if value in selected_windows %}checked{% endif %}><span><b>{{ label }}</b></span></label>{% endfor %}</div>
-      <div class="form-grid two"><label class="field">When a calendar is connected<select name="calendar_preference"><option value="calendar_first" {% if (d.calendar_preference or 'calendar_first') == 'calendar_first' %}selected{% endif %}>Use calendar availability first</option><option value="preferences_first" {% if d.calendar_preference == 'preferences_first' %}selected{% endif %}>Prefer these windows first</option></select></label><label class="field">Hard latest time <input type="time" name="hard_latest_time" value="{{ d.hard_latest_time or '' }}"><span class="field-hint">Optional. Leave blank if no hard cutoff is needed.</span></label></div>
-    </section>
-
-    <section class="card section-card"><div class="section-heading"><span class="section-emoji" aria-hidden="true">🛡️</span><div><h2>Anything we should protect?</h2><p>We will keep these visible when building and adapting the program.</p></div></div><label class="field">Injuries, movements to avoid, or other constraints<textarea name="injuries_limitations" rows="3" placeholder="For example: Avoid overhead pressing; right knee gets irritated by deep lunges">{{ goal.custom_input or profile.injuries_limitations or '' }}</textarea></label></section>
-
-    <div class="onboarding-submit"><div><b>Next: review your program</b><p>We will show exactly what we suggest and why before anything becomes active.</p></div><button class="btn" type="submit" id="create-plan-btn" {% if sync_running %}disabled{% endif %}>{% if sync_running %}Waiting for Garmin…{% elif is_editing %}Create revised proposal{% else %}Create my program{% endif %}</button></div>
-  </form>
-  {% endif %}
+  <div class="sync-banner {% if sync_running %}is-running{% else %}is-ready{% endif %}" id="sync-banner"><div class="sync-pulse" aria-hidden="true"></div><div><b id="sync-title">{% if sync_running %}Garmin is learning your history…{% else %}Garmin history is ready{% endif %}</b><p id="sync-copy">{% if sync_running %}Fill in your preferences while the sync runs. We'll wait before creating the gym plan.{% else %}We found {{ analysis.total_activities }} recent activities to learn from.{% endif %}</p></div></div>
+  <div class="grid onboarding-findings"><div class="card"><span class="card-kicker">⌚ Recent training context · last 90 days</span><h3 id="classification-label">{{ classification.label }}</h3><p class="muted" id="classification-reason">{{ classification.reason }}</p><div class="activity-count"><strong id="activity-count">{{ analysis.total_activities }}</strong><span>completed activities</span></div><p class="field-hint" id="training-background">Long-term strength background: {{ analysis.training_background.experience_level | capitalize }}</p></div><div class="card"><span class="card-kicker">↗ Recent activity mix · last 90 days</span><div class="history-bars" id="activity-patterns">{% for row in analysis.activity_patterns %}<div class="history-bar-row"><div class="history-bar-label"><span>{{ row.label }}</span><small>{{ row.sessions }} sessions</small></div><div class="history-bar-track"><span style="width: {{ (row.sessions / (analysis.activity_patterns | sum(attribute='sessions')) * 100) if analysis.activity_patterns else 0 }}%"></span></div></div>{% else %}<p class="muted">Activity patterns will appear as the sync completes.</p>{% endfor %}</div></div></div>
+  <form method="post" action="/onboarding" class="form-section onboarding-form" id="onboarding-form"><input type="hidden" name="training_type" value="{{ d.training_type }}">
+    <section class="card section-card"><div class="section-heading"><span class="section-emoji" aria-hidden="true">🎯</span><div><h2>What are we working toward?</h2><p>This determines the gym-workout emphasis.</p></div></div><div class="choice-grid goal-grid">{% for value, copy in [('Build strength & muscle', 'Build useful strength and sustainable muscle.'), ('Improve a sport/activity', 'Use gym strength work to support your performance.'), ('Feel fitter & more consistent', 'Build a balanced gym routine you can maintain.')] %}<label class="choice-card"><input type="radio" name="primary_goal" value="{{ value }}" {% if selected_goal == value %}checked{% endif %} required><span><b>{{ value }}</b><small>{{ copy }}</small></span></label>{% endfor %}</div><label class="field">Anything more specific? <input name="goal_detail" value="{{ d.goal_detail or '' }}" placeholder="Optional — e.g. stronger legs for soccer"></label><div class="form-grid two"><label class="field">Your current gym-training experience<select name="experience_level">{% for value, label in [('beginner','Beginner'),('intermediate','Intermediate'),('advanced','Advanced')] %}<option value="{{ value }}" {% if d.experience_level == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><span class="field-hint">Suggested from long-term strength history; correct it if needed.</span></label><label class="field">How many gym sessions fit in a normal week?<select name="days_per_week">{% for value in [2, 3, 4] %}<option value="{{ value }}" {% if (d.days_per_week or 2) == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select><span class="field-hint">This sets training volume and recovery budget, not calendar dates.</span></label></div></section>
+    <section class="card section-card"><div class="section-heading"><span class="section-emoji" aria-hidden="true">🏋️</span><div><h2>What can you realistically do?</h2><p>These limits shape every gym workout we create.</p></div></div><label class="field">Maximum gym-session length<select name="session_duration_min">{% for value in [30, 45, 60, 75, 90] %}<option value="{{ value }}" {% if (d.session_duration_min or 60) == value %}selected{% endif %}>{{ value }} minutes</option>{% endfor %}</select></label></section>
+    <section class="card section-card"><div class="section-heading"><span class="section-emoji" aria-hidden="true">🗓️</span><div><h2>When can we suggest a gym workout?</h2><p>Your calendar chooses a suitable time later; these are your boundaries and tie-breakers.</p></div></div><div class="choice-grid compact">{% for value, label in [('morning','Morning'), ('midday','Midday'), ('evening','Evening'), ('weekend','Weekend')] %}<label class="choice-card compact"><input type="checkbox" name="acceptable_windows" value="{{ value }}" {% if value in selected_windows %}checked{% endif %}><span><b>{{ label }}</b></span></label>{% endfor %}</div><div class="form-grid two"><label class="field">When a calendar is connected<select name="calendar_preference"><option value="calendar_first" {% if (d.calendar_preference or 'calendar_first') == 'calendar_first' %}selected{% endif %}>Use calendar availability first</option><option value="preferences_first" {% if d.calendar_preference == 'preferences_first' %}selected{% endif %}>Prefer these windows first</option></select></label><label class="field">Hard latest time <input type="time" name="hard_latest_time" value="{{ d.hard_latest_time or '' }}"><span class="field-hint">Optional. Leave blank if no hard cutoff is needed.</span></label></div></section>
+    <section class="card section-card"><div class="section-heading"><span class="section-emoji" aria-hidden="true">🛡️</span><div><h2>Anything we should protect?</h2><p>We use these to avoid unsuitable gym exercises.</p></div></div><label class="field">Injuries, movements to avoid, or other constraints<textarea name="injuries_limitations" rows="3" placeholder="For example: Avoid overhead pressing; right knee gets irritated by deep lunges">{{ goal.custom_input or profile.injuries_limitations or '' }}</textarea></label></section>
+    <div class="onboarding-submit"><div><b>Next: review your gym plan</b><p>We will show the gym workouts and rationale before anything becomes active.</p></div><button class="btn" type="submit" id="create-plan-btn" {% if sync_running %}disabled{% endif %}>{% if sync_running %}Waiting for Garmin…{% elif is_editing %}Create revised proposal{% else %}Create my gym plan{% endif %}</button></div>
+  </form>{% endif %}
 </div>
-
-{% if garmin_connected and sync_running %}
-<script>
-(function pollOnboarding() {
-  fetch('/onboarding/status').then(r => r.json()).then(data => {
-    document.getElementById('activity-count').textContent = data.total_activities;
-    document.getElementById('classification-label').textContent = data.classification.label;
-    document.getElementById('classification-reason').textContent = data.classification.reason;
-    document.getElementById('training-background').textContent = `Training background: ${data.training_background.total_activities} synced activities · ${data.training_background.experience_level[0].toUpperCase() + data.training_background.experience_level.slice(1)} experience`;
-    const patterns = document.getElementById('activity-patterns'); const total = data.activity_patterns.reduce((sum, row) => sum + row.sessions, 0); patterns.replaceChildren();
-    data.activity_patterns.forEach(row => { const wrapper = document.createElement('div'); wrapper.className = 'history-bar-row'; const label = document.createElement('div'); label.className = 'history-bar-label'; const name = document.createElement('span'); name.textContent = row.label; const count = document.createElement('small'); count.textContent = `${row.sessions} sessions`; label.append(name, count); const track = document.createElement('div'); track.className = 'history-bar-track'; const fill = document.createElement('span'); fill.style.width = `${total ? row.sessions / total * 100 : 0}%`; track.append(fill); wrapper.append(label, track); patterns.append(wrapper); });
-    if (data.running) { setTimeout(pollOnboarding, 2000); return; }
-    const banner = document.getElementById('sync-banner'); banner.classList.remove('is-running'); banner.classList.add('is-ready'); document.getElementById('sync-title').textContent = 'Garmin history is ready'; document.getElementById('sync-copy').textContent = `We found ${data.total_activities} recent activities to learn from.`; const button = document.getElementById('create-plan-btn'); button.disabled = false; button.textContent = '{{ "Create revised proposal" if is_editing else "Create my program" }}';
-  }).catch(() => setTimeout(pollOnboarding, 3000));
-})();
-</script>
-{% endif %}
+{% if garmin_connected and sync_running %}<script>(function pollOnboarding(){fetch('/onboarding/status').then(r=>r.json()).then(data=>{document.getElementById('activity-count').textContent=data.total_activities;document.getElementById('classification-label').textContent=data.classification.label;document.getElementById('classification-reason').textContent=data.classification.reason;document.getElementById('training-background').textContent=`Long-term strength background: ${data.training_background.experience_level[0].toUpperCase()+data.training_background.experience_level.slice(1)}`;const patterns=document.getElementById('activity-patterns'),total=data.activity_patterns.reduce((sum,row)=>sum+row.sessions,0);patterns.replaceChildren();data.activity_patterns.forEach(row=>{const wrapper=document.createElement('div');wrapper.className='history-bar-row';const label=document.createElement('div');label.className='history-bar-label';const name=document.createElement('span');name.textContent=row.label;const count=document.createElement('small');count.textContent=`${row.sessions} sessions`;label.append(name,count);const track=document.createElement('div');track.className='history-bar-track';const fill=document.createElement('span');fill.style.width=`${total?row.sessions/total*100:0}%`;track.append(fill);wrapper.append(label,track);patterns.append(wrapper)});if(data.running){setTimeout(pollOnboarding,2000);return}const banner=document.getElementById('sync-banner');banner.classList.remove('is-running');banner.classList.add('is-ready');document.getElementById('sync-title').textContent='Garmin history is ready';document.getElementById('sync-copy').textContent=`We found ${data.total_activities} recent activities to learn from.`;const button=document.getElementById('create-plan-btn');button.disabled=false;button.textContent='{{ "Create revised proposal" if is_editing else "Create my gym plan" }}'}).catch(()=>setTimeout(pollOnboarding,3000))})();</script>{% endif %}
 {% endblock %}

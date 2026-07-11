@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from coach.onboarding import analyze_user_history, routine_sessions_for_setup
+from coach.onboarding import analyze_user_history
 from db import Activity, Workout
 
 
@@ -33,18 +33,6 @@ def test_no_history_defaults_to_low_history(session):
     assert analysis["defaults"]["primary_goal"] == "Feel fitter & more consistent"
     assert analysis["defaults"]["days_per_week"] == 2
     assert analysis["total_activities"] == 0
-    assert analysis["routine"]["detected"] is False
-
-
-def test_thin_history_falls_back_to_preferred_activities(session):
-    _activity(session, 1, "strength_training", 1, "Chest & Biceps")
-    session.commit()
-
-    analysis = analyze_user_history(session)
-    sessions = routine_sessions_for_setup(analysis, ["Strength", "Running"])
-
-    assert analysis["routine"]["detected"] is False
-    assert [s["name"] for s in sessions] == ["Full body strength", "Running"]
 
 
 def test_strength_history_selects_strength_defaults_without_templates(session):
@@ -62,61 +50,6 @@ def test_strength_history_selects_strength_defaults_without_templates(session):
     assert "Strength" in analysis["defaults"]["preferred_activities"]
     assert analysis["defaults"]["plan_mode"] == "schedule_my_routine"
     assert analysis["defaults"]["selected_templates"] == []
-
-
-def test_repeated_strength_names_detect_ab_split(session):
-    names = ["Chest & Biceps", "Back & Triceps", "Legs & Shoulders"]
-    for idx, name in enumerate(names + names):
-        _activity(session, idx + 1, "strength_training", 6 - idx, name)
-    session.commit()
-
-    analysis = analyze_user_history(session)
-
-    assert analysis["routine"]["detected"] is True
-    assert [s["name"] for s in analysis["routine"]["sessions"]] == [
-        "A - Chest & Biceps",
-        "B - Back & Triceps",
-        "C - Legs & Shoulders",
-    ]
-
-
-def test_generic_strength_name_is_not_a_split_slot(session):
-    names = ["Strength", "Chest & Biceps", "Legs & Shoulders", "Back & Triceps"]
-    for idx, name in enumerate(names + names):
-        _activity(session, idx + 1, "strength_training", 8 - idx, name)
-    session.commit()
-
-    analysis = analyze_user_history(session)
-
-    assert [s["name"] for s in analysis["routine"]["sessions"]] == [
-        "A - Chest & Biceps",
-        "B - Legs & Shoulders",
-        "C - Back & Triceps",
-    ]
-
-
-def test_single_repeated_strength_name_detects_full_body(session):
-    for idx in range(3):
-        _activity(session, idx + 1, "strength_training", idx, "\U0001f3cb\ufe0f Strength @ 18:00")
-    session.commit()
-
-    analysis = analyze_user_history(session)
-
-    assert analysis["routine"]["detected"] is True
-    assert [s["name"] for s in analysis["routine"]["sessions"]] == ["Full body strength"]
-
-
-def test_mixed_sport_history_detects_sport_sessions(session):
-    for idx in range(3):
-        _activity(session, idx + 1, "running", idx)
-    for idx in range(2):
-        _activity(session, idx + 20, "cycling", idx + 3)
-    session.commit()
-
-    analysis = analyze_user_history(session)
-
-    assert analysis["routine"]["detected"] is True
-    assert [s["name"] for s in analysis["routine"]["sessions"]] == ["Running", "Cycling"]
 
 
 def test_recent_routine_uses_one_90_day_dataset_while_background_keeps_all_history(session):
