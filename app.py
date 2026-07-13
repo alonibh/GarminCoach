@@ -1157,72 +1157,14 @@ def _json_list(value: str | None) -> list[str]:
     return [str(v) for v in parsed] if isinstance(parsed, list) else []
 
 
-def _json_object(value: str | None) -> dict:
-    if not value:
-        return {}
-    try:
-        parsed = json.loads(value)
-    except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _clean_list(values: list[str] | None) -> list[str]:
     return [v.strip() for v in (values or []) if v and v.strip()]
 
 
-def _line_value(blob: str | None, prefix: str) -> str:
-    if not blob:
-        return ""
-    needle = f"{prefix}:"
-    for line in blob.splitlines():
-        if line.startswith(needle):
-            return line[len(needle):].strip()
-    return ""
-
-
-def _line_list(blob: str | None, prefix: str) -> list[str]:
-    value = _line_value(blob, prefix)
-    return [v.strip() for v in value.split(",") if v.strip()]
-
-
-def _format_availability(
-    training_days: list[str],
-    preferred_time: str,
-    session_duration_min: int = 0,
-    latest_training_time: str = "",
-) -> str:
-    lines = []
-    if training_days:
-        lines.append(f"Training days: {', '.join(training_days)}")
-    if preferred_time:
-        lines.append(f"Preferred time: {preferred_time}")
-    if session_duration_min:
-        lines.append(f"Maximum session: {session_duration_min} minutes")
-    if latest_training_time:
-        lines.append(f"Never train after: {latest_training_time}")
-    return "\n".join(lines)
-
-
-def _format_timing_availability(windows: list[str], session_duration_min: int, hard_latest_time: str) -> str:
-    labels = {"morning": "morning", "midday": "midday", "evening": "evening", "weekend": "weekend"}
-    lines = []
-    if windows:
-        lines.append(f"Acceptable windows: {', '.join(labels.get(value, value) for value in windows)}")
-    if session_duration_min:
-        lines.append(f"Maximum session: {session_duration_min} minutes")
-    if hard_latest_time:
-        lines.append(f"Hard latest time: {hard_latest_time}")
-    return "\n".join(lines)
-
-
-def _format_scheduling_preferences(options: list[str], notes: str) -> str:
-    lines = []
-    if options:
-        lines.append(f"Scheduling options: {', '.join(options)}")
-    if notes.strip():
-        lines.append(f"Notes: {notes.strip()}")
-    return "\n".join(lines)
+def _constraint_session_duration(constraints: str, default: int = 60) -> int:
+    """Use a clear duration mentioned in free-text constraints, otherwise 60 minutes."""
+    match = re.search(r"\b(\d{2,3})\s*(?:min(?:ute)?s?)\b", constraints, flags=re.IGNORECASE)
+    return min(180, max(20, int(match.group(1)))) if match else default
 
 
 def _onboarding_form_defaults(
@@ -1240,29 +1182,6 @@ def _onboarding_form_defaults(
         defaults["experience_level"] = profile.experience_level or defaults.get("experience_level", "")
         defaults["primary_goal"] = defaults.get("primary_goal") or profile.primary_goal or ""
         defaults["goal_detail"] = profile.goal_detail or ""
-        timing = _json_object(profile.timing_preferences)
-        if timing:
-            defaults["acceptable_windows"] = timing.get("acceptable_windows", [])
-            defaults["calendar_preference"] = timing.get("calendar_preference", "calendar_first")
-            defaults["hard_latest_time"] = timing.get("hard_latest_time", "")
-
-        training_days = _line_list(profile.availability, "Training days")
-        preferred_time = _line_value(profile.availability, "Preferred time")
-        session_duration = _line_value(profile.availability, "Maximum session")
-        scheduling_options = _line_list(profile.scheduling_preferences, "Scheduling options")
-        scheduling_notes = _line_value(profile.scheduling_preferences, "Notes")
-        if training_days:
-            defaults["training_days"] = training_days
-        if preferred_time:
-            defaults["preferred_time_of_day"] = preferred_time
-        if session_duration:
-            try:
-                defaults["session_duration_min"] = int(session_duration.split()[0])
-            except (TypeError, ValueError):
-                pass
-        if scheduling_options:
-            defaults["scheduling_options"] = scheduling_options
-        defaults["scheduling_notes"] = scheduling_notes
 
     if current_program:
         defaults["program_name"] = current_program.name
@@ -1325,10 +1244,6 @@ def post_onboarding(
     primary_goal: str = Form(""),
     goal_detail: str = Form(""),
     days_per_week: int = Form(0),
-    session_duration_min: int = Form(60),
-    acceptable_windows: list[str] = Form([]),
-    hard_latest_time: str = Form(""),
-    calendar_preference: str = Form("calendar_first"),
     injuries_limitations: str = Form(""),
 ):
     """Save setup and create a reviewable, undated program proposal."""
@@ -1340,7 +1255,7 @@ def post_onboarding(
 
         analysis = analyze_user_history(session)
         requested_days = min(4, max(2, days_per_week or analysis["defaults"].get("days_per_week", 3)))
-        requested_duration = min(180, max(20, session_duration_min))
+        requested_duration = _constraint_session_duration(injuries_limitations)
         proposal = recommend_program(
             goal=primary_goal.strip(),
             limitations=injuries_limitations,
@@ -1354,14 +1269,8 @@ def post_onboarding(
         profile.primary_goal = primary_goal.strip()
         profile.goal_detail = goal_detail.strip()
         profile.equipment_access = json.dumps(["gym"])
-        valid_windows = [value for value in _clean_list(acceptable_windows) if value in {"morning", "midday", "evening", "weekend"}]
-        calendar_preference = calendar_preference if calendar_preference in {"calendar_first", "preferences_first"} else "calendar_first"
-        profile.availability = _format_timing_availability(valid_windows, requested_duration, hard_latest_time.strip())
-        profile.timing_preferences = json.dumps({
-            "acceptable_windows": valid_windows,
-            "hard_latest_time": hard_latest_time.strip(),
-            "calendar_preference": calendar_preference,
-        })
+        profile.availability = ""
+        profile.timing_preferences = ""
         profile.injuries_limitations = injuries_limitations.strip()
         profile.scheduling_preferences = "Scheduling options: manual_approval"
         profile.approval_mode = "manual"

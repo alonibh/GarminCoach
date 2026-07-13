@@ -139,6 +139,9 @@ def test_onboarding_renders_history_defaults(client):
     assert "Training days" not in resp.text
     assert "Activity anchors" not in resp.text
     assert "equipment_access" not in resp.text
+    assert "Maximum gym-session length" not in resp.text
+    assert "When can we suggest a gym workout?" not in resp.text
+    assert "max 45 minutes" in resp.text
     assert "Upper Strength" not in resp.text
 
 
@@ -208,10 +211,7 @@ def test_onboarding_creates_reviewable_program_proposal(client):
             "primary_goal": "Build strength & muscle",
             "goal_detail": "Stronger for soccer",
             "days_per_week": "3",
-            "acceptable_windows": ["morning", "evening"],
-            "hard_latest_time": "21:00",
-            "calendar_preference": "calendar_first",
-            "injuries_limitations": "No heavy overhead press",
+            "injuries_limitations": "No heavy overhead press; max 45 minutes; never suggest after 21:00",
         },
         follow_redirects=False,
     )
@@ -221,17 +221,13 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         profile = s.get(AthleteProfile, 1)
         assert profile.training_type == "strength_focused"
         assert profile.goal_detail == "Stronger for soccer"
-        assert json.loads(profile.timing_preferences) == {
-            "acceptable_windows": ["morning", "evening"],
-            "hard_latest_time": "21:00",
-            "calendar_preference": "calendar_first",
-        }
+        assert profile.timing_preferences == ""
+        assert profile.availability == ""
         assert json.loads(profile.equipment_access) == ["gym"]
-        assert "morning" in profile.availability
 
         goal = s.get(Goal, 1)
         assert goal.goal == "Build strength & muscle"
-        assert goal.custom_input == "No heavy overhead press"
+        assert goal.custom_input == "No heavy overhead press; max 45 minutes; never suggest after 21:00"
 
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
         assert program.name == "Full body strength · 3 days"
@@ -243,6 +239,7 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
         assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C"]
         assert all(ps.session_role == "coach_strength" for ps in sessions)
+        assert all(ps.duration_min == 45 for ps in sessions)
         assert all(ps.base_workout_id is None for ps in sessions)
 
 
