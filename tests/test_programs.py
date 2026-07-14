@@ -14,7 +14,7 @@ def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
 
 def test_source_program_is_not_trimmed_by_free_text_duration_limit():
     proposal = recommend_program(
-        goal="Feel fitter & more consistent", plan_key="upper_lower_4",
+        plan_key="upper_lower_4",
         limitations="max 30 minutes", session_duration_min=30,
         history_summary="There are few synced activities.",
     )
@@ -24,7 +24,7 @@ def test_source_program_is_not_trimmed_by_free_text_duration_limit():
 
 def test_warmup_is_once_per_movement_pattern_with_matching_reps():
     proposal = recommend_program(
-        goal="Build strength & muscle", plan_key="full_body_2", limitations="",
+        plan_key="full_body_2", limitations="",
         session_duration_min=90, history_summary="Recent history is sparse.",
     )
     for routine in proposal["sessions"]:
@@ -36,7 +36,7 @@ def test_warmup_is_once_per_movement_pattern_with_matching_reps():
 
 def test_all_program_sessions_are_gym_only_and_undated():
     proposal = recommend_program(
-        goal="Improve a sport/activity", plan_key="upper_lower_full_3", limitations="",
+        plan_key="upper_lower_full_3", limitations="",
         session_duration_min=60, history_summary="Running is common.",
     )
     assert all(s["sport_type"] == "strength_training" and s["session_role"] == "coach_strength" for s in proposal["sessions"])

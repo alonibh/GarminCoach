@@ -408,7 +408,6 @@ def _add_warmups(sessions: list[dict]) -> None:
 
 def recommend_program(
     *,
-    goal: str,
     plan_key: str,
     limitations: str,
     session_duration_min: int,
@@ -424,7 +423,7 @@ def recommend_program(
         session["target_frequency"] = 1
 
     reasons = [
-        f"Your goal is {goal or 'to build a consistent gym routine'}.",
+        f"You selected the {template['name']} routine.",
         history_summary,
         template["volume_review"],
         f"It contains {len(sessions)} undated gym sessions from the cited source.",

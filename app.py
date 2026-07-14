@@ -1209,23 +1209,17 @@ def _onboarding_form_defaults(
     current_sessions: list[ProgramSession],
 ) -> dict:
     defaults = dict(analysis.get("defaults", {}))
-    if goal and goal.goal:
-        defaults["primary_goal"] = goal.goal
     if profile and profile.onboarding_complete:
         defaults["training_type"] = profile.training_type or defaults.get("training_type", "")
-        defaults["experience_level"] = profile.experience_level or defaults.get("experience_level", "")
-        defaults["primary_goal"] = defaults.get("primary_goal") or profile.primary_goal or ""
-        defaults["goal_detail"] = profile.goal_detail or ""
 
     if current_program:
         defaults["program_name"] = current_program.name
         defaults["plan_mode"] = current_program.mode
-        if current_program.days_per_week:
-            defaults["days_per_week"] = current_program.days_per_week
         tags = _json_list(current_program.goal_tags)
         plan_keys = {choice["key"] for choice in PLAN_CHOICES}
-        if len(tags) > 1 and tags[1] in plan_keys:
-            defaults["plan_key"] = tags[1]
+        selected_key = next((tag for tag in tags if tag in plan_keys), None)
+        if selected_key:
+            defaults["plan_key"] = selected_key
         selected = [ps.base_workout_id for ps in current_sessions if ps.base_workout_id]
         if selected:
             defaults["selected_templates"] = selected
@@ -1243,7 +1237,6 @@ def get_onboarding(request: Request):
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
         form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
         form_defaults.setdefault("plan_key", analysis["plan_recommendation"]["key"])
-        form_defaults.setdefault("days_per_week", analysis["plan_recommendation"].get("days_per_week", 2))
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1280,11 +1273,6 @@ def onboarding_status():
 @app.post("/onboarding", response_class=RedirectResponse)
 def post_onboarding(
     request: Request,
-    training_type: str = Form(""),
-    experience_level: str = Form(""),
-    days_per_week: int = Form(2),
-    primary_goal: str = Form(""),
-    goal_detail: str = Form(""),
     plan_key: str = Form(""),
     injuries_limitations: str = Form(""),
 ):
@@ -1297,17 +1285,11 @@ def post_onboarding(
 
         analysis = analyze_user_history(session)
         requested_duration = _constraint_session_duration(injuries_limitations)
-        if experience_level not in {"new", "six_to_twenty_four_months", "two_plus_years", "returning"}:
-            raise HTTPException(status_code=422, detail="Confirm your weight-training history.")
-        if primary_goal not in {"Build strength & muscle", "Improve a sport/activity", "Feel fitter & more consistent"}:
-            raise HTTPException(status_code=422, detail="Choose a primary goal.")
-        if days_per_week not in range(2, 7):
-            raise HTTPException(status_code=422, detail="Choose between 2 and 6 gym sessions.")
-        if plan_key in PROGRAMS and len(PROGRAMS[plan_key]["sessions"]) != days_per_week:
-            raise HTTPException(status_code=422, detail="Choose a routine matching your normal weekly gym frequency.")
+        if plan_key not in PROGRAMS:
+            raise HTTPException(status_code=422, detail="Choose one of the available gym routines.")
+        template = PROGRAMS[plan_key]
         try:
             proposal = recommend_program(
-                goal=primary_goal.strip(),
                 plan_key=plan_key,
                 limitations=injuries_limitations,
                 session_duration_min=requested_duration,
@@ -1317,10 +1299,10 @@ def post_onboarding(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
-        profile.training_type = training_type.strip() or analysis["classification"]["training_type"]
-        profile.experience_level = experience_level.strip()
-        profile.primary_goal = primary_goal.strip()
-        profile.goal_detail = goal_detail.strip()
+        profile.training_type = "strength_focused"
+        profile.experience_level = template["experience"]
+        profile.primary_goal = ""
+        profile.goal_detail = ""
         profile.equipment_access = json.dumps(["gym"])
         profile.availability = ""
         profile.timing_preferences = ""
@@ -1334,7 +1316,7 @@ def post_onboarding(
         if not goal_row:
             goal_row = Goal(id=1)
             session.add(goal_row)
-        goal_row.goal = primary_goal.strip()
+        goal_row.goal = ""
         goal_row.custom_input = injuries_limitations.strip()
         goal_row.updated_at = datetime.now()
 
@@ -1349,8 +1331,8 @@ def post_onboarding(
             source_type="curated_archetype",
             source_url=proposal["source_url"],
             attribution=proposal["attribution"],
-            goal_tags=json.dumps([primary_goal.strip(), proposal["key"]]),
-            experience_level=experience_level.strip(),
+            goal_tags=json.dumps([proposal["key"]]),
+            experience_level=template["experience"],
             days_per_week=proposal["days_per_week"],
             equipment=json.dumps(["gym"]),
             active=False,
