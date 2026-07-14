@@ -142,6 +142,9 @@ def test_onboarding_renders_history_defaults(client):
     assert "Maximum gym-session length" not in resp.text
     assert "When can we suggest a gym workout?" not in resp.text
     assert "max 45 minutes" in resp.text
+    assert "Full Body · 2 days" in resp.text
+    assert "Push / Pull / Legs · 3 days" in resp.text
+    assert "Upper / Lower · 4 days" in resp.text
     assert "Upper Strength" not in resp.text
 
 
@@ -210,7 +213,7 @@ def test_onboarding_creates_reviewable_program_proposal(client):
             "experience_level": "intermediate",
             "primary_goal": "Build strength & muscle",
             "goal_detail": "Stronger for soccer",
-            "days_per_week": "3",
+            "plan_key": "push_pull_legs_3",
             "injuries_limitations": "No heavy overhead press; max 45 minutes; never suggest after 21:00",
         },
         follow_redirects=False,
@@ -230,17 +233,23 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         assert goal.custom_input == "No heavy overhead press; max 45 minutes; never suggest after 21:00"
 
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
-        assert program.name == "Full body strength · 3 days"
+        assert program.name == "Push / pull / legs · 3 days"
         assert program.mode == "curated_strength"
         assert program.days_per_week == 3
         assert program.active is False
         assert "without assigning dates" in program.rationale
 
         sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
-        assert [ps.name for ps in sessions] == ["Full body A", "Full body B", "Full body C"]
+        assert [ps.name for ps in sessions] == ["Push", "Pull", "Legs"]
         assert all(ps.session_role == "coach_strength" for ps in sessions)
         assert all(ps.duration_min == 45 for ps in sessions)
         assert all(ps.base_workout_id is None for ps in sessions)
+
+    setup = c.get("/onboarding")
+    assert 'value="Stronger for soccer"' in setup.text
+    assert '<option value="intermediate" selected>' in setup.text
+    assert 'value="push_pull_legs_3" checked' in setup.text
+    assert "No heavy overhead press; max 45 minutes; never suggest after 21:00" in setup.text
 
 
 def test_onboarding_proposal_is_reviewed_before_activation(client):
@@ -262,6 +271,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         data={
             "training_type": "strength_focused",
             "primary_goal": "Build strength & muscle",
+            "plan_key": "full_body_2",
         },
         follow_redirects=False,
     )
@@ -270,7 +280,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     with db_module.get_session() as s:
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
         program_id = program.id
-        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 4
+        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 2
 
     review = c.get(f"/program?proposal={program_id}")
     assert review.status_code == 200
@@ -303,6 +313,34 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         exercise = s.query(SessionExercise).filter_by(program_session_id=session_id).one()
         assert exercise.exercise_name == "Goblet Squat"
         assert exercise.sets == 2
+
+
+def test_selected_plan_overrides_history_recommendation(client):
+    c, db_module = client
+    from datetime import datetime, timedelta
+    from db import Activity, ExerciseSet, TrainingProgram
+
+    patterns = [
+        ("Push", ["BENCH_PRESS", "OVERHEAD_PRESS", "TRICEPS_EXTENSION"]),
+        ("Pull", ["LAT_PULL_DOWN", "BENT_OVER_ROW", "BICEP_CURL"]),
+        ("Legs", ["SQUAT", "LUNGE", "CALF_RAISE"]),
+    ] * 2
+    with db_module.get_session() as s:
+        for index, (name, exercises) in enumerate(patterns):
+            activity_id = 9300 + index
+            s.add(Activity(id=activity_id, activity_type="strength_training", start_time=datetime.now() - timedelta(days=12 - index), name=name))
+            for set_index, exercise in enumerate(exercises):
+                s.add(ExerciseSet(id=9400 + index * 10 + set_index, activity_id=activity_id, set_index=set_index, exercise_category=exercise, exercise_name=exercise, reps=8, weight_kg=40))
+
+    onboarding = c.get("/onboarding")
+    assert "Push / Pull / Legs · 3 days · Suggested" in onboarding.text
+
+    response = c.post("/onboarding", data={"primary_goal": "Build strength & muscle", "plan_key": "full_body_2"}, follow_redirects=False)
+    assert response.status_code == 303
+    with db_module.get_session() as s:
+        program = s.query(TrainingProgram).filter_by(status="draft").one()
+        assert program.days_per_week == 2
+        assert "full_body_2" in program.goal_tags
 
 
 def test_active_program_hides_legacy_non_gym_sessions(client):

@@ -38,7 +38,7 @@ from coach.onboarding import (
     latest_draft_program,
     program_sessions_for,
 )
-from coach.programs import recommend_program
+from coach.programs import PLAN_CHOICES, recommend_program
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
@@ -1188,6 +1188,10 @@ def _onboarding_form_defaults(
         defaults["plan_mode"] = current_program.mode
         if current_program.days_per_week:
             defaults["days_per_week"] = current_program.days_per_week
+        tags = _json_list(current_program.goal_tags)
+        plan_keys = {choice["key"] for choice in PLAN_CHOICES}
+        if len(tags) > 1 and tags[1] in plan_keys:
+            defaults["plan_key"] = tags[1]
         selected = [ps.base_workout_id for ps in current_sessions if ps.base_workout_id]
         if selected:
             defaults["selected_templates"] = selected
@@ -1201,9 +1205,10 @@ def get_onboarding(request: Request):
         profile = session.get(AthleteProfile, 1) or AthleteProfile(id=1)
         goal = session.get(Goal, 1) or Goal(id=1, goal="", custom_input="")
         analysis = analyze_user_history(session)
-        current_program = active_program(session)
+        current_program = latest_draft_program(session) or active_program(session)
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
         form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
+        form_defaults.setdefault("plan_key", analysis["plan_recommendation"]["key"])
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1213,6 +1218,7 @@ def get_onboarding(request: Request):
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
+                "plan_choices": PLAN_CHOICES,
                 "garmin_connected": client.is_authenticated(),
                 "sync_running": sync_runner.is_running(),
                 "is_editing": bool(profile.onboarding_complete),
@@ -1243,7 +1249,7 @@ def post_onboarding(
     experience_level: str = Form(""),
     primary_goal: str = Form(""),
     goal_detail: str = Form(""),
-    days_per_week: int = Form(0),
+    plan_key: str = Form(""),
     injuries_limitations: str = Form(""),
 ):
     """Save setup and create a reviewable, undated program proposal."""
@@ -1254,15 +1260,17 @@ def post_onboarding(
             session.add(profile)
 
         analysis = analyze_user_history(session)
-        requested_days = min(4, max(2, days_per_week or analysis["defaults"].get("days_per_week", 3)))
         requested_duration = _constraint_session_duration(injuries_limitations)
-        proposal = recommend_program(
-            goal=primary_goal.strip(),
-            limitations=injuries_limitations,
-            days_per_week=requested_days,
-            session_duration_min=requested_duration,
-            history_summary=analysis["classification"]["reason"],
-        )
+        try:
+            proposal = recommend_program(
+                goal=primary_goal.strip(),
+                plan_key=plan_key,
+                limitations=injuries_limitations,
+                session_duration_min=requested_duration,
+                history_summary=analysis["classification"]["reason"],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
         profile.training_type = training_type.strip() or analysis["classification"]["training_type"]
         profile.experience_level = experience_level.strip()
@@ -1298,7 +1306,7 @@ def post_onboarding(
             attribution=proposal["attribution"],
             goal_tags=json.dumps([primary_goal.strip(), proposal["key"]]),
             experience_level=experience_level.strip(),
-            days_per_week=requested_days,
+            days_per_week=proposal["days_per_week"],
             equipment=json.dumps(["gym"]),
             active=False,
             status="draft",

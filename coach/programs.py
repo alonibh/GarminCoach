@@ -76,42 +76,29 @@ PROGRAMS: dict[str, dict[str, Any]] = {
             _session("Legs", "lower body", [_exercise("SQUAT", 3, 8), _exercise("LUNGE", 3, 10, "each side"), _exercise("CALF_RAISE", 3, 12)]),
         ],
     },
-    "sport_support_2": {
-        "name": "Strength to support your sport · 2 days",
-        "sessions": [
-            _session("Strength A", "full body", [_exercise("SQUAT", 3, 6), _exercise("BENCH_PRESS", 3, 8), _exercise("BENT_OVER_ROW", 3, 8), _exercise("PLANK", 3, 30, "seconds")]),
-            _session("Strength B", "full body", [_exercise("ROMANIAN_DEADLIFT", 3, 8), _exercise("OVERHEAD_PRESS", 3, 8), _exercise("LAT_PULL_DOWN", 3, 10), _exercise("LUNGE", 2, 8, "each side")]),
-        ],
-    },
-    "minimal_equipment_2": {
-        "name": "Minimal-equipment full body · 2 days",
-        "sessions": [
-            _session("Full body A", "full body", [_exercise("BODYWEIGHT_SQUAT", 3, 12), _exercise("PUSH_UP", 3, 10), _exercise("INVERTED_ROW", 3, 10), _exercise("PLANK", 3, 30, "seconds")]),
-            _session("Full body B", "full body", [_exercise("LUNGE", 3, 10, "each side"), _exercise("DUMBBELL_ROW", 3, 10), _exercise("DUMBBELL_SHOULDER_PRESS", 3, 10), _exercise("GLUTE_BRIDGE", 3, 12)]),
-        ],
-    },
 }
+
+PLAN_CHOICES = (
+    {"key": "full_body_2", "title": "Full Body · 2 days", "description": "Two balanced gym sessions each week."},
+    {"key": "full_body_3", "title": "Full Body · 3 days", "description": "Three balanced gym sessions each week."},
+    {"key": "push_pull_legs_3", "title": "Push / Pull / Legs · 3 days", "description": "Three focused gym sessions each week."},
+    {"key": "upper_lower_4", "title": "Upper / Lower · 4 days", "description": "Four focused gym sessions each week."},
+)
+PLAN_KEYS = {choice["key"] for choice in PLAN_CHOICES}
 
 
 def recommend_program(
     *,
     goal: str,
+    plan_key: str,
     limitations: str,
-    days_per_week: int,
     session_duration_min: int,
     history_summary: str,
 ) -> dict[str, Any]:
     """Return one deterministic, editable starting program and its rationale."""
-    if goal == "Improve a sport/activity" and days_per_week <= 2:
-        key = "sport_support_2"
-    elif days_per_week >= 4:
-        key = "upper_lower_4"
-    elif days_per_week == 3:
-        key = "full_body_3"
-    else:
-        key = "full_body_2"
-
-    template = PROGRAMS[key]
+    if plan_key not in PLAN_KEYS:
+        raise ValueError("Choose one of the available gym plans.")
+    template = PROGRAMS[plan_key]
     sessions = deepcopy(template["sessions"])
     for session in sessions:
         session["session_role"] = "coach_strength"
@@ -124,8 +111,6 @@ def recommend_program(
         history_summary,
         f"It starts with {len(sessions)} strength sessions in sequence, without assigning dates.",
     ]
-    if goal == "Improve a sport/activity":
-        reasons.append("The gym work is kept conservative so daily coaching can adapt it to your recent training load.")
     if session_duration_min <= 45:
         reasons.append(f"Sessions are trimmed to fit your {session_duration_min}-minute limit.")
 
@@ -141,10 +126,11 @@ def recommend_program(
     reasons.append("Starting weights stay open unless recent Garmin strength data provides a trustworthy baseline.")
 
     return {
-        "key": key,
+        "key": plan_key,
         "name": template["name"],
         "sessions": sessions,
         "strength_session_count": len(template["sessions"]),
+        "days_per_week": len(template["sessions"]),
         "attribution": ACSM_ATTRIBUTION,
         "source_url": ACSM_SOURCE_URL,
         "rationale": " ".join(part for part in reasons if part),

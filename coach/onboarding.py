@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from db import Activity, ProgramSession, TrainingProgram, Workout
+from db import Activity, ExerciseSet, ProgramSession, TrainingProgram, Workout
 
 _COACH_PREFIX = "\U0001f3cb\ufe0f "
 
@@ -30,6 +30,13 @@ SPORT_FAMILIES = {"Soccer"}
 DEFAULT_WEEKDAYS = ["Monday", "Wednesday", "Friday"]
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 SPLIT_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+_EXERCISE_GROUPS = {
+    "lower": ("SQUAT", "DEADLIFT", "LUNGE", "LEG_", "CALF", "HIP_THRUST", "GLUTE"),
+    "push": ("BENCH", "CHEST", "OVERHEAD_PRESS", "SHOULDER_PRESS", "PUSH_UP", "TRICEPS"),
+    "pull": ("ROW", "PULL", "BICEP", "REAR_DELT"),
+}
+_NAME_PATTERNS = (("push", "push"), ("pull", "pull"), ("leg", "lower"), ("lower", "lower"), ("upper", "upper"), ("full body", "full_body"))
 
 TRAINING_TYPE_LABELS = {
     "strength_focused": "Strength focused",
@@ -234,6 +241,66 @@ def _coach_strength_budget(activities: list[Activity]) -> int:
     return min(4, max(2, round(weekly_strength)))
 
 
+def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | None:
+    groups = {
+        group for group, hints in _EXERCISE_GROUPS.items()
+        if any(hint in exercise for exercise in exercises for hint in hints)
+    }
+    if not groups:
+        return None
+    name = (activity_name or "").lower()
+    for hint, pattern in _NAME_PATTERNS:
+        if hint in name and (pattern in groups or pattern in {"upper", "full_body"}):
+            return pattern
+    if "push" in groups and "pull" in groups and "lower" in groups:
+        return "full_body"
+    if "push" in groups and "pull" in groups:
+        return "upper"
+    if "lower" in groups and len(groups) == 1:
+        return "lower"
+    if "push" in groups and len(groups) == 1:
+        return "push"
+    if "pull" in groups and len(groups) == 1:
+        return "pull"
+    if "pull" in groups and "lower" in groups and len(exercises) >= 3:
+        return "pull"  # Romanian deadlifts often belong in a pull workout.
+    if "lower" in groups and ("push" in groups or "pull" in groups):
+        return "full_body"
+
+    return None
+
+
+def recommend_plan_from_history(session: Session, activities: list[Activity]) -> dict[str, str]:
+    """Match repeated, exercise-backed strength sessions to one catalog split."""
+    strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"][:12]
+    if len(strength) < 6:
+        return {"key": "full_body_2", "reason": "No reliable split found yet; start with two full-body gym sessions."}
+
+    ids = [a.id for a in strength]
+    grouped: dict[int, set[str]] = defaultdict(set)
+    for exercise in session.query(ExerciseSet).filter(ExerciseSet.activity_id.in_(ids)).all():
+        name = (exercise.exercise_category or exercise.exercise_name or "").upper()
+        if name:
+            grouped[exercise.activity_id].add(name)
+
+    patterns = Counter(
+        pattern for activity in strength
+        if (pattern := _exercise_pattern(grouped[activity.id], activity.name))
+    )
+    classified = sum(patterns.values())
+    if classified < 6:
+        return {"key": "full_body_2", "reason": "No reliable split found in your recent exercise history; start with two full-body gym sessions."}
+    if all(patterns[part] >= 2 for part in ("push", "pull", "lower")):
+        return {"key": "push_pull_legs_3", "reason": "Suggested from repeated push, pull, and lower-body gym sessions."}
+    if patterns["upper"] >= 2 and patterns["lower"] >= 2:
+        return {"key": "upper_lower_4", "reason": "Suggested from repeated upper-body and lower-body gym sessions."}
+    if patterns["full_body"] >= 4:
+        weekly = len(strength) / _history_span_weeks(strength)
+        key = "full_body_3" if weekly >= 2.5 else "full_body_2"
+        return {"key": key, "reason": "Suggested from repeated full-body gym sessions."}
+    return {"key": "full_body_2", "reason": "Your recent gym sessions do not show a reliable recurring split yet."}
+
+
 def _build_defaults(
     recent_activities: list[Activity],
     all_activities: list[Activity],
@@ -322,6 +389,7 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
             "total_activities": len(all_completed),
             "experience_level": defaults["experience_level"],
         },
+        "plan_recommendation": recommend_plan_from_history(session, recent_activities),
     }
 
 

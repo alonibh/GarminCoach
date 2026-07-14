@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from coach.onboarding import analyze_user_history
-from db import Activity, Workout
+from db import Activity, ExerciseSet, Workout
 
 
 def _activity(session, activity_id: int, activity_type: str, days_ago: int, name: str = "") -> None:
@@ -24,6 +24,19 @@ def _workout(session, workout_id: int, name: str, sport_type: str = "strength_tr
             steps_json="[]",
         )
     )
+
+
+def _strength_session(session, activity_id: int, days_ago: int, name: str, exercises: list[str]) -> None:
+    _activity(session, activity_id, "strength_training", days_ago, name)
+    for index, exercise in enumerate(exercises):
+        session.add(ExerciseSet(
+            activity_id=activity_id,
+            set_index=index,
+            exercise_category=exercise,
+            exercise_name=exercise,
+            reps=8,
+            weight_kg=40,
+        ))
 
 
 def test_no_history_defaults_to_low_history(session):
@@ -96,3 +109,47 @@ def test_sport_recreational_history(session):
 
     assert analysis["classification"]["training_type"] == "sport_recreational"
     assert analysis["defaults"]["primary_goal"] == "Improve a sport/activity"
+
+
+def test_history_recommends_push_pull_legs_from_repeated_exercise_patterns(session):
+    for index, (name, exercises) in enumerate([
+        ("Push", ["BENCH_PRESS", "OVERHEAD_PRESS", "TRICEPS_EXTENSION"]),
+        ("Pull", ["LAT_PULL_DOWN", "BENT_OVER_ROW", "BICEP_CURL"]),
+        ("Legs", ["SQUAT", "LUNGE", "CALF_RAISE"]),
+    ] * 2):
+        _strength_session(session, index + 1, 20 - index, name, exercises)
+    session.commit()
+
+    analysis = analyze_user_history(session)
+
+    assert analysis["plan_recommendation"]["key"] == "push_pull_legs_3"
+    assert "push, pull, and lower-body" in analysis["plan_recommendation"]["reason"]
+
+
+def test_history_recommends_upper_lower_from_repeated_exercise_patterns(session):
+    for index, (name, exercises) in enumerate([
+        ("Upper", ["BENCH_PRESS", "BENT_OVER_ROW", "OVERHEAD_PRESS"]),
+        ("Lower", ["SQUAT", "LUNGE", "LEG_CURL"]),
+    ] * 3):
+        _strength_session(session, index + 1, 20 - index, name, exercises)
+    session.commit()
+
+    assert analyze_user_history(session)["plan_recommendation"]["key"] == "upper_lower_4"
+
+
+def test_history_recommends_full_body_three_days_from_frequent_mixed_sessions(session):
+    for index in range(6):
+        _strength_session(session, index + 1, 13 - index * 2, "Full Body", ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"])
+    session.commit()
+
+    assert analyze_user_history(session)["plan_recommendation"]["key"] == "full_body_3"
+
+
+def test_sparse_or_name_only_history_falls_back_to_full_body_two_days(session):
+    for index in range(6):
+        _activity(session, index + 1, "strength_training", index, "Push")
+    session.commit()
+
+    recommendation = analyze_user_history(session)["plan_recommendation"]
+    assert recommendation["key"] == "full_body_2"
+    assert "No reliable split" in recommendation["reason"]
