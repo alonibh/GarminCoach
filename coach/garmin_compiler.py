@@ -4,31 +4,31 @@ from datetime import date, datetime, timedelta
 import os
 from sqlalchemy.orm import Session
 
-from db import PlannedSession, Workout
+from db import PlannedSession, ProgramSession, SessionExercise, SyncState, Workout
 from sync.garmin_client import client
 from coach.actions import parse_action
 
 logger = logging.getLogger(__name__)
 
-def build_generic_step(description: str, reps: int, weight_kg: float, exercise_name: str = None, category: str = None) -> dict:
+def build_generic_step(description: str, reps: int | None, weight_kg: float | None, exercise_name: str = None, category: str = None, duration_seconds: int | None = None, step_type: str = "interval") -> dict:
     """Build a generic interval step."""
     return {
         "type": "ExecutableStepDTO",
         "stepOrder": 0,  # Will be re-indexed later
         "stepType": {
-            "stepTypeId": 3,
-            "stepTypeKey": "interval",
-            "displayOrder": 3
+            "stepTypeId": 1 if step_type == "warmup" else 3,
+            "stepTypeKey": step_type,
+            "displayOrder": 1 if step_type == "warmup" else 3
         },
         "childStepId": 0,
         "description": description,
         "endCondition": {
-            "conditionTypeId": 10,
-            "conditionTypeKey": "reps",
-            "displayOrder": 10,
+            "conditionTypeId": 2 if duration_seconds else 10,
+            "conditionTypeKey": "time" if duration_seconds else "reps",
+            "displayOrder": 2 if duration_seconds else 10,
             "displayable": True
         },
-        "endConditionValue": reps,
+        "endConditionValue": float(duration_seconds or reps or 1),
         "preferredEndConditionUnit": None,
         "endConditionCompare": "",
         "targetType": {
@@ -197,6 +197,105 @@ def reindex_steps(workout_steps: list) -> list:
         child_id += 1
     return workout_steps
 
+
+def build_program_workout(session: Session, program_session_id: int, suggested_time: str = "") -> dict:
+    """Compile one active program session into a standalone Garmin workout."""
+    planned = session.get(ProgramSession, program_session_id)
+    if not planned or not planned.program or not planned.program.active:
+        raise ValueError("Program session is not active")
+    exercises = (
+        session.query(SessionExercise)
+        .filter_by(program_session_id=program_session_id)
+        .order_by(SessionExercise.order_index)
+        .all()
+    )
+    if not exercises:
+        raise ValueError("Program session has no exercises")
+    steps = []
+    for exercise in exercises:
+        if exercise.warmup_enabled:
+            steps.append(build_generic_step(
+                f"Warm-up: {exercise.exercise_name}", exercise.warmup_reps,
+                exercise.warmup_weight_kg, exercise.garmin_name, exercise.garmin_category,
+                exercise.warmup_duration_seconds, "warmup",
+            ))
+            steps.append(build_rest_step(exercise.rest_seconds))
+        working = build_generic_step(
+            exercise.exercise_name, exercise.reps, exercise.weight_kg,
+            exercise.garmin_name, exercise.garmin_category, exercise.duration_seconds,
+        )
+        steps.append(build_repeat_group(exercise.sets or 1, working, build_rest_step(exercise.rest_seconds)))
+    nested_steps = sum(1 + len(step.get("workoutSteps", [])) for step in steps)
+    if nested_steps > 50:
+        raise ValueError(f"Workout has {nested_steps} steps; Garmin limit is 50")
+    name = f"{_COACH_PREFIX}{planned.name}" + (f" @ {suggested_time}" if suggested_time else "")
+    sport = {"sportTypeId": 5, "sportTypeKey": "strength_training", "displayOrder": 5}
+    return {"workoutName": name, "sportType": sport, "workoutSegments": [{"segmentOrder": 1, "sportType": sport, "workoutSteps": reindex_steps(steps)}]}
+
+
+def _verify_uploaded_workout(expected: dict, uploaded: dict) -> None:
+    expected_steps = expected["workoutSegments"][0]["workoutSteps"]
+    actual_segments = uploaded.get("workoutSegments") or []
+    actual_steps = actual_segments[0].get("workoutSteps", []) if actual_segments else []
+    if len(actual_steps) != len(expected_steps):
+        raise ValueError("Garmin read-back step count does not match")
+    def signature(step: dict) -> tuple:
+        children = tuple(signature(child) for child in step.get("workoutSteps", []))
+        condition = step.get("endCondition") or {}
+        return (
+            step.get("type"), step.get("numberOfIterations"),
+            (step.get("stepType") or {}).get("stepTypeKey"), step.get("description"),
+            condition.get("conditionTypeKey"), float(step.get("endConditionValue") or 0),
+            float(step.get("weightValue") or -1), step.get("category"), step.get("exerciseName"),
+            children,
+        )
+    if tuple(map(signature, actual_steps)) != tuple(map(signature, expected_steps)):
+        raise ValueError("Garmin read-back workout details do not match the approved session")
+
+
+def _schedule_program_session(session: Session, meta: dict) -> bool:
+    target_day = date.fromisoformat(meta["target_date"])
+    duplicate = session.query(PlannedSession).filter_by(
+        program_session_id=meta["program_session_id"], target_date=target_day,
+        status="approved",
+    ).first()
+    if duplicate and duplicate.garmin_workout_id:
+        return True
+    workout = build_program_workout(session, meta["program_session_id"], meta["suggested_time"])
+    new_id = None
+    try:
+        client.login()
+        result = client.api.upload_workout(workout)
+        new_id = result.get("workoutId")
+        if not new_id:
+            raise ValueError("Garmin upload returned no workout ID")
+        reader = getattr(client.api, "get_workout_by_id", None) or getattr(client.api, "get_workout", None)
+        if not reader:
+            raise ValueError("Installed Garmin client cannot read a workout back")
+        _verify_uploaded_workout(workout, reader(new_id))
+        client.api.schedule_workout(new_id, meta["target_date"])
+        session.add(PlannedSession(
+            program_session_id=meta["program_session_id"], activity_type=meta["activity_type"],
+            title=meta["title"], target_date=target_day, suggested_time=meta["suggested_time"],
+            duration_min=meta["duration_min"], intensity=meta["intensity"], status="approved",
+            garmin_workout_id=new_id, source="coach", created_at=datetime.now(), updated_at=datetime.now(),
+        ))
+        events_row = session.get(SyncState, "coach_calendar_events")
+        events = json.loads(events_row.value) if events_row and events_row.value else []
+        events.append({"title": meta["title"], "date": meta["target_date"], "start_time": meta["suggested_time"] or "18:30", "duration_min": meta["duration_min"]})
+        session.merge(SyncState(key="coach_calendar_events", value=json.dumps(events)))
+        session.commit()
+        return True
+    except Exception as exc:
+        session.rollback()
+        if new_id:
+            try:
+                client.api.delete_workout(new_id)
+            except Exception:
+                pass
+        logger.error("Failed to upload program workout: %s", exc)
+        return False
+
 # Prefix used for all coach-created workouts, so we can find and delete them.
 _COACH_PREFIX = "\U0001f3cb\ufe0f "  # 🏋️ emoji prefix
 
@@ -245,6 +344,8 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
             "duration_min": payload.get("duration_min") or 60,
             "intensity": payload.get("intensity") or "normal",
         }
+        if payload.get("program_session_id") and not payload.get("base_workout_id"):
+            return _schedule_program_session(session, planned_meta)
         if not payload.get("base_workout_id"):
             try:
                 target_day = date.fromisoformat(planned_meta["target_date"])
@@ -268,7 +369,6 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
                 )
             )
 
-            from db import SyncState
             existing_row = session.get(SyncState, "coach_calendar_events")
             existing_events = []
             if existing_row and existing_row.value:
@@ -411,7 +511,6 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     }
     
     try:
-        from db import SyncState
         client.login()
         
         # 1. Delete previous coach-created workout by ID directly (much faster).

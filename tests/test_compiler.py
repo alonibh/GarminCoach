@@ -1,6 +1,6 @@
 import pytest
 from coach.garmin_compiler import _get_step_weight, build_generic_step
-from db import PlannedSession, SyncState
+from db import PlannedSession, ProgramSession, SessionExercise, SyncState, TrainingProgram
 
 def test_get_step_weight_with_none_weight():
     """Test that a step with weightValue = None (like bodyweight exercises) does not crash."""
@@ -59,3 +59,60 @@ def test_schedule_session_calendar_only_creates_planned_session(session):
     row = session.get(SyncState, "coach_calendar_events")
     assert row is not None
     assert "Easy Run" in row.value
+
+
+def _active_session(session):
+    program = TrainingProgram(name="A/B", active=True, status="active", days_per_week=2)
+    session.add(program)
+    session.flush()
+    routine = ProgramSession(program_id=program.id, name="Workout A", sport_type="strength_training", sequence_order=1)
+    session.add(routine)
+    session.flush()
+    session.add_all([
+        SessionExercise(program_session_id=routine.id, exercise_name="Bench Press", exercise_key="BENCH_PRESS", garmin_category="BENCH_PRESS", garmin_name="BENCH_PRESS", movement_pattern="horizontal_push", sets=3, reps=12, weight_kg=40, rest_seconds=90, warmup_enabled=True, warmup_reps=12, warmup_weight_kg=20, order_index=0),
+        SessionExercise(program_session_id=routine.id, exercise_name="Curated Source Move", exercise_key="CURATED_SOURCE_MOVE", movement_pattern="other", is_generic=True, sets=2, reps=10, rest_seconds=60, order_index=1),
+    ])
+    session.commit()
+    return routine
+
+
+def test_program_workout_has_structured_warmup_and_generic_fallback(session):
+    from coach.garmin_compiler import build_program_workout
+    routine = _active_session(session)
+    payload = build_program_workout(session, routine.id, "18:00")
+    steps = payload["workoutSegments"][0]["workoutSteps"]
+    assert steps[0]["stepType"]["stepTypeKey"] == "warmup"
+    assert steps[0]["endConditionValue"] == 12
+    assert steps[0]["weightValue"] == 20
+    generic = steps[-1]["workoutSteps"][0]
+    assert generic["description"] == "Curated Source Move"
+    assert generic["category"] is None and generic["exerciseName"] is None
+
+
+def test_program_telegram_approval_uploads_verifies_schedules_and_is_idempotent(session, monkeypatch):
+    import coach.garmin_compiler as compiler
+    routine = _active_session(session)
+
+    class FakeApi:
+        def __init__(self):
+            self.uploads = []
+            self.scheduled = []
+        def upload_workout(self, payload):
+            self.uploads.append(payload)
+            return {"workoutId": 77}
+        def get_workout_by_id(self, workout_id):
+            return self.uploads[-1]
+        def schedule_workout(self, workout_id, day):
+            self.scheduled.append((workout_id, day))
+        def delete_workout(self, workout_id):
+            pass
+
+    api = FakeApi()
+    monkeypatch.setattr(compiler.client, "login", lambda: None)
+    monkeypatch.setattr(type(compiler.client), "api", property(lambda self: api))
+    action = {"action": "schedule_session", "program_session_id": routine.id, "title": routine.name, "activity_type": "strength_training", "target_date": "2026-07-20", "suggested_time": "18:00", "duration_min": 60, "intensity": "normal"}
+    assert compiler.compile_and_schedule(session, action) is True
+    assert compiler.compile_and_schedule(session, action) is True
+    assert len(api.uploads) == 1
+    assert api.scheduled == [(77, "2026-07-20")]
+    assert session.query(PlannedSession).one().garmin_workout_id == 77

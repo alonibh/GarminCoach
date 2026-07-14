@@ -38,7 +38,8 @@ from coach.onboarding import (
     latest_draft_program,
     program_sessions_for,
 )
-from coach.programs import PLAN_CHOICES, recommend_program
+from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
+from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
@@ -60,6 +61,39 @@ def clean_workout_name(name: str) -> str:
 
 templates.env.filters["clean_name"] = clean_workout_name
 templates.env.filters["activity_family"] = activity_family
+
+
+def _apply_recent_strength_weights(session, proposal: dict) -> None:
+    """Fill source exercises from recent matching Garmin sets; never guess."""
+    cutoff = datetime.now() - timedelta(days=90)
+    rows = (
+        session.query(ExerciseSet)
+        .join(Activity, ExerciseSet.activity_id == Activity.id)
+        .filter(Activity.start_time >= cutoff)
+        .filter(ExerciseSet.weight_kg > 0)
+        .filter(ExerciseSet.set_type != "REST")
+        .order_by(Activity.start_time.desc(), ExerciseSet.set_index.desc())
+        .all()
+    )
+    by_key: dict[str, list[ExerciseSet]] = {}
+    for row in rows:
+        key = exercise_key(row.exercise_name or row.exercise_category or "")
+        if exercise_metadata(key):
+            by_key.setdefault(key, []).append(row)
+
+    for routine in proposal["sessions"]:
+        for exercise in routine["exercises"]:
+            matches = by_key.get(exercise["exercise_key"], [])
+            target_reps = exercise.get("reps")
+            if target_reps:
+                compatible = [row for row in matches if row.reps and row.reps >= target_reps]
+                matches = compatible or matches
+            if not matches:
+                continue
+            weight = round(float(matches[0].weight_kg) * 2) / 2
+            exercise["weight_kg"] = weight
+            if exercise.get("warmup_enabled"):
+                exercise["warmup_weight_kg"] = round(weight * 0.5, 1)
 
 
 import hashlib
@@ -1209,6 +1243,7 @@ def get_onboarding(request: Request):
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
         form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
         form_defaults.setdefault("plan_key", analysis["plan_recommendation"]["key"])
+        form_defaults.setdefault("days_per_week", analysis["plan_recommendation"].get("days_per_week", 2))
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1247,6 +1282,7 @@ def post_onboarding(
     request: Request,
     training_type: str = Form(""),
     experience_level: str = Form(""),
+    days_per_week: int = Form(2),
     primary_goal: str = Form(""),
     goal_detail: str = Form(""),
     plan_key: str = Form(""),
@@ -1261,6 +1297,14 @@ def post_onboarding(
 
         analysis = analyze_user_history(session)
         requested_duration = _constraint_session_duration(injuries_limitations)
+        if experience_level not in {"new", "six_to_twenty_four_months", "two_plus_years", "returning"}:
+            raise HTTPException(status_code=422, detail="Confirm your weight-training history.")
+        if primary_goal not in {"Build strength & muscle", "Improve a sport/activity", "Feel fitter & more consistent"}:
+            raise HTTPException(status_code=422, detail="Choose a primary goal.")
+        if days_per_week not in range(2, 7):
+            raise HTTPException(status_code=422, detail="Choose between 2 and 6 gym sessions.")
+        if plan_key in PROGRAMS and len(PROGRAMS[plan_key]["sessions"]) != days_per_week:
+            raise HTTPException(status_code=422, detail="Choose a routine matching your normal weekly gym frequency.")
         try:
             proposal = recommend_program(
                 goal=primary_goal.strip(),
@@ -1269,6 +1313,7 @@ def post_onboarding(
                 session_duration_min=requested_duration,
                 history_summary=analysis["classification"]["reason"],
             )
+            _apply_recent_strength_weights(session, proposal)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
@@ -1336,8 +1381,20 @@ def post_onboarding(
                     SessionExercise(
                         program_session_id=planned_session.id,
                         exercise_name=exercise["exercise_name"],
+                        exercise_key=exercise["exercise_key"],
+                        garmin_category=exercise["garmin_category"],
+                        garmin_name=exercise["garmin_name"],
+                        movement_pattern=exercise["movement_pattern"],
+                        is_generic=exercise["is_generic"],
                         sets=exercise["sets"],
                         reps=exercise["reps"],
+                        duration_seconds=exercise["duration_seconds"],
+                        rest_seconds=exercise["rest_seconds"],
+                        warmup_enabled=exercise["warmup_enabled"],
+                        warmup_reps=exercise["warmup_reps"],
+                        warmup_duration_seconds=exercise["warmup_duration_seconds"],
+                        warmup_weight_kg=exercise["warmup_weight_kg"],
+                        weight_kg=exercise.get("weight_kg"),
                         order_index=exercise_order,
                         notes=exercise.get("notes", ""),
                     )
@@ -1379,9 +1436,19 @@ def get_program_page(
                 {
                     "id": ex.id,
                     "exercise_name": ex.exercise_name,
+                    "exercise_key": ex.exercise_key,
+                    "garmin_category": ex.garmin_category,
+                    "garmin_name": ex.garmin_name,
+                    "is_generic": ex.is_generic,
                     "sets": ex.sets,
                     "reps": ex.reps,
+                    "duration_seconds": ex.duration_seconds,
                     "weight_kg": ex.weight_kg,
+                    "rest_seconds": ex.rest_seconds,
+                    "warmup_enabled": ex.warmup_enabled,
+                    "warmup_reps": ex.warmup_reps,
+                    "warmup_duration_seconds": ex.warmup_duration_seconds,
+                    "warmup_weight_kg": ex.warmup_weight_kg,
                     "order_index": ex.order_index,
                     "notes": ex.notes,
                 }
@@ -1431,6 +1498,7 @@ def get_program_page(
                 "strength_sessions": strength_sessions,
                 "exercises_by_session": exercises_by_session,
                 "planned": planned,
+                "exercise_catalog": catalog_for_ui(),
             },
         )
 
@@ -1461,6 +1529,8 @@ async def save_session_exercises(session_id: int, request: Request):
         rows = _json.loads(body)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(rows, list) or len(rows) > 50 or not all(isinstance(row, dict) for row in rows):
+        raise HTTPException(status_code=422, detail="Exercises must be a list of at most 50 rows.")
 
     with get_session() as db:
         ps = db.get(ProgramSession, session_id)
@@ -1469,16 +1539,54 @@ async def save_session_exercises(session_id: int, request: Request):
         if ps.session_role != "coach_strength":
             raise HTTPException(status_code=400, detail="Only coach strength sessions have exercise templates")
 
-        # Delete existing exercises for this session
+        existing_generic = {
+            ex.exercise_name for ex in db.query(SessionExercise).filter_by(program_session_id=session_id)
+            if ex.is_generic
+        }
+        validated = []
+        warmed: set[str] = set()
+        for row in rows:
+            name = str(row.get("exercise_name", "")).strip()
+            meta = exercise_metadata(str(row.get("exercise_key") or name))
+            is_generic = not meta and name in existing_generic
+            if not meta and not is_generic:
+                raise HTTPException(status_code=422, detail=f"Choose {name or 'each exercise'} from the Garmin exercise list.")
+            pattern = (meta or {}).get("movement_pattern", str(row.get("movement_pattern") or "other"))
+            warmup_enabled = pattern != "other" and pattern not in warmed
+            if warmup_enabled:
+                warmed.add(pattern)
+            weight = float(row["weight_kg"]) if row.get("weight_kg") not in (None, "") else None
+            reps = int(row["reps"]) if row.get("reps") not in (None, "") else None
+            duration = int(row["duration_seconds"]) if row.get("duration_seconds") not in (None, "") else None
+            sets = int(row["sets"]) if row.get("sets") not in (None, "") else None
+            if sets is not None and not 1 <= sets <= 20:
+                raise HTTPException(status_code=422, detail="Sets must be between 1 and 20.")
+            if reps is not None and not 1 <= reps <= 100:
+                raise HTTPException(status_code=422, detail="Reps must be between 1 and 100.")
+            if weight is not None and not 0 <= weight <= 500:
+                raise HTTPException(status_code=422, detail="Weight must be between 0 and 500 kg.")
+            validated.append((row, name, meta, is_generic, pattern, warmup_enabled, weight, reps, duration))
+
         db.query(SessionExercise).filter_by(program_session_id=session_id).delete()
 
-        for i, row in enumerate(rows):
+        for i, (row, name, meta, is_generic, pattern, warmup_enabled, weight, reps, duration) in enumerate(validated):
             ex = SessionExercise(
                 program_session_id=session_id,
-                exercise_name=str(row.get("exercise_name", "")).strip(),
-                sets=int(row["sets"]) if row.get("sets") is not None else None,
-                reps=int(row["reps"]) if row.get("reps") is not None else None,
-                weight_kg=float(row["weight_kg"]) if row.get("weight_kg") is not None and row["weight_kg"] != "" else None,
+                exercise_name=(meta or {}).get("label", name),
+                exercise_key=(meta or {}).get("key", exercise_key(name)),
+                garmin_category=(meta or {}).get("category"),
+                garmin_name=(meta or {}).get("garmin_name"),
+                movement_pattern=pattern,
+                is_generic=is_generic,
+                sets=int(row["sets"]) if row.get("sets") not in (None, "") else None,
+                reps=reps,
+                duration_seconds=duration,
+                weight_kg=weight,
+                rest_seconds=max(0, min(600, int(row.get("rest_seconds") or 60))),
+                warmup_enabled=warmup_enabled,
+                warmup_reps=reps if warmup_enabled else None,
+                warmup_duration_seconds=duration if warmup_enabled else None,
+                warmup_weight_kg=round(weight * 0.5, 1) if warmup_enabled and weight else None,
                 order_index=i,
                 notes=str(row.get("notes", "")),
             )

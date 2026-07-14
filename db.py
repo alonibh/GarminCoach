@@ -274,9 +274,20 @@ class SessionExercise(Base):
         ForeignKey("program_sessions.id", ondelete="CASCADE"), index=True
     )
     exercise_name: Mapped[str] = mapped_column(String(128))  # Garmin exercise enum value
+    exercise_key: Mapped[str] = mapped_column(String(128), default="")
+    garmin_category: Mapped[Optional[str]] = mapped_column(String(64))
+    garmin_name: Mapped[Optional[str]] = mapped_column(String(128))
+    movement_pattern: Mapped[str] = mapped_column(String(32), default="other")
+    is_generic: Mapped[bool] = mapped_column(Boolean, default=False)
     sets: Mapped[Optional[int]] = mapped_column(Integer)
     reps: Mapped[Optional[int]] = mapped_column(Integer)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     weight_kg: Mapped[Optional[float]] = mapped_column(Float)  # None = bodyweight
+    rest_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    warmup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    warmup_reps: Mapped[Optional[int]] = mapped_column(Integer)
+    warmup_duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    warmup_weight_kg: Mapped[Optional[float]] = mapped_column(Float)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[str] = mapped_column(Text, default="")
 
@@ -446,13 +457,38 @@ _SESSION_EXERCISES_CREATE = """
         program_session_id INTEGER NOT NULL
             REFERENCES program_sessions(id) ON DELETE CASCADE,
         exercise_name VARCHAR(128) NOT NULL,
+        exercise_key VARCHAR(128) NOT NULL DEFAULT '',
+        garmin_category VARCHAR(64),
+        garmin_name VARCHAR(128),
+        movement_pattern VARCHAR(32) NOT NULL DEFAULT 'other',
+        is_generic INTEGER NOT NULL DEFAULT 0,
         sets INTEGER,
         reps INTEGER,
+        duration_seconds INTEGER,
         weight_kg FLOAT,
+        rest_seconds INTEGER NOT NULL DEFAULT 60,
+        warmup_enabled INTEGER NOT NULL DEFAULT 0,
+        warmup_reps INTEGER,
+        warmup_duration_seconds INTEGER,
+        warmup_weight_kg FLOAT,
         order_index INTEGER NOT NULL DEFAULT 0,
         notes TEXT NOT NULL DEFAULT ''
     )
 """
+
+_SESSION_EXERCISE_ADD_COLUMNS = {
+    "exercise_key": "VARCHAR(128) NOT NULL DEFAULT ''",
+    "garmin_category": "VARCHAR(64)",
+    "garmin_name": "VARCHAR(128)",
+    "movement_pattern": "VARCHAR(32) NOT NULL DEFAULT 'other'",
+    "is_generic": "INTEGER NOT NULL DEFAULT 0",
+    "duration_seconds": "INTEGER",
+    "rest_seconds": "INTEGER NOT NULL DEFAULT 60",
+    "warmup_enabled": "INTEGER NOT NULL DEFAULT 0",
+    "warmup_reps": "INTEGER",
+    "warmup_duration_seconds": "INTEGER",
+    "warmup_weight_kg": "FLOAT",
+}
 
 
 def _migrate_add_columns() -> None:
@@ -506,6 +542,10 @@ def _migrate_add_columns() -> None:
 
         # Create session_exercises table if it doesn't exist yet
         conn.execute(text(_SESSION_EXERCISES_CREATE))
+        existing_exercises = {c["name"] for c in inspect(conn).get_columns("session_exercises")}
+        for col, sqltype in _SESSION_EXERCISE_ADD_COLUMNS.items():
+            if col not in existing_exercises:
+                conn.execute(text(f"ALTER TABLE session_exercises ADD COLUMN {col} {sqltype}"))
 
 
 @contextmanager

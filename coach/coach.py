@@ -43,7 +43,6 @@ When a user-facing recommendation should be approval-ready, append exactly one J
   "title": "Upper Body",
   "activity_type": "strength_training",
   "program_session_id": 1,
-  "base_workout_id": 12345,
   "target_date": "2026-07-03",
   "suggested_time": "18:00",
   "duration_min": 60,
@@ -52,8 +51,11 @@ When a user-facing recommendation should be approval-ready, append exactly one J
 }
 ```
 
-Use `modifications` only for strength Garmin templates when changing sets, reps,
-or weight. Omit `base_workout_id` for calendar-only planned sessions.
+For an active program session, include its `program_session_id` and omit
+`base_workout_id`; approval compiles that editable session directly to Garmin.
+Before the JSON, show the complete exercise list with warm-up, working sets,
+reps, weights or calibration, and rest. `target_date` is sent to Garmin; the
+exact `suggested_time` remains in Telegram and the personal calendar.
 </scheduling_json>
 """
 

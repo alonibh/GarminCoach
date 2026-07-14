@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from db import Activity, ExerciseSet, ProgramSession, TrainingProgram, Workout
+from coach.exercises import exercise_metadata
 
 _COACH_PREFIX = "\U0001f3cb\ufe0f "
 
@@ -116,11 +117,11 @@ def _history_span_weeks(activities: list[Activity]) -> float:
 
 
 def _experience_level(total_sessions: int, avg_per_week: float, template_count: int) -> str:
-    if total_sessions >= 120 or avg_per_week >= 5 or template_count >= 8:
-        return "advanced"
-    if total_sessions >= 20 or avg_per_week >= 2 or template_count >= 2:
-        return "intermediate"
-    return "beginner"
+    if total_sessions >= 80 or template_count >= 8:
+        return "two_plus_years"
+    if total_sessions >= 20 or avg_per_week >= 1.5 or template_count >= 2:
+        return "six_to_twenty_four_months"
+    return "new"
 
 
 def _classify_history(activities: list[Activity]) -> dict[str, Any]:
@@ -238,7 +239,27 @@ def _coach_strength_budget(activities: list[Activity]) -> int:
     if not strength:
         return 2
     weekly_strength = len(strength) / _history_span_weeks(strength)
-    return min(4, max(2, round(weekly_strength)))
+    return min(6, max(2, round(weekly_strength)))
+
+
+def _movement_pattern(name: str) -> str | None:
+    meta = exercise_metadata(name)
+    if meta:
+        return meta["movement_pattern"]
+    upper = name.upper()
+    hints = (
+        ("knee_dominant", ("SQUAT", "LUNGE", "LEG_PRESS", "LEG_EXTENSION")),
+        ("hip_hinge", ("DEADLIFT", "LEG_CURL", "HIP_THRUST", "GLUTE")),
+        ("horizontal_push", ("BENCH", "CHEST", "PUSH_UP", "FLY")),
+        ("vertical_push", ("SHOULDER", "OVERHEAD", "MILITARY", "LATERAL_RAISE")),
+        ("horizontal_pull", ("ROW", "FACE_PULL")),
+        ("vertical_pull", ("PULL_UP", "PULLDOWN", "PULL_DOWN", "CHIN_UP")),
+        ("elbow_flexion", ("CURL", "BICEP")),
+        ("elbow_extension", ("TRICEP", "SKULL")),
+        ("calves", ("CALF",)),
+        ("core", ("PLANK", "CRUNCH", "AB_", "DEAD_BUG")),
+    )
+    return next((pattern for pattern, words in hints if any(word in upper for word in words)), None)
 
 
 def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | None:
@@ -271,10 +292,10 @@ def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | N
 
 
 def recommend_plan_from_history(session: Session, activities: list[Activity]) -> dict[str, str]:
-    """Match repeated, exercise-backed strength sessions to one catalog split."""
-    strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"][:12]
-    if len(strength) < 6:
-        return {"key": "full_body_2", "reason": "No reliable split found yet; start with two full-body gym sessions."}
+    """Rank the ten-routine catalog from exercise-backed recent history."""
+    strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
+    if len(strength) < 3:
+        return {"key": "full_body_2", "reason": "No reliable gym pattern found yet; start with the two-day A/B full-body routine."}
 
     ids = [a.id for a in strength]
     grouped: dict[int, set[str]] = defaultdict(set)
@@ -283,22 +304,37 @@ def recommend_plan_from_history(session: Session, activities: list[Activity]) ->
         if name:
             grouped[exercise.activity_id].add(name)
 
-    patterns = Counter(
-        pattern for activity in strength
-        if (pattern := _exercise_pattern(grouped[activity.id], activity.name))
+    labels = Counter()
+    for activity in strength:
+        movements = {p for name in grouped[activity.id] if (p := _movement_pattern(name))}
+        lower = bool(movements & {"knee_dominant", "hip_hinge"})
+        push = bool(movements & {"horizontal_push", "vertical_push", "elbow_extension"})
+        pull = bool(movements & {"horizontal_pull", "vertical_pull", "elbow_flexion"})
+        label = "full_body" if lower and push and pull else "upper" if push and pull else "lower" if lower and not (push or pull) else "push" if push and not pull else "pull" if pull and not push else None
+        if label:
+            labels[label] += 1
+
+    weekly = min(6, max(2, round(len(strength) / _history_span_weeks(strength))))
+    if weekly == 2:
+        key = "full_body_2"
+    elif weekly == 3:
+        key = "upper_lower_full_3" if labels["upper"] and labels["lower"] else "ms_full_body_3" if labels["full_body"] >= 4 else "beginner_full_body_3"
+    elif weekly == 4:
+        key = "upper_lower_4" if labels["upper"] >= 2 and labels["lower"] >= 2 else "split_full_4"
+    elif weekly == 5:
+        key = "muscle_strength_5"
+    else:
+        key = "ppl_6" if all(labels[p] >= 2 for p in ("push", "pull", "lower")) else "muscle_strength_5"
+    usable = sum(labels.values())
+    if usable < 3:
+        return {"key": "full_body_2", "reason": "No reliable split was found from recent exercise sets; start with the two-day A/B full-body routine.", "days_per_week": 2}
+    reason = (
+        f"Suggested from about {weekly} recent gym sessions per week and {usable} exercise-backed sessions."
+        if usable >= 3 else
+        f"Recent frequency suggests {weekly} gym days, but no reliable split was found from the exercises."
     )
-    classified = sum(patterns.values())
-    if classified < 6:
-        return {"key": "full_body_2", "reason": "No reliable split found in your recent exercise history; start with two full-body gym sessions."}
-    if all(patterns[part] >= 2 for part in ("push", "pull", "lower")):
-        return {"key": "push_pull_legs_3", "reason": "Suggested from repeated push, pull, and lower-body gym sessions."}
-    if patterns["upper"] >= 2 and patterns["lower"] >= 2:
-        return {"key": "upper_lower_4", "reason": "Suggested from repeated upper-body and lower-body gym sessions."}
-    if patterns["full_body"] >= 4:
-        weekly = len(strength) / _history_span_weeks(strength)
-        key = "full_body_3" if weekly >= 2.5 else "full_body_2"
-        return {"key": key, "reason": "Suggested from repeated full-body gym sessions."}
-    return {"key": "full_body_2", "reason": "Your recent gym sessions do not show a reliable recurring split yet."}
+    recommended_days = {"full_body_2": 2, "beginner_full_body_3": 3, "ms_full_body_3": 3, "upper_lower_full_3": 3, "upper_lower_4": 4, "split_full_4": 4, "muscle_strength_5": 5, "ppl_6": 6}[key]
+    return {"key": key, "reason": reason, "days_per_week": recommended_days}
 
 
 def _build_defaults(
@@ -315,10 +351,14 @@ def _build_defaults(
     preferred = _preferred_activities(training_type, counts)
     days_per_week = _coach_strength_budget(recent_activities)
 
+    recent_strength = [a for a in usable if activity_family(a.activity_type) == "Strength"]
+    experience = _experience_level(len(background), background_avg_per_week, len(templates))
+    if background and not recent_strength:
+        experience = "returning"
     return {
         "training_type": training_type,
         # Experience is deliberately long-term background, not current routine.
-        "experience_level": _experience_level(len(background), background_avg_per_week, len(templates)),
+        "experience_level": experience,
         "primary_goal": GOAL_BY_TYPE[training_type],
         "preferred_activities": preferred,
         "equipment_access": ["gym"],

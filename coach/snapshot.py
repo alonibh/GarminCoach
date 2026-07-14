@@ -253,6 +253,13 @@ def build_snapshot(session: Session) -> str:
                             "sets": ex.sets,
                             "reps": ex.reps,
                             "weight_kg": ex.weight_kg,
+                            "rest_seconds": ex.rest_seconds,
+                            "warmup": ({
+                                "reps": ex.warmup_reps,
+                                "duration_seconds": ex.warmup_duration_seconds,
+                                "weight_kg": ex.warmup_weight_kg,
+                            } if ex.warmup_enabled else None),
+                            "garmin_mapping": ({"category": ex.garmin_category, "exercise_name": ex.garmin_name} if not ex.is_generic else None),
                             **(({"notes": ex.notes}) if ex.notes else {}),
                         }
                         for ex in exs
