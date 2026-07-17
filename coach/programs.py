@@ -94,11 +94,36 @@ def _major_region(meta: dict[str, Any] | None, exercise_name: str) -> str | None
     return _MAJOR_REGION_BY_MUSCLE_GROUP.get((meta or {}).get("muscle_group"))
 
 
+def _joint_systems(meta: dict[str, Any] | None, region: str | None) -> set[str]:
+    """Joint systems substantially loaded by an exercise, including stabilizers."""
+    systems = {
+        "lower_body": {"lower_body"},
+        "chest": {"shoulder_complex"},
+        "shoulders": {"shoulder_complex"},
+        "back": {"back_grip"},
+    }.get(region, set()).copy()
+    # A deadlift is primarily lower body, but its lats and grip are also loaded
+    # hard enough to count as back/grip preparation for a later pulldown or row.
+    if (meta or {}).get("category") == "DEADLIFT":
+        systems.add("back_grip")
+    return systems
+
+
+def _primary_joint_system(region: str | None) -> str | None:
+    return {
+        "lower_body": "lower_body",
+        "chest": "shoulder_complex",
+        "shoulders": "shoulder_complex",
+        "back": "back_grip",
+    }.get(region)
+
+
 def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
     """Apply the daily-anchor, cold-joint, flow, and 20-minute return rules."""
-    touched_at: dict[str, int] = {}
+    touched_regions: set[str] = set()
+    joint_touched_at: dict[str, int] = {}
     elapsed_seconds = 0
-    previous_region: str | None = None
+    previous_joint_systems: set[str] = set()
     for index, exercise in enumerate(exercises):
         meta = exercise_metadata(exercise["exercise_name"])
         defaults = warmup_defaults(
@@ -106,22 +131,29 @@ def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
         )
         _without_warmup(exercise)
         region = _major_region(meta, exercise["exercise_name"])
+        joint_systems = _joint_systems(meta, region)
+        primary_joint_system = _primary_joint_system(region)
         can_warm_up = defaults["warmup_enabled"]
         is_anchor = index == 0
-        is_new_major_region = region is not None and region not in touched_at
-        is_back_to_back_flow = region is not None and region == previous_region
-        last_touched = touched_at.get(region) if region else None
+        is_new_major_region = region is not None and region not in touched_regions
+        has_cold_joint = not (joint_systems & joint_touched_at.keys())
+        is_back_to_back_flow = bool(joint_systems & previous_joint_systems)
+        last_touched = joint_touched_at.get(primary_joint_system) if primary_joint_system else None
         is_long_break_return = bool(
             _is_heavy_compound(exercise)
             and last_touched is not None
             and elapsed_seconds - last_touched >= 20 * 60
         )
-        if can_warm_up and not is_back_to_back_flow and (is_anchor or is_new_major_region or is_long_break_return):
+        if can_warm_up and not is_back_to_back_flow and (
+            is_anchor or (is_new_major_region and has_cold_joint) or is_long_break_return
+        ):
             exercise.update(defaults)
-        if region:
-            touched_at[region] = elapsed_seconds + _estimated_exercise_seconds(exercise)
-        previous_region = region
-        elapsed_seconds += _estimated_exercise_seconds(exercise)
+        exercise_end = elapsed_seconds + _estimated_exercise_seconds(exercise)
+        touched_regions.update({region} if region else set())
+        for system in joint_systems:
+            joint_touched_at[system] = exercise_end
+        previous_joint_systems = joint_systems
+        elapsed_seconds = exercise_end
 
 
 def _exercise(
