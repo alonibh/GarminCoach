@@ -143,7 +143,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
     "ms_full_body_3": _program(
         "M&S Full Body · 3 days",
         "https://www.muscleandstrength.com/workouts/muscle-strength-full-body-workout-routine",
-        "six_to_twenty_four_months",
+        "new",
         [
             _session("Workout A", "full body", [
                 _exercise("Squat", 3, 5, rest=120), _exercise("Bench Press", 3, 5, rest=120),
@@ -223,7 +223,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
     "upper_lower_4": _program(
         "Upper / Lower Bodybuilding · 4 days",
         "https://www.muscleandstrength.com/workouts/upper-lower-4-day-gym-bodybuilding-workout",
-        "six_to_twenty_four_months",
+        "new",
         [
             _session("Upper A", "upper body", [
                 _exercise("Bench Press", 3, 12), _exercise("Barbell Row", 3, 12), _exercise("Seated Overhead Dumbbell Press", 3, 12),
@@ -251,7 +251,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
     "shul_4": _program(
         "SHUL Strength / Hypertrophy · 4 days",
         "https://www.muscleandstrength.com/workouts/shul-workout",
-        "two_plus_years",
+        "six_to_twenty_four_months",
         [
             _session("Lower Strength", "lower body", [
                 _exercise("Front Squat", 3, 5, rest=180), _exercise("Trap Bar Deadlift", 3, 5, rest=180),
@@ -309,7 +309,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
     "muscle_strength_5": _program(
         "Muscle & Strength Building Split · 5 days",
         "https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split",
-        "two_plus_years",
+        "six_to_twenty_four_months",
         [
             _session("Upper Strength", "upper body", [
                 _exercise("Weighted Wide Grip Pull Ups", 2, 6, rest=120), _exercise("Bent Over Barbell Row", 4, 6, rest=120),
@@ -350,7 +350,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
     "ppl_6": _program(
         "Push / Pull / Legs A/B · 6 days",
         "https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout",
-        "two_plus_years",
+        "new",
         [
             _session("Push A", "push", [
                 _exercise("Dumbbell Bench Press", 4, 12, rest=45), _exercise("Incline Smith Machine Bench Press", 3, 10, movement="horizontal_push", rest=45),

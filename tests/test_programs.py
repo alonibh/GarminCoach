@@ -17,6 +17,22 @@ def test_plan_choices_include_clear_experience_badges():
     assert {choice["experience_slug"] for choice in PLAN_CHOICES} == {"beginner", "intermediate", "expert"}
 
 
+def test_source_training_levels_are_reflected_in_catalog_badges():
+    labels = {choice["key"]: choice["experience_label"] for choice in PLAN_CHOICES}
+    assert labels == {
+        "full_body_2": "Beginner",
+        "beginner_full_body_3": "Beginner",
+        "ms_full_body_3": "Beginner",
+        "total_package_3": "Intermediate",
+        "upper_lower_full_3": "Intermediate",
+        "upper_lower_4": "Beginner",
+        "shul_4": "Intermediate",
+        "split_full_4": "Expert",
+        "muscle_strength_5": "Intermediate",
+        "ppl_6": "Beginner",
+    }
+
+
 def test_source_program_is_not_trimmed_by_free_text_duration_limit():
     proposal = recommend_program(
         plan_key="upper_lower_4",
