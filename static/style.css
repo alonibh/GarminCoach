@@ -1377,7 +1377,11 @@ details summary {
 .plan-proposal-card {
   border-color: rgba(47, 129, 247, .7);
   background: linear-gradient(135deg, rgba(47, 129, 247, .13), var(--card));
+  padding: clamp(1.5rem, 3vw, 2.25rem);
 }
+
+.plan-proposal-card h2 { margin-top: .25rem; font-size: 1.35rem; }
+.proposal-rationale { max-width: 76ch; line-height: 1.65; }
 
 .plan-proposal-card form {
   display: flex;
@@ -1453,8 +1457,8 @@ details summary {
 
 /* Template card */
 .plan-template-card {
-  padding: 1.35rem;
-  margin-bottom: 1rem;
+  padding: clamp(1rem, 2.5vw, 1.65rem);
+  margin-bottom: 1.25rem;
 }
 
 .plan-template-header {
@@ -1480,43 +1484,65 @@ details summary {
   flex-shrink: 0;
 }
 
-/* Exercise table */
-.plan-exercise-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: .88rem;
-  margin-bottom: .85rem;
-}
+.plan-templates-heading { margin: 2rem 0 1rem; }
+.plan-templates-heading h2 { margin-bottom: .35rem; font-size: 1.3rem; }
 
-.plan-exercise-table th {
-  text-align: left;
-  padding: .4rem .5rem;
-  font-size: .78rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  color: var(--muted);
-  border-bottom: 1px solid var(--border);
+.day-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .75rem 1rem;
+  margin-bottom: .75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(127, 140, 153, .06);
 }
+.day-settings > label { font-size: .82rem; color: var(--muted); }
+.day-rest-control { display: flex; align-items: center; gap: .5rem; }
+.day-rest-control input { width: 76px; min-height: 36px; padding: .4rem .5rem; text-align: center; }
+.day-rest-control > span { color: var(--muted); font-size: .82rem; }
 
-.plan-exercise-table td {
-  padding: .3rem .35rem;
-  vertical-align: middle;
+.exercise-list { display: grid; gap: .55rem; margin-bottom: .85rem; }
+.exercise-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 2.2fr) minmax(64px, .55fr) minmax(170px, 1.25fr) minmax(105px, .9fr) minmax(80px, .65fr) 32px;
+  align-items: end;
+  gap: .65rem;
+  padding: .8rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
+.exercise-identity { align-self: center; min-width: 0; }
+.exercise-name { display: block; overflow: hidden; color: var(--fg); font-size: .94rem; text-overflow: ellipsis; white-space: nowrap; }
+.exercise-replace { margin-top: .25rem; padding: 0; border: 0; background: none; color: var(--accent-strong); font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.exercise-replace:hover { text-decoration: underline; }
+.exercise-field { display: grid; gap: .3rem; min-width: 0; }
+.exercise-field > span, .mobile-field-label { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .035em; text-transform: uppercase; }
+.mobile-field-label { display: none; }
+.exercise-field input, .exercise-field select { min-height: 38px; padding: .4rem .5rem; font-size: .86rem; text-align: center; }
+.target-control { display: grid; grid-template-columns: minmax(62px, .9fr) minmax(52px, .7fr) auto; align-items: center; }
+.target-control select { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.target-control input { border-left: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.target-unit { margin-left: .35rem; color: var(--muted); font-size: .75rem; }
+.load-field.is-hidden { visibility: hidden; pointer-events: none; }
+.remove-exercise { align-self: center; }
 
-.plan-exercise-table tr:not(:last-child) td {
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.plan-exercise-table input {
-  min-height: 36px;
-  padding: .4rem .55rem;
-  font-size: .88rem;
-}
-
-.plan-exercise-table input[type="number"] {
-  text-align: center;
-}
+body.picker-open { overflow: hidden; }
+.exercise-picker { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 1rem; }
+.exercise-picker[hidden] { display: none; }
+.picker-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(2, 7, 12, .75); cursor: default; }
+.picker-dialog { position: relative; display: flex; flex-direction: column; width: min(600px, 100%); max-height: min(680px, calc(100vh - 2rem)); padding: 1.35rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 24px 80px rgba(0, 0, 0, .45); }
+.picker-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.picker-header h2 { font-size: 1.25rem; }
+.picker-close { width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--fg); font-size: 1.3rem; cursor: pointer; }
+.picker-search-label { margin-bottom: .4rem; }
+#exercise-search { flex: 0 0 auto; }
+.picker-results { display: grid; gap: .35rem; min-height: 140px; margin-top: .75rem; overflow-y: auto; overscroll-behavior: contain; }
+.picker-result { width: 100%; padding: .75rem .85rem; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.picker-result:hover, .picker-result:focus { border-color: var(--accent); background: rgba(47, 129, 247, .11); outline: none; }
+.picker-empty { padding: 2rem 1rem; color: var(--muted); text-align: center; }
 
 /* Buttons */
 .btn-sm {
@@ -1637,7 +1663,18 @@ tr.from-history td:first-child::before {
   .onboarding-submit .btn { width: 100%; }
   .plan-template-header { flex-direction: column; align-items: flex-start; }
   .btn-addon-toggle { margin-left: 0; margin-top: .5rem; }
-  .plan-exercise-table th:nth-child(5),
-  .plan-exercise-table td:nth-child(5) { display: none; }
+  .day-settings { align-items: flex-start; flex-direction: column; }
+  .exercise-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+  .exercise-identity { grid-column: 1 / -1; }
+  .mobile-field-label { display: block; margin-bottom: .25rem; }
+  .target-field { grid-column: 1 / -1; }
+  .load-field.is-hidden { display: none; }
+  .remove-exercise { position: absolute; align-self: auto; right: .65rem; margin-top: .15rem; }
+  .exercise-row { position: relative; padding-right: 2.75rem; }
+  .picker-dialog { padding: 1rem; }
+}
+
+@media (min-width: 641px) and (max-width: 1050px) {
+  .exercise-row { grid-template-columns: minmax(190px, 2fr) 70px minmax(160px, 1.2fr) 95px 75px 32px; }
 }
 

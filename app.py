@@ -1549,6 +1549,8 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Sets must be between 1 and 20.")
             if reps is not None and not 1 <= reps <= 100:
                 raise HTTPException(status_code=422, detail="Reps must be between 1 and 100.")
+            if duration is not None and not 1 <= duration <= 3600:
+                raise HTTPException(status_code=422, detail="Time must be between 1 and 3600 seconds.")
             if weight is not None and not 0 <= weight <= 500:
                 raise HTTPException(status_code=422, detail="Weight must be between 0 and 500 kg.")
             validated.append((row, name, meta, is_generic, pattern, warmup_enabled, weight, reps, duration))

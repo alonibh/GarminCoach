@@ -1,24 +1,102 @@
 {% extends "base.html" %}
 {% block title %}Plan - GarminCoach{% endblock %}
 {% block content %}
-<div class="content-header"><div class="header-left"><span class="eyebrow">{% if is_draft %}Step 3 of 3{% else %}Your active program{% endif %}</span><h1>{% if is_draft %}Review your program 🧭{% else %}Your plan{% endif %}</h1>{% if program %}<p class="muted">{{ program.name }}</p>{% endif %}</div><a class="btn-secondary" href="/onboarding">{% if is_draft %}← Adjust answers{% else %}Adjust plan{% endif %}</a></div>
+<div class="content-header"><div class="header-left"><span class="eyebrow">{% if is_draft %}Step 3 of 3{% else %}Your active program{% endif %}</span><h1>{% if is_draft %}Review your program{% else %}Your plan{% endif %}</h1>{% if program %}<p class="muted">{{ program.name }}</p>{% endif %}</div><a class="btn-secondary" href="/onboarding">{% if is_draft %}← Adjust answers{% else %}Adjust plan{% endif %}</a></div>
 {% if not program %}<div class="card"><p class="muted">Start setup to define your routine.</p><a class="btn" href="/onboarding">Start setup</a></div>{% else %}
 {% if just_approved %}<div class="card success-card"><div class="feature-icon">✓</div><div><h3>Your program is active</h3><p>No workout was uploaded or scheduled. GarminCoach will propose one session and time later.</p></div></div>{% endif %}
-{% if is_draft %}<div class="card plan-proposal-card"><span class="badge">Program proposal</span><h3>Review before activating</h3><p>{{ program.rationale }}</p><p class="muted">This program is undated. Web approval activates it but does not contact Garmin.</p>{% if program.source_url %}<p><a href="{{ program.source_url }}" target="_blank" rel="noopener">View the original Muscle & Strength routine</a></p>{% endif %}<form method="post" action="/program/{{ program.id }}/approve"><button class="btn" type="submit">Approve this program</button>{% if active_program %}<a class="btn-secondary" href="/program?view=active">Keep current active plan</a>{% endif %}</form></div>{% endif %}
+{% if is_draft %}<section class="card plan-proposal-card"><span class="badge">Program proposal</span><h2>Review before activating</h2><p class="proposal-rationale">{{ program.rationale }}</p><p class="muted">This program is undated. Approval activates it here, but does not contact Garmin.</p>{% if program.source_url %}<p><a href="{{ program.source_url }}" target="_blank" rel="noopener">View the original Muscle &amp; Strength routine</a></p>{% endif %}<form method="post" action="/program/{{ program.id }}/approve"><button class="btn" type="submit">Approve this program</button>{% if active_program %}<a class="btn-secondary" href="/program?view=active">Keep current active plan</a>{% endif %}</form></section>{% endif %}
 {% if profile.injuries_limitations %}<div class="card plan-profile-card"><div class="profile-card-heading"><h3>Protected constraints</h3><a href="/onboarding">Edit</a></div><p>{{ profile.injuries_limitations }}</p></div>{% endif %}
 <div class="card"><h3>Target weekly routine</h3><p class="muted">{{ strength_sessions | length }} gym sessions. Calendar events, recent training load, and recovery are considered only when suggesting which session to do and when.</p><div class="plan-sessions-list">{% for s in strength_sessions %}<div class="plan-session-badge"><span class="plan-session-num">{{ s.sequence_order }}</span><span class="plan-session-name">{{ s.name }}</span><span class="plan-session-type muted">Gym strength</span></div>{% endfor %}</div></div>
 {% if not is_draft %}<div class="card next-session-empty"><span class="card-kicker">Next session</span><h3>Nothing scheduled yet</h3><p>Telegram will show the complete workout and exact suggested time before anything is uploaded.</p></div>{% endif %}
-<h2 style="margin-bottom:1rem;font-size:1.25rem">Workout templates</h2><p class="muted">This remains editable. Replace exercises only from Garmin’s supported list. Source exercises without a mapping remain marked as generic; Garmin presentation may be limited.</p>
-{% for s in strength_sessions %}<div class="card plan-template-card" id="session-card-{{ s.id }}"><div class="plan-template-header"><div class="plan-template-title"><span class="plan-session-num">{{ s.sequence_order }}</span><span>{{ s.name }}</span></div><div class="plan-template-actions"><span class="plan-save-status muted" id="save-status-{{ s.id }}"></span><button class="btn btn-sm" type="button" onclick="saveSession({{ s.id }})">Save</button></div></div>
-<table class="plan-exercise-table"><thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Weight</th><th>Rest</th><th></th></tr></thead><tbody id="tbody-{{ s.id }}">{% for ex in exercises_by_session.get(s.id, []) %}<tr data-duration-seconds="{{ ex.duration_seconds or '' }}">
-<td><input class="ex-name" list="garmin-exercises-list" value="{% if ex.is_generic %}{{ ex.exercise_name }}{% else %}{{ ex.exercise_name }} [{{ ex.garmin_category }}]{% endif %}" data-current-key="{{ ex.exercise_key }}" {% if ex.is_generic %}data-generic="true"{% endif %}><small class="field-hint">{% if ex.warmup_enabled %}Warm-up: {{ ex.warmup_reps or 'same duration' }}{% if ex.warmup_weight_kg %} @ {{ ex.warmup_weight_kg }} kg{% elif ex.weight_kg %} @ 50%{% else %} · calibrate first session{% endif %}{% else %}Movement already warmed{% endif %}</small></td>
-<td><input class="ex-sets" type="number" value="{{ ex.sets or '' }}" min="1" max="20"></td><td><input class="ex-reps" type="number" value="{{ ex.reps or '' }}" min="1" max="100"></td><td><input class="ex-weight" type="number" value="{{ ex.weight_kg if ex.weight_kg is not none else '' }}" min="0" max="500" step="0.5" placeholder="Calibrate"></td><td><input class="ex-rest" type="number" value="{{ ex.rest_seconds }}" min="0" max="600" step="5"></td><td><button class="btn-icon btn-danger" type="button" onclick="this.closest('tr').remove()" title="Remove">×</button></td></tr>{% endfor %}</tbody></table><button class="btn-ghost add-ex-btn" type="button" onclick="addRow({{ s.id }})">+ Add exercise</button></div>{% endfor %}
+<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Review the targets for each day, or replace and add any Garmin-supported exercise.</p></div></div>
+{% for s in strength_sessions %}
+<section class="card plan-template-card" id="session-card-{{ s.id }}">
+  <div class="plan-template-header">
+    <div class="plan-template-title"><span class="plan-session-num">{{ s.sequence_order }}</span><span>{{ s.name }}</span></div>
+    <div class="plan-template-actions"><span class="plan-save-status muted" id="save-status-{{ s.id }}" role="status"></span><button class="btn btn-sm" type="button" onclick="saveSession({{ s.id }})">Save day</button></div>
+  </div>
+  <div class="day-settings">
+    <label for="day-rest-{{ s.id }}">Rest between sets</label>
+    <div class="day-rest-control"><input id="day-rest-{{ s.id }}" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"><span>sec</span><button class="btn-secondary btn-sm" type="button" onclick="setAllRest({{ s.id }})">Apply to all</button></div>
+  </div>
+  <div class="exercise-list" id="tbody-{{ s.id }}">
+  {% for ex in exercises_by_session.get(s.id, []) %}
+    <div class="exercise-row" data-key="{{ ex.exercise_key }}" data-generic="{{ 'true' if ex.is_generic else 'false' }}">
+      <div class="exercise-identity"><span class="mobile-field-label">Exercise</span><strong class="exercise-name">{{ ex.exercise_name }}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div>
+      <label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="{{ ex.sets or '' }}" min="1" max="20" inputmode="numeric"></label>
+      <label class="exercise-field target-field"><span>Target</span><div class="target-control"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"{% if not ex.duration_seconds %} selected{% endif %}>Reps</option><option value="time"{% if ex.duration_seconds %} selected{% endif %}>Time</option></select><input class="ex-target" type="number" value="{{ ex.duration_seconds if ex.duration_seconds else (ex.reps or '') }}" min="1" max="{% if ex.duration_seconds %}3600{% else %}100{% endif %}" inputmode="numeric"><span class="target-unit">{% if ex.duration_seconds %}sec{% endif %}</span></div></label>
+      <label class="exercise-field load-field{% if ex.duration_seconds %} is-hidden{% endif %}"><span>Weight (kg)</span><input class="ex-weight" type="number" value="{{ ex.weight_kg if ex.weight_kg is not none else '' }}" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label>
+      <label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="{{ ex.rest_seconds }}" min="0" max="600" step="5" inputmode="numeric"></label>
+      <button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove {{ ex.exercise_name }}" aria-label="Remove {{ ex.exercise_name }}">×</button>
+    </div>
+  {% endfor %}
+  </div>
+  <button class="btn-ghost add-ex-btn" type="button" onclick="openPicker(null, {{ s.id }})">+ Add exercise</button>
+</section>
+{% endfor %}
 {% endif %}
-<datalist id="garmin-exercises-list">{% for item in exercise_catalog %}<option value="{{ item.label }} [{{ item.category }}]" data-key="{{ item.key }}"></option>{% endfor %}</datalist>
+
+<div class="exercise-picker" id="exercise-picker" hidden>
+  <button class="picker-backdrop" type="button" aria-label="Close exercise search" onclick="closePicker()"></button>
+  <section class="picker-dialog" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+    <div class="picker-header"><div><span class="eyebrow">Exercise library</span><h2 id="picker-title">Choose an exercise</h2></div><button class="picker-close" type="button" onclick="closePicker()" aria-label="Close">×</button></div>
+    <label class="picker-search-label" for="exercise-search">Search by exercise name</label>
+    <input id="exercise-search" type="search" placeholder="Try “bench press” or “plank”" autocomplete="off">
+    <div class="picker-results" id="picker-results" role="listbox"></div>
+  </section>
+</div>
+
 <script>
-const catalogOptions=[...document.querySelectorAll('#garmin-exercises-list option')];
-function catalogChoice(input){return catalogOptions.find(option=>option.value===input.value)}
-function addRow(sessionId){const tr=document.createElement('tr');tr.innerHTML='<td><input class="ex-name" list="garmin-exercises-list" placeholder="Choose a Garmin exercise"></td><td><input class="ex-sets" type="number" value="3" min="1" max="20"></td><td><input class="ex-reps" type="number" value="10" min="1" max="100"></td><td><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Calibrate"></td><td><input class="ex-rest" type="number" value="60" min="0" max="600" step="5"></td><td><button class="btn-icon btn-danger" type="button" onclick="this.closest(\'tr\').remove()">×</button></td>';document.getElementById('tbody-'+sessionId).append(tr)}
-async function saveSession(sessionId){const status=document.getElementById('save-status-'+sessionId);const payload=[...document.querySelectorAll('#tbody-'+sessionId+' tr')].map((tr,i)=>{const input=tr.querySelector('.ex-name'),choice=catalogChoice(input),generic=input.dataset.generic==='true'&&!choice;return {exercise_key:choice?choice.dataset.key:(generic?input.dataset.currentKey:''),exercise_name:choice?choice.value.replace(/ \[[^\]]+\]$/,''):input.value,sets:tr.querySelector('.ex-sets').value||null,reps:tr.querySelector('.ex-reps').value||null,duration_seconds:tr.dataset.durationSeconds||null,weight_kg:tr.querySelector('.ex-weight').value||null,rest_seconds:tr.querySelector('.ex-rest').value||60,order_index:i}});status.textContent='Saving…';const res=await fetch('/api/session/'+sessionId+'/exercises',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(res.ok){status.textContent='✓ Saved';setTimeout(()=>location.reload(),500)}else{const body=await res.json().catch(()=>({}));status.textContent=body.detail||'Could not save'}}
+const exerciseCatalog={{ exercise_catalog | tojson }};
+const picker=document.getElementById('exercise-picker');
+const search=document.getElementById('exercise-search');
+const results=document.getElementById('picker-results');
+let pickerRow=null,pickerSessionId=null;
+
+function openPicker(button,sessionId=null){
+  pickerRow=button?button.closest('.exercise-row'):null;
+  pickerSessionId=sessionId;
+  picker.hidden=false;
+  document.body.classList.add('picker-open');
+  search.value='';
+  renderResults('');
+  requestAnimationFrame(()=>search.focus());
+}
+function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null}
+function renderResults(query){
+  const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const seen=new Set();
+  const matches=exerciseCatalog.filter(item=>words.every(word=>item.label.toLowerCase().includes(word))).filter(item=>{const name=item.label.toLowerCase();if(seen.has(name))return false;seen.add(name);return true}).slice(0,40);
+  results.innerHTML=matches.length?matches.map(item=>`<button type="button" class="picker-result" data-key="${escapeHtml(item.key)}" data-category="${escapeHtml(item.category)}" data-label="${escapeHtml(item.label)}" role="option"><span>${escapeHtml(item.label)}</span></button>`).join(''):'<p class="picker-empty">No matching exercises. Try a shorter search.</p>';
+}
+function escapeHtml(value){return String(value).replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]))}
+function newExerciseRow(item){
+  const timed=item.category==='PLANK'||/\bplank\b/i.test(item.label);
+  const row=document.createElement('div');
+  row.className='exercise-row';row.dataset.key=item.key;row.dataset.generic='false';
+  row.innerHTML=`<div class="exercise-identity"><span class="mobile-field-label">Exercise</span><strong class="exercise-name">${escapeHtml(item.label)}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div><label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="3" min="1" max="20" inputmode="numeric"></label><label class="exercise-field target-field"><span>Target</span><div class="target-control"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"${timed?'':' selected'}>Reps</option><option value="time"${timed?' selected':''}>Time</option></select><input class="ex-target" type="number" value="${timed?'30':'10'}" min="1" max="${timed?'3600':'100'}" inputmode="numeric"><span class="target-unit">${timed?'sec':''}</span></div></label><label class="exercise-field load-field${timed?' is-hidden':''}"><span>Weight (kg)</span><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label><label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"></label><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove ${escapeHtml(item.label)}" aria-label="Remove ${escapeHtml(item.label)}">×</button>`;
+  return row;
+}
+results.addEventListener('click',event=>{
+  const choice=event.target.closest('.picker-result');if(!choice)return;
+  const item={key:choice.dataset.key,category:choice.dataset.category,label:choice.dataset.label};
+  if(pickerRow){
+    pickerRow.dataset.key=item.key;pickerRow.dataset.generic='false';pickerRow.querySelector('.exercise-name').textContent=item.label;
+    pickerRow.querySelector('.remove-exercise').setAttribute('aria-label','Remove '+item.label);
+    if(item.category==='PLANK'||/\bplank\b/i.test(item.label)){const type=pickerRow.querySelector('.ex-target-type');type.value='time';changeTargetType(type)}
+  }else{document.getElementById('tbody-'+pickerSessionId).append(newExerciseRow(item))}
+  closePicker();
+});
+search.addEventListener('input',()=>renderResults(search.value));
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!picker.hidden)closePicker()});
+function changeTargetType(select){const row=select.closest('.exercise-row'),timed=select.value==='time',target=row.querySelector('.ex-target'),load=row.querySelector('.load-field');target.max=timed?3600:100;row.querySelector('.target-unit').textContent=timed?'sec':'';load.classList.toggle('is-hidden',timed);if(timed)row.querySelector('.ex-weight').value=''}
+function setAllRest(sessionId){const value=document.getElementById('day-rest-'+sessionId).value||60;document.querySelectorAll('#tbody-'+sessionId+' .ex-rest').forEach(input=>input.value=value)}
+async function saveSession(sessionId){
+  const status=document.getElementById('save-status-'+sessionId);
+  const payload=[...document.querySelectorAll('#tbody-'+sessionId+' .exercise-row')].map((row,i)=>{const timed=row.querySelector('.ex-target-type').value==='time',target=row.querySelector('.ex-target').value;return {exercise_key:row.dataset.key,exercise_name:row.querySelector('.exercise-name').textContent.trim(),sets:row.querySelector('.ex-sets').value||null,reps:timed?null:(target||null),duration_seconds:timed?(target||null):null,weight_kg:timed?null:(row.querySelector('.ex-weight').value||null),rest_seconds:row.querySelector('.ex-rest').value||60,order_index:i}});
+  status.textContent='Saving…';
+  const res=await fetch('/api/session/'+sessionId+'/exercises',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(res.ok){status.textContent='✓ Saved'}else{const body=await res.json().catch(()=>({}));status.textContent=body.detail||'Could not save'}
+}
 </script>
 {% endblock %}
