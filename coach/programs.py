@@ -54,7 +54,7 @@ def warmup_defaults(
         }
     return {
         "warmup_enabled": True,
-        "warmup_reps": min(reps, 8) if reps else 6,
+        "warmup_reps": 8,
         "warmup_duration_seconds": None,
         "warmup_weight_kg": round(weight_kg * 0.5, 1) if weight_kg else None,
     }

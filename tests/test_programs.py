@@ -1,5 +1,5 @@
 from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
-from coach.exercises import GARMIN_EXERCISES, muscle_group_for
+from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
 
 
 def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
@@ -94,6 +94,23 @@ def test_every_curated_exercise_has_a_primary_muscle_group():
         if not muscle_group_for(exercise["exercise_key"] or exercise["exercise_name"], exercise["movement_pattern"])
     ]
     assert missing == []
+
+
+def test_every_curated_exercise_maps_to_the_garmin_catalog():
+    missing = [
+        exercise["exercise_name"]
+        for program in PROGRAMS.values()
+        for routine in program["sessions"]
+        for exercise in routine["exercises"]
+        if exercise_metadata(exercise["exercise_name"]) is None
+    ]
+    assert missing == []
+
+
+def test_seated_dumbbell_press_maps_to_garmins_seated_shoulder_press():
+    metadata = exercise_metadata("Seated Dumbbell Press")
+    assert metadata is not None
+    assert metadata["key"] == "SHOULDER_PRESS:SEATED_DUMBBELL_SHOULDER_PRESS"
 
 
 def test_primary_muscle_groups_cover_close_and_cross_category_alternatives():

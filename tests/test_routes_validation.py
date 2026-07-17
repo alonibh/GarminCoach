@@ -331,6 +331,8 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "Add additional session" in review.text
     assert 'data-muscle-group="' in review.text
     assert "No matching same-muscle exercises" in review.text
+    assert "Include warm-up set" in review.text
+    assert 'placeholder="Auto"' not in review.text
 
     missing_name = c.post(f"/api/program/{program_id}/sessions", json={})
     assert missing_name.status_code == 422
@@ -426,7 +428,7 @@ def test_onboarding_uses_matching_recent_weight_and_half_weight_warmup(client):
         exercise = s.query(SessionExercise).join(ProgramSession).filter(ProgramSession.program_id == program.id, SessionExercise.exercise_key == "SQUAT:BARBELL_FRONT_SQUAT").one()
         assert exercise.weight_kg == 60
         assert exercise.warmup_weight_kg == 30
-        assert exercise.warmup_reps == 6
+        assert exercise.warmup_reps == 8
 
 
 def test_selected_plan_overrides_history_recommendation(client):
