@@ -17,6 +17,15 @@ def test_plan_choices_include_clear_experience_badges():
     assert {choice["experience_slug"] for choice in PLAN_CHOICES} == {"beginner", "intermediate", "expert"}
 
 
+def test_plan_choices_include_original_routine_detail_badges():
+    expected_labels = {"Main Goal", "Workout Type", "Training Level", "Days Per Week", "Time Per Workout"}
+    for choice in PLAN_CHOICES:
+        details = dict(choice["source_details"])
+        assert set(details) == expected_labels
+        assert details["Training Level"] == choice["experience_label"]
+        assert details["Days Per Week"] == f"{choice['days']} days"
+
+
 def test_source_training_levels_are_reflected_in_catalog_badges():
     labels = {choice["key"]: choice["experience_label"] for choice in PLAN_CHOICES}
     assert labels == {

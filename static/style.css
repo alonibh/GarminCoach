@@ -377,6 +377,32 @@ p { margin: 0 0 1rem; }
 .routine-experience-badge.intermediate { background: rgba(47, 129, 247, .16); color: var(--accent-strong); }
 .routine-experience-badge.expert { background: rgba(210, 153, 34, .17); color: #e3b341; }
 
+.routine-source-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  margin: .45rem 0 .15rem;
+}
+
+.routine-detail-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .24rem;
+  padding: .2rem .46rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .035);
+  color: var(--fg);
+  font-size: .7rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.routine-detail-badge span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .choice-card {
   position: relative;
   display: flex;
