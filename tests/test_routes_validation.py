@@ -331,18 +331,16 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     missing_name = c.post(f"/api/program/{program_id}/sessions", json={})
     assert missing_name.status_code == 422
 
-    missing_exercise = c.post(f"/api/program/{program_id}/sessions", json={"name": "Accessories"})
-    assert missing_exercise.status_code == 422
-
-    added = c.post(f"/api/program/{program_id}/sessions", json={
-        "name": "Accessories",
-        "first_exercise_key": "SQUAT:GOBLET_SQUAT",
-    })
+    added = c.post(f"/api/program/{program_id}/sessions", json={"name": "Accessories"})
     assert added.status_code == 200
     assert added.json()["name"] == "Accessories"
     added_session_id = added.json()["id"]
+    not_ready = c.post(f"/program/{program_id}/approve", follow_redirects=False)
+    assert not_ready.status_code == 422
+    removed = c.delete(f"/api/program/{program_id}/sessions/{added_session_id}")
+    assert removed.status_code == 200
     with db_module.get_session() as s:
-        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 3
+        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 2
 
     approved = c.post(f"/program/{program_id}/approve", follow_redirects=False)
     assert approved.status_code == 303

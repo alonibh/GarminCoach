@@ -252,6 +252,8 @@ class ProgramSession(Base):
     target_frequency: Mapped[int] = mapped_column(Integer, default=1)
     # If True, this session is a finisher/add-on to another session, not standalone.
     is_addon: Mapped[bool] = mapped_column(Boolean, default=False)
+    # True only for a session explicitly added by the athlete in the program editor.
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False)
 
     program: Mapped["TrainingProgram"] = relationship(back_populates="sessions")
     exercises: Mapped[list["SessionExercise"]] = relationship(
@@ -442,6 +444,7 @@ _PROGRAM_SESSION_ADD_COLUMNS = {
     "is_addon": "INTEGER NOT NULL DEFAULT 0",
     "session_role": "VARCHAR(32) NOT NULL DEFAULT 'coach_strength'",
     "target_frequency": "INTEGER NOT NULL DEFAULT 1",
+    "is_custom": "INTEGER NOT NULL DEFAULT 0",
 }
 
 

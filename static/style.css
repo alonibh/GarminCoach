@@ -1544,21 +1544,6 @@ details summary {
 .add-session-status { display: block; min-height: 1.3em; margin-top: .35rem; font-size: .8rem; }
 .approve-status { display: inline-block; max-width: 320px; margin-right: .5rem; color: #d29922; font-size: .8rem; vertical-align: middle; }
 
-.day-settings {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: .8rem 1.35rem;
-  margin-bottom: 0;
-  border-bottom: 1px solid var(--border-soft);
-  background: rgba(127, 140, 153, .035);
-}
-.day-settings > label { color: var(--fg); font-size: .84rem; font-weight: 700; }
-.day-rest-control { display: flex; align-items: center; gap: .5rem; }
-.day-rest-control input { width: 76px; min-height: 38px; padding: .4rem .5rem; border-radius: 9px; text-align: center; }
-.day-rest-control > span { color: var(--muted); font-size: .82rem; }
-
 .exercise-list { display: grid; gap: .65rem; padding: 1rem 1.35rem; }
 .exercise-row {
   display: grid;
@@ -1590,9 +1575,12 @@ details summary {
 .target-control input { border-left: 0; border-radius: 0 9px 9px 0; }
 .target-unit { margin-left: .35rem; color: var(--muted); font-size: .72rem; }
 .load-field.is-hidden { visibility: hidden; pointer-events: none; }
-.exercise-actions { display: grid; align-self: stretch; gap: .3rem; padding-left: .75rem; }
+.exercise-actions { display: grid; grid-template-rows: 1em 42px; align-self: stretch; gap: .3rem; padding-left: 0; }
 .exercise-actions > span { min-height: 1em; color: var(--muted); font-size: .68rem; font-weight: 750; letter-spacing: .055em; text-align: center; text-transform: uppercase; }
-.remove-exercise { align-self: end; width: 100%; height: 42px; padding: 0 .65rem; border: 1px solid rgba(241, 92, 109, .34); border-radius: 9px; background: rgba(241, 92, 109, .08); font-size: .76rem; font-weight: 700; }
+.btn-icon.remove-exercise { align-self: end; box-sizing: border-box; width: 100%; height: 42px; padding: 0 .65rem; border: 1px solid rgba(241, 92, 109, .34); border-radius: 9px; background: rgba(241, 92, 109, .08); font-size: .76rem; font-weight: 700; }
+.btn-icon.remove-exercise:hover { border-color: rgba(241, 92, 109, .65); }
+.btn-danger-outline { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-height: 34px; padding: .38rem .75rem; border: 1px solid rgba(241, 92, 109, .42); border-radius: var(--radius-sm); background: rgba(241, 92, 109, .08); color: var(--danger); font-size: .84rem; font-weight: 700; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.btn-danger-outline:hover { border-color: rgba(241, 92, 109, .7); background: rgba(241, 92, 109, .15); }
 .add-ex-btn { margin: 0 1.35rem 1.25rem; min-height: 40px; padding-inline: .9rem; border-radius: 10px; }
 
 body.picker-open { overflow: hidden; }
@@ -1739,7 +1727,6 @@ tr.from-history td:first-child::before {
   .proposal-footer form .btn,
   .proposal-footer form .btn-secondary { justify-content: center; width: 100%; }
   .btn-addon-toggle { margin-left: 0; margin-top: .5rem; }
-  .day-settings { align-items: flex-start; flex-direction: column; }
   .exercise-list { padding: .85rem; }
   .exercise-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
   .exercise-identity { grid-column: 1 / -1; }

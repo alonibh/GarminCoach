@@ -12,12 +12,8 @@
 {% for s in strength_sessions %}
 <section class="card plan-template-card" id="session-card-{{ s.id }}">
   <div class="plan-template-header">
-    <div class="plan-template-title"><span class="plan-session-num">{{ s.sequence_order }}</span><span>{{ s.name }}</span><span class="session-garmin-status {% if session_ready.get(s.id) %}is-ready{% else %}is-incomplete{% endif %}">{% if session_ready.get(s.id) %}Ready for Garmin{% else %}Add an exercise to make this ready{% endif %}</span></div>
-    <div class="plan-template-actions"><span class="plan-save-status muted" id="save-status-{{ s.id }}" role="status"></span>{% if not is_draft %}<button class="btn btn-sm" type="button" onclick="saveSession({{ s.id }})">Save changes</button>{% endif %}</div>
-  </div>
-  <div class="day-settings">
-    <label for="day-rest-{{ s.id }}">Rest between sets</label>
-    <div class="day-rest-control"><input id="day-rest-{{ s.id }}" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"><span>sec</span><button class="btn-secondary btn-sm" type="button" onclick="setAllRest({{ s.id }})">Apply to all</button></div>
+    <div class="plan-template-title"><span class="plan-session-num">{{ s.sequence_order }}</span><span>{{ s.name }}</span><span id="session-ready-{{ s.id }}" class="session-garmin-status {% if session_ready.get(s.id) %}is-ready{% else %}is-incomplete{% endif %}">{% if session_ready.get(s.id) %}Ready for Garmin{% else %}Add an exercise to make this ready{% endif %}</span></div>
+    <div class="plan-template-actions"><span class="plan-save-status muted" id="save-status-{{ s.id }}" role="status"></span>{% if s.is_custom %}<button class="btn-danger-outline btn-sm" type="button" onclick="removeAdditionalSession({{ program.id }}, {{ s.id }})">Remove session</button>{% endif %}{% if not is_draft %}<button class="btn btn-sm" type="button" onclick="saveSession({{ s.id }})">Save changes</button>{% endif %}</div>
   </div>
   <div class="exercise-list" id="tbody-{{ s.id }}">
   {% for ex in exercises_by_session.get(s.id, []) %}
@@ -27,14 +23,14 @@
       <label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"{% if not ex.duration_seconds %} selected{% endif %}>Reps</option><option value="time"{% if ex.duration_seconds %} selected{% endif %}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="{{ ex.duration_seconds if ex.duration_seconds else (ex.reps or '') }}" min="1" max="{% if ex.duration_seconds %}3600{% else %}100{% endif %}" inputmode="numeric"><span class="target-unit">{% if ex.duration_seconds %}sec{% endif %}</span></div></label>
       <label class="exercise-field load-field{% if ex.duration_seconds %} is-hidden{% endif %}"><span>Weight (kg)</span><input class="ex-weight" type="number" value="{{ ex.weight_kg if ex.weight_kg is not none else '' }}" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label>
       <label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="{{ ex.rest_seconds }}" min="0" max="600" step="5" inputmode="numeric"></label>
-      <div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove {{ ex.exercise_name }}" aria-label="Remove {{ ex.exercise_name }}">Remove</button></div>
+      <div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="removeExerciseRow(this)" title="Remove {{ ex.exercise_name }}" aria-label="Remove {{ ex.exercise_name }}">Remove</button></div>
     </div>
   {% endfor %}
   </div>
   <button class="btn-ghost add-ex-btn" type="button" onclick="openPicker(null, {{ s.id }})">+ Add exercise</button>
 </section>
 {% endfor %}
-<section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Name it, then choose its first exercise. It is created ready for Garmin.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="startAdditionalSession({{ program.id }})">Choose first exercise</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
+<section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Set its Garmin-facing name, then add exercises in the new session.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">Add session</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
 {% endif %}
 
 <div class="exercise-picker" id="exercise-picker" hidden>
@@ -53,7 +49,7 @@ const picker=document.getElementById('exercise-picker');
 const search=document.getElementById('exercise-search');
 const results=document.getElementById('picker-results');
 const pickerContext=document.getElementById('picker-context');
-let pickerRow=null,pickerSessionId=null,pickerMuscleGroup='',pickerCategory='',pickerCurrentKey='',pendingAdditionalSession=null;
+let pickerRow=null,pickerSessionId=null,pickerMuscleGroup='',pickerCategory='',pickerCurrentKey='';
 const muscleLabels={chest:'Chest',back:'Back',shoulders:'Shoulders',quads:'Quads',hamstrings_glutes:'Hamstrings & glutes',biceps:'Biceps',triceps:'Triceps',calves:'Calves',core:'Core',full_body:'Full body'};
 
 function openPicker(button,sessionId=null){
@@ -62,14 +58,14 @@ function openPicker(button,sessionId=null){
   pickerMuscleGroup=pickerRow?.dataset.muscleGroup||'';
   pickerCategory=pickerRow?.dataset.category||'';
   pickerCurrentKey=pickerRow?.dataset.key||'';
-  pickerContext.textContent=pendingAdditionalSession?'Choose the first exercise for '+pendingAdditionalSession.name:pickerRow?(pickerMuscleGroup?'Showing '+(muscleLabels[pickerMuscleGroup]||pickerMuscleGroup)+' alternatives':'No reliable muscle match is available for this exercise'):'Search the full exercise library';
+  pickerContext.textContent=pickerRow?(pickerMuscleGroup?'Showing '+(muscleLabels[pickerMuscleGroup]||pickerMuscleGroup)+' alternatives':'No reliable muscle match is available for this exercise'):'Search the full exercise library';
   picker.hidden=false;
   document.body.classList.add('picker-open');
   search.value='';
   renderResults('');
   requestAnimationFrame(()=>search.focus());
 }
-function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null;pickerMuscleGroup='';pickerCategory='';pickerCurrentKey='';pendingAdditionalSession=null}
+function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null;pickerMuscleGroup='';pickerCategory='';pickerCurrentKey=''}
 function renderResults(query){
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const seen=new Set();
@@ -84,27 +80,28 @@ function newExerciseRow(item){
   const timed=isTimedExercise(item);
   const row=document.createElement('div');
   row.className='exercise-row';row.dataset.key=item.key;row.dataset.category=item.category;row.dataset.muscleGroup=item.muscle_group||'';row.dataset.generic='false';
-  row.innerHTML=`<div class="exercise-identity"><span class="exercise-field-label">Exercise</span><div class="exercise-name-line"><strong class="exercise-name">${escapeHtml(item.label)}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div></div><label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="3" min="1" max="20" inputmode="numeric"></label><label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"${timed?'':' selected'}>Reps</option><option value="time"${timed?' selected':''}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="${timed?'30':'10'}" min="1" max="${timed?'3600':'100'}" inputmode="numeric"><span class="target-unit">${timed?'sec':''}</span></div></label><label class="exercise-field load-field${timed?' is-hidden':''}"><span>Weight (kg)</span><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label><label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"></label><div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove ${escapeHtml(item.label)}" aria-label="Remove ${escapeHtml(item.label)}">Remove</button></div>`;
+  row.innerHTML=`<div class="exercise-identity"><span class="exercise-field-label">Exercise</span><div class="exercise-name-line"><strong class="exercise-name">${escapeHtml(item.label)}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div></div><label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="3" min="1" max="20" inputmode="numeric"></label><label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"${timed?'':' selected'}>Reps</option><option value="time"${timed?' selected':''}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="${timed?'30':'10'}" min="1" max="${timed?'3600':'100'}" inputmode="numeric"><span class="target-unit">${timed?'sec':''}</span></div></label><label class="exercise-field load-field${timed?' is-hidden':''}"><span>Weight (kg)</span><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label><label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"></label><div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="removeExerciseRow(this)" title="Remove ${escapeHtml(item.label)}" aria-label="Remove ${escapeHtml(item.label)}">Remove</button></div>`;
   return row;
 }
 results.addEventListener('click',event=>{
   const choice=event.target.closest('.picker-result');if(!choice)return;
   const item={key:choice.dataset.key,category:choice.dataset.category,muscle_group:choice.dataset.muscleGroup,label:choice.dataset.label};
-  if(pendingAdditionalSession){const pending=pendingAdditionalSession;closePicker();createAdditionalSession(pending.programId,pending.name,item.key);return}
   if(pickerRow){
     const wasTimed=pickerRow.querySelector('.ex-target-type').value==='time',nowTimed=isTimedExercise(item);
     pickerRow.dataset.key=item.key;pickerRow.dataset.category=item.category;pickerRow.dataset.muscleGroup=item.muscle_group||'';pickerRow.dataset.generic='false';pickerRow.querySelector('.exercise-name').textContent=item.label;
     pickerRow.querySelector('.remove-exercise').setAttribute('aria-label','Remove '+item.label);
     pickerRow.querySelector('.ex-weight').value='';
     if(wasTimed!==nowTimed){const type=pickerRow.querySelector('.ex-target-type');type.value=nowTimed?'time':'reps';pickerRow.querySelector('.ex-target').value=nowTimed?'30':'10';changeTargetType(type)}
-  }else{document.getElementById('tbody-'+pickerSessionId).append(newExerciseRow(item))}
+  }else{document.getElementById('tbody-'+pickerSessionId).append(newExerciseRow(item));markSessionReady(pickerSessionId)}
   closePicker();
 });
 search.addEventListener('input',()=>renderResults(search.value));
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!picker.hidden)closePicker()});
 function isTimedExercise(item){return item.category==='PLANK'||/\bplank\b/i.test(item.label)}
 function changeTargetType(select){const row=select.closest('.exercise-row'),timed=select.value==='time',target=row.querySelector('.ex-target'),load=row.querySelector('.load-field');target.max=timed?3600:100;row.querySelector('.target-unit').textContent=timed?'sec':'';load.classList.toggle('is-hidden',timed);if(timed)row.querySelector('.ex-weight').value=''}
-function setAllRest(sessionId){const value=document.getElementById('day-rest-'+sessionId).value||60;document.querySelectorAll('#tbody-'+sessionId+' .ex-rest').forEach(input=>input.value=value)}
+function markSessionReady(sessionId){const badge=document.getElementById('session-ready-'+sessionId);if(!badge)return;badge.classList.remove('is-incomplete');badge.classList.add('is-ready');badge.textContent='Ready for Garmin'}
+function refreshSessionReady(sessionId){const badge=document.getElementById('session-ready-'+sessionId),hasExercise=document.querySelector('#tbody-'+sessionId+' .exercise-row');if(!badge)return;badge.classList.toggle('is-ready',Boolean(hasExercise));badge.classList.toggle('is-incomplete',!hasExercise);badge.textContent=hasExercise?'Ready for Garmin':'Add an exercise to make this ready'}
+function removeExerciseRow(button){const list=button.closest('.exercise-list');button.closest('.exercise-row').remove();refreshSessionReady(list.id.replace('tbody-',''))}
 async function saveSession(sessionId){
   const status=document.getElementById('save-status-'+sessionId);
   const payload=[...document.querySelectorAll('#tbody-'+sessionId+' .exercise-row')].map((row,i)=>{const timed=row.querySelector('.ex-target-type').value==='time',target=row.querySelector('.ex-target').value;return {exercise_key:row.dataset.key,exercise_name:row.querySelector('.exercise-name').textContent.trim(),sets:row.querySelector('.ex-sets').value||null,reps:timed?null:(target||null),duration_seconds:timed?(target||null):null,weight_kg:timed?null:(row.querySelector('.ex-weight').value||null),rest_seconds:row.querySelector('.ex-rest').value||60,order_index:i}});
@@ -123,21 +120,18 @@ async function approveProgram(){
   if(saved.every(Boolean)){document.getElementById('approve-form').submit();return}
   button.disabled=false;button.textContent='Save and approve program';
 }
-function startAdditionalSession(programId){
+async function addSession(programId){
+  const button=document.getElementById('add-session-button');
   const input=document.getElementById('additional-session-name');
   const status=document.getElementById('add-session-status');
   const name=input.value.trim();
   if(!name){status.textContent='Enter a session name.';input.focus();return}
-  pendingAdditionalSession={programId,name};openPicker(null);
-}
-async function createAdditionalSession(programId,name,firstExerciseKey){
-  const button=document.getElementById('add-session-button');
-  const status=document.getElementById('add-session-status');
   button.disabled=true;button.textContent='Adding session…';
-  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,first_exercise_key:firstExerciseKey})});
+  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
   if(response.ok){location.reload();return}
   const body=await response.json().catch(()=>({}));
   button.disabled=false;button.textContent='Add session';status.textContent=body.detail||'Could not add session';
 }
+async function removeAdditionalSession(programId,sessionId){if(!confirm('Remove this additional session?'))return;const response=await fetch('/api/program/'+programId+'/sessions/'+sessionId,{method:'DELETE'});if(response.ok){location.reload();return}const body=await response.json().catch(()=>({}));alert(body.detail||'Could not remove session')}
 </script>
 {% endblock %}

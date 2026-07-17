@@ -1540,7 +1540,7 @@ def approve_program(program_id: int):
 
 @app.post("/api/program/{program_id}/sessions")
 async def add_program_session(program_id: int, request: Request):
-    """Add an independent, Garmin-ready strength session to an editable program."""
+    """Add an independent strength session to an editable program."""
     try:
         body = await request.json()
     except Exception:
@@ -1551,11 +1551,6 @@ async def add_program_session(program_id: int, request: Request):
         raise HTTPException(status_code=422, detail="Enter a session name.")
     if len(name) > 80:
         raise HTTPException(status_code=422, detail="Session names must be 80 characters or fewer.")
-    first_exercise_key = str(body.get("first_exercise_key", "")).strip() if isinstance(body, dict) else ""
-    first_exercise = exercise_metadata(first_exercise_key)
-    if not first_exercise:
-        raise HTTPException(status_code=422, detail="Choose the first exercise from the Garmin exercise list.")
-
     with get_session() as db:
         program = db.get(TrainingProgram, program_id)
         if not program or program.status not in {"draft", "active"}:
@@ -1585,40 +1580,33 @@ async def add_program_session(program_id: int, request: Request):
             session_role="coach_strength",
             target_frequency=1,
             is_addon=False,
+            is_custom=True,
         )
         db.add(added)
         db.flush()
-        is_timed = (
-            first_exercise.get("category") == "PLANK"
-            or "plank" in first_exercise.get("label", "").casefold()
-        )
-        pattern = first_exercise.get("movement_pattern", "other")
-        warmup_enabled = pattern != "other"
-        db.add(SessionExercise(
-            program_session_id=added.id,
-            exercise_name=first_exercise["label"],
-            exercise_key=first_exercise["key"],
-            garmin_category=first_exercise["category"],
-            garmin_name=first_exercise["garmin_name"],
-            movement_pattern=pattern,
-            sets=3,
-            reps=None if is_timed else 10,
-            duration_seconds=30 if is_timed else None,
-            rest_seconds=60,
-            warmup_enabled=warmup_enabled,
-            warmup_reps=10 if warmup_enabled and not is_timed else None,
-            warmup_duration_seconds=30 if warmup_enabled and is_timed else None,
-            order_index=0,
-        ))
-        db.flush()
-        from coach.garmin_compiler import build_program_workout
-        try:
-            build_program_workout(db, added.id, require_active=False)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
         program.days_per_week = len(sessions) + 1
         program.updated_at = datetime.now()
         return JSONResponse({"id": added.id, "name": added.name})
+
+
+@app.delete("/api/program/{program_id}/sessions/{session_id}")
+def delete_custom_program_session(program_id: int, session_id: int):
+    """Remove an unscheduled athlete-added session from a program."""
+    with get_session() as db:
+        ps = db.get(ProgramSession, session_id)
+        if not ps or ps.program_id != program_id or not ps.is_custom:
+            raise HTTPException(status_code=404, detail="Additional session not found")
+        if db.query(PlannedSession).filter_by(program_session_id=session_id, status="approved").first():
+            raise HTTPException(status_code=422, detail="This session is already scheduled. Remove its scheduled workout first.")
+        program = ps.program
+        db.delete(ps)
+        db.flush()
+        if program:
+            program.days_per_week = db.query(ProgramSession).filter_by(
+                program_id=program_id, session_role="coach_strength"
+            ).count()
+            program.updated_at = datetime.now()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/session/{session_id}/exercises")
