@@ -138,6 +138,8 @@ def test_onboarding_renders_history_defaults(client):
     assert 'routine-experience-badge beginner' in resp.text
     assert 'routine-experience-badge intermediate' in resp.text
     assert 'routine-experience-badge expert' in resp.text
+    for badge_label in ("Main Goal", "Workout Type", "Training Level", "Days Per Week", "Time Per Workout"):
+        assert badge_label in resp.text
     assert "Recent training context · last 90 days" in resp.text
     assert "Recent activity mix · last 90 days" in resp.text
     assert "Strength focused" in resp.text
