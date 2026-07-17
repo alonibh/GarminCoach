@@ -1411,6 +1411,7 @@ def get_program_page(
 
         # Load exercises for each session, keyed by session id
         exercises_by_session: dict[int, list] = {}
+        session_ready: dict[int, bool] = {}
         for ps in sessions:
             exs = (
                 session.query(SessionExercise)
@@ -1442,6 +1443,15 @@ def get_program_page(
                 }
                 for ex in exs
             ]
+            if exs:
+                from coach.garmin_compiler import build_program_workout
+                try:
+                    build_program_workout(session, ps.id, require_active=False)
+                    session_ready[ps.id] = True
+                except ValueError:
+                    session_ready[ps.id] = False
+            else:
+                session_ready[ps.id] = False
 
         # User physical profile (from Garmin sync)
         gender_row = session.get(SyncState, "user_gender")
@@ -1485,6 +1495,7 @@ def get_program_page(
                 "sessions": sessions,
                 "strength_sessions": strength_sessions,
                 "exercises_by_session": exercises_by_session,
+                "session_ready": session_ready,
                 "planned": planned,
                 "exercise_catalog": catalog_for_ui(),
             },
@@ -1509,6 +1520,14 @@ def approve_program(program_id: int):
                 status_code=422,
                 detail=f"Add at least one exercise to: {', '.join(incomplete)}.",
             )
+        from coach.garmin_compiler import build_program_workout
+        for planned in program_sessions_for(session, program_id):
+            if planned.session_role != "coach_strength":
+                continue
+            try:
+                build_program_workout(session, planned.id, require_active=False)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"{planned.name}: {exc}") from exc
         for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
             existing.active = False
             existing.status = "archived"
@@ -1643,6 +1662,19 @@ async def save_session_exercises(session_id: int, request: Request):
                 notes=str(row.get("notes", "")),
             )
             db.add(ex)
+
+        if not validated and ps.program and ps.program.active:
+            raise HTTPException(
+                status_code=422,
+                detail="An active Garmin session needs at least one exercise.",
+            )
+        if validated:
+            from coach.garmin_compiler import build_program_workout
+            db.flush()
+            try:
+                build_program_workout(db, ps.id, require_active=False)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return JSONResponse({"ok": True})
 

@@ -4,15 +4,15 @@
 <div class="content-header"><div class="header-left"><span class="eyebrow">{% if is_draft %}Step 3 of 3{% else %}Your active program{% endif %}</span><h1>{% if is_draft %}Review your program{% else %}Your plan{% endif %}</h1>{% if program %}<p class="muted">{{ program.name }}</p>{% endif %}</div><a class="btn-secondary" href="/onboarding">{% if is_draft %}← Adjust answers{% else %}Adjust plan{% endif %}</a></div>
 {% if not program %}<div class="card"><p class="muted">Start setup to define your routine.</p><a class="btn" href="/onboarding">Start setup</a></div>{% else %}
 {% if just_approved %}<div class="card success-card"><div class="feature-icon">✓</div><div><h3>Your program is active</h3><p>No workout was uploaded or scheduled. GarminCoach will propose one session and time later.</p></div></div>{% endif %}
-{% if is_draft %}<section class="card plan-proposal-card"><span class="badge">Program proposal</span><h2>Review before activating</h2><p class="proposal-rationale">You selected <strong>{{ program.name }}</strong> with {{ strength_sessions | length }} gym sessions per week. Review the exercises, targets, and rest times below before activating it.</p><div class="proposal-note"><span aria-hidden="true">✓</span><span>Activating saves this as your plan. Nothing is scheduled or sent to Garmin yet.</span></div><div class="proposal-footer">{% if program.source_url %}<a class="proposal-source" href="{{ program.source_url }}" target="_blank" rel="noopener">View original routine ↗</a>{% endif %}<form id="approve-form" method="post" action="/program/{{ program.id }}/approve"><button id="approve-button" class="btn" type="button" onclick="approveProgram()">Save and approve program</button>{% if active_program %}<a class="btn-secondary" href="/program?view=active">Keep current plan</a>{% endif %}</form></div></section>{% endif %}
+{% if is_draft %}<section class="card plan-proposal-card"><span class="badge">Program proposal</span><h2>Review before activating</h2><p class="proposal-rationale">You selected <strong>{{ program.name }}</strong> with {{ strength_sessions | length }} gym sessions per week. Review the exercises, targets, and rest times below before activating it.</p><div class="proposal-note"><span aria-hidden="true">✓</span><span>Activating saves this as your plan. Nothing is scheduled or sent to Garmin yet.</span></div><div class="proposal-footer">{% if program.source_url %}<a class="proposal-source" href="{{ program.source_url }}" target="_blank" rel="noopener">View original routine ↗</a>{% endif %}<form id="approve-form" method="post" action="/program/{{ program.id }}/approve"><span class="approve-status muted" id="approve-status" role="status"></span><button id="approve-button" class="btn" type="button" onclick="approveProgram()">Save and approve program</button>{% if active_program %}<a class="btn-secondary" href="/program?view=active">Keep current plan</a>{% endif %}</form></div></section>{% endif %}
 {% if profile.injuries_limitations %}<div class="card plan-profile-card"><div class="profile-card-heading"><h3>Protected constraints</h3><a href="/onboarding">Edit</a></div><p>{{ profile.injuries_limitations }}</p></div>{% endif %}
 <div class="card"><h3>Target weekly routine</h3><p class="muted">{{ strength_sessions | length }} gym sessions. Calendar events, recent training load, and recovery are considered only when suggesting which session to do and when.</p><div class="plan-sessions-list">{% for s in strength_sessions %}<div class="plan-session-badge"><span class="plan-session-num">{{ s.sequence_order }}</span><span class="plan-session-name">{{ s.name }}</span><span class="plan-session-type muted">Gym strength</span></div>{% endfor %}</div></div>
 {% if not is_draft %}<div class="card next-session-empty"><span class="card-kicker">Next session</span><h3>Nothing scheduled yet</h3><p>Telegram will show the complete workout and exact suggested time before anything is uploaded.</p></div>{% endif %}
-<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Review the targets for each session, or replace and add any Garmin-supported exercise.</p></div><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">+ Add additional session</button></div>
+<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Every session marked ready can be compiled, uploaded to Garmin Connect, and synced to your watch when it is scheduled.</p></div></div>
 {% for s in strength_sessions %}
 <section class="card plan-template-card" id="session-card-{{ s.id }}">
   <div class="plan-template-header">
-    <div class="plan-template-title"><span class="plan-session-num">{{ s.sequence_order }}</span><span>{{ s.name }}</span></div>
+    <div class="plan-template-title"><span class="plan-session-num">{{ s.sequence_order }}</span><span>{{ s.name }}</span><span class="session-garmin-status {% if session_ready.get(s.id) %}is-ready{% else %}is-incomplete{% endif %}">{% if session_ready.get(s.id) %}Ready for Garmin{% else %}Add an exercise to make this ready{% endif %}</span></div>
     <div class="plan-template-actions"><span class="plan-save-status muted" id="save-status-{{ s.id }}" role="status"></span>{% if not is_draft %}<button class="btn btn-sm" type="button" onclick="saveSession({{ s.id }})">Save changes</button>{% endif %}</div>
   </div>
   <div class="day-settings">
@@ -34,6 +34,7 @@
   <button class="btn-ghost add-ex-btn" type="button" onclick="openPicker(null, {{ s.id }})">+ Add exercise</button>
 </section>
 {% endfor %}
+<section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Choose the name Garmin Connect and your watch will show when this workout is scheduled.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">Add session</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
 {% endif %}
 
 <div class="exercise-picker" id="exercise-picker" hidden>
@@ -112,6 +113,9 @@ async function saveSession(sessionId){
 }
 async function approveProgram(){
   const button=document.getElementById('approve-button');
+  const status=document.getElementById('approve-status');
+  const emptySessions=[...document.querySelectorAll('.plan-template-card')].filter(card=>!card.querySelector('.exercise-row'));
+  if(emptySessions.length){status.textContent='Add at least one exercise to every session before approving.';return}
   button.disabled=true;button.textContent='Saving changes…';
   const sessionIds=[{% for s in strength_sessions %}{{ s.id }}{% if not loop.last %},{% endif %}{% endfor %}];
   const saved=await Promise.all(sessionIds.map(saveSession));
@@ -120,11 +124,15 @@ async function approveProgram(){
 }
 async function addSession(programId){
   const button=document.getElementById('add-session-button');
+  const input=document.getElementById('additional-session-name');
+  const status=document.getElementById('add-session-status');
+  const name=input.value.trim();
+  if(!name){status.textContent='Enter a session name.';input.focus();return}
   button.disabled=true;button.textContent='Adding session…';
-  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST'});
+  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
   if(response.ok){location.reload();return}
   const body=await response.json().catch(()=>({}));
-  button.disabled=false;button.textContent=body.detail||'Could not add session';
+  button.disabled=false;button.textContent='Add session';status.textContent=body.detail||'Could not add session';
 }
 </script>
 {% endblock %}

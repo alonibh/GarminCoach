@@ -198,10 +198,20 @@ def reindex_steps(workout_steps: list) -> list:
     return workout_steps
 
 
-def build_program_workout(session: Session, program_session_id: int, suggested_time: str = "") -> dict:
-    """Compile one active program session into a standalone Garmin workout."""
+def build_program_workout(
+    session: Session,
+    program_session_id: int,
+    suggested_time: str = "",
+    *,
+    require_active: bool = True,
+) -> dict:
+    """Compile one program session into a standalone Garmin workout.
+
+    Draft sessions use ``require_active=False`` for the same local preflight
+    validation that is used before an upload is permitted.
+    """
     planned = session.get(ProgramSession, program_session_id)
-    if not planned or not planned.program or not planned.program.active:
+    if not planned or not planned.program or (require_active and not planned.program.active):
         raise ValueError("Program session is not active")
     exercises = (
         session.query(SessionExercise)

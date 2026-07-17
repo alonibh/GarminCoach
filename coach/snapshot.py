@@ -206,6 +206,19 @@ def build_snapshot(session: Session) -> str:
     current_program = active_program(session)
     if current_program:
         sessions = program_sessions_for(session, current_program.id)
+        exercises_by_session = {
+            ps.id: (
+                session.query(SessionExercise)
+                .filter_by(program_session_id=ps.id)
+                .order_by(SessionExercise.order_index)
+                .all()
+            )
+            for ps in sessions
+        }
+        schedulable_sessions = [
+            ps for ps in sessions
+            if ps.session_role != "coach_strength" or exercises_by_session[ps.id]
+        ]
         snapshot["active_program"] = {
             "id": current_program.id,
             "name": current_program.name,
@@ -228,7 +241,7 @@ def build_snapshot(session: Session) -> str:
                     "notes": ps.notes,
                     "is_addon": bool(ps.is_addon),
                 }
-                for ps in sessions
+                for ps in schedulable_sessions
             ],
         }
 
@@ -236,13 +249,8 @@ def build_snapshot(session: Session) -> str:
         # Sessions marked is_addon=true are finisher blocks to be appended
         # to another session, not scheduled as standalone workouts.
         base_templates = []
-        for ps in sessions:
-            exs = (
-                session.query(SessionExercise)
-                .filter_by(program_session_id=ps.id)
-                .order_by(SessionExercise.order_index)
-                .all()
-            )
+        for ps in schedulable_sessions:
+            exs = exercises_by_session[ps.id]
             if exs:
                 base_templates.append({
                     "session": ps.name,

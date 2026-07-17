@@ -328,9 +328,20 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert 'data-muscle-group="' in review.text
     assert "No matching same-muscle exercises" in review.text
 
-    added = c.post(f"/api/program/{program_id}/sessions")
+    missing_name = c.post(f"/api/program/{program_id}/sessions", json={})
+    assert missing_name.status_code == 422
+
+    added = c.post(f"/api/program/{program_id}/sessions", json={"name": "Accessories"})
     assert added.status_code == 200
-    assert added.json()["name"] == "Additional session"
+    assert added.json()["name"] == "Accessories"
+    added_session_id = added.json()["id"]
+    not_ready = c.post(f"/program/{program_id}/approve", follow_redirects=False)
+    assert not_ready.status_code == 422
+    ready = c.post(
+        f"/api/session/{added_session_id}/exercises",
+        json=[{"exercise_name": "Goblet Squat", "sets": 2, "reps": 10}],
+    )
+    assert ready.status_code == 200
     with db_module.get_session() as s:
         assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 3
 

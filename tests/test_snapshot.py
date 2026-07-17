@@ -17,6 +17,7 @@ from db import (
     ExerciseSet,
     PlannedSession,
     ProgramSession,
+    SessionExercise,
     TrainingProgram,
     Workout,
 )
@@ -124,6 +125,24 @@ def test_profile_program_and_rolling_plan_included(session):
     ps = ProgramSession(program_id=program.id, name="Full body A", sport_type="strength_training", sequence_order=1)
     session.add(ps)
     session.flush()
+    session.add(SessionExercise(
+        program_session_id=ps.id,
+        exercise_name="Goblet Squat",
+        exercise_key="SQUAT:GOBLET_SQUAT",
+        garmin_category="SQUAT",
+        garmin_name="GOBLET_SQUAT",
+        movement_pattern="knee_dominant",
+        sets=3,
+        reps=10,
+        rest_seconds=60,
+    ))
+    empty = ProgramSession(
+        program_id=program.id,
+        name="Unfinished accessories",
+        sport_type="strength_training",
+        sequence_order=2,
+    )
+    session.add(empty)
     session.add(PlannedSession(
         program_session_id=ps.id,
         activity_type="strength_training",
@@ -142,6 +161,7 @@ def test_profile_program_and_rolling_plan_included(session):
     assert snap["athlete_profile"]["primary_goal"] == "general fitness"
     assert snap["active_program"]["name"] == "My routine"
     assert snap["active_program"]["sessions"][0]["name"] == "Full body A"
+    assert [item["name"] for item in snap["active_program"]["sessions"]] == ["Full body A"]
     assert snap["rolling_plan_14_days"][0]["title"] == "Full body A"
 
 

@@ -80,6 +80,7 @@ def test_program_workout_has_structured_warmup_and_generic_fallback(session):
     from coach.garmin_compiler import build_program_workout
     routine = _active_session(session)
     payload = build_program_workout(session, routine.id, "18:00")
+    assert payload["workoutName"] == "🏋️ Workout A @ 18:00"
     steps = payload["workoutSegments"][0]["workoutSteps"]
     assert steps[0]["stepType"]["stepTypeKey"] == "warmup"
     assert steps[0]["endConditionValue"] == 12
