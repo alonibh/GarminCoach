@@ -397,6 +397,7 @@ p { margin: 0 0 1rem; }
 .choice-card small { display: block; }
 .choice-card small { margin-top: .2rem; color: var(--muted); font-size: .78rem; font-weight: 500; }
 .choice-card.compact { min-height: 54px; align-items: center; }
+.choice-card.is-filtered-out { display: none; }
 
 .onboarding-submit {
   position: sticky;

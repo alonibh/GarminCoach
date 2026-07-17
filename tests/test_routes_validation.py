@@ -134,6 +134,7 @@ def test_onboarding_renders_history_defaults(client):
     assert 'How many days a week do you plan to work out?' in resp.text
     assert 'data-days-filter="2"' in resp.text
     assert 'data-plan-days="2"' in resp.text
+    assert "is-filtered-out" in resp.text
     assert 'routine-experience-badge beginner' in resp.text
     assert 'routine-experience-badge intermediate' in resp.text
     assert 'routine-experience-badge expert' in resp.text
