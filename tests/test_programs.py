@@ -1,4 +1,4 @@
-from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
+from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommend_program
 from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
 
 
@@ -53,17 +53,37 @@ def test_source_program_is_not_trimmed_by_free_text_duration_limit():
     assert "not silently trimmed" in proposal["rationale"]
 
 
-def test_templates_include_one_low_fatigue_warmup_for_loaded_compounds():
+def test_templates_follow_daily_anchor_and_new_major_muscle_warmup_rules():
     proposal = recommend_program(
         plan_key="full_body_2", limitations="",
         session_duration_min=90, history_summary="Recent history is sparse.",
     )
     exercises = [exercise for routine in proposal["sessions"] for exercise in routine["exercises"]]
     warmed = [exercise for exercise in exercises if exercise["warmup_enabled"]]
-    assert {exercise["exercise_name"] for exercise in warmed} >= {"Trap Bar Deadlift", "Military Press", "Lat Pull Down", "T Bar Row", "Front Squat", "Dumbbell Bench Press", "Cable Row"}
+    assert {exercise["exercise_name"] for exercise in warmed} >= {"Trap Bar Deadlift", "Military Press", "Lat Pull Down", "Front Squat", "Dumbbell Bench Press"}
+    assert "T Bar Row" not in {exercise["exercise_name"] for exercise in warmed}
+    assert "Cable Row" not in {exercise["exercise_name"] for exercise in warmed}
     assert "Push Up" not in {exercise["exercise_name"] for exercise in warmed}
     assert all(1 <= exercise["warmup_reps"] <= 8 for exercise in warmed)
     assert all(exercise["warmup_weight_kg"] is None for exercise in warmed)
+
+
+def test_templates_skip_warmups_for_isolation_exercises_and_small_muscle_groups():
+    day_two = PROGRAMS["total_package_3"]["sessions"][1]["exercises"]
+    enabled = {exercise["exercise_name"] for exercise in day_two if exercise["warmup_enabled"]}
+    assert enabled == {"Bench Press"}
+    assert not next(exercise for exercise in day_two if exercise["exercise_name"] == "Leg Extension")["warmup_enabled"]
+
+
+def test_long_break_return_to_a_heavy_compound_gets_one_warmup_set():
+    session = _session("Test", "full body", [
+        _exercise("Squat", 5, 5),
+        _exercise("Bench Press", 5, 5),
+        _exercise("Dumbbell Row", 5, 5),
+        _exercise("Seated Dumbbell Press", 5, 5),
+        _exercise("Lunge", 5, 5),
+    ])
+    assert session["exercises"][-1]["warmup_enabled"] is True
 
 
 def test_all_program_sessions_are_gym_only_and_undated():

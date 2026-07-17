@@ -21,7 +21,10 @@ EXPERIENCE_BADGES = {
 }
 
 
-_WARMUP_CATEGORIES = {
+# Compounds that can be a daily anchor, introduce a major muscle group, or
+# require a re-entry warm-up after a long gap. Single-joint work, arms, calves,
+# and core are intentionally excluded.
+_WARMUP_COMPOUND_CATEGORIES = {
     "SQUAT", "LUNGE", "DEADLIFT", "HIP_RAISE", "BENCH_PRESS",
     "SHOULDER_PRESS", "PULL_UP", "ROW",
 }
@@ -38,11 +41,11 @@ def warmup_defaults(
     duration_seconds: int | None = None,
     weight_kg: float | None = None,
 ) -> dict[str, Any]:
-    """Return one low-fatigue rehearsal set for eligible loaded compound exercises."""
+    """Return the editable warm-up defaults for a loaded compound exercise."""
     normalized_name = name.upper()
     eligible = bool(
         meta
-        and meta.get("category") in _WARMUP_CATEGORIES
+        and meta.get("category") in _WARMUP_COMPOUND_CATEGORIES
         and not any(marker in normalized_name for marker in _BODYWEIGHT_WARMUP_MARKERS)
     )
     if not eligible:
@@ -58,6 +61,54 @@ def warmup_defaults(
         "warmup_duration_seconds": None,
         "warmup_weight_kg": round(weight_kg * 0.5, 1) if weight_kg else None,
     }
+
+
+def _without_warmup(exercise: dict[str, Any]) -> None:
+    exercise.update({
+        "warmup_enabled": False,
+        "warmup_reps": None,
+        "warmup_duration_seconds": None,
+        "warmup_weight_kg": None,
+    })
+
+
+def _estimated_exercise_seconds(exercise: dict[str, Any]) -> int:
+    """Conservative planning estimate used only for the 20-minute re-entry rule."""
+    if exercise["duration_seconds"]:
+        return exercise["sets"] * exercise["duration_seconds"] + max(exercise["sets"] - 1, 0) * exercise["rest_seconds"]
+    return exercise["sets"] * 60 + max(exercise["sets"] - 1, 0) * exercise["rest_seconds"]
+
+
+def _is_heavy_compound(exercise: dict[str, Any]) -> bool:
+    return bool(exercise["sets"] >= 4 and (exercise["reps"] or 0) <= 10)
+
+
+def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
+    """Apply the daily-anchor, new-muscle, and 20-minute return warm-up rules."""
+    touched_at: dict[str, int] = {}
+    elapsed_seconds = 0
+    for index, exercise in enumerate(exercises):
+        meta = exercise_metadata(exercise["exercise_name"])
+        defaults = warmup_defaults(
+            exercise["exercise_name"], meta, exercise["reps"], exercise["duration_seconds"], exercise["weight_kg"],
+        )
+        _without_warmup(exercise)
+        muscle_group = (meta or {}).get("muscle_group")
+        is_compound = defaults["warmup_enabled"]
+        is_anchor = index == 0
+        is_new_major_group = is_compound and muscle_group not in touched_at
+        last_touched = touched_at.get(muscle_group) if muscle_group else None
+        is_long_break_return = bool(
+            is_compound
+            and _is_heavy_compound(exercise)
+            and last_touched is not None
+            and elapsed_seconds - last_touched >= 20 * 60
+        )
+        if is_compound and (is_anchor or is_new_major_group or is_long_break_return):
+            exercise.update(defaults)
+        if muscle_group:
+            touched_at[muscle_group] = elapsed_seconds + _estimated_exercise_seconds(exercise)
+        elapsed_seconds += _estimated_exercise_seconds(exercise)
 
 
 def _exercise(
@@ -89,6 +140,7 @@ def _exercise(
 
 
 def _session(name: str, focus: str, exercises: list[dict], duration: int = 60) -> dict[str, Any]:
+    _apply_session_warmups(exercises)
     return {
         "name": name,
         "sport_type": "strength_training",
