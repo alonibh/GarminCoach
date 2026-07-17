@@ -1,4 +1,4 @@
-const CACHE_NAME = 'garmincoach-cache-v1';
+const CACHE_NAME = 'garmincoach-cache-v2';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',
@@ -37,15 +37,17 @@ self.addEventListener('activate', event => {
 
 // Fetch event: serve from cache if available, else fetch from network
 self.addEventListener('fetch', event => {
-  // Only intercept GET requests
+  // Dynamic pages contain user-specific, rapidly changing state. Always let
+  // navigations reach the app instead of returning stale cached HTML.
   if (event.request.method !== 'GET') return;
-  
-  // Don't cache API requests, chat endpoint, or auth routes
-  if (event.request.url.includes('/sync') || event.request.url.includes('/chat')
-      || event.request.url.includes('/app-login') || event.request.url.includes('/app-logout')) {
-    return;
-  }
+  if (event.request.mode === 'navigate') return;
 
+  const url = new URL(event.request.url);
+  const isLocalStaticAsset = url.origin === self.location.origin
+    && url.pathname.startsWith('/static/');
+  const isCachedFont = url.hostname === 'fonts.googleapis.com';
+  if (!isLocalStaticAsset && !isCachedFont) return;
+  
   event.respondWith(
     caches.match(event.request)
       .then(response => {

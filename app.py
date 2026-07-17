@@ -203,9 +203,13 @@ def _ensure_schedule_target_date(payload: dict, msg: CoachMessage) -> dict:
 
 
 def _asset_version() -> int:
-    """Cache-buster: stylesheet mtime, so a CSS edit forces a fresh fetch."""
+    """Cache-buster for local static assets used by rendered pages."""
     try:
-        return int(os.path.getmtime(config.PROJECT_ROOT / "static" / "style.css"))
+        static_dir = config.PROJECT_ROOT / "static"
+        return int(max(
+            os.path.getmtime(static_dir / "style.css"),
+            os.path.getmtime(static_dir / "onboarding.js"),
+        ))
     except OSError:
         return 0
 
