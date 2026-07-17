@@ -547,6 +547,34 @@ def _migrate_add_columns() -> None:
             if col not in existing_exercises:
                 conn.execute(text(f"ALTER TABLE session_exercises ADD COLUMN {col} {sqltype}"))
 
+        # One-time data fixes are tracked so a later user edit is never
+        # overwritten on every startup.
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS app_migrations ("
+            "migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"
+        ))
+        rest_migration = "total_package_default_rest_60_v1"
+        already_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": rest_migration},
+        ).first()
+        if not already_applied:
+            conn.execute(text(
+                "UPDATE session_exercises SET rest_seconds = 60 "
+                "WHERE rest_seconds = 90 AND program_session_id IN ("
+                "SELECT ps.id FROM program_sessions ps "
+                "JOIN training_programs tp ON tp.id = ps.program_id "
+                "WHERE tp.goal_tags LIKE '%total_package_3%'"
+                ")"
+            ))
+            conn.execute(
+                text(
+                    "INSERT INTO app_migrations (migration_key, applied_at) "
+                    "VALUES (:key, CURRENT_TIMESTAMP)"
+                ),
+                {"key": rest_migration},
+            )
+
 
 @contextmanager
 def get_session() -> Iterator:

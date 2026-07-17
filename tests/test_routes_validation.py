@@ -257,6 +257,40 @@ def test_onboarding_creates_reviewable_program_proposal(client):
     assert "No heavy overhead press; max 45 minutes; never suggest after 21:00" in setup.text
 
 
+def test_existing_total_package_ninety_second_defaults_migrate_once(client):
+    _, db_module = client
+    from db import ProgramSession, SessionExercise, TrainingProgram
+
+    with db_module.get_session() as s:
+        program = TrainingProgram(
+            name="Total Package",
+            goal_tags='["total_package_3"]',
+            status="draft",
+        )
+        s.add(program)
+        s.flush()
+        routine = ProgramSession(program_id=program.id, name="Day 1")
+        s.add(routine)
+        s.flush()
+        exercise = SessionExercise(
+            program_session_id=routine.id,
+            exercise_name="Squat",
+            rest_seconds=90,
+        )
+        s.add(exercise)
+        s.flush()
+        exercise_id = exercise.id
+
+    db_module._migrate_add_columns()
+    with db_module.get_session() as s:
+        assert s.get(SessionExercise, exercise_id).rest_seconds == 60
+        s.get(SessionExercise, exercise_id).rest_seconds = 90
+
+    db_module._migrate_add_columns()
+    with db_module.get_session() as s:
+        assert s.get(SessionExercise, exercise_id).rest_seconds == 90
+
+
 def test_onboarding_proposal_is_reviewed_before_activation(client):
     c, db_module = client
     from datetime import datetime, timedelta

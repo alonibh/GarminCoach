@@ -62,3 +62,13 @@ def test_all_program_sessions_are_gym_only_and_undated():
     )
     assert all(s["sport_type"] == "strength_training" and s["session_role"] == "coach_strength" for s in proposal["sessions"])
     assert "does not assign dates or upload" in proposal["rationale"]
+
+
+def test_total_package_uses_sixty_second_default_rest():
+    exercises = [
+        exercise
+        for routine in PROGRAMS["total_package_3"]["sessions"]
+        for exercise in routine["exercises"]
+    ]
+    assert exercises
+    assert {exercise["rest_seconds"] for exercise in exercises} == {60}
