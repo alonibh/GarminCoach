@@ -8,7 +8,7 @@
 {% if profile.injuries_limitations %}<div class="card plan-profile-card"><div class="profile-card-heading"><h3>Protected constraints</h3><a href="/onboarding">Edit</a></div><p>{{ profile.injuries_limitations }}</p></div>{% endif %}
 <div class="card"><h3>Target weekly routine</h3><p class="muted">{{ strength_sessions | length }} gym sessions. Calendar events, recent training load, and recovery are considered only when suggesting which session to do and when.</p><div class="plan-sessions-list">{% for s in strength_sessions %}<div class="plan-session-badge"><span class="plan-session-num">{{ s.sequence_order }}</span><span class="plan-session-name">{{ s.name }}</span><span class="plan-session-type muted">Gym strength</span></div>{% endfor %}</div></div>
 {% if not is_draft %}<div class="card next-session-empty"><span class="card-kicker">Next session</span><h3>Nothing scheduled yet</h3><p>Telegram will show the complete workout and exact suggested time before anything is uploaded.</p></div>{% endif %}
-<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Review the targets for each day, or replace and add any Garmin-supported exercise.</p></div></div>
+<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Review the targets for each session, or replace and add any Garmin-supported exercise.</p></div><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">+ Add additional session</button></div>
 {% for s in strength_sessions %}
 <section class="card plan-template-card" id="session-card-{{ s.id }}">
   <div class="plan-template-header">
@@ -27,7 +27,7 @@
       <label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"{% if not ex.duration_seconds %} selected{% endif %}>Reps</option><option value="time"{% if ex.duration_seconds %} selected{% endif %}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="{{ ex.duration_seconds if ex.duration_seconds else (ex.reps or '') }}" min="1" max="{% if ex.duration_seconds %}3600{% else %}100{% endif %}" inputmode="numeric"><span class="target-unit">{% if ex.duration_seconds %}sec{% endif %}</span></div></label>
       <label class="exercise-field load-field{% if ex.duration_seconds %} is-hidden{% endif %}"><span>Weight (kg)</span><input class="ex-weight" type="number" value="{{ ex.weight_kg if ex.weight_kg is not none else '' }}" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label>
       <label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="{{ ex.rest_seconds }}" min="0" max="600" step="5" inputmode="numeric"></label>
-      <button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove {{ ex.exercise_name }}" aria-label="Remove {{ ex.exercise_name }}">Remove</button>
+      <div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove {{ ex.exercise_name }}" aria-label="Remove {{ ex.exercise_name }}">Remove</button></div>
     </div>
   {% endfor %}
   </div>
@@ -74,7 +74,7 @@ function newExerciseRow(item){
   const timed=item.category==='PLANK'||/\bplank\b/i.test(item.label);
   const row=document.createElement('div');
   row.className='exercise-row';row.dataset.key=item.key;row.dataset.generic='false';
-  row.innerHTML=`<div class="exercise-identity"><span class="exercise-field-label">Exercise</span><div class="exercise-name-line"><strong class="exercise-name">${escapeHtml(item.label)}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div></div><label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="3" min="1" max="20" inputmode="numeric"></label><label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"${timed?'':' selected'}>Reps</option><option value="time"${timed?' selected':''}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="${timed?'30':'10'}" min="1" max="${timed?'3600':'100'}" inputmode="numeric"><span class="target-unit">${timed?'sec':''}</span></div></label><label class="exercise-field load-field${timed?' is-hidden':''}"><span>Weight (kg)</span><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label><label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"></label><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove ${escapeHtml(item.label)}" aria-label="Remove ${escapeHtml(item.label)}">Remove</button>`;
+  row.innerHTML=`<div class="exercise-identity"><span class="exercise-field-label">Exercise</span><div class="exercise-name-line"><strong class="exercise-name">${escapeHtml(item.label)}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div></div><label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="3" min="1" max="20" inputmode="numeric"></label><label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"${timed?'':' selected'}>Reps</option><option value="time"${timed?' selected':''}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="${timed?'30':'10'}" min="1" max="${timed?'3600':'100'}" inputmode="numeric"><span class="target-unit">${timed?'sec':''}</span></div></label><label class="exercise-field load-field${timed?' is-hidden':''}"><span>Weight (kg)</span><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label><label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"></label><div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove ${escapeHtml(item.label)}" aria-label="Remove ${escapeHtml(item.label)}">Remove</button></div>`;
   return row;
 }
 results.addEventListener('click',event=>{
@@ -105,6 +105,14 @@ async function approveProgram(){
   const saved=await Promise.all(sessionIds.map(saveSession));
   if(saved.every(Boolean)){document.getElementById('approve-form').submit();return}
   button.disabled=false;button.textContent='Save and approve program';
+}
+async function addSession(programId){
+  const button=document.getElementById('add-session-button');
+  button.disabled=true;button.textContent='Adding session…';
+  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST'});
+  if(response.ok){location.reload();return}
+  const body=await response.json().catch(()=>({}));
+  button.disabled=false;button.textContent=body.detail||'Could not add session';
 }
 </script>
 {% endblock %}

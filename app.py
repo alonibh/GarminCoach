@@ -1506,6 +1506,49 @@ def approve_program(program_id: int):
     return RedirectResponse(url="/program?view=active&approved=1", status_code=303)
 
 
+@app.post("/api/program/{program_id}/sessions")
+def add_program_session(program_id: int):
+    """Add an independent, empty strength session to an editable program."""
+    with get_session() as db:
+        program = db.get(TrainingProgram, program_id)
+        if not program or program.status not in {"draft", "active"}:
+            raise HTTPException(status_code=404, detail="Program not found")
+
+        sessions = (
+            db.query(ProgramSession)
+            .filter_by(program_id=program_id, session_role="coach_strength")
+            .order_by(ProgramSession.sequence_order.asc())
+            .all()
+        )
+        if len(sessions) >= 12:
+            raise HTTPException(status_code=422, detail="A program can have at most 12 sessions.")
+
+        existing_names = {session.name.casefold() for session in sessions}
+        number = 1
+        name = "Additional session"
+        while name.casefold() in existing_names:
+            number += 1
+            name = f"Additional session {number}"
+
+        added = ProgramSession(
+            program_id=program_id,
+            name=name,
+            sport_type="strength_training",
+            sequence_order=max((session.sequence_order for session in sessions), default=0) + 1,
+            focus_tags='["strength"]',
+            duration_min=60,
+            notes="",
+            session_role="coach_strength",
+            target_frequency=1,
+            is_addon=False,
+        )
+        db.add(added)
+        db.flush()
+        program.days_per_week = len(sessions) + 1
+        program.updated_at = datetime.now()
+        return JSONResponse({"id": added.id, "name": added.name})
+
+
 @app.post("/api/session/{session_id}/exercises")
 async def save_session_exercises(session_id: int, request: Request):
     """Full-replace the exercise list for a program session."""

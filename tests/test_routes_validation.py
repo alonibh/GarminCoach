@@ -324,6 +324,13 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "Review your program" in review.text
     assert "Save and approve program" in review.text
     assert "Save day" not in review.text
+    assert "Add additional session" in review.text
+
+    added = c.post(f"/api/program/{program_id}/sessions")
+    assert added.status_code == 200
+    assert added.json()["name"] == "Additional session"
+    with db_module.get_session() as s:
+        assert s.query(ProgramSession).filter_by(program_id=program_id).count() == 3
 
     approved = c.post(f"/program/{program_id}/approve", follow_redirects=False)
     assert approved.status_code == 303
