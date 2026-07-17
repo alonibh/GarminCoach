@@ -330,6 +330,53 @@ p { margin: 0 0 1rem; }
 
 .choice-grid.compact { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
 
+.routine-days-filter {
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.routine-days-filter legend {
+  margin-bottom: .55rem;
+  color: var(--muted);
+  font-size: .84rem;
+  font-weight: 600;
+}
+
+.routine-days-filter [role="group"] { display: flex; flex-wrap: wrap; gap: .45rem; }
+
+.filter-chip {
+  min-height: 34px;
+  padding: .35rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 600;
+}
+
+.filter-chip:hover,
+.filter-chip.is-selected { border-color: var(--accent); color: var(--fg); background: rgba(47, 129, 247, .11); }
+
+.routine-level-hint { margin: -.35rem 0 1rem; }
+
+.routine-experience-badge {
+  display: inline-block;
+  margin: .35rem 0 .05rem;
+  padding: .16rem .48rem;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.routine-experience-badge.beginner { background: rgba(63, 185, 80, .16); color: var(--success); }
+.routine-experience-badge.intermediate { background: rgba(47, 129, 247, .16); color: var(--accent-strong); }
+.routine-experience-badge.expert { background: rgba(210, 153, 34, .17); color: #e3b341; }
+
 .choice-card {
   position: relative;
   display: flex;

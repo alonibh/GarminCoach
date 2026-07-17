@@ -1,4 +1,4 @@
-from coach.programs import PROGRAMS, recommend_program
+from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
 from coach.exercises import GARMIN_EXERCISES
 
 
@@ -10,6 +10,11 @@ def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
         assert all(count >= 2 for count in program["region_exposures"].values())
         assert program["weekly_sets"]
+
+
+def test_plan_choices_include_clear_experience_badges():
+    assert {choice["experience_label"] for choice in PLAN_CHOICES} == {"Beginner", "Intermediate", "Expert"}
+    assert {choice["experience_slug"] for choice in PLAN_CHOICES} == {"beginner", "intermediate", "expert"}
 
 
 def test_source_program_is_not_trimmed_by_free_text_duration_limit():

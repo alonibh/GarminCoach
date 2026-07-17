@@ -10,6 +10,16 @@ from coach.exercises import CATALOG_VERSION, exercise_key, exercise_metadata
 ACSM_SOURCE_URL = "https://acsm.org/resistance-training-guidelines-update-2026/"
 ACSM_ATTRIBUTION = "Muscle & Strength routine reviewed against ACSM 2026 resistance-training guidance."
 
+# These labels describe the routine's demands—not an absolute judgment of the
+# athlete. They are assigned during catalog review from training age, weekly
+# frequency, exercise complexity, and total volume.
+EXPERIENCE_BADGES = {
+    "new": {"label": "Beginner", "slug": "beginner"},
+    "six_to_twenty_four_months": {"label": "Intermediate", "slug": "intermediate"},
+    "two_plus_years": {"label": "Expert", "slug": "expert"},
+    "returning": {"label": "Beginner", "slug": "beginner"},
+}
+
 
 def _exercise(
     name: str,
@@ -384,6 +394,8 @@ PLAN_CHOICES = tuple(
         "title": program["name"],
         "days": len(program["sessions"]),
         "experience": program["experience"],
+        "experience_label": EXPERIENCE_BADGES[program["experience"]]["label"],
+        "experience_slug": EXPERIENCE_BADGES[program["experience"]]["slug"],
         "description": program["volume_review"],
         "source_url": program["source_url"],
     }
