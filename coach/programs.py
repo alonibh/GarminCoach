@@ -396,6 +396,7 @@ PLAN_CHOICES = tuple(
         "experience": program["experience"],
         "experience_label": EXPERIENCE_BADGES[program["experience"]]["label"],
         "experience_slug": EXPERIENCE_BADGES[program["experience"]]["slug"],
+        "duration_min": max(session["duration_min"] for session in program["sessions"]),
         "source_details": (
             ("Main Goal", "Build Muscle"),
             ("Workout Type", "Full Body" if all(session["focus_tags"][0] == "full body" for session in program["sessions"]) else "Split"),

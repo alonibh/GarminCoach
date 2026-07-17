@@ -24,6 +24,7 @@ def test_plan_choices_include_original_routine_detail_badges():
         assert set(details) == expected_labels
         assert details["Training Level"] == choice["experience_label"]
         assert details["Days Per Week"] == f"{choice['days']} days"
+        assert details["Time Per Workout"] == f"{choice['duration_min']} min"
 
 
 def test_source_training_levels_are_reflected_in_catalog_badges():

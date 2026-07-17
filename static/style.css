@@ -377,11 +377,36 @@ p { margin: 0 0 1rem; }
 .routine-experience-badge.intermediate { background: rgba(47, 129, 247, .16); color: var(--accent-strong); }
 .routine-experience-badge.expert { background: rgba(210, 153, 34, .17); color: #e3b341; }
 
-.routine-source-details {
+.routine-card-highlights {
   display: flex;
   flex-wrap: wrap;
   gap: .35rem;
   margin: .45rem 0 .15rem;
+}
+
+.routine-quick-fact {
+  align-self: center;
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 650;
+}
+
+.routine-source-details { margin: .34rem 0 .16rem; }
+
+.routine-source-details summary {
+  width: max-content;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .74rem;
+  font-weight: 650;
+}
+
+.routine-source-details[open] summary { margin-bottom: .38rem; color: var(--fg); }
+
+.routine-source-details > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
 }
 
 .routine-detail-badge {
