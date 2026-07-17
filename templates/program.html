@@ -34,7 +34,7 @@
   <button class="btn-ghost add-ex-btn" type="button" onclick="openPicker(null, {{ s.id }})">+ Add exercise</button>
 </section>
 {% endfor %}
-<section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Choose the name Garmin Connect and your watch will show when this workout is scheduled.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">Add session</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
+<section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Name it, then choose its first exercise. It is created ready for Garmin.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="startAdditionalSession({{ program.id }})">Choose first exercise</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
 {% endif %}
 
 <div class="exercise-picker" id="exercise-picker" hidden>
@@ -53,7 +53,7 @@ const picker=document.getElementById('exercise-picker');
 const search=document.getElementById('exercise-search');
 const results=document.getElementById('picker-results');
 const pickerContext=document.getElementById('picker-context');
-let pickerRow=null,pickerSessionId=null,pickerMuscleGroup='',pickerCategory='',pickerCurrentKey='';
+let pickerRow=null,pickerSessionId=null,pickerMuscleGroup='',pickerCategory='',pickerCurrentKey='',pendingAdditionalSession=null;
 const muscleLabels={chest:'Chest',back:'Back',shoulders:'Shoulders',quads:'Quads',hamstrings_glutes:'Hamstrings & glutes',biceps:'Biceps',triceps:'Triceps',calves:'Calves',core:'Core',full_body:'Full body'};
 
 function openPicker(button,sessionId=null){
@@ -62,14 +62,14 @@ function openPicker(button,sessionId=null){
   pickerMuscleGroup=pickerRow?.dataset.muscleGroup||'';
   pickerCategory=pickerRow?.dataset.category||'';
   pickerCurrentKey=pickerRow?.dataset.key||'';
-  pickerContext.textContent=pickerRow?(pickerMuscleGroup?'Showing '+(muscleLabels[pickerMuscleGroup]||pickerMuscleGroup)+' alternatives':'No reliable muscle match is available for this exercise'):'Search the full exercise library';
+  pickerContext.textContent=pendingAdditionalSession?'Choose the first exercise for '+pendingAdditionalSession.name:pickerRow?(pickerMuscleGroup?'Showing '+(muscleLabels[pickerMuscleGroup]||pickerMuscleGroup)+' alternatives':'No reliable muscle match is available for this exercise'):'Search the full exercise library';
   picker.hidden=false;
   document.body.classList.add('picker-open');
   search.value='';
   renderResults('');
   requestAnimationFrame(()=>search.focus());
 }
-function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null;pickerMuscleGroup='';pickerCategory='';pickerCurrentKey=''}
+function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null;pickerMuscleGroup='';pickerCategory='';pickerCurrentKey='';pendingAdditionalSession=null}
 function renderResults(query){
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const seen=new Set();
@@ -90,6 +90,7 @@ function newExerciseRow(item){
 results.addEventListener('click',event=>{
   const choice=event.target.closest('.picker-result');if(!choice)return;
   const item={key:choice.dataset.key,category:choice.dataset.category,muscle_group:choice.dataset.muscleGroup,label:choice.dataset.label};
+  if(pendingAdditionalSession){const pending=pendingAdditionalSession;closePicker();createAdditionalSession(pending.programId,pending.name,item.key);return}
   if(pickerRow){
     const wasTimed=pickerRow.querySelector('.ex-target-type').value==='time',nowTimed=isTimedExercise(item);
     pickerRow.dataset.key=item.key;pickerRow.dataset.category=item.category;pickerRow.dataset.muscleGroup=item.muscle_group||'';pickerRow.dataset.generic='false';pickerRow.querySelector('.exercise-name').textContent=item.label;
@@ -122,14 +123,18 @@ async function approveProgram(){
   if(saved.every(Boolean)){document.getElementById('approve-form').submit();return}
   button.disabled=false;button.textContent='Save and approve program';
 }
-async function addSession(programId){
-  const button=document.getElementById('add-session-button');
+function startAdditionalSession(programId){
   const input=document.getElementById('additional-session-name');
   const status=document.getElementById('add-session-status');
   const name=input.value.trim();
   if(!name){status.textContent='Enter a session name.';input.focus();return}
+  pendingAdditionalSession={programId,name};openPicker(null);
+}
+async function createAdditionalSession(programId,name,firstExerciseKey){
+  const button=document.getElementById('add-session-button');
+  const status=document.getElementById('add-session-status');
   button.disabled=true;button.textContent='Adding session…';
-  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,first_exercise_key:firstExerciseKey})});
   if(response.ok){location.reload();return}
   const body=await response.json().catch(()=>({}));
   button.disabled=false;button.textContent='Add session';status.textContent=body.detail||'Could not add session';
