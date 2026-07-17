@@ -83,6 +83,7 @@ def test_program_workout_has_structured_warmup_and_generic_fallback(session):
     assert payload["workoutName"] == "🏋️ Workout A @ 18:00"
     steps = payload["workoutSegments"][0]["workoutSteps"]
     assert steps[0]["stepType"]["stepTypeKey"] == "warmup"
+    assert steps[0]["description"] == "Warm-up: Bench Press"
     assert steps[0]["endConditionValue"] == 12
     assert steps[0]["weightValue"] == 20
     generic = steps[-1]["workoutSteps"][0]

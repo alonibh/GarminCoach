@@ -1668,9 +1668,13 @@ async def save_session_exercises(session_id: int, request: Request):
             if weight is not None and not 0 <= weight <= 500:
                 raise HTTPException(status_code=422, detail="Weight must be between 0 and 500 kg.")
             defaults = warmup_defaults(name, meta, reps, duration, weight)
-            warmup_enabled = defaults["warmup_enabled"] if "warmup_enabled" not in row else bool(row["warmup_enabled"]) and defaults["warmup_enabled"]
-            warmup_reps = int(row["warmup_reps"]) if warmup_enabled and row.get("warmup_reps") not in (None, "") else defaults["warmup_reps"]
-            warmup_weight = float(row["warmup_weight_kg"]) if warmup_enabled and row.get("warmup_weight_kg") not in (None, "") else defaults["warmup_weight_kg"]
+            if "warmup_enabled" in row and bool(row["warmup_enabled"]) and (duration is not None or reps is None):
+                raise HTTPException(status_code=422, detail="Warm-up sets are available for rep-based strength exercises only.")
+            warmup_enabled = defaults["warmup_enabled"] if "warmup_enabled" not in row else bool(row["warmup_enabled"])
+            default_warmup_reps = (defaults["warmup_reps"] or min(reps, 8)) if reps else None
+            default_warmup_weight = defaults["warmup_weight_kg"] if defaults["warmup_weight_kg"] is not None else (round(weight * 0.5, 1) if weight else None)
+            warmup_reps = int(row["warmup_reps"]) if warmup_enabled and row.get("warmup_reps") not in (None, "") else default_warmup_reps
+            warmup_weight = float(row["warmup_weight_kg"]) if warmup_enabled and row.get("warmup_weight_kg") not in (None, "") else default_warmup_weight
             if warmup_reps is not None and not 1 <= warmup_reps <= 100:
                 raise HTTPException(status_code=422, detail="Warm-up reps must be between 1 and 100.")
             if warmup_weight is not None and not 0 <= warmup_weight <= 500:
