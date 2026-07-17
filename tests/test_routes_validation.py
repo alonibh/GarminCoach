@@ -361,6 +361,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "This remains editable" in active_page.text
     assert "Adjust plan" in active_page.text
     assert "Nothing scheduled yet" in active_page.text
+    assert "Reset to template" in active_page.text
 
     edited = c.post(
         f"/api/session/{session_id}/exercises",
@@ -399,6 +400,16 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         json=[{"exercise_name": "Made Up Exercise", "sets": 3, "reps": 10}],
     )
     assert rejected.status_code == 422
+
+    reset = c.post(f"/program/{program_id}/reset", follow_redirects=False)
+    assert reset.status_code == 303
+    assert reset.headers["location"] == "/program?view=active"
+    with db_module.get_session() as s:
+        sessions = s.query(ProgramSession).filter_by(program_id=program_id).order_by(ProgramSession.sequence_order).all()
+        assert [item.name for item in sessions] == ["Workout A", "Workout B"]
+        restored_names = [item.exercise_name for item in sessions[0].exercises]
+        assert "Rope Pressdown" not in restored_names
+        assert "Trap Bar Deadlift" in restored_names
 
 
 def test_onboarding_uses_matching_recent_weight_and_half_weight_warmup(client):

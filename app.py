@@ -96,6 +96,50 @@ def _apply_recent_strength_weights(session, proposal: dict) -> None:
                 exercise["warmup_weight_kg"] = round(weight * 0.5, 1)
 
 
+def _replace_program_sessions(session, program: TrainingProgram, routines: list[dict]) -> None:
+    """Replace editable program sessions with the source-template proposal."""
+    for existing in session.query(ProgramSession).filter_by(program_id=program.id).all():
+        session.delete(existing)
+    session.flush()
+    for order, routine in enumerate(routines, start=1):
+        planned_session = ProgramSession(
+            program_id=program.id,
+            name=routine["name"],
+            sport_type=routine["sport_type"],
+            sequence_order=order,
+            focus_tags=json.dumps(routine["focus_tags"]),
+            duration_min=routine["duration_min"],
+            notes=routine.get("notes", ""),
+            session_role=routine.get("session_role", "coach_strength"),
+            target_frequency=routine.get("target_frequency", 1),
+        )
+        session.add(planned_session)
+        session.flush()
+        for exercise_order, exercise in enumerate(routine["exercises"]):
+            session.add(
+                SessionExercise(
+                    program_session_id=planned_session.id,
+                    exercise_name=exercise["exercise_name"],
+                    exercise_key=exercise["exercise_key"],
+                    garmin_category=exercise["garmin_category"],
+                    garmin_name=exercise["garmin_name"],
+                    movement_pattern=exercise["movement_pattern"],
+                    is_generic=exercise["is_generic"],
+                    sets=exercise["sets"],
+                    reps=exercise["reps"],
+                    duration_seconds=exercise["duration_seconds"],
+                    rest_seconds=exercise["rest_seconds"],
+                    warmup_enabled=exercise["warmup_enabled"],
+                    warmup_reps=exercise["warmup_reps"],
+                    warmup_duration_seconds=exercise["warmup_duration_seconds"],
+                    warmup_weight_kg=exercise["warmup_weight_kg"],
+                    weight_kg=exercise.get("weight_kg"),
+                    order_index=exercise_order,
+                    notes=exercise.get("notes", ""),
+                )
+            )
+
+
 import hashlib
 import hmac
 import json
@@ -1348,43 +1392,7 @@ def post_onboarding(
         session.add(program)
         session.flush()
 
-        for order, routine in enumerate(proposal["sessions"], start=1):
-            planned_session = ProgramSession(
-                program_id=program.id,
-                name=routine["name"],
-                sport_type=routine["sport_type"],
-                sequence_order=order,
-                focus_tags=json.dumps(routine["focus_tags"]),
-                duration_min=routine["duration_min"],
-                notes=routine.get("notes", ""),
-                session_role=routine.get("session_role", "coach_strength"),
-                target_frequency=routine.get("target_frequency", 1),
-            )
-            session.add(planned_session)
-            session.flush()
-            for exercise_order, exercise in enumerate(routine["exercises"]):
-                session.add(
-                    SessionExercise(
-                        program_session_id=planned_session.id,
-                        exercise_name=exercise["exercise_name"],
-                        exercise_key=exercise["exercise_key"],
-                        garmin_category=exercise["garmin_category"],
-                        garmin_name=exercise["garmin_name"],
-                        movement_pattern=exercise["movement_pattern"],
-                        is_generic=exercise["is_generic"],
-                        sets=exercise["sets"],
-                        reps=exercise["reps"],
-                        duration_seconds=exercise["duration_seconds"],
-                        rest_seconds=exercise["rest_seconds"],
-                        warmup_enabled=exercise["warmup_enabled"],
-                        warmup_reps=exercise["warmup_reps"],
-                        warmup_duration_seconds=exercise["warmup_duration_seconds"],
-                        warmup_weight_kg=exercise["warmup_weight_kg"],
-                        weight_kg=exercise.get("weight_kg"),
-                        order_index=exercise_order,
-                        notes=exercise.get("notes", ""),
-                    )
-                )
+        _replace_program_sessions(session, program, proposal["sessions"])
         return RedirectResponse(url=f"/program?proposal={program.id}", status_code=303)
 
 
@@ -1546,6 +1554,37 @@ def approve_program(program_id: int):
         program.status = "active"
         program.updated_at = datetime.now()
     return RedirectResponse(url="/program?view=active&approved=1", status_code=303)
+
+
+@app.post("/program/{program_id}/reset")
+def reset_program_to_template(program_id: int):
+    """Restore a curated program's editable sessions from its source template."""
+    with get_session() as session:
+        program = session.get(TrainingProgram, program_id)
+        plan_keys = _json_list(program.goal_tags) if program else []
+        plan_key = plan_keys[0] if plan_keys else ""
+        template = PROGRAMS.get(plan_key)
+        if not program or not template or program.source_type != "curated_archetype":
+            raise HTTPException(status_code=404, detail="A curated template was not found for this program.")
+
+        session_ids = [item.id for item in program_sessions_for(session, program.id)]
+        if session_ids and session.query(PlannedSession).filter(PlannedSession.program_session_id.in_(session_ids)).first():
+            raise HTTPException(status_code=422, detail="Remove scheduled workouts before resetting this program.")
+
+        proposal = recommend_program(
+            plan_key=plan_key,
+            limitations="",
+            session_duration_min=max(item["duration_min"] for item in template["sessions"]),
+            history_summary="Program reset to the original curated template.",
+        )
+        _apply_recent_strength_weights(session, proposal)
+        _replace_program_sessions(session, program, proposal["sessions"])
+        program.name = proposal["name"]
+        program.days_per_week = proposal["days_per_week"]
+        program.rationale = proposal["rationale"]
+        program.updated_at = datetime.now()
+        target = f"/program?proposal={program.id}" if program.status == "draft" else "/program?view=active"
+    return RedirectResponse(url=target, status_code=303)
 
 
 @app.post("/api/program/{program_id}/sessions")
