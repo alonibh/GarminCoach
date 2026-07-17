@@ -364,7 +364,10 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
 
     edited = c.post(
         f"/api/session/{session_id}/exercises",
-        json=[{"exercise_name": "Goblet Squat", "sets": 2, "reps": 10, "weight_kg": 12}],
+        json=[{
+            "exercise_name": "Goblet Squat", "sets": 2, "reps": 10, "weight_kg": 12,
+            "warmup_enabled": True, "warmup_reps": 7, "warmup_weight_kg": 6,
+        }],
     )
     assert edited.status_code == 200
     with db_module.get_session() as s:
@@ -372,6 +375,9 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         exercise = s.query(SessionExercise).filter_by(program_session_id=session_id).one()
         assert exercise.exercise_name == "Goblet Squat"
         assert exercise.sets == 2
+        assert exercise.warmup_enabled is True
+        assert exercise.warmup_reps == 7
+        assert exercise.warmup_weight_kg == 6
 
     rejected = c.post(
         f"/api/session/{session_id}/exercises",
@@ -394,6 +400,7 @@ def test_onboarding_uses_matching_recent_weight_and_half_weight_warmup(client):
         exercise = s.query(SessionExercise).join(ProgramSession).filter(ProgramSession.program_id == program.id, SessionExercise.exercise_key == "SQUAT:BARBELL_FRONT_SQUAT").one()
         assert exercise.weight_kg == 60
         assert exercise.warmup_weight_kg == 30
+        assert exercise.warmup_reps == 6
 
 
 def test_selected_plan_overrides_history_recommendation(client):

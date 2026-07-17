@@ -21,6 +21,45 @@ EXPERIENCE_BADGES = {
 }
 
 
+_WARMUP_CATEGORIES = {
+    "SQUAT", "LUNGE", "DEADLIFT", "HIP_RAISE", "BENCH_PRESS",
+    "SHOULDER_PRESS", "PULL_UP", "ROW",
+}
+_BODYWEIGHT_WARMUP_MARKERS = (
+    "BODYWEIGHT", "PUSH UP", "PUSHUP", "PULL UP", "PULLUP", "CHIN UP",
+    "DIP", "INVERTED ROW", "BAND ",
+)
+
+
+def warmup_defaults(
+    name: str,
+    meta: dict[str, Any] | None,
+    reps: int | None,
+    duration_seconds: int | None = None,
+    weight_kg: float | None = None,
+) -> dict[str, Any]:
+    """Return one low-fatigue rehearsal set for eligible loaded compound exercises."""
+    normalized_name = name.upper()
+    eligible = bool(
+        meta
+        and meta.get("category") in _WARMUP_CATEGORIES
+        and not any(marker in normalized_name for marker in _BODYWEIGHT_WARMUP_MARKERS)
+    )
+    if not eligible:
+        return {
+            "warmup_enabled": False,
+            "warmup_reps": None,
+            "warmup_duration_seconds": None,
+            "warmup_weight_kg": None,
+        }
+    return {
+        "warmup_enabled": True,
+        "warmup_reps": min(reps, 8) if reps else 6,
+        "warmup_duration_seconds": None,
+        "warmup_weight_kg": round(weight_kg * 0.5, 1) if weight_kg else None,
+    }
+
+
 def _exercise(
     name: str,
     sets: int,
@@ -31,7 +70,7 @@ def _exercise(
     duration: int | None = None,
 ) -> dict[str, Any]:
     meta = exercise_metadata(name)
-    return {
+    exercise = {
         "exercise_name": name,
         "exercise_key": exercise_key(name),
         "sets": sets,
@@ -45,6 +84,8 @@ def _exercise(
         "is_generic": meta is None,
         "notes": notes,
     }
+    exercise.update(warmup_defaults(name, meta, reps, duration))
+    return exercise
 
 
 def _session(name: str, focus: str, exercises: list[dict], duration: int = 60) -> dict[str, Any]:
@@ -412,20 +453,6 @@ PLAN_CHOICES = tuple(
 PLAN_KEYS = {choice["key"] for choice in PLAN_CHOICES}
 
 
-def _add_warmups(sessions: list[dict]) -> None:
-    for session in sessions:
-        warmed: set[str] = set()
-        for exercise in session["exercises"]:
-            pattern = exercise["movement_pattern"]
-            enabled = pattern != "other" and pattern not in warmed
-            exercise["warmup_enabled"] = enabled
-            exercise["warmup_reps"] = exercise["reps"] if enabled else None
-            exercise["warmup_duration_seconds"] = exercise["duration_seconds"] if enabled else None
-            exercise["warmup_weight_kg"] = None
-            if enabled:
-                warmed.add(pattern)
-
-
 def recommend_program(
     *,
     plan_key: str,
@@ -437,7 +464,6 @@ def recommend_program(
         raise ValueError("Choose one of the available gym plans.")
     template = PROGRAMS[plan_key]
     sessions = deepcopy(template["sessions"])
-    _add_warmups(sessions)
     for session in sessions:
         session["session_role"] = "coach_strength"
         session["target_frequency"] = 1

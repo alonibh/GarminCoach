@@ -38,7 +38,7 @@ from coach.onboarding import (
     latest_draft_program,
     program_sessions_for,
 )
-from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
+from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program, warmup_defaults
 from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata, muscle_group_for
 from metrics.engine import acwr_label
 from sync.garmin_client import client
@@ -1648,7 +1648,6 @@ async def save_session_exercises(session_id: int, request: Request):
             if ex.is_generic
         }
         validated = []
-        warmed: set[str] = set()
         for row in rows:
             name = str(row.get("exercise_name", "")).strip()
             meta = exercise_metadata(str(row.get("exercise_key") or name))
@@ -1656,9 +1655,6 @@ async def save_session_exercises(session_id: int, request: Request):
             if not meta and not is_generic:
                 raise HTTPException(status_code=422, detail=f"Choose {name or 'each exercise'} from the Garmin exercise list.")
             pattern = (meta or {}).get("movement_pattern", str(row.get("movement_pattern") or "other"))
-            warmup_enabled = pattern != "other" and pattern not in warmed
-            if warmup_enabled:
-                warmed.add(pattern)
             weight = float(row["weight_kg"]) if row.get("weight_kg") not in (None, "") else None
             reps = int(row["reps"]) if row.get("reps") not in (None, "") else None
             duration = int(row["duration_seconds"]) if row.get("duration_seconds") not in (None, "") else None
@@ -1671,11 +1667,19 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Time must be between 1 and 3600 seconds.")
             if weight is not None and not 0 <= weight <= 500:
                 raise HTTPException(status_code=422, detail="Weight must be between 0 and 500 kg.")
-            validated.append((row, name, meta, is_generic, pattern, warmup_enabled, weight, reps, duration))
+            defaults = warmup_defaults(name, meta, reps, duration, weight)
+            warmup_enabled = defaults["warmup_enabled"] if "warmup_enabled" not in row else bool(row["warmup_enabled"]) and defaults["warmup_enabled"]
+            warmup_reps = int(row["warmup_reps"]) if warmup_enabled and row.get("warmup_reps") not in (None, "") else defaults["warmup_reps"]
+            warmup_weight = float(row["warmup_weight_kg"]) if warmup_enabled and row.get("warmup_weight_kg") not in (None, "") else defaults["warmup_weight_kg"]
+            if warmup_reps is not None and not 1 <= warmup_reps <= 100:
+                raise HTTPException(status_code=422, detail="Warm-up reps must be between 1 and 100.")
+            if warmup_weight is not None and not 0 <= warmup_weight <= 500:
+                raise HTTPException(status_code=422, detail="Warm-up weight must be between 0 and 500 kg.")
+            validated.append((row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_weight, weight, reps, duration))
 
         db.query(SessionExercise).filter_by(program_session_id=session_id).delete()
 
-        for i, (row, name, meta, is_generic, pattern, warmup_enabled, weight, reps, duration) in enumerate(validated):
+        for i, (row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_weight, weight, reps, duration) in enumerate(validated):
             ex = SessionExercise(
                 program_session_id=session_id,
                 exercise_name=(meta or {}).get("label", name),
@@ -1690,9 +1694,9 @@ async def save_session_exercises(session_id: int, request: Request):
                 weight_kg=weight,
                 rest_seconds=max(0, min(600, int(row.get("rest_seconds") or 60))),
                 warmup_enabled=warmup_enabled,
-                warmup_reps=reps if warmup_enabled else None,
-                warmup_duration_seconds=duration if warmup_enabled else None,
-                warmup_weight_kg=round(weight * 0.5, 1) if warmup_enabled and weight else None,
+                warmup_reps=warmup_reps if warmup_enabled else None,
+                warmup_duration_seconds=None,
+                warmup_weight_kg=warmup_weight if warmup_enabled else None,
                 order_index=i,
                 notes=str(row.get("notes", "")),
             )

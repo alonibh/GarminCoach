@@ -53,16 +53,17 @@ def test_source_program_is_not_trimmed_by_free_text_duration_limit():
     assert "not silently trimmed" in proposal["rationale"]
 
 
-def test_warmup_is_once_per_movement_pattern_with_matching_reps():
+def test_templates_include_one_low_fatigue_warmup_for_loaded_compounds():
     proposal = recommend_program(
         plan_key="full_body_2", limitations="",
         session_duration_min=90, history_summary="Recent history is sparse.",
     )
-    for routine in proposal["sessions"]:
-        warmed = [ex for ex in routine["exercises"] if ex["warmup_enabled"]]
-        assert len({ex["movement_pattern"] for ex in warmed}) == len(warmed)
-        assert all(ex["warmup_reps"] == ex["reps"] for ex in warmed)
-        assert all(ex["warmup_weight_kg"] is None for ex in warmed)
+    exercises = [exercise for routine in proposal["sessions"] for exercise in routine["exercises"]]
+    warmed = [exercise for exercise in exercises if exercise["warmup_enabled"]]
+    assert {exercise["exercise_name"] for exercise in warmed} >= {"Trap Bar Deadlift", "Military Press", "Lat Pull Down", "T Bar Row", "Front Squat", "Dumbbell Bench Press", "Cable Row"}
+    assert "Push Up" not in {exercise["exercise_name"] for exercise in warmed}
+    assert all(1 <= exercise["warmup_reps"] <= 8 for exercise in warmed)
+    assert all(exercise["warmup_weight_kg"] is None for exercise in warmed)
 
 
 def test_all_program_sessions_are_gym_only_and_undated():
