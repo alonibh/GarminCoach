@@ -118,12 +118,18 @@ def _primary_joint_system(region: str | None) -> str | None:
     }.get(region)
 
 
+def _is_direct_shoulder_compound(meta: dict[str, Any] | None) -> bool:
+    """A press directly loads the shoulders, unlike their stabilizing role in a bench press."""
+    return (meta or {}).get("category") == "SHOULDER_PRESS"
+
+
 def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
     """Apply the daily-anchor, cold-joint, flow, and 20-minute return rules."""
     touched_regions: set[str] = set()
     joint_touched_at: dict[str, int] = {}
     elapsed_seconds = 0
     previous_joint_systems: set[str] = set()
+    direct_shoulder_press_seen = False
     for index, exercise in enumerate(exercises):
         meta = exercise_metadata(exercise["exercise_name"])
         defaults = warmup_defaults(
@@ -138,6 +144,7 @@ def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
         is_new_major_region = region is not None and region not in touched_regions
         has_cold_joint = not (joint_systems & joint_touched_at.keys())
         is_back_to_back_flow = bool(joint_systems & previous_joint_systems)
+        is_first_direct_shoulder_press = _is_direct_shoulder_compound(meta) and not direct_shoulder_press_seen
         last_touched = joint_touched_at.get(primary_joint_system) if primary_joint_system else None
         is_long_break_return = bool(
             _is_heavy_compound(exercise)
@@ -145,13 +152,14 @@ def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
             and elapsed_seconds - last_touched >= 20 * 60
         )
         if can_warm_up and not is_back_to_back_flow and (
-            is_anchor or (is_new_major_region and has_cold_joint) or is_long_break_return
+            is_anchor or (is_new_major_region and has_cold_joint) or is_first_direct_shoulder_press or is_long_break_return
         ):
             exercise.update(defaults)
         exercise_end = elapsed_seconds + _estimated_exercise_seconds(exercise)
         touched_regions.update({region} if region else set())
         for system in joint_systems:
             joint_touched_at[system] = exercise_end
+        direct_shoulder_press_seen = direct_shoulder_press_seen or _is_direct_shoulder_compound(meta)
         previous_joint_systems = joint_systems
         elapsed_seconds = exercise_end
 

@@ -81,6 +81,19 @@ def test_templates_warm_the_first_isolation_for_a_new_major_region_only():
     assert not next(exercise for exercise in day_three if exercise["exercise_name"] == "Pulldown")["warmup_enabled"]
 
 
+def test_total_package_warmups_match_the_final_day_by_day_rules():
+    expected = [
+        {"Squat", "Dumbbell Bench Press", "Dumbbell Row", "Seated Dumbbell Press", "Lunge"},
+        {"Bench Press", "Leg Extension", "Pullup"},
+        {"Deadlift", "Incline Dumbbell Press", "Leg Press"},
+    ]
+    actual = [
+        {exercise["exercise_name"] for exercise in session["exercises"] if exercise["warmup_enabled"]}
+        for session in PROGRAMS["total_package_3"]["sessions"]
+    ]
+    assert actual == expected
+
+
 def test_long_break_return_to_a_heavy_compound_gets_one_warmup_set():
     session = _session("Test", "full body", [
         _exercise("Squat", 5, 5),
