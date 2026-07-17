@@ -21,17 +21,18 @@ EXPERIENCE_BADGES = {
 }
 
 
-# Compounds that can be a daily anchor, introduce a major muscle group, or
-# require a re-entry warm-up after a long gap. Single-joint work, arms, calves,
-# and core are intentionally excluded.
+# Only these compound categories qualify for the 20-minute return rule.
 _WARMUP_COMPOUND_CATEGORIES = {
     "SQUAT", "LUNGE", "DEADLIFT", "HIP_RAISE", "BENCH_PRESS",
     "SHOULDER_PRESS", "PULL_UP", "ROW",
 }
-_BODYWEIGHT_WARMUP_MARKERS = (
-    "BODYWEIGHT", "PUSH UP", "PUSHUP", "PULL UP", "PULLUP", "CHIN UP",
-    "DIP", "INVERTED ROW", "BAND ",
-)
+_MAJOR_REGION_BY_MUSCLE_GROUP = {
+    "quads": "lower_body",
+    "hamstrings_glutes": "lower_body",
+    "chest": "chest",
+    "back": "back",
+    "shoulders": "shoulders",
+}
 
 
 def warmup_defaults(
@@ -41,14 +42,8 @@ def warmup_defaults(
     duration_seconds: int | None = None,
     weight_kg: float | None = None,
 ) -> dict[str, Any]:
-    """Return the editable warm-up defaults for a loaded compound exercise."""
-    normalized_name = name.upper()
-    eligible = bool(
-        meta
-        and meta.get("category") in _WARMUP_COMPOUND_CATEGORIES
-        and not any(marker in normalized_name for marker in _BODYWEIGHT_WARMUP_MARKERS)
-    )
-    if not eligible:
+    """Return a rep-based warm-up's editable defaults, including bodyweight work."""
+    if reps is None or duration_seconds is not None:
         return {
             "warmup_enabled": False,
             "warmup_reps": None,
@@ -80,34 +75,52 @@ def _estimated_exercise_seconds(exercise: dict[str, Any]) -> int:
 
 
 def _is_heavy_compound(exercise: dict[str, Any]) -> bool:
-    return bool(exercise["sets"] >= 4 and (exercise["reps"] or 0) <= 10)
+    meta = exercise_metadata(exercise["exercise_name"])
+    return bool(
+        meta
+        and meta.get("category") in _WARMUP_COMPOUND_CATEGORIES
+        and exercise["sets"] >= 4
+        and (exercise["reps"] or 0) <= 10
+    )
+
+
+def _major_region(meta: dict[str, Any] | None, exercise_name: str) -> str | None:
+    # Garmin's catalog currently represents plain "Leg Extension" as a banded
+    # exercise. Preserve the source routine's actual lower-body joint context
+    # for warm-up planning rather than inheriting that catalog category.
+    normalized_name = exercise_name.upper()
+    if "LEG EXTENSION" in normalized_name or "LEG CURL" in normalized_name:
+        return "lower_body"
+    return _MAJOR_REGION_BY_MUSCLE_GROUP.get((meta or {}).get("muscle_group"))
 
 
 def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
-    """Apply the daily-anchor, new-muscle, and 20-minute return warm-up rules."""
+    """Apply the daily-anchor, cold-joint, flow, and 20-minute return rules."""
     touched_at: dict[str, int] = {}
     elapsed_seconds = 0
+    previous_region: str | None = None
     for index, exercise in enumerate(exercises):
         meta = exercise_metadata(exercise["exercise_name"])
         defaults = warmup_defaults(
             exercise["exercise_name"], meta, exercise["reps"], exercise["duration_seconds"], exercise["weight_kg"],
         )
         _without_warmup(exercise)
-        muscle_group = (meta or {}).get("muscle_group")
-        is_compound = defaults["warmup_enabled"]
+        region = _major_region(meta, exercise["exercise_name"])
+        can_warm_up = defaults["warmup_enabled"]
         is_anchor = index == 0
-        is_new_major_group = is_compound and muscle_group not in touched_at
-        last_touched = touched_at.get(muscle_group) if muscle_group else None
+        is_new_major_region = region is not None and region not in touched_at
+        is_back_to_back_flow = region is not None and region == previous_region
+        last_touched = touched_at.get(region) if region else None
         is_long_break_return = bool(
-            is_compound
-            and _is_heavy_compound(exercise)
+            _is_heavy_compound(exercise)
             and last_touched is not None
             and elapsed_seconds - last_touched >= 20 * 60
         )
-        if is_compound and (is_anchor or is_new_major_group or is_long_break_return):
+        if can_warm_up and not is_back_to_back_flow and (is_anchor or is_new_major_region or is_long_break_return):
             exercise.update(defaults)
-        if muscle_group:
-            touched_at[muscle_group] = elapsed_seconds + _estimated_exercise_seconds(exercise)
+        if region:
+            touched_at[region] = elapsed_seconds + _estimated_exercise_seconds(exercise)
+        previous_region = region
         elapsed_seconds += _estimated_exercise_seconds(exercise)
 
 

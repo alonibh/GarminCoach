@@ -53,26 +53,28 @@ def test_source_program_is_not_trimmed_by_free_text_duration_limit():
     assert "not silently trimmed" in proposal["rationale"]
 
 
-def test_templates_follow_daily_anchor_and_new_major_muscle_warmup_rules():
+def test_templates_follow_daily_anchor_and_cold_joint_warmup_rules():
     proposal = recommend_program(
         plan_key="full_body_2", limitations="",
         session_duration_min=90, history_summary="Recent history is sparse.",
     )
     exercises = [exercise for routine in proposal["sessions"] for exercise in routine["exercises"]]
     warmed = [exercise for exercise in exercises if exercise["warmup_enabled"]]
-    assert {exercise["exercise_name"] for exercise in warmed} >= {"Trap Bar Deadlift", "Military Press", "Lat Pull Down", "Front Squat", "Dumbbell Bench Press"}
+    assert {exercise["exercise_name"] for exercise in warmed} >= {"Trap Bar Deadlift", "Military Press", "Lat Pull Down", "Front Squat", "Dumbbell Bench Press", "Chin Up"}
     assert "T Bar Row" not in {exercise["exercise_name"] for exercise in warmed}
     assert "Cable Row" not in {exercise["exercise_name"] for exercise in warmed}
-    assert "Push Up" not in {exercise["exercise_name"] for exercise in warmed}
     assert all(1 <= exercise["warmup_reps"] <= 8 for exercise in warmed)
     assert all(exercise["warmup_weight_kg"] is None for exercise in warmed)
+    assert PROGRAMS["upper_lower_full_3"]["sessions"][0]["exercises"][0]["warmup_enabled"] is True
 
 
-def test_templates_skip_warmups_for_isolation_exercises_and_small_muscle_groups():
+def test_templates_warm_the_first_isolation_for_a_new_major_region_only():
     day_two = PROGRAMS["total_package_3"]["sessions"][1]["exercises"]
     enabled = {exercise["exercise_name"] for exercise in day_two if exercise["warmup_enabled"]}
-    assert enabled == {"Bench Press"}
-    assert not next(exercise for exercise in day_two if exercise["exercise_name"] == "Leg Extension")["warmup_enabled"]
+    assert enabled == {"Bench Press", "Leg Extension", "Pullup", "Seated Lateral Raise"}
+    assert next(exercise for exercise in day_two if exercise["exercise_name"] == "Leg Extension")["warmup_enabled"]
+    assert not next(exercise for exercise in day_two if exercise["exercise_name"] == "Leg Curl")["warmup_enabled"]
+    assert not next(exercise for exercise in day_two if exercise["exercise_name"] == "Dumbbell Hammer Curls")["warmup_enabled"]
 
 
 def test_long_break_return_to_a_heavy_compound_gets_one_warmup_set():
