@@ -94,6 +94,11 @@ def test_total_package_warmups_match_the_final_day_by_day_rules():
     assert actual == expected
 
 
+def test_first_direct_chest_press_warms_up_even_if_garmin_labels_dips_as_triceps():
+    workout = PROGRAMS["ms_full_body_3"]["sessions"][1]["exercises"]
+    assert next(exercise for exercise in workout if exercise["exercise_name"] == "Dips")["warmup_enabled"] is True
+
+
 def test_long_break_return_to_a_heavy_compound_gets_one_warmup_set():
     session = _session("Test", "full body", [
         _exercise("Squat", 5, 5),

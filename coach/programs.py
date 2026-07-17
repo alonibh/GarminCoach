@@ -118,9 +118,14 @@ def _primary_joint_system(region: str | None) -> str | None:
     }.get(region)
 
 
-def _is_direct_shoulder_compound(meta: dict[str, Any] | None) -> bool:
-    """A press directly loads the shoulders, unlike their stabilizing role in a bench press."""
-    return (meta or {}).get("category") == "SHOULDER_PRESS"
+def _direct_press_region(meta: dict[str, Any] | None, exercise_name: str) -> str | None:
+    """Return the primary region for direct presses, distinct from stabilization."""
+    category = (meta or {}).get("category")
+    if category == "SHOULDER_PRESS":
+        return "shoulders"
+    if category in {"BENCH_PRESS", "PUSH_UP"} or "DIP" in exercise_name.upper():
+        return "chest"
+    return None
 
 
 def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
@@ -129,7 +134,7 @@ def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
     joint_touched_at: dict[str, int] = {}
     elapsed_seconds = 0
     previous_joint_systems: set[str] = set()
-    direct_shoulder_press_seen = False
+    direct_press_regions_seen: set[str] = set()
     for index, exercise in enumerate(exercises):
         meta = exercise_metadata(exercise["exercise_name"])
         defaults = warmup_defaults(
@@ -144,7 +149,8 @@ def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
         is_new_major_region = region is not None and region not in touched_regions
         has_cold_joint = not (joint_systems & joint_touched_at.keys())
         is_back_to_back_flow = bool(joint_systems & previous_joint_systems)
-        is_first_direct_shoulder_press = _is_direct_shoulder_compound(meta) and not direct_shoulder_press_seen
+        direct_press_region = _direct_press_region(meta, exercise["exercise_name"])
+        is_first_direct_press = direct_press_region is not None and direct_press_region not in direct_press_regions_seen
         last_touched = joint_touched_at.get(primary_joint_system) if primary_joint_system else None
         is_long_break_return = bool(
             _is_heavy_compound(exercise)
@@ -152,14 +158,15 @@ def _apply_session_warmups(exercises: list[dict[str, Any]]) -> None:
             and elapsed_seconds - last_touched >= 20 * 60
         )
         if can_warm_up and not is_back_to_back_flow and (
-            is_anchor or (is_new_major_region and has_cold_joint) or is_first_direct_shoulder_press or is_long_break_return
+            is_anchor or (is_new_major_region and has_cold_joint) or is_first_direct_press or is_long_break_return
         ):
             exercise.update(defaults)
         exercise_end = elapsed_seconds + _estimated_exercise_seconds(exercise)
         touched_regions.update({region} if region else set())
         for system in joint_systems:
             joint_touched_at[system] = exercise_end
-        direct_shoulder_press_seen = direct_shoulder_press_seen or _is_direct_shoulder_compound(meta)
+        if direct_press_region:
+            direct_press_regions_seen.add(direct_press_region)
         previous_joint_systems = joint_systems
         elapsed_seconds = exercise_end
 
