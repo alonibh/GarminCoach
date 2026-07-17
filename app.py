@@ -1408,6 +1408,16 @@ def get_program_page(
         current_program = draft or active
         sessions = program_sessions_for(session, current_program.id) if current_program else []
         strength_sessions = [item for item in sessions if item.session_role == "coach_strength"]
+        # Additional sessions created before ``is_custom`` was introduced were
+        # appended after the curated template sessions. Mark them on first view
+        # so they gain the same removable-session controls as new additions.
+        plan_keys = _json_list(current_program.goal_tags) if current_program else []
+        template = PROGRAMS.get(plan_keys[0]) if plan_keys else None
+        template_session_count = len(template["sessions"]) if template else 0
+        if template_session_count:
+            for ps in strength_sessions:
+                if ps.sequence_order > template_session_count and not ps.is_custom:
+                    ps.is_custom = True
 
         # Load exercises for each session, keyed by session id
         exercises_by_session: dict[int, list] = {}
@@ -1594,7 +1604,12 @@ def delete_custom_program_session(program_id: int, session_id: int):
     """Remove an unscheduled athlete-added session from a program."""
     with get_session() as db:
         ps = db.get(ProgramSession, session_id)
-        if not ps or ps.program_id != program_id or not ps.is_custom:
+        if not ps or ps.program_id != program_id:
+            raise HTTPException(status_code=404, detail="Additional session not found")
+        plan_keys = _json_list(ps.program.goal_tags) if ps.program else []
+        template = PROGRAMS.get(plan_keys[0]) if plan_keys else None
+        is_legacy_custom = bool(template and ps.sequence_order > len(template["sessions"]))
+        if not ps.is_custom and not is_legacy_custom:
             raise HTTPException(status_code=404, detail="Additional session not found")
         if db.query(PlannedSession).filter_by(program_session_id=session_id, status="approved").first():
             raise HTTPException(status_code=422, detail="This session is already scheduled. Remove its scheduled workout first.")
