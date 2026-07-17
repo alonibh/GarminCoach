@@ -322,7 +322,8 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     review = c.get(f"/program?proposal={program_id}")
     assert review.status_code == 200
     assert "Review your program" in review.text
-    assert "Approve this program" in review.text
+    assert "Save and approve program" in review.text
+    assert "Save day" not in review.text
 
     approved = c.post(f"/program/{program_id}/approve", follow_redirects=False)
     assert approved.status_code == 303
