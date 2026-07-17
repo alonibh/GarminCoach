@@ -135,13 +135,13 @@ def test_onboarding_renders_history_defaults(client):
     assert 'data-days-filter="2"' in resp.text
     assert 'data-plan-days="2"' in resp.text
     assert '/static/onboarding.js?v=' in resp.text
-    assert 'routine-experience-badge beginner' in resp.text
-    assert 'routine-experience-badge intermediate' in resp.text
-    assert 'routine-experience-badge expert' in resp.text
-    for badge_label in ("Main Goal", "Workout Type", "Training Level", "Days Per Week", "Time Per Workout"):
+    for badge_label in ("Goal", "Type", "Level", "Days", "Time"):
         assert badge_label in resp.text
     assert 'class="routine-source-details"' in resp.text
-    assert 'Source details</summary>' in resp.text
+    assert 'Source details</summary>' not in resp.text
+    assert 'routine-detail-fact beginner' in resp.text
+    assert 'routine-detail-fact intermediate' in resp.text
+    assert 'routine-detail-fact expert' in resp.text
     assert "Recent training context · last 90 days" in resp.text
     assert "Recent activity mix · last 90 days" in resp.text
     assert "Strength focused" in resp.text
