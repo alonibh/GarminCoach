@@ -325,6 +325,8 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "Save and approve program" in review.text
     assert "Save day" not in review.text
     assert "Add additional session" in review.text
+    assert 'data-muscle-group="' in review.text
+    assert "No matching same-muscle exercises" in review.text
 
     added = c.post(f"/api/program/{program_id}/sessions")
     assert added.status_code == 200

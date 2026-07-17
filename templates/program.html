@@ -21,7 +21,7 @@
   </div>
   <div class="exercise-list" id="tbody-{{ s.id }}">
   {% for ex in exercises_by_session.get(s.id, []) %}
-    <div class="exercise-row" data-key="{{ ex.exercise_key }}" data-generic="{{ 'true' if ex.is_generic else 'false' }}">
+    <div class="exercise-row" data-key="{{ ex.exercise_key }}" data-category="{{ ex.garmin_category or '' }}" data-muscle-group="{{ ex.muscle_group or '' }}" data-generic="{{ 'true' if ex.is_generic else 'false' }}">
       <div class="exercise-identity"><span class="exercise-field-label">Exercise</span><div class="exercise-name-line"><strong class="exercise-name">{{ ex.exercise_name }}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div></div>
       <label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="{{ ex.sets or '' }}" min="1" max="20" inputmode="numeric"></label>
       <label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"{% if not ex.duration_seconds %} selected{% endif %}>Reps</option><option value="time"{% if ex.duration_seconds %} selected{% endif %}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="{{ ex.duration_seconds if ex.duration_seconds else (ex.reps or '') }}" min="1" max="{% if ex.duration_seconds %}3600{% else %}100{% endif %}" inputmode="numeric"><span class="target-unit">{% if ex.duration_seconds %}sec{% endif %}</span></div></label>
@@ -39,7 +39,7 @@
 <div class="exercise-picker" id="exercise-picker" hidden>
   <button class="picker-backdrop" type="button" aria-label="Close exercise search" onclick="closePicker()"></button>
   <section class="picker-dialog" role="dialog" aria-modal="true" aria-labelledby="picker-title">
-    <div class="picker-header"><div><span class="eyebrow">Exercise library</span><h2 id="picker-title">Choose an exercise</h2></div><button class="picker-close" type="button" onclick="closePicker()" aria-label="Close">×</button></div>
+    <div class="picker-header"><div><span class="eyebrow">Exercise library</span><h2 id="picker-title">Choose an exercise</h2><p class="picker-context muted" id="picker-context"></p></div><button class="picker-close" type="button" onclick="closePicker()" aria-label="Close">×</button></div>
     <label class="picker-search-label" for="exercise-search">Search by exercise name</label>
     <input id="exercise-search" type="search" placeholder="Try “bench press” or “plank”" autocomplete="off">
     <div class="picker-results" id="picker-results" role="listbox"></div>
@@ -51,44 +51,56 @@ const exerciseCatalog={{ exercise_catalog | tojson }};
 const picker=document.getElementById('exercise-picker');
 const search=document.getElementById('exercise-search');
 const results=document.getElementById('picker-results');
-let pickerRow=null,pickerSessionId=null;
+const pickerContext=document.getElementById('picker-context');
+let pickerRow=null,pickerSessionId=null,pickerMuscleGroup='',pickerCategory='',pickerCurrentKey='';
+const muscleLabels={chest:'Chest',back:'Back',shoulders:'Shoulders',quads:'Quads',hamstrings_glutes:'Hamstrings & glutes',biceps:'Biceps',triceps:'Triceps',calves:'Calves',core:'Core',full_body:'Full body'};
 
 function openPicker(button,sessionId=null){
   pickerRow=button?button.closest('.exercise-row'):null;
   pickerSessionId=sessionId;
+  pickerMuscleGroup=pickerRow?.dataset.muscleGroup||'';
+  pickerCategory=pickerRow?.dataset.category||'';
+  pickerCurrentKey=pickerRow?.dataset.key||'';
+  pickerContext.textContent=pickerRow?(pickerMuscleGroup?'Showing '+(muscleLabels[pickerMuscleGroup]||pickerMuscleGroup)+' alternatives':'No reliable muscle match is available for this exercise'):'Search the full exercise library';
   picker.hidden=false;
   document.body.classList.add('picker-open');
   search.value='';
   renderResults('');
   requestAnimationFrame(()=>search.focus());
 }
-function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null}
+function closePicker(){picker.hidden=true;document.body.classList.remove('picker-open');pickerRow=null;pickerSessionId=null;pickerMuscleGroup='';pickerCategory='';pickerCurrentKey=''}
 function renderResults(query){
   const words=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const seen=new Set();
-  const matches=exerciseCatalog.filter(item=>words.every(word=>item.label.toLowerCase().includes(word))).filter(item=>{const name=item.label.toLowerCase();if(seen.has(name))return false;seen.add(name);return true}).slice(0,40);
-  results.innerHTML=matches.length?matches.map(item=>`<button type="button" class="picker-result" data-key="${escapeHtml(item.key)}" data-category="${escapeHtml(item.category)}" data-label="${escapeHtml(item.label)}" role="option"><span>${escapeHtml(item.label)}</span></button>`).join(''):'<p class="picker-empty">No matching exercises. Try a shorter search.</p>';
+  const pool=(pickerRow?exerciseCatalog.filter(item=>pickerMuscleGroup&&item.muscle_group===pickerMuscleGroup&&item.key!==pickerCurrentKey):exerciseCatalog).slice();
+  pool.sort((a,b)=>Number(b.category===pickerCategory)-Number(a.category===pickerCategory)||a.label.localeCompare(b.label));
+  const matches=pool.filter(item=>words.every(word=>item.label.toLowerCase().includes(word))).filter(item=>{const name=item.label.toLowerCase();if(seen.has(name))return false;seen.add(name);return true}).slice(0,40);
+  const emptyMessage=pickerRow&&!pickerMuscleGroup?'This exercise does not have enough muscle information for a safe replacement.':'No matching same-muscle exercises. Try a shorter search.';
+  results.innerHTML=matches.length?matches.map(item=>`<button type="button" class="picker-result" data-key="${escapeHtml(item.key)}" data-category="${escapeHtml(item.category)}" data-muscle-group="${escapeHtml(item.muscle_group||'')}" data-label="${escapeHtml(item.label)}" role="option"><span>${escapeHtml(item.label)}</span></button>`).join(''):`<p class="picker-empty">${emptyMessage}</p>`;
 }
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]))}
 function newExerciseRow(item){
-  const timed=item.category==='PLANK'||/\bplank\b/i.test(item.label);
+  const timed=isTimedExercise(item);
   const row=document.createElement('div');
-  row.className='exercise-row';row.dataset.key=item.key;row.dataset.generic='false';
+  row.className='exercise-row';row.dataset.key=item.key;row.dataset.category=item.category;row.dataset.muscleGroup=item.muscle_group||'';row.dataset.generic='false';
   row.innerHTML=`<div class="exercise-identity"><span class="exercise-field-label">Exercise</span><div class="exercise-name-line"><strong class="exercise-name">${escapeHtml(item.label)}</strong><button class="exercise-replace" type="button" onclick="openPicker(this)">Replace</button></div></div><label class="exercise-field"><span>Sets</span><input class="ex-sets" type="number" value="3" min="1" max="20" inputmode="numeric"></label><label class="exercise-field target-field"><span>Target</span><div class="target-control"><span class="target-select"><select class="ex-target-type" onchange="changeTargetType(this)"><option value="reps"${timed?'':' selected'}>Reps</option><option value="time"${timed?' selected':''}>Time</option></select><span class="target-chevron" aria-hidden="true"></span></span><input class="ex-target" type="number" value="${timed?'30':'10'}" min="1" max="${timed?'3600':'100'}" inputmode="numeric"><span class="target-unit">${timed?'sec':''}</span></div></label><label class="exercise-field load-field${timed?' is-hidden':''}"><span>Weight (kg)</span><input class="ex-weight" type="number" min="0" max="500" step="0.5" placeholder="Optional" inputmode="decimal"></label><label class="exercise-field"><span>Rest (sec)</span><input class="ex-rest" type="number" value="60" min="0" max="600" step="5" inputmode="numeric"></label><div class="exercise-actions"><span>Action</span><button class="btn-icon btn-danger remove-exercise" type="button" onclick="this.closest('.exercise-row').remove()" title="Remove ${escapeHtml(item.label)}" aria-label="Remove ${escapeHtml(item.label)}">Remove</button></div>`;
   return row;
 }
 results.addEventListener('click',event=>{
   const choice=event.target.closest('.picker-result');if(!choice)return;
-  const item={key:choice.dataset.key,category:choice.dataset.category,label:choice.dataset.label};
+  const item={key:choice.dataset.key,category:choice.dataset.category,muscle_group:choice.dataset.muscleGroup,label:choice.dataset.label};
   if(pickerRow){
-    pickerRow.dataset.key=item.key;pickerRow.dataset.generic='false';pickerRow.querySelector('.exercise-name').textContent=item.label;
+    const wasTimed=pickerRow.querySelector('.ex-target-type').value==='time',nowTimed=isTimedExercise(item);
+    pickerRow.dataset.key=item.key;pickerRow.dataset.category=item.category;pickerRow.dataset.muscleGroup=item.muscle_group||'';pickerRow.dataset.generic='false';pickerRow.querySelector('.exercise-name').textContent=item.label;
     pickerRow.querySelector('.remove-exercise').setAttribute('aria-label','Remove '+item.label);
-    if(item.category==='PLANK'||/\bplank\b/i.test(item.label)){const type=pickerRow.querySelector('.ex-target-type');type.value='time';changeTargetType(type)}
+    pickerRow.querySelector('.ex-weight').value='';
+    if(wasTimed!==nowTimed){const type=pickerRow.querySelector('.ex-target-type');type.value=nowTimed?'time':'reps';pickerRow.querySelector('.ex-target').value=nowTimed?'30':'10';changeTargetType(type)}
   }else{document.getElementById('tbody-'+pickerSessionId).append(newExerciseRow(item))}
   closePicker();
 });
 search.addEventListener('input',()=>renderResults(search.value));
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!picker.hidden)closePicker()});
+function isTimedExercise(item){return item.category==='PLANK'||/\bplank\b/i.test(item.label)}
 function changeTargetType(select){const row=select.closest('.exercise-row'),timed=select.value==='time',target=row.querySelector('.ex-target'),load=row.querySelector('.load-field');target.max=timed?3600:100;row.querySelector('.target-unit').textContent=timed?'sec':'';load.classList.toggle('is-hidden',timed);if(timed)row.querySelector('.ex-weight').value=''}
 function setAllRest(sessionId){const value=document.getElementById('day-rest-'+sessionId).value||60;document.querySelectorAll('#tbody-'+sessionId+' .ex-rest').forEach(input=>input.value=value)}
 async function saveSession(sessionId){

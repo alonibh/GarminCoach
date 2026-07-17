@@ -1,5 +1,5 @@
 from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
-from coach.exercises import GARMIN_EXERCISES
+from coach.exercises import GARMIN_EXERCISES, muscle_group_for
 
 
 def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
@@ -72,3 +72,22 @@ def test_total_package_uses_sixty_second_default_rest():
     ]
     assert exercises
     assert {exercise["rest_seconds"] for exercise in exercises} == {60}
+
+
+def test_every_curated_exercise_has_a_primary_muscle_group():
+    missing = [
+        exercise["exercise_name"]
+        for program in PROGRAMS.values()
+        for routine in program["sessions"]
+        for exercise in routine["exercises"]
+        if not muscle_group_for(exercise["exercise_key"] or exercise["exercise_name"], exercise["movement_pattern"])
+    ]
+    assert missing == []
+
+
+def test_primary_muscle_groups_cover_close_and_cross_category_alternatives():
+    assert muscle_group_for("BENCH_PRESS:BARBELL_BENCH_PRESS") == "chest"
+    assert muscle_group_for("FLYE:DUMBBELL_FLYE") == "chest"
+    assert muscle_group_for("ROW:SEATED_CABLE_ROW") == "back"
+    assert muscle_group_for("Seated Dumbbell Press") == "shoulders"
+    assert muscle_group_for("Seated Leg Curl") == "hamstrings_glutes"

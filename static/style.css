@@ -1559,6 +1559,7 @@ body.picker-open { overflow: hidden; }
 .picker-dialog { position: relative; display: flex; flex-direction: column; width: min(600px, 100%); max-height: min(680px, calc(100vh - 2rem)); padding: 1.5rem; border: 1px solid var(--border); border-radius: 18px; background: var(--card); box-shadow: 0 24px 80px rgba(0, 0, 0, .45); }
 .picker-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .picker-header h2 { font-size: 1.25rem; }
+.picker-context { margin: -.35rem 0 .85rem; }
 .picker-close { width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--fg); font-size: 1.3rem; cursor: pointer; }
 .picker-search-label { margin-bottom: .4rem; }
 #exercise-search { flex: 0 0 auto; }

@@ -39,7 +39,7 @@ from coach.onboarding import (
     program_sessions_for,
 )
 from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program
-from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata
+from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata, muscle_group_for
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
@@ -1425,6 +1425,8 @@ def get_program_page(
                     "exercise_key": ex.exercise_key,
                     "garmin_category": ex.garmin_category,
                     "garmin_name": ex.garmin_name,
+                    "movement_pattern": ex.movement_pattern,
+                    "muscle_group": muscle_group_for(ex.exercise_key or ex.exercise_name, ex.movement_pattern),
                     "is_generic": ex.is_generic,
                     "sets": ex.sets,
                     "reps": ex.reps,
@@ -1496,6 +1498,17 @@ def approve_program(program_id: int):
         program = session.get(TrainingProgram, program_id)
         if not program or program.status != "draft":
             raise HTTPException(status_code=404, detail="Program proposal not found")
+        incomplete = [
+            planned.name
+            for planned in program_sessions_for(session, program_id)
+            if planned.session_role == "coach_strength"
+            and not session.query(SessionExercise).filter_by(program_session_id=planned.id).first()
+        ]
+        if incomplete:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Add at least one exercise to: {', '.join(incomplete)}.",
+            )
         for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
             existing.active = False
             existing.status = "archived"
@@ -1507,8 +1520,19 @@ def approve_program(program_id: int):
 
 
 @app.post("/api/program/{program_id}/sessions")
-def add_program_session(program_id: int):
+async def add_program_session(program_id: int, request: Request):
     """Add an independent, empty strength session to an editable program."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw_name = str(body.get("name", "")) if isinstance(body, dict) else ""
+    name = " ".join(raw_name.split())
+    if not name:
+        raise HTTPException(status_code=422, detail="Enter a session name.")
+    if len(name) > 80:
+        raise HTTPException(status_code=422, detail="Session names must be 80 characters or fewer.")
+
     with get_session() as db:
         program = db.get(TrainingProgram, program_id)
         if not program or program.status not in {"draft", "active"}:
@@ -1524,11 +1548,8 @@ def add_program_session(program_id: int):
             raise HTTPException(status_code=422, detail="A program can have at most 12 sessions.")
 
         existing_names = {session.name.casefold() for session in sessions}
-        number = 1
-        name = "Additional session"
-        while name.casefold() in existing_names:
-            number += 1
-            name = f"Additional session {number}"
+        if name.casefold() in existing_names:
+            raise HTTPException(status_code=422, detail="That session name is already in use.")
 
         added = ProgramSession(
             program_id=program_id,
