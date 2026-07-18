@@ -85,12 +85,13 @@ def _bound_session(session):
 def test_dashboard_hides_readiness_when_today_is_unready(session, monkeypatch):
     import app as app_module
 
-    today = date.today()
+    today = date(2026, 7, 19)
     yesterday = today - timedelta(days=1)
     session.add(DailyMetrics(day=yesterday, readiness=72, acute_load=10, chronic_load=10, acwr=1.0))
     session.add(DailyMetrics(day=today, readiness=18, acute_load=5, chronic_load=10, acwr=0.5))
     session.commit()
     monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(app_module, "get_local_date", lambda: today)
     monkeypatch.setattr(app_module, "_overnight_metrics_ready", lambda session: False)
 
     readiness, acwr = app_module._readiness_tiles()
@@ -104,7 +105,7 @@ def test_dashboard_hides_readiness_when_today_is_unready(session, monkeypatch):
 def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals(session, monkeypatch):
     import app as app_module
 
-    today = date.today()
+    today = date(2026, 7, 19)
     freshness.note_capability_from_device(
         session,
         {
@@ -133,6 +134,7 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
         freshness.record_signal(session, signal, today, freshness.FRESH, "test")
     session.commit()
     monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(app_module, "get_local_date", lambda: today)
 
     readiness, _ = app_module._readiness_tiles()
     rendered = app_module.templates.get_template("dashboard.html").render(
@@ -169,7 +171,9 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
 def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(session, monkeypatch):
     import app as app_module
 
-    today = date.today()
+    # Deliberately differs from the runner's host date. This covers the local
+    # midnight/UTC-midnight window that caused CI run 29661625316 to fail.
+    today = date(2026, 7, 19)
     freshness.note_capability_from_device(
         session,
         {"lastUsedDeviceApplicationKey": "vivoactive5"},
@@ -188,6 +192,7 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
     _state(session, "last_sync_at", (synced_at + timedelta(minutes=1)).isoformat())
     session.commit()
     monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(app_module, "get_local_date", lambda: today)
 
     recovery, _ = app_module._readiness_tiles()
 

@@ -44,6 +44,7 @@ from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata, mus
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
+from time_utils import get_local_date
 
 app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
@@ -529,7 +530,10 @@ def _fitness_tiles() -> list[dict]:
 def _readiness_tiles() -> list[dict]:
     """Capability-aware recovery facts plus descriptive, UI-only ACWR."""
     with get_session() as s:
-        today = date.today()
+        # The server and CI runners use UTC, while the athlete's day is defined
+        # by USER_TIMEZONE.  Using the host date here hid freshly synced
+        # overnight data between local midnight and UTC midnight.
+        today = get_local_date()
         # Latest row (today or most recent day with data) for load/ACWR.
         latest_metrics = (
             s.query(DailyMetrics)
