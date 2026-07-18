@@ -536,28 +536,40 @@ def handle_chat(session: Session, user_text: str) -> str:
         session.commit()
         return response_text, asst_msg
 
-    from coach.scheduling import is_timing_question, next_available_time
+    from coach.scheduling import is_timing_question, next_available_time, requested_day
     if is_timing_question(user_text):
         from coach.calendar import get_upcoming_schedule_result
         from time_utils import get_local_now
 
+        local_now = get_local_now().replace(tzinfo=None)
+        target_day = requested_day(user_text, local_now.date())
         calendar = get_upcoming_schedule_result(days=7)
         if calendar["state"] == "fresh":
             suggestion = next_available_time(
                 session,
-                now=get_local_now().replace(tzinfo=None),
+                now=local_now,
                 schedule=calendar["events"],
+                start_day=target_day,
+                max_days=1 if target_day else 7,
             )
             if suggestion:
                 response_text = suggestion.render()
-                user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
-                asst_msg = CoachMessage(
-                    role="assistant", content=response_text, created_at=datetime.now(timezone.utc),
-                    data_snapshot=None, pending_action_json=None,
-                )
-                session.add_all((user_msg, asst_msg))
-                session.commit()
-                return response_text, asst_msg
+            elif target_day:
+                response_text = f"No full workout slot is available {target_day:%A}."
+            else:
+                response_text = "No full workout slot is available in the next 7 days."
+        elif calendar["state"] == "unconfigured":
+            response_text = "Calendar is not connected, so I cannot verify a workout time."
+        else:
+            response_text = "Calendar data is unavailable, so I cannot verify a workout time."
+        user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
+        asst_msg = CoachMessage(
+            role="assistant", content=response_text, created_at=datetime.now(timezone.utc),
+            data_snapshot=None, pending_action_json=None,
+        )
+        session.add_all((user_msg, asst_msg))
+        session.commit()
+        return response_text, asst_msg
 
     snapshot_json = build_snapshot(session)
     

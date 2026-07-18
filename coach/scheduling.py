@@ -33,16 +33,44 @@ class TimeSuggestion:
     session_name: str
 
     def render(self) -> str:
-        return f"{self.session_name} — {self.day.strftime('%A, %B %d')} at {self.start:%H:%M}."
+        return f"{self.session_name} — {self.day:%A} at {self.start:%H:%M}."
 
 
 def is_timing_question(user_text: str) -> bool:
     text = " ".join(user_text.lower().split())
-    return any(phrase in text for phrase in (
+    if any(phrase in text for phrase in (
         "when should i do it", "when should i work out", "when should i workout",
         "when can i work out", "when can i workout", "what time should i",
         "best time for", "available time", "time window",
+    )):
+        return True
+    day_reference = bool(re.search(
+        r"\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+        text,
     ))
+    workout_reference = any(phrase in text for phrase in (
+        "do it", "work out", "workout", "train", "session",
+    ))
+    question_reference = any(phrase in text for phrase in (
+        "can i", "could i", "should i", "will", "would", "what about", "how about", "is there",
+    ))
+    return day_reference and workout_reference and question_reference
+
+
+def requested_day(user_text: str, today: date) -> date | None:
+    """Resolve an explicitly requested relative day or weekday."""
+    text = " ".join(user_text.lower().split())
+    if re.search(r"\btoday\b", text):
+        return today
+    if re.search(r"\btomorrow\b", text):
+        return today + timedelta(days=1)
+    for name, weekday in _DAY_NAMES.items():
+        if len(name) <= 3:
+            continue
+        if re.search(rf"\b{name}s?\b", text):
+            days_ahead = (weekday - today.weekday()) % 7
+            return today + timedelta(days=days_ahead)
+    return None
 
 
 def _parse_clock(value: str) -> time | None:
@@ -146,7 +174,8 @@ def _event_bounds(item: dict) -> tuple[datetime, datetime] | None:
 
 
 def next_available_time(
-    session: Session, *, now: datetime, schedule: list[dict], max_days: int = 7
+    session: Session, *, now: datetime, schedule: list[dict], max_days: int = 7,
+    start_day: date | None = None,
 ) -> TimeSuggestion | None:
     """Return the first valid full session slot; never delegate time arithmetic to the LLM."""
     goal = session.get(Goal, 1)
@@ -162,8 +191,9 @@ def next_available_time(
     session_name, duration_min, earliest_day = details
     events = [bounds for item in schedule if (bounds := _event_bounds(item))]
 
+    search_start = start_day or now.date()
     for offset in range(max_days):
-        candidate_day = now.date() + timedelta(days=offset)
+        candidate_day = search_start + timedelta(days=offset)
         if candidate_day < earliest_day:
             continue
         opening = lower_by_day.get(candidate_day.weekday(), global_lower or time(6, 0))
