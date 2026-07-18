@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 from app import app
 import config
+import json
+from types import SimpleNamespace
 
 client = TestClient(app)
 
@@ -29,3 +31,34 @@ def test_telegram_webhook_payload_too_large():
         json={"message": large_payload}
     )
     assert response.status_code == 413
+
+
+def test_actionable_message_serializes_reply_markup(monkeypatch):
+    sent = []
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr("notify.telegram.send_chat_action", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None: sent.append((text, reply_markup)) or True,
+    )
+    monkeypatch.setattr(
+        "coach.coach.handle_chat",
+        lambda *_args, **_kwargs: (
+            "Confirm workout.",
+            SimpleNamespace(
+                pending_action_json=json.dumps({"interaction_ids": ["interaction-1"]}),
+                content="Confirm workout.",
+            ),
+        ),
+    )
+    markup = {"inline_keyboard": [[{"text": "Approve", "callback_data": "decision_action_1"}]]}
+    monkeypatch.setattr("coach.interactions.reply_markup_for_ids", lambda *_args: markup)
+
+    response = client.post(
+        "/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
+        json={"message": {"chat": {"id": 123}, "text": "Schedule today"}},
+    )
+
+    assert response.status_code == 200
+    assert sent == [("Confirm workout.", markup)]

@@ -2363,7 +2363,6 @@ async def telegram_webhook(request: Request):
                         from db import CoachMessage
                         msg = db.get(CoachMessage, msg_id)
                         if msg and msg.pending_action_json:
-                            import json
                             from coach.garmin_compiler import compile_and_schedule
                             payload = json.loads(msg.pending_action_json)
                             payload = _ensure_schedule_target_date(payload, msg)
