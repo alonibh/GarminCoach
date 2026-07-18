@@ -333,6 +333,9 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "No matching same-muscle exercises" in review.text
     assert "Include warm-up set" in review.text
     assert 'placeholder="Auto"' not in review.text
+    assert 'onclick="resetProgram(' in review.text
+    assert "location.reload()" not in review.text
+    assert "function replaceProgramContent" in review.text
 
     missing_name = c.post(f"/api/program/{program_id}/sessions", json={})
     assert missing_name.status_code == 422

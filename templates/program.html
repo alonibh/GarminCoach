@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Plan - GarminCoach{% endblock %}
 {% block content %}
+<div id="program-dynamic-content">
 <div class="content-header"><div class="header-left"><span class="eyebrow">{% if is_draft %}Step 3 of 3{% else %}Your active program{% endif %}</span><h1>{% if is_draft %}Review your program{% else %}Your plan{% endif %}</h1>{% if program %}<p class="muted">{{ program.name }}</p>{% endif %}</div><a class="btn-secondary" href="/onboarding">{% if is_draft %}← Adjust answers{% else %}Adjust plan{% endif %}</a></div>
 {% if not program %}<div class="card"><p class="muted">Start setup to define your routine.</p><a class="btn" href="/onboarding">Start setup</a></div>{% else %}
 {% if just_approved %}<div class="card success-card"><div class="feature-icon">✓</div><div><h3>Your program is active</h3><p>No workout was uploaded or scheduled. GarminCoach will propose one session and time later.</p></div></div>{% endif %}
@@ -8,7 +9,7 @@
 {% if profile.injuries_limitations %}<div class="card plan-profile-card"><div class="profile-card-heading"><h3>Protected constraints</h3><a href="/onboarding">Edit</a></div><p>{{ profile.injuries_limitations }}</p></div>{% endif %}
 <div class="card"><h3>Target weekly routine</h3><p class="muted">{{ strength_sessions | length }} gym sessions. Calendar events, recent training load, and recovery are considered only when suggesting which session to do and when.</p><div class="plan-sessions-list">{% for s in strength_sessions %}<div class="plan-session-badge"><span class="plan-session-num">{{ s.sequence_order }}</span><span class="plan-session-name">{{ s.name }}</span><span class="plan-session-type muted">Gym strength</span></div>{% endfor %}</div></div>
 {% if not is_draft %}<div class="card next-session-empty"><span class="card-kicker">Next session</span><h3>Nothing scheduled yet</h3><p>Telegram will show the complete workout and exact suggested time before anything is uploaded.</p></div>{% endif %}
-<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Every session marked ready can be compiled, uploaded to Garmin Connect, and synced to your watch when it is scheduled.</p></div>{% if program.source_type == 'curated_archetype' %}<form method="post" action="/program/{{ program.id }}/reset" onsubmit="return confirm('Reset every workout to the original template? Your exercise edits and added sessions will be removed. Recent matching Garmin weights will be reapplied.');"><button class="btn-danger-outline btn-sm" type="submit">Reset to template</button></form>{% endif %}</div>
+<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Every session marked ready can be compiled, uploaded to Garmin Connect, and synced to your watch when it is scheduled.</p></div>{% if program.source_type == 'curated_archetype' %}<button class="btn-danger-outline btn-sm" type="button" onclick="resetProgram({{ program.id }})">Reset to template</button>{% endif %}</div>
 {% for s in strength_sessions %}
 <section class="card plan-template-card" id="session-card-{{ s.id }}">
   <div class="plan-template-header">
@@ -33,6 +34,7 @@
 {% endfor %}
 <section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Set its Garmin-facing name, then add exercises in the new session.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">Add session</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
 {% endif %}
+</div>
 
 <div class="exercise-picker" id="exercise-picker" hidden>
   <button class="picker-backdrop" type="button" aria-label="Close exercise search" onclick="closePicker()"></button>
@@ -106,6 +108,18 @@ document.addEventListener('input',event=>{if(!event.target.matches('.ex-weight')
 function markSessionReady(sessionId){const badge=document.getElementById('session-ready-'+sessionId);if(!badge)return;badge.classList.remove('is-incomplete');badge.classList.add('is-ready');badge.textContent='Ready for Garmin'}
 function refreshSessionReady(sessionId){const badge=document.getElementById('session-ready-'+sessionId),hasExercise=document.querySelector('#tbody-'+sessionId+' .exercise-row');if(!badge)return;badge.classList.toggle('is-ready',Boolean(hasExercise));badge.classList.toggle('is-incomplete',!hasExercise);badge.textContent=hasExercise?'Ready for Garmin':'Add an exercise to make this ready'}
 function removeExerciseRow(button){const list=button.closest('.exercise-list');button.closest('.exercise-row').remove();refreshSessionReady(list.id.replace('tbody-',''))}
+async function replaceProgramContent(response,{scrollTop=false}={}){
+  if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.detail||'Could not update the program.');}
+  const html=await response.text();
+  const next=new DOMParser().parseFromString(html,'text/html').getElementById('program-dynamic-content');
+  const current=document.getElementById('program-dynamic-content');
+  if(!next||!current)throw new Error('Could not update the program.');
+  current.replaceWith(next);
+  const url=new URL(response.url,window.location.origin);
+  history.replaceState({},'',url.pathname+url.search);
+  if(scrollTop)window.scrollTo({top:0,behavior:'smooth'});
+}
+async function refreshProgramContent(url,{scrollTop=false}={}){await replaceProgramContent(await fetch(url),{scrollTop})}
 async function saveSession(sessionId){
   const status=document.getElementById('save-status-'+sessionId);
   const payload=[...document.querySelectorAll('#tbody-'+sessionId+' .exercise-row')].map((row,i)=>{const timed=row.querySelector('.ex-target-type').value==='time',target=row.querySelector('.ex-target').value,warmup=row.querySelector('.ex-warmup-enabled');return {exercise_key:row.dataset.key,exercise_name:row.querySelector('.exercise-name').textContent.trim(),sets:row.querySelector('.ex-sets').value||null,reps:timed?null:(target||null),duration_seconds:timed?(target||null):null,weight_kg:timed?null:(row.querySelector('.ex-weight').value||null),rest_seconds:row.querySelector('.ex-rest').value||60,warmup_enabled:warmup?warmup.checked:undefined,warmup_reps:row.querySelector('.ex-warmup-reps')?.value||null,warmup_weight_kg:row.querySelector('.ex-warmup-weight')?.value||null,order_index:i}});
@@ -121,7 +135,11 @@ async function approveProgram(){
   button.disabled=true;button.textContent='Saving changes…';
   const sessionIds=[{% for s in strength_sessions %}{{ s.id }}{% if not loop.last %},{% endif %}{% endfor %}];
   const saved=await Promise.all(sessionIds.map(saveSession));
-  if(saved.every(Boolean)){document.getElementById('approve-form').submit();return}
+  if(saved.every(Boolean)){
+    try{await replaceProgramContent(await fetch(document.getElementById('approve-form').action,{method:'POST'}),{scrollTop:true});}
+    catch(error){status.textContent=error.message;button.disabled=false;button.textContent='Save and approve program';}
+    return;
+  }
   button.disabled=false;button.textContent='Save and approve program';
 }
 async function addSession(programId){
@@ -132,10 +150,15 @@ async function addSession(programId){
   if(!name){status.textContent='Enter a session name.';input.focus();return}
   button.disabled=true;button.textContent='Adding session…';
   const response=await fetch('/api/program/'+programId+'/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  if(response.ok){location.reload();return}
+  if(response.ok){await refreshProgramContent('/program'+location.search);return}
   const body=await response.json().catch(()=>({}));
   button.disabled=false;button.textContent='Add session';status.textContent=body.detail||'Could not add session';
 }
-async function removeAdditionalSession(programId,sessionId){if(!confirm('Remove this additional session?'))return;const response=await fetch('/api/program/'+programId+'/sessions/'+sessionId,{method:'DELETE'});if(response.ok){location.reload();return}const body=await response.json().catch(()=>({}));alert(body.detail||'Could not remove session')}
+async function removeAdditionalSession(programId,sessionId){if(!confirm('Remove this additional session?'))return;const response=await fetch('/api/program/'+programId+'/sessions/'+sessionId,{method:'DELETE'});if(response.ok){await refreshProgramContent('/program'+location.search);return}const body=await response.json().catch(()=>({}));alert(body.detail||'Could not remove session')}
+async function resetProgram(programId){
+  if(!confirm('Reset every workout to the original template? Your exercise edits and added sessions will be removed. Recent matching Garmin weights will be reapplied.'))return;
+  try{await replaceProgramContent(await fetch('/program/'+programId+'/reset',{method:'POST'}),{scrollTop:true});}
+  catch(error){alert(error.message);}
+}
 </script>
 {% endblock %}
