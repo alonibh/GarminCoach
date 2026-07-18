@@ -14,6 +14,7 @@ from db import (
     NotificationOutbox,
     PendingInteraction,
     PlannedSession,
+    Sleep,
 )
 from notify.outbox import (
     deliver_notification,
@@ -202,8 +203,27 @@ def test_weekly_completion_uses_activity_date_not_late_reconciliation_date(sessi
 
     summary = build_weekly_summary(session, date(2026, 7, 11))
 
-    assert "Program sessions: 1/not defined completed" in summary
-    assert "Unmatched strength activities: 0" in summary
+    assert "Training: 1 of 2 program sessions completed." in summary
+    assert "Unmatched strength activities" not in summary
+    assert "not defined" not in summary
+
+
+def test_weekly_summary_uses_plain_language_and_meaningful_sleep_changes(session):
+    from tests.test_program_state import _add_program
+
+    _add_program(session)
+    session.add_all([
+        Sleep(day=date(2026, 7, 11), total_s=6.9 * 3600, score=83),
+        Sleep(day=date(2026, 7, 4), total_s=7.2 * 3600, score=81.4),
+    ])
+
+    summary = build_weekly_summary(session, date(2026, 7, 11))
+
+    assert "Training: 0 of 2 program sessions completed." in summary
+    assert "Sleep: 6h 54m per night, 18 min less than last week; score 83 (Good), up 2." in summary
+    assert "Unmatched" not in summary
+    assert "Uncompleted" not in summary
+    assert "not defined" not in summary
 
 
 def test_late_poor_readiness_update_is_daytime_only_and_idempotent(session, monkeypatch):

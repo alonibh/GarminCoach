@@ -13,6 +13,7 @@ from db import (
     AthleteSafetyReport,
     ExerciseSet,
     PlannedSession,
+    ProgramSession,
     Sleep,
     get_session,
 )
@@ -23,6 +24,28 @@ from time_utils import get_local_date, get_local_now
 def _avg(values) -> float | None:
     values = [float(value) for value in values if value is not None]
     return round(sum(values) / len(values), 1) if values else None
+
+
+def _duration_text(hours: float) -> str:
+    total_minutes = int(round(hours * 60))
+    whole_hours, minutes = divmod(total_minutes, 60)
+    return f"{whole_hours}h {minutes:02d}m"
+
+
+def _sleep_change(current: float, previous: float) -> str:
+    delta_minutes = int(round((current - previous) * 60))
+    if delta_minutes == 0:
+        return "unchanged from last week"
+    direction = "more" if delta_minutes > 0 else "less"
+    return f"{abs(delta_minutes)} min {direction} than last week"
+
+
+def _score_change(current: float, previous: float) -> str:
+    delta = int(round(current - previous))
+    if delta == 0:
+        return "unchanged from last week"
+    direction = "up" if delta > 0 else "down"
+    return f"{direction} {abs(delta)}"
 
 
 def _strength_progression(session: Session, week_start: date, week_end: date) -> str | None:
@@ -69,6 +92,12 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
         .count()
     )
     expected = program.days_per_week if program and program.days_per_week is not None else None
+    if program and expected is None:
+        expected = session.query(ProgramSession).filter(
+            ProgramSession.program_id == program.id,
+            ProgramSession.session_role == "coach_strength",
+            ProgramSession.is_addon.is_(False),
+        ).count() or None
     strength = (
         session.query(Activity)
         .filter(
@@ -106,34 +135,48 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
 
     if not strength and not current_sleep and not completed:
         next_text = f" Next: {state['next_session_name']}." if state else ""
-        return f"Weekly summary: no new synced training or recovery data.{next_text}"
+        return f"*Weekly summary*\nNo new synced training or sleep data.{next_text}"
 
-    expected_text = str(expected) if expected is not None else "not defined"
-    lines = [
-        f"Program sessions: {completed}/{expected_text} completed. "
-        f"Unmatched strength activities: {unmatched}. Uncompleted scheduled sessions: {missed}."
-    ]
+    if expected is not None and completed <= expected:
+        training_text = f"Training: {completed} of {expected} program sessions completed."
+    elif expected is not None:
+        training_text = f"Training: {completed} program sessions completed; weekly target {expected}."
+    elif completed:
+        training_text = f"Training: {completed} program sessions completed."
+    else:
+        training_text = "Training: no program sessions completed."
+    lines = ["*Weekly summary*", training_text]
+    if unmatched:
+        noun = "activity" if unmatched == 1 else "activities"
+        lines.append(f"Additional training: {unmatched} other strength {noun} synced.")
+    if missed:
+        noun = "session remains" if missed == 1 else "sessions remain"
+        lines.append(f"Schedule: {missed} planned {noun} incomplete.")
     if progression:
-        lines.append(f"Synced progression: {progression}.")
+        lines.append(f"Progress: {progression}.")
     if current_hours is not None or current_score is not None:
-        current = []
-        previous = []
+        sleep_parts = []
         if current_hours is not None:
-            current.append(f"{current_hours:g}h average")
+            duration = f"{_duration_text(current_hours)} per night"
+            if previous_hours is not None:
+                duration += f", {_sleep_change(current_hours, previous_hours)}"
+            sleep_parts.append(duration)
         if current_score is not None:
-            current.append(f"score {current_score:g}")
-        if previous_hours is not None:
-            previous.append(f"{previous_hours:g}h")
-        if previous_score is not None:
-            previous.append(f"score {previous_score:g}")
-        comparison = f"; previous week {', '.join(previous)}" if previous else ""
-        lines.append(f"Sleep: {', '.join(current)}{comparison}.")
+            from coach.decision_engine import sleep_score_category
+
+            rounded_score = int(round(current_score))
+            category = sleep_score_category(current_score)
+            score = f"score {rounded_score}"
+            if category:
+                score += f" ({category})"
+            if previous_score is not None:
+                score += f", {_score_change(current_score, previous_score)}"
+            sleep_parts.append(score)
+        lines.append(f"Sleep: {'; '.join(sleep_parts)}.")
     if issues:
         lines.append(f"Confirmed unresolved safety reports: {issues}.")
     if state:
-        lines.append(
-            f"Next: {state['next_session_name']}; earliest {state['earliest_recommended_date']}."
-        )
+        lines.append(f"Next: {state['next_session_name']}.")
     return "\n".join(lines)
 
 
