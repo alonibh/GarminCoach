@@ -8,6 +8,74 @@ import config
 
 logger = logging.getLogger(__name__)
 
+
+def generate_structured(system: str, user: str, schema: dict) -> str:
+    """Return schema-constrained JSON for untrusted routing decisions."""
+    if config.LLM_PROVIDER == "claude":
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model=config.CLAUDE_MODEL, max_tokens=256, system=system,
+                messages=[{"role": "user", "content": user}],
+                tools=[{
+                    "name": "classify_intent",
+                    "description": "Classify the current coach message.",
+                    "input_schema": schema,
+                }],
+                tool_choice={"type": "tool", "name": "classify_intent"},
+            )
+            for block in response.content:
+                if getattr(block, "type", None) == "tool_use":
+                    return json.dumps(block.input)
+            raise ValueError("Claude returned no classifier tool call")
+        except Exception as exc:
+            logger.error("Claude structured generation failed: %s", exc)
+            return ""
+    if config.LLM_PROVIDER == "gemini":
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent"
+            response = requests.post(
+                url,
+                headers={"x-goog-api-key": config.GEMINI_API_KEY},
+                json={
+                    "system_instruction": {"parts": {"text": system}},
+                    "contents": [{"role": "user", "parts": [{"text": user}]}],
+                    "generationConfig": {
+                        "temperature": 0,
+                        "maxOutputTokens": 512,
+                        "responseMimeType": "application/json",
+                        "thinkingConfig": {"thinkingBudget": 0},
+                    },
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as exc:
+            logger.error("Gemini structured generation failed: %s", exc)
+            return ""
+    try:
+        response = requests.post(
+            f"{config.OLLAMA_HOST.rstrip('/')}/api/chat",
+            json={
+                "model": config.OLLAMA_MODEL,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "format": schema,
+                "options": {"temperature": 0},
+                "stream": False,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("message", {}).get("content", "").strip()
+    except Exception as exc:
+        logger.error("Ollama structured generation failed: %s", exc)
+        return ""
+
 def generate(system: str, user: str, history: list[dict] = None) -> str:
     """Generate a response from the configured LLM provider.
     `history` should be a list of dicts like [{"role": "user", "content": "..."}, ...]

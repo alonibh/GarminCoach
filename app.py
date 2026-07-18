@@ -2316,7 +2316,14 @@ async def telegram_webhook(request: Request):
             telegram.answer_callback_query(callback_id)
             
             if str(chat_id) == config.TELEGRAM_CHAT_ID:
-                if callback_data.startswith("decision_action_"):
+                if callback_data.startswith("decision_different_time_"):
+                    from coach.interactions import request_different_time
+                    interaction_id = callback_data.removeprefix("decision_different_time_")
+                    with get_session() as db:
+                        text = request_different_time(db, interaction_id)
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith("decision_action_"):
                     from coach.interactions import apply_interaction
                     interaction_id = callback_data.removeprefix("decision_action_")
                     with get_session() as db:
@@ -2411,19 +2418,26 @@ async def telegram_webhook(request: Request):
             # Pass to AI Coach
             with get_session() as db:
                 response_text, asst_msg = handle_chat(db, text)
-                
                 reply_markup = None
+                interaction_ids = []
                 if asst_msg.pending_action_json:
-                    try:
-                        pending = json.loads(asst_msg.pending_action_json)
-                        interaction_ids = pending.get("interaction_ids", [])
-                        from coach.interactions import reply_markup_for_ids
-                        reply_markup = reply_markup_for_ids(db, interaction_ids)
-                    except Exception:
-                        reply_markup = None
+                    pending = json.loads(asst_msg.pending_action_json)
+                    interaction_ids = pending.get("interaction_ids", [])
+                    from coach.interactions import reply_markup_for_ids
+                    reply_markup = reply_markup_for_ids(db, interaction_ids)
+                    if not reply_markup:
+                        from coach.interactions import mark_delivery_failed
+                        mark_delivery_failed(db, interaction_ids, "markup_unavailable")
+                        asst_msg.pending_action_json = None
+                        asst_msg.content = "I couldn't create safe confirmation controls. No action was taken."
+                        response_text = asst_msg.content
             
             # Send response back to Telegram
-            telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)
+            delivered = telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)
+            if interaction_ids and not delivered:
+                with get_session() as db:
+                    from coach.interactions import mark_delivery_failed
+                    mark_delivery_failed(db, interaction_ids, "telegram_send_failed")
             
     except Exception as e:
         import logging

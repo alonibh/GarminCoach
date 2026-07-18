@@ -36,7 +36,9 @@ def test_renderer_stages_only_deterministic_original_session(session, monkeypatc
 
     assert "Suggested today: Workout A." in text
     assert len(ids) == 1
-    assert markup["inline_keyboard"][0][0]["text"] == "Schedule session"
+    assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
+    assert markup["inline_keyboard"][0][1]["text"] == "Different time"
+    assert markup["inline_keyboard"][1][0]["text"] == "Dismiss"
     pending = session.get(PendingInteraction, ids[0])
     payload = json.loads(pending.payload_json)
     assert payload["program_session_id"] == result.next_program_session_id

@@ -108,4 +108,4 @@ def test_morning_workout_proposal_is_actionable_and_includes_fixed_short_sleep_o
     assert "Workout A" in msg.content
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
-    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Schedule session"
+    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Approve and schedule"

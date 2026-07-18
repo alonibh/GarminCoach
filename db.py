@@ -513,6 +513,38 @@ class PendingInteraction(Base):
     failure_reason: Mapped[str] = mapped_column(Text, default="")
 
 
+class ChatDialogueState(Base):
+    """Single-user, typed context for one incomplete conversational request."""
+
+    __tablename__ = "chat_dialogue_state"
+
+    state_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    intent: Mapped[str] = mapped_column(String(48))
+    slots_json: Mapped[str] = mapped_column(Text, default="{}")
+    missing_slot: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class ChatIntentAudit(Base):
+    """Auditable result of an untrusted model classification."""
+
+    __tablename__ = "chat_intent_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_text: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    router_mode: Mapped[str] = mapped_column(String(16))
+    intent: Mapped[str] = mapped_column(String(48), default="unknown", index=True)
+    evidence_json: Mapped[str] = mapped_column(Text, default="{}")
+    validation_status: Mapped[str] = mapped_column(String(24), index=True)
+    failure_reason: Mapped[str] = mapped_column(Text, default="")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class AthleteSafetyReport(Base):
     """Only confirmed voluntary safety reports; free text alone is not persisted here."""
 

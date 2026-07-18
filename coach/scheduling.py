@@ -75,6 +75,12 @@ def requested_day(user_text: str, today: date) -> date | None:
         return today
     if re.search(r"\btomorrow\b", text):
         return today + timedelta(days=1)
+    iso_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+    if iso_match:
+        try:
+            return date.fromisoformat(iso_match.group(1))
+        except ValueError:
+            return None
     for name, weekday in _DAY_NAMES.items():
         if len(name) <= 3:
             continue
@@ -186,7 +192,7 @@ def _event_bounds(item: dict) -> tuple[datetime, datetime] | None:
 
 def next_available_time(
     session: Session, *, now: datetime, schedule: list[dict], max_days: int = 7,
-    start_day: date | None = None,
+    start_day: date | None = None, preferred_time: time | None = None,
 ) -> TimeSuggestion | None:
     """Return the first valid full session slot; never delegate time arithmetic to the LLM."""
     goal = session.get(Goal, 1)
@@ -209,13 +215,20 @@ def next_available_time(
             continue
         opening = lower_by_day.get(candidate_day.weekday(), global_lower or time(6, 0))
         closing = upper_by_day.get(candidate_day.weekday(), global_upper or time(22, 0))
-        candidate = datetime.combine(candidate_day, opening)
-        if candidate_day == now.date():
+        candidate = datetime.combine(candidate_day, preferred_time or opening)
+        if preferred_time and (preferred_time < opening or preferred_time > closing):
+            continue
+        if candidate_day == now.date() and not preferred_time:
             candidate = max(candidate, _round_up_to_quarter(now))
+        if candidate < now:
+            continue
         end_limit = datetime.combine(candidate_day, closing)
         for event_start, event_end in events:
             if event_end <= candidate or event_start.date() > candidate_day:
                 continue
+            if preferred_time and event_start < candidate + timedelta(minutes=duration_min) and candidate < event_end:
+                candidate = end_limit
+                break
             if candidate + timedelta(minutes=duration_min) <= event_start:
                 break
             if event_start < end_limit and event_end > candidate:

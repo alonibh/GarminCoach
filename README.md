@@ -133,6 +133,19 @@ The complete nine-routine audit is in
 - A late same-day update is sent only when fresh Garmin readiness materially
   changes a prior recommendation to Poor.
 
+### Guarded semantic chat routing
+
+- Free text is classified into a closed intent catalog with schema-constrained
+  output. The classifier may quote the user's date, time, or workout words but
+  cannot provide database IDs or executable actions.
+- Deterministic handlers resolve every referenced session and calendar slot.
+  All state changes require versioned Telegram confirmation buttons.
+- `CHAT_ROUTER_MODE=shadow` records classifications without changing replies.
+  Switch to `guarded` only after reviewing the shadow audit; invalid or timed
+  out classifications fail closed.
+- Incomplete requests use a typed, 30-minute dialogue state. A generic text
+  reply such as “yes” never approves an action.
+
 ## Technical architecture
 
 - Python 3.11+

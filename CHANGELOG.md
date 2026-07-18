@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-19 — Guarded Semantic Chat Router
+
+- Added AI-first, closed-schema intent classification with verbatim evidence
+  validation, typed clarification state, audit records, and shadow rollout.
+- Kept workout decisions and all mutations deterministic and confirmation-only.
+- Added approve, different-time, and dismiss controls to schedule proposals.
+- Added guarded sync and cancellation actions, including verified Garmin
+  unscheduling before local cancellation.
+- Prevented actionable Telegram messages from silently losing their buttons.
+
 ## 2026-07-18 — Deterministic Coach Redesign
 
 - Added source-audited policies and rolling completion reconciliation for all

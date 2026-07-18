@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 import yaml
 from sqlalchemy.orm import Session
 
+import config
 from db import CoachMessage, DailyHealth, DailyMetrics, Sleep
 from coach import llm
 from coach.actions import parse_action
@@ -517,8 +518,28 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
 def handle_chat(session: Session, user_text: str) -> str:
     """Handle an interactive chat message from the user."""
 
+    from coach.intent_router import route_chat
+    routed = route_chat(session, user_text)
+    if routed is not None:
+        response_text, interactions = routed.text, routed.interactions
+        user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
+        asst_msg = CoachMessage(
+            role="assistant", content=response_text, created_at=datetime.now(timezone.utc),
+            data_snapshot=None,
+            pending_action_json=(
+                json.dumps({"interaction_ids": [item.interaction_id for item in interactions]})
+                if interactions else None
+            ),
+        )
+        session.add_all((user_msg, asst_msg))
+        session.commit()
+        return response_text, asst_msg
+
     from coach.interactions import stage_free_text_change
-    staged_change = stage_free_text_change(session, user_text)
+    staged_change = (
+        None if config.CHAT_ROUTER_MODE == "guarded"
+        else stage_free_text_change(session, user_text)
+    )
     if staged_change is not None:
         response_text, interactions = staged_change
         user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
@@ -537,7 +558,7 @@ def handle_chat(session: Session, user_text: str) -> str:
         return response_text, asst_msg
 
     from coach.scheduling import is_timing_question, next_available_time, requested_day
-    if is_timing_question(user_text):
+    if config.CHAT_ROUTER_MODE != "guarded" and is_timing_question(user_text):
         from coach.calendar import get_upcoming_schedule_result
         from time_utils import get_local_now
 

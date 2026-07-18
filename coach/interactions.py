@@ -155,19 +155,29 @@ def stage_decision_actions(
 
 def button_label(action_type: str) -> str:
     return {
-        "schedule_original_session": "Schedule session",
+        "schedule_original_session": "Approve and schedule",
         "skip_today": "Skip today",
         "do_original_workout": "Do original workout",
         "confirm_safety_report": "Confirm report",
         "keep_calendar_time": "Keep time",
         "request_reschedule": "Reschedule",
         "reschedule_planned_time": "Confirm time",
+        "cancel_planned_session": "Confirm cancellation",
+        "start_sync": "Start sync",
     }[action_type]
 
 
 def reply_markup(interactions: list[PendingInteraction]) -> dict | None:
     if not interactions:
         return None
+    if len(interactions) == 1 and interactions[0].action_type == "schedule_original_session":
+        item = interactions[0]
+        return {
+            "inline_keyboard": [[
+                {"text": "Approve and schedule", "callback_data": f"decision_action_{item.interaction_id}"},
+                {"text": "Different time", "callback_data": f"decision_different_time_{item.interaction_id}"},
+            ], [{"text": "Dismiss", "callback_data": f"decision_cancel_{item.interaction_id}"}]]
+        }
     return {
         "inline_keyboard": [[
             {"text": button_label(item.action_type), "callback_data": f"decision_action_{item.interaction_id}"}
@@ -186,7 +196,7 @@ def _stage_explicit_schedule(
 ) -> tuple[str, list[PendingInteraction]]:
     """Calculate and stage an explicit dated schedule request without using chat context."""
     from coach.calendar import get_upcoming_schedule_result
-    from coach.scheduling import next_available_time, requested_day
+    from coach.scheduling import _CLOCK_PATTERN, _parse_clock, next_available_time, requested_day
 
     target_day = requested_day(user_text, now.date())
     if target_day is None:
@@ -196,12 +206,15 @@ def _stage_explicit_schedule(
         return "Calendar is not connected, so I cannot verify a workout time.", []
     if calendar["state"] != "fresh":
         return "Calendar data is unavailable, so I cannot verify a workout time.", []
+    clock_matches = re.findall(rf"\b({_CLOCK_PATTERN})\b", user_text, re.IGNORECASE)
+    preferred = next((parsed for value in reversed(clock_matches) if (parsed := _parse_clock(value))), None)
     suggestion = next_available_time(
         session,
         now=now,
         schedule=calendar["events"],
         start_day=target_day,
         max_days=1,
+        preferred_time=preferred,
     )
     if not suggestion:
         return f"No schedulable workout slot is available {target_day:%A}.", []
@@ -333,6 +346,67 @@ def cancel_interaction(session: Session, interaction_id: str) -> bool:
     return True
 
 
+def mark_delivery_failed(session: Session, interaction_ids: list[str], reason: str) -> None:
+    for interaction_id in interaction_ids:
+        row = session.get(PendingInteraction, interaction_id)
+        if row and row.status == "pending":
+            row.status = "failed"
+            row.failure_reason = f"delivery_failed:{reason}"[:1000]
+
+
+def request_different_time(session: Session, interaction_id: str) -> str:
+    """Turn a schedule proposal into typed dialogue awaiting a replacement time."""
+    from db import ChatDialogueState
+    row = session.get(PendingInteraction, interaction_id)
+    now = get_local_now().replace(tzinfo=None)
+    if not row or row.status != "pending" or row.action_type != "schedule_original_session":
+        return "This proposal is no longer available."
+    payload = json.loads(row.payload_json)
+    row.status = "superseded"
+    row.failure_reason = "different_time_requested"
+    session.merge(ChatDialogueState(
+        state_id=1,
+        intent="schedule_workout",
+        slots_json=json.dumps({
+            "date_text": payload.get("target_date"),
+            "workout_text": payload.get("title"),
+            "program_session_id": payload.get("program_session_id"),
+        }, sort_keys=True),
+        missing_slot="time",
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(minutes=30),
+    ))
+    session.flush()
+    return "What exact time would you prefer?"
+
+
+def _walk_dicts(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_dicts(child)
+
+
+def _scheduled_occurrence_id(raw, workout_id: int, target_day: date) -> int | None:
+    """Find the Garmin scheduled-occurrence ID without trusting list ordering."""
+    for item in _walk_dicts(raw):
+        nested_workout = item.get("workout")
+        nested_id = nested_workout.get("workoutId") if isinstance(nested_workout, dict) else None
+        item_workout = item.get("workoutId") or nested_id
+        item_date = item.get("date") or item.get("calendarDate") or item.get("workoutDate")
+        scheduled_id = item.get("scheduledWorkoutId") or item.get("workoutScheduleId") or item.get("id")
+        if str(item_workout) == str(workout_id) and (not item_date or str(item_date)[:10] == target_day.isoformat()):
+            try:
+                return int(scheduled_id)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
     row = session.get(PendingInteraction, interaction_id)
     now = get_local_now().replace(tzinfo=None)
@@ -357,6 +431,64 @@ def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
         row.status = "applied"
         row.applied_at = now
         return "applied", "Safety report confirmed."
+
+    if row.action_type == "start_sync":
+        from sync import sync_runner
+        started = sync_runner.try_start_sync(full=False, force=True)
+        row.status = "applied" if started else "failed"
+        row.applied_at = now if started else None
+        row.failure_reason = "" if started else "sync_already_running"
+        return ("applied", "Garmin sync started.") if started else ("failed", "A Garmin sync is already running.")
+
+    if row.action_type == "cancel_planned_session":
+        planned = session.get(PlannedSession, row.target_id)
+        if not planned or planned.status != "approved":
+            row.status = "superseded"
+            row.failure_reason = "planned_session_changed"
+            return "stale", "The scheduled workout is no longer current."
+        if row.program_version != program_version(session) or row.calendar_version != calendar_version(session):
+            row.status = "superseded"
+            row.failure_reason = "program_or_calendar_changed"
+            return "stale", "Program or calendar data changed. Ask again."
+        if planned.garmin_workout_id:
+            try:
+                from sync.garmin_client import client
+                client.login()
+                scheduled = client.api.get_scheduled_workouts(planned.target_date.year, planned.target_date.month)
+                occurrence_id = _scheduled_occurrence_id(
+                    scheduled, planned.garmin_workout_id, planned.target_date,
+                )
+                if occurrence_id is None:
+                    raise ValueError("Garmin scheduled occurrence could not be verified")
+                client.api.unschedule_workout(occurrence_id)
+            except Exception as exc:
+                row.status = "failed"
+                row.failure_reason = f"garmin_unschedule_failed:{type(exc).__name__}"
+                return "failed", "Garmin could not verify the scheduled occurrence. Nothing was cancelled."
+        planned.status = "cancelled"
+        planned.updated_at = now
+        events_row = session.get(SyncState, "coach_calendar_events")
+        if events_row and events_row.value:
+            try:
+                events = json.loads(events_row.value)
+            except ValueError:
+                events = []
+            removed = False
+            kept = []
+            for event in events:
+                match = (
+                    not removed
+                    and event.get("date") == planned.target_date.isoformat()
+                    and event.get("title") in {planned.title, f"\U0001f3cb\ufe0f {planned.title} @ {planned.suggested_time}"}
+                )
+                if match:
+                    removed = True
+                else:
+                    kept.append(event)
+            events_row.value = json.dumps(kept)
+        row.status = "applied"
+        row.applied_at = now
+        return "applied", f"{planned.title} was cancelled."
 
     if row.action_type == "keep_calendar_time":
         planned = session.get(PlannedSession, row.target_id)
