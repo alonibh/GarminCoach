@@ -1,110 +1,233 @@
-# 🏃 GarminCoach
+# GarminCoach
 
-A personal, **local** web app that pulls everything off your Garmin watch
-(workouts incl. per-set drills/reps/weights, sleep, HRV, Body Battery, stress,
-resting HR, steps), turns it into a clean dashboard and type-aware workout
-views, and (Phase 3) acts as an adaptive coach. Runs free on your own Windows
-or Linux machine — **self-hosted; your data stays on hardware you control.**
-(You can optionally expose it over the internet — see Phase 4 — but there's no
-third-party cloud in the loop.)
+GarminCoach is a personal, single-user Garmin training assistant. It syncs
+Garmin data into a local SQLite database, presents the data in a FastAPI web
+app, manages a source-reviewed strength program, and sends concise Telegram
+recommendations through a deterministic evidence-rule engine.
 
-Built with **FastAPI · SQLAlchemy 2.0 · Jinja2 · Chart.js · garminconnect**, on
-Python 3.11+.
+The product is deliberately not a simulated human coach. It communicates in a
+cold, short, factual style; explains the decisive data; and requires explicit
+confirmation before scheduling, skipping, or rescheduling a workout.
 
-## Features
+## Goals
 
-**Dashboard**
-- Past-week trend charts for **Sleep, HRV, Resting HR, and Steps** — the value
-  is labelled on every point (no hover needed), arranged 2×2, each chart
-  collapsible.
-- **Fitness Age** and **VO₂ max** summary tiles with the current value, an
-  up/down trend arrow vs. the last recorded change, and how long ago it was
-  measured. Computed during sync and cached, so the page loads instantly and
-  works even when Garmin is unreachable.
+1. Turn Garmin observations and the selected source program into one short,
+   actionable daily answer without overwhelming the athlete.
+2. Consider the complete available context—including program recovery rules,
+   planned sessions, calendar constraints, observation history, device support,
+   and relevant personal facts—without converting demographics into broad
+   assumptions.
+3. Make every consequential recommendation traceable to synced facts and a
+   reviewed rule, with explicit missing-data behavior.
+4. Preserve athlete authority: the system warns or advises, while the athlete
+   confirms scheduling and may choose the unchanged original workout.
+5. Eliminate unnecessary manual logging by obtaining training performance from
+   Garmin sync whenever the watch recorded it.
 
-**Type-aware workout pages**
-- **Strength** sessions: per-exercise breakdown with weight × reps for every
-  set and total volume — straight from the watch. Optional manual correction
-  for the rare misdetected set.
-- **Cardio** sessions (soccer, running, …): distance, speed, elevation, laps,
-  intensity minutes, training effect — showing only the metrics that are
-  meaningful for that activity type (e.g. running cadence/pace are hidden for
-  stop-start sports).
-- **HR-zone breakdown** (time in each zone) on every workout, plus ⓘ hover
-  tooltips explaining the non-obvious metrics.
-- Shows the watch's own values — only unit conversions, never invented metrics.
+## Product contract
 
-## Status
+- Recommendations use synced observations, their freshness and provenance,
+  device capabilities, the active program, calendar state, and versioned rules.
+- A language model may answer informational free-text questions, but it cannot
+  decide or execute workout, readiness, recovery, or scheduling actions.
+- Metrics never silently change exercises, sets, repetitions, or target
+  weights. Low readiness adds a warning; Poor Garmin readiness may produce a
+  skip recommendation while preserving an explicit option to do the original
+  workout.
+- Garmin is the source of completed sets, repetitions, weights, and available
+  RPE. The bot never asks for manual post-workout logging and sends no proactive
+  post-workout questionnaire.
+- ACWR is descriptive UI data only. The retired custom readiness composite is
+  neither computed nor shown. Supported devices use Garmin Training Readiness;
+  unsupported devices show individual observations without a synthetic score.
+- This is not a medical device and does not diagnose illness, injury, or
+  recovery status.
 
-- **Phase 1 ✅ — Foundation + Dashboard:** Garmin sync (token cache + MFA),
-  SQLite cache, trend dashboard, fitness-age/VO₂ tiles, and type-aware
-  workout-detail views (strength sets, cardio stats, HR zones).
-- **Phase 2 ✅ — Metrics and freshness:** descriptive training metrics, per-signal
-  freshness, device capability, and priority overnight sync. The custom
-  readiness composite is retired; its database column remains only for schema
-  compatibility.
-- **Phase 3 ✅ — Evidence decision engine:** deterministic program/readiness
-  decisions with stored facts, rule versions, and boundary tests. Telegram chat
-  remains informational; it cannot invent or execute coaching actions.
-- **Phase 4 ✅ — Safe interactions and security:** versioned confirmation
-  buttons, stale-action rejection, atomic scheduling, and HTTP Basic Authentication.
-- **Phase 5 ✅ — Durable notifications:** immediate morning briefing with an
-  11:30 deadline, Saturday 20:00 summary, one-hour workout reminders, quiet
-  hours, late material updates, and calendar-conflict handling.
+The complete authority model and decision order are documented in
+[`docs/coach_product_architecture.md`](docs/coach_product_architecture.md).
 
-The Telegram coach runs on a deterministic evidence engine. Its implemented
-baseline is in
-[`docs/coach_product_architecture.md`](docs/coach_product_architecture.md), with
-program scheduling and recovery rules in
-[`docs/routine_source_audit.md`](docs/routine_source_audit.md). The current
-workout decisions and mutations do not depend on LLM output. The custom
-readiness composite is retired from coaching, and ACWR remains UI-only.
+## Implemented capabilities
+
+### Garmin sync and data quality
+
+- Cached Garmin authentication with interactive password/MFA only when needed.
+- Initial history backfill plus scheduled and manual incremental sync.
+- Activities, strength exercise sets, sleep, HRV, resting heart rate, Body
+  Battery, stress, steps, VO2 max, Fitness Age, and Garmin Training Readiness
+  when the connected device supports it.
+- Priority morning sync fetches briefing-critical overnight observations first;
+  slower history and workout synchronization continues afterward.
+- Per-signal freshness states distinguish fresh, pending, stale, missing,
+  endpoint errors, and unsupported device capability. Missing data alone never
+  proves that a device lacks a metric.
+- Garmin rate-limit cooldowns and a shared guard prevent overlapping manual and
+  scheduled syncs.
+
+### Web application
+
+- Dashboard trends for sleep, HRV, resting heart rate, and steps.
+- Garmin readiness score and official category on supported devices; a clear
+  unsupported-device state otherwise.
+- Descriptive ACWR tile, Fitness Age, VO2 max, and cached sync status.
+- Type-aware activity pages: strength sets and volume; cardio distance, pace,
+  speed, elevation, laps, intensity minutes, training effect, and HR zones when
+  those fields apply.
+- Monthly calendar combining completed activities and planned sessions.
+- Public read-only ICS feed for confirmed coach workouts.
+- Optional application login with signed session cookies.
+
+### Strength programs and Garmin workouts
+
+- Nine selectable Muscle & Strength routines covering two through six training
+  days per cycle.
+- Source-reviewed exercise order, rolling session sequence, required recovery
+  intervals, optional recovery guidance, exclusions, and between-set timers.
+- Source ranges resolve to concrete Garmin timers using the documented upper-
+  bound convention; timers can be skipped early on the watch.
+- Warm-up steps are added deterministically by movement and joint exposure.
+- Program proposals are reviewable and undated. Approval activates the rolling
+  program cursor; each actual workout date/time still requires confirmation.
+- Structured strength workouts compile to Garmin exercise identifiers with
+  sets, repetitions or duration, weight when known, warm-ups, and rest steps.
+- Synced activities reconcile to the active program by exact Garmin workout
+  provenance or a guarded unique exercise fingerprint. Unrelated routines do
+  not advance the cursor.
+- Source templates can be edited, but metric-driven decisions never rewrite
+  them. Customized rest timers are preserved by catalog migrations.
+
+The complete nine-routine audit is in
+[`docs/routine_source_audit.md`](docs/routine_source_audit.md).
+
+### Deterministic Telegram coach
+
+- Sends the morning result as soon as required data is available.
+- At 11:30 local time, crucial missing data produces buttons to confirm a watch
+  sync or request a clearly labeled best-effort answer.
+- Applies program eligibility before biometrics: a source-required rest day is
+  not overridden by a readiness metric.
+- Garmin Training Readiness categories have limited authority: Prime, High, and
+  Moderate do not change the session; Low adds a warning; Poor advises skipping
+  while offering the unchanged original session.
+- On devices without Garmin Training Readiness, the coach does not invent a
+  replacement score. Until individual-metric rules are separately approved,
+  program and calendar rules determine workout eligibility.
+- Source-approved, evidence-reviewed recovery activity may be suggested
+  verbally on a rest day. It is never uploaded to Garmin.
+- No evening workout is created before the following night's sleep and morning
+  observations are available.
+
+### Confirmations and notifications
+
+- Telegram buttons carry exact pending actions, expiry, and program/sync/
+  calendar versions. Every click reloads and revalidates current state.
+- Free text may initiate a scheduling or change request; a button confirmation
+  is still required before mutation. A generic “yes” never executes the latest
+  message.
+- One-line pre-workout reminder exactly one hour before the confirmed start.
+- Deterministic weekly summary every Saturday at 20:00 with matched program
+  completion, unmatched strength activity, missed sessions, synced progression,
+  sleep comparison, safety reports, and next-session state when available.
+- Calendar conflicts offer explicit keep-time or reschedule actions.
+- Notifications are stored in a durable SQLite outbox, deduplicated, retried,
+  and deferred during 22:00-07:00 quiet hours.
+- A late same-day update is sent only when fresh Garmin readiness materially
+  changes a prior recommendation to Poor.
+
+## Technical architecture
+
+- Python 3.11+
+- FastAPI and Jinja2
+- SQLAlchemy 2.0 with SQLite
+- APScheduler for local jobs
+- `garminconnect` for Garmin Connect synchronization
+- Chart.js for dashboard charts
+- Telegram Bot API for messages and confirmation buttons
+- Optional Ollama, Claude, or Gemini provider for non-authoritative free-text
+  answers only
+
+Important modules:
+
+| Area | Module |
+| --- | --- |
+| Garmin client and synchronization | `sync/garmin_client.py`, `sync/sync_service.py`, `sync/sync_runner.py` |
+| Freshness and derived metrics | `metrics/freshness.py`, `metrics/engine.py` |
+| Program templates and policy | `coach/programs.py`, `coach/program_policy.py`, `coach/program_state.py` |
+| Decisions and interactions | `coach/decision_engine.py`, `coach/renderer.py`, `coach/interactions.py` |
+| Garmin workout compilation | `coach/garmin_compiler.py` |
+| Telegram and durable notifications | `notify/telegram.py`, `notify/morning.py`, `notify/outbox.py`, `notify/weekly.py` |
 
 ## Setup
 
 ```bash
 cd garmincoach
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # Windows: .venv\Scripts\pip install -r requirements.txt
-cp .env.example .env                          # then edit GARMIN_EMAIL
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env
 ```
 
-Edit `.env` and set `GARMIN_EMAIL`. Leave `LLM_PROVIDER=ollama` (default, free).
+On Windows, use `.venv\Scripts\pip` and `.venv\Scripts\python` instead.
+
+At minimum, set `GARMIN_EMAIL`. Password and MFA are entered through the app on
+first connection and are not written to `.env`; Garmin tokens are cached in
+`GARMIN_TOKEN_STORE`.
+
+For Telegram coaching, set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and a
+strong `TELEGRAM_WEBHOOK_SECRET`. `ICS_CALENDAR_URL` is optional and may point
+to a private iCloud or Google Calendar ICS feed.
+
+If `APP_USERNAME` is set, also set `APP_PASSWORD` and replace the default
+`SESSION_SECRET`; the app refuses to start with authentication enabled and the
+placeholder signing secret.
+
+Start the app:
 
 ```bash
-.venv/bin/python app.py          # Windows: .venv\Scripts\python app.py
+.venv/bin/python app.py
 ```
 
-Open http://localhost:8000 (or http://<this-machine-ip>:8000 from your iPhone on
-the same wifi).
+Open `http://localhost:8000`. The app binds to `0.0.0.0` by default, so a private
+network such as Tailscale can provide remote access without changing the app.
 
-## Access Away From Home (Tailscale)
-Install [Tailscale](https://tailscale.com/) on the machine running this app, and on your phone.
-The app automatically binds to `0.0.0.0`, meaning you can open `http://<your-tailscale-ip>:8000` from your phone anywhere in the world to check your readiness. Coach chat runs through the connected Telegram bot.
+## Scheduled behavior
 
-## First login (one time)
+- `AUTO_SYNC_TIMES` controls normal incremental sync times and accepts
+  comma-separated `HH:MM` values; the default is `19:00`.
+- Morning readiness polling runs every 15 minutes from 07:00 through 12:00 by
+  default and stops after a briefing is sent.
+- The missing-data decision deadline is fixed at 11:30 local time.
+- Weekly summary is fixed at Saturday 20:00 local time.
+- The durable notification outbox is checked every minute.
 
-1. Click **Connect your Garmin account**.
-2. Enter your Garmin password. If your account uses 2FA, also paste the code.
-   - Your password is used once to obtain an auth token, then **discarded**.
-   - The token is cached at `~/.garminconnect` and reused on every later run, so
-     you won't log in again (this also avoids Garmin's login rate-limits).
-3. An initial backfill (last `INITIAL_BACKFILL_DAYS`, default 90) runs in the
-   background. Refresh the dashboard as data lands.
+See [`.env.example`](.env.example) for all supported settings.
 
-Thereafter, data auto-syncs at the hours in `AUTO_SYNC_HOURS` (default 7am/7pm),
-plus a **Sync now** button on the dashboard.
+## Current limitations
 
-## Switching the coach to Claude (Phase 3, optional, paid)
+- Single-user only; no multi-user preparation is intentionally included yet.
+- Garmin Connect access uses an unofficial library and can require dependency
+  updates when Garmin changes its authentication flow.
+- The Vivoactive 5 does not provide Garmin Training Readiness, so the app
+  displays individual recovery observations and does not fabricate a fallback
+  readiness number.
+- Strength details exist only when Garmin recorded them. Manual UI correction
+  remains available for a misdetected set, but the Telegram bot never requests
+  manual set logging.
+- The five-day source program's supersets and PPL's separate between-exercise
+  transition timer are not yet represented structurally; current templates use
+  straight sets and one rest field per exercise.
+- Program duration, deload prompts, and source progression rules are metadata
+  only. The system does not automatically increase target weights.
+- Optional LLM answers are informational and may be unavailable without a
+  configured provider; deterministic coaching and notifications continue to
+  work without them.
 
-In `.env`: set `LLM_PROVIDER=claude` and `ANTHROPIC_API_KEY=...`. That's the only
-change — same app, sharper advice, ~$0.002 per coaching call. Default stays free
-(local Ollama).
+## Documentation
 
-## Notes & limitations
+- [`docs/coach_product_architecture.md`](docs/coach_product_architecture.md) — product contract, authority boundaries, decisions, sync, and notifications
+- [`docs/routine_source_audit.md`](docs/routine_source_audit.md) — all nine routine sources, scheduling rules, recovery guidance, and rest timers
+- [`docs/METRICS.md`](docs/METRICS.md) — implemented formulas, evidence status, and product authority
+- [`ROADMAP.md`](ROADMAP.md) — completed milestones, active priorities, and deferred scope
+- [`CHANGELOG.md`](CHANGELOG.md) — chronological implementation history
 
-- The unofficial Garmin login flow breaks ~1–3×/year when Garmin changes their
-  SSO. If sync starts failing on auth, `pip install -U garminconnect`.
-- Per-set strength data only appears if the watch logged it (you tracked reps and
-  entered weight on-device during a Strength activity).
-- This is personal single-user use of your own data.
+The AthleteData documents under `docs/` are dated research artifacts. They
+record product discovery input and must not be read as current GarminCoach
+capabilities or policy.

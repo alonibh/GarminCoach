@@ -133,10 +133,10 @@ Evidence reviewed:
 - [Post-exercise recovery techniques: systematic review and meta-analysis](https://pubmed.ncbi.nlm.nih.gov/29755363/)
 - [Physical therapies for DOMS: umbrella review](https://pubmed.ncbi.nlm.nih.gov/40120073/)
 
-## Program-policy fields required in the catalog
+## Implemented program-policy fields
 
-The implementation should add a versioned policy beside each immutable program
-template. At minimum it must contain:
+`coach/program_policy.py` defines and validates a versioned policy beside each
+source template. Each policy contains:
 
 - `program_key`, `source_url`, `source_reviewed_at`, and `policy_version`;
 - ordered immutable session keys;

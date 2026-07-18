@@ -1,10 +1,11 @@
 # GarminCoach — Metrics Reference
 
-> **Coach redesign note (2026-07-18):** the custom composite readiness score
-> documented below is legacy and is being retired from coaching and user-facing
-> UI. Supported devices use Garmin Training Readiness; unsupported devices use
-> individual observations without a synthetic score. ACWR remains descriptive
-> UI data only and must not drive Telegram recommendations or alerts. See
+> **Coach authority note (2026-07-18):** the custom composite readiness score is
+> retired. Runtime recomputation stores `NULL`, and neither the web UI nor the
+> coach consumes it. Supported devices use Garmin Training Readiness;
+> unsupported devices show individual observations without a synthetic score.
+> ACWR remains descriptive UI data only and must not drive Telegram
+> recommendations or alerts. See
 > [`coach_product_architecture.md`](coach_product_architecture.md).
 
 This is the source of truth for every computed metric: the exact formula as
@@ -14,7 +15,8 @@ validated formula exists). The unit tests in `tests/test_engine.py` assert the
 numbers below — change them together.
 
 > Scope note: this is a personal single-user tool, not a medical device. The
-> readiness and ACWR labels are guidance, not diagnoses.
+> Garmin readiness categories and ACWR labels are not diagnoses or predictions
+> of performance.
 
 ---
 
@@ -68,7 +70,8 @@ Sport* 2011;14(3):249–53.
 
 ## 2. ACWR (Acute:Chronic Workload Ratio) — **Validated structure / Heuristic thresholds**
 
-**Where:** `metrics/engine.py` — `compute_daily_loads`, `acwr_label`.
+**Where:** `metrics/engine.py` — `generate_ewma_series`,
+`recompute_daily_metrics`, `acwr_label`.
 
 EWMA per Williams et al. 2016:
 ```
@@ -98,36 +101,44 @@ al., *Front Physiol* 2018;9:1280 · Impellizzeri et al., *J Athl Train*
 
 ---
 
-## 3. Readiness (0–100) — **Heuristic composite of validated components**
+## 3. Readiness authority
 
-**Where:** `metrics/engine.py` — `compute_readiness`, `_score_hrv`,
-`_score_rhr`, `_score_sleep`, `_baselines`.
+### Garmin Training Readiness
 
-Each component is normalized against the user's **own 7-day rolling baseline**
-(mean + SD), then blended. Missing components are skipped and remaining weights
-renormalized.
+**Where:** raw value in `DailyHealth.training_readiness`; category handling in
+`coach/decision_engine.py::training_readiness_category`.
 
-```
-z              = (today − mean_7d) / SD_7d
-HRV_score      = 50 + 50·tanh(z_HRV / 2)
-RHR_score      = 50 − 50·tanh(z_RHR / 2)            # inverted: high RHR is worse
-dur_score      = clamp(sleep_hours / 8 × 100, 0, 100)
-eff_score      = clamp((sleep_eff% − 50) / 40 × 100, 0, 100)   # if available
-Sleep_score    = 0.6·dur_score + 0.4·eff_score      # else dur_score alone
-Readiness      = 0.50·HRV + 0.25·RHR + 0.25·Sleep
-```
-- 7-day baseline (Plews et al.) tracks **acute** readiness, not long-term drift.
-- **Body Battery is intentionally excluded** from the composite — it's a
-  proprietary Garmin score that already embeds HRV, so including it
-  double-counts. Display it separately instead.
-- **Heuristic parts (labelled in code):** the `0.50/0.25/0.25` weights, the
-  `tanh(z/2)` sensitivity, and the `0.6/0.4` sleep split. No peer-reviewed RCT
-  validates a specific weight vector for a consumer-wearable composite.
+When device capability is explicitly supported and today's value is present,
+the UI and morning decision show Garmin's numeric score and official category:
 
-**Citations:** Plews et al., *Sports Med* 2013;43(9):773–81 & *Eur J Appl
-Physiol* 2012;112(11):3729–41 · Buchheit, *Front Physiol* 2014;5:73 · Coyne et
-al., *J Sports Sci Med* 2021;20:482–91 · Costa et al., *Front Physiol* 2021 ·
-Watson et al., *Sleep* 2015;38(6):843–4.
+| Score | Category | Product authority |
+| --- | --- | --- |
+| 95-100 | Prime | No workout change |
+| 75-94 | High | No workout change |
+| 50-74 | Moderate | No workout change |
+| 25-49 | Low | Keep the original workout and add a concise warning |
+| 1-24 | Poor | Advise skipping; preserve an explicit option to do the original workout |
+
+These categories do not predict performance and never change exercises, sets,
+repetitions, or weights. Program-required recovery takes precedence over the
+metric. If a supported device has no current value, the decision omits the
+metric rather than substituting another score.
+
+### Unsupported devices
+
+When capability is explicitly unsupported, individual sleep, HRV, resting
+heart rate, stress, and related observations may still be displayed. They do
+not become a synthetic readiness value. A prescriptive individual-metric rule
+requires a separate evidence registry entry and boundary tests; none currently
+has workout authority.
+
+### Retired custom composite
+
+`metrics/engine.py` retains the pure `compute_readiness` helper and component
+scorers only as legacy/testable code. `recompute_daily_metrics` explicitly sets
+`DailyMetrics.readiness = None`. The field remains in SQLite for schema
+compatibility and must not be used by the UI, snapshot, notification rules, or
+coach.
 
 ---
 

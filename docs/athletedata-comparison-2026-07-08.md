@@ -1,5 +1,10 @@
 # Revised AthleteData Comparison Plan
 
+> Historical product-discovery artifact. Scenarios and proposed behavior in
+> this file are not the current GarminCoach specification. Use
+> [`coach_product_architecture.md`](coach_product_architecture.md) for runtime
+> policy and [`../ROADMAP.md`](../ROADMAP.md) for planned work.
+
 ## Scenario ID: A1 / Turn 1
 
 Source lanes:

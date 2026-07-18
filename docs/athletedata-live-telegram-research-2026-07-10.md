@@ -1,5 +1,10 @@
 # AthleteData Live Telegram Research - 2026-07-10
 
+> Historical product-discovery artifact. AthleteData behavior and candidate
+> lessons recorded here are research input, not implemented GarminCoach
+> capability or authority. Use [`coach_product_architecture.md`](coach_product_architecture.md)
+> for the current specification.
+
 ## Summary
 
 This document captures two live Telegram research passes against `@athletedata_bot`.

@@ -1,5 +1,10 @@
 # Athletedata.health — Complete Research Documentation
 
+> Historical product-discovery artifact. AthleteData capabilities and candidate
+> features in this file are not current GarminCoach behavior. Use
+> [`../coach_product_architecture.md`](../coach_product_architecture.md) for the
+> implemented product contract.
+
 > Generated: 2026-07-08. All responses captured from @athletedata_bot on Telegram and MCP server API.
 > This is a living document — bot test responses will be added as they arrive.
 

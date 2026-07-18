@@ -17,6 +17,10 @@
 - Re-audited between-set rest guidance for all nine source routines and aligned
   their Garmin timers, including phase- and exercise-specific rules. Existing
   untouched source defaults migrate once; customized rest values are preserved.
+- Reconciled the README, roadmap, next-steps guide, architecture, metrics
+  reference, routine audit, research disclaimers, and environment example with
+  the implemented deterministic coach. Corrected the documented sync setting
+  from obsolete `AUTO_SYNC_HOURS` to `AUTO_SYNC_TIMES`.
 
 ## 2026-06-29 — Telegram Integration & Proactive Notifications
 

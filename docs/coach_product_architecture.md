@@ -1,12 +1,14 @@
 # Garmin Coach Telegram Bot: Product and System Architecture
 
-Status: implementation-ready design baseline  
-Date: 2026-07-18  
+Status: implemented product and architecture baseline
+
+Date: 2026-07-18
+
 Scope: single-user deployment; Telegram coaching, Garmin sync, metrics, notifications, and program sequencing
 
-This document converts the product interview into an architecture. It does not
-change runtime behavior. Where the evidence or product decision is incomplete,
-the document blocks automation instead of inventing a rule.
+This document records the product contract and the architecture implemented in
+the repository. Where evidence or a product decision remains incomplete, the
+runtime blocks automation instead of inventing a rule.
 
 ## 1. Product contract
 
@@ -422,10 +424,11 @@ Transient timeouts and rate limits retry silently unless they block the 11:30
 flow. User-facing text distinguishes watch-not-synced, Garmin data pending,
 authentication failure, and server fetch failure.
 
-## 10. Data model changes required during implementation
+## 10. Implemented data and state model
 
-The existing tables remain useful but are insufficient for traceability and
-durable state. Implementation should introduce or normalize these concepts:
+The implementation persists the following concepts for traceability and
+restart-safe behavior. `ProgramPolicy` is a versioned code catalog; the other
+stateful concepts are stored in SQLite.
 
 | Concept | Required fields |
 | --- | --- |
@@ -437,31 +440,31 @@ durable state. Implementation should introduce or normalize these concepts:
 | `DecisionRecord` | typed result, fact snapshot, rules, permitted actions, idempotency key |
 | `PendingInteraction` | exact action, target/version hashes, expiry, status |
 | `NotificationOutbox` | event type, due time, quiet-hour policy, status, attempts, idempotency key |
+| `MorningBriefState` | decision day, fetch/deadline state, prompt status, answer-anyway choice |
+| `AthleteSafetyReport` | confirmed user-reported limitation, active state, timestamps |
 
 `DailyHealth.training_readiness` is the raw Garmin score and remains separate
 from `DailyMetrics.readiness`. The custom composite `DailyMetrics.readiness`
-must be retired from both coaching and user-facing UI; its column may remain
-temporarily only for migration compatibility. The UI shows Garmin Training
+is retired from both coaching and user-facing UI; recomputation writes `NULL`
+and the column remains only for schema compatibility. The UI shows Garmin Training
 Readiness on supported devices and individual observations on unsupported
 devices. ACWR stays available only to the UI.
 
-## 11. Current repository gap map
+## 11. Current implementation map
 
-| Area | Current behavior | Required direction |
+| Area | Implemented behavior | Known limit |
 | --- | --- | --- |
-| `sync/sync_service.py` | Activities, workouts, and multi-day data precede the briefing-critical health path | Priority overnight phase followed by background completion |
-| `metrics/freshness.py` | Sleep plus any recovery signal and global sync timestamps can mark the day ready | Per-signal freshness and capability-aware requirements |
-| `metrics/engine.py` | Creates a heuristic composite readiness score and ACWR labels | Retire composite from coaching; ACWR UI-only; add rule evaluator inputs, not a new score |
-| `coach/snapshot.py` | Exposes custom readiness and ACWR but omits Garmin Training Readiness | Build a typed facts object containing Garmin score/category and provenance |
-| `coach/coach.py` | LLM selects intensity, modifications, timing, and action JSON | Deterministic engine selects outcome/action; renderer only verbalizes |
-| `coach/actions.py` | Accepts model-generated workout modifications | Remove metric-driven modification path; stage typed deterministic actions |
-| `coach/programs.py` | Exercises are source-audited; program operating rules are absent | Add versioned sequence, rest-slot, recovery, progression, and exclusion policy |
-| `coach/garmin_compiler.py` | Stores planned Garmin workout ID but completion provenance is not reconciled | Link activity to program session and advance cursor deterministically |
-| `notify/rules.py` | ACWR/readiness generates alarmist “High Load” alerts | Remove ACWR coaching and use reviewed event rules only |
-| `notify/weekly.py` | LLM summary uses ACWR and references fields not present in the schema | Deterministic Saturday summary from valid models |
-| `notify/reminders.py` | One-off in-memory job can be lost on restart and message is motivational | Durable outbox; exact name and time only |
-| `sync/scheduler.py` | Weekly job is Sunday 19:05; morning has no 11:30 terminal state | Saturday 20:00 and explicit morning run/deadline state |
-| Telegram webhook | Buttons are tied to message JSON without complete revalidation state | Versioned pending interaction and stale-action rejection |
+| `sync/sync_service.py` | Briefing-critical overnight signals are committed first; background sync continues afterward | Garmin endpoint behavior and authentication still depend on the unofficial client |
+| `metrics/freshness.py` | Per-signal freshness and capability-aware requirements distinguish pending, missing, stale, error, and unsupported states | Unsupported-device individual-metric decision rules remain intentionally unapproved |
+| `metrics/engine.py` | Computes scale-consistent TRIMP, EWMA ACWR, sleep debt, and descriptive strength metrics; custom readiness is `NULL` | ACWR has UI authority only |
+| `coach/snapshot.py` and `coach/decision_engine.py` | Build typed facts with Garmin readiness, provenance, program state, calendar state, and persisted rule results | A missing supported-device readiness value is omitted, never imputed |
+| `coach/renderer.py` and `coach/interactions.py` | Render typed outcomes, stage exact actions, and revalidate every confirmation | Optional LLM free-text answers remain informational only |
+| `coach/programs.py` and `coach/program_policy.py` | Nine source-audited templates include sequence, recovery intervals, exclusions, warm-ups, and rest timers | Source duration, deload, and progression rules are metadata only |
+| `coach/program_state.py` | Reconciles generated-workout provenance or guarded unique fingerprints and advances a rolling cursor | Ambiguous or unrelated activities deliberately do not advance the program |
+| `coach/garmin_compiler.py` | Compiles structured strength steps with sets, reps/duration, weight, warm-up, and rest | Superset groups and a separate between-exercise transition timer are not represented |
+| `notify/outbox.py` and `notify/weekly.py` | Persist notifications, apply quiet hours and revalidation, and generate a deterministic Saturday summary | Delivery still requires a configured Telegram bot/webhook |
+| `sync/scheduler.py` | Runs configurable syncs, priority morning polling, the 11:30 deadline, Saturday 20:00 summary, and outbox draining | Scheduler runs in-process with the web application |
+| Telegram webhook | Accepts informational free text and versioned callbacks; stale actions cannot mutate state | Generic text confirmation is never treated as approval |
 
 ## 12. Evidence governance
 
@@ -490,7 +493,7 @@ Key baseline conclusions for this design:
 - Subjective session RPE can be useful, but the product collects it only when
   Garmin sync provides it. The bot does not prompt for it after a workout.
 
-## 13. Implementation sequence and acceptance gates
+## 13. Implemented sequence and acceptance gates
 
 ### Increment 1: program truth and reconciliation
 
@@ -602,6 +605,10 @@ These are not silently assumed during implementation:
   The current design records synced performance but does not invent progression.
 - Exact evidence rules for unsupported-device biometrics. No prescriptive rule
   ships until its review entry and tests exist.
+- Structural representation of supersets, source tempo, and separate
+  between-exercise transition time.
+- Multi-user support or preparatory tenancy abstractions.
+- Nutrition, medical, injury-risk, and general cross-sport plan advice.
 
 ## References
 

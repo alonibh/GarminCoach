@@ -1,57 +1,116 @@
-# GarminCoach Roadmap 🗺️
+# GarminCoach Roadmap
 
-Feature backlog for the GarminCoach app. Priorities may shift as we go.
+Updated 2026-07-18. This roadmap follows the current product contract: concise
+data-grounded coaching, deterministic authority for consequential decisions,
+no metric-driven workout rewriting, and explicit user confirmation.
 
----
+## Completed baseline
 
-## 🔴 Phase 1 — Security & Cloud Essentials
+### Garmin data and web UI
 
-- [x] **Garmin login on the cloud server**
-  - The cloud instance needs its own authenticated Garmin session so it can auto-sync fresh data every day without relying on the local copy.
+- [x] Cached Garmin authentication with MFA and rate-limit protection.
+- [x] Initial backfill, scheduled incremental sync, manual sync, and priority
+  morning sync.
+- [x] Activities, strength sets, sleep, HRV, resting heart rate, Body Battery,
+  stress, steps, Fitness Age, VO2 max, and supported-device Garmin Training
+  Readiness.
+- [x] Type-aware workout detail, dashboard trends, monthly calendar, PWA assets,
+  application authentication, HTTPS deployment, and public coach ICS feed.
+- [x] Per-signal freshness and tri-state device-capability records.
 
-- [x] **HTTPS (SSL certificate)**
-  - Free Let's Encrypt certificate installed. Auto-renews. Available at `https://garmincoach.duckdns.org`.
+### Program engine
 
----
+- [x] Nine source-reviewed strength templates from two through six sessions.
+- [x] Rolling sequence and recovery intervals without forcing weekday names.
+- [x] Source-reviewed between-set rest timers and deterministic warm-up steps.
+- [x] Reviewable program proposal, explicit activation, and editable sessions.
+- [x] Structured Garmin strength workout compilation.
+- [x] Completion reconciliation using Garmin workout provenance or a guarded
+  unique fingerprint within the active program.
+- [x] Program cursor that does not reset at week boundaries or accumulate missed
+  sessions as debt.
 
-## 🟡 Phase 2 — Polish & Convenience
+### Deterministic coach and Telegram
 
-- [x] **Custom domain name**
-  - Live at `https://garmincoach.duckdns.org` via DuckDNS (free).
+- [x] Typed, persisted morning decisions with versioned evidence rules.
+- [x] Garmin Training Readiness category handling on supported devices; no
+  fallback composite score on unsupported devices.
+- [x] Program-rest precedence and immutable workout content under metric-based
+  warnings.
+- [x] Immediate morning briefing plus 11:30 manual-sync/answer-anyway flow.
+- [x] Versioned confirmation buttons, stale-action rejection, and atomic
+  scheduling/rescheduling.
+- [x] Durable outbox, 22:00-07:00 quiet hours, one-hour reminder, calendar
+  conflict handling, late Poor-readiness update, and Saturday 20:00 summary.
+- [x] Informational free-text chat separated from decision and mutation
+  authority.
 
-- [x] **Auto-deploy from GitHub**
-  - Push code to GitHub → server automatically pulls and restarts using GitHub Actions.
+## Active priorities
 
-- [x] **Install as phone app (PWA)**
-  - App is now installable via 'Add to Home Screen' with custom icons and standalone mode.
+### P0 — End-to-end operational verification
 
----
+- [ ] Complete a real watch-to-Garmin-to-app morning cycle after a fresh Garmin
+  login and record endpoint/freshness behavior for the connected Vivoactive 5.
+- [ ] Exercise Telegram webhook, button confirmation, calendar mutation,
+  reminder delivery, restart recovery, and idempotency in one production-like
+  scenario.
+- [ ] Verify a completed GarminCoach-generated strength workout advances exactly
+  one active-program session and retains the linked activity audit trail.
+- [ ] Add an operator-facing health view for authentication state, endpoint
+  errors, queued notifications, last successful priority sync, and failed jobs.
 
-## 🟢 Phase 3 — Smart Features
+### P1 — Source-template fidelity
 
+- [ ] Add explicit superset groups so paired exercises compile and reconcile as
+  pairs rather than straight sets.
+- [ ] Separate between-set rest from between-exercise transition time; this is
+  needed for the Planet Fitness PPL 45/90-second rule.
+- [ ] Represent source tempos such as three-second negatives when Garmin workout
+  steps can carry the instruction reliably.
+- [ ] Decide how optional source components, such as the five-day program's ab
+  session, should be exposed without implying they are mandatory.
+- [ ] Add program-duration review and deload prompts only after each source rule
+  and resulting user interaction are approved.
 
-- [ ] **Nutrition recommendations**
-  - Post-workout meal suggestions based on workout type, intensity, and goals.
-  - Daily macro targets (protein/carbs/fat) adjusted to training load and rest days.
-  - Integration with Garmin's calorie burn data to suggest caloric intake.
+### P1 — Evidence coverage for devices without Training Readiness
 
+- [ ] Review candidate rules for sleep, HRV trend, resting heart rate, and stress
+  individually; define populations, required history, missing-data behavior,
+  effect size, exclusions, evidence grade, and boundary tests.
+- [ ] Add only rules that support a concrete decision without inventing a
+  replacement readiness score.
+- [ ] Keep unsupported-device behavior program/calendar-driven until a rule
+  passes that review.
 
-- [x] **Training plan calendar view**
-  - View past workouts in a calendar grid.
-  - Visual week/month calendar showing past workouts and planned sessions.
+### P2 — Program progression
 
-- [x] **Push notifications (Telegram)**
-  - AI proactive push notifications, recovery alerts, and interactive workout scheduling delivered via Telegram bot integration.
+- [ ] Encode source-specific progression rules separately for every routine.
+- [ ] Use only synced completed sets to prepare a proposed future target.
+- [ ] Require confirmation and show the exact source rule and performance facts
+  before changing a target weight.
+- [ ] Never infer a weight increase from readiness or from a single failed set.
 
----
+### P2 — Reliability and maintainability
 
-## 💡 Ideas Parking Lot
-_Drop any future ideas here:_
+- [ ] Replace deprecated FastAPI startup events with a lifespan handler.
+- [ ] Add backup/restore documentation and automated SQLite integrity checks.
+- [ ] Add structured operational logging without exposing Garmin tokens,
+  calendar URLs, Telegram secrets, or health data.
+- [ ] Add deployment smoke tests for application login, public ICS access, and
+  authenticated private routes.
 
-- **Smart Activity Recommendations:** Recommend specific activities based on user preferences and goals.
-- **Dynamic Workout Type Suggestions:** Suggest different types of workouts (Yoga, Swim, Cardio, etc.) based on fatigue status, recovery needs, and overall goals, instead of just strength training.
-- Strava integration
-- Export reports as PDF
-- Multi-user support
-- Heart rate zone training plans
-- Sleep optimization tips based on HRV trends
+## Deliberately deferred
+
+- Multi-user support. The current app remains single-user and does not add
+  preparatory tenancy abstractions yet.
+- Automatic source-program renewal, deload, or weight progression.
+- Metric-adjusted alternate workouts or automatic reductions in sets, reps, or
+  weights.
+- Uploading recovery activities to Garmin.
+- Nutrition, medical, injury-risk, emergency, or diagnostic recommendations.
+- General cross-sport plan generation, race planning, and dynamically changing
+  heart-rate zones.
+- Strava integration and PDF report export.
+
+Deferred items are not promises. They require a new product decision and, when
+prescriptive, an evidence review before implementation.
