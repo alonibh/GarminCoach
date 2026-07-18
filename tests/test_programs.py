@@ -123,14 +123,84 @@ def test_all_program_sessions_are_gym_only_and_undated():
     assert "does not assign dates or upload" in proposal["rationale"]
 
 
-def test_total_package_uses_sixty_second_default_rest():
-    exercises = [
-        exercise
-        for routine in PROGRAMS["total_package_3"]["sessions"]
+def _rests(program_key, session_name):
+    routine = next(
+        routine for routine in PROGRAMS[program_key]["sessions"]
+        if routine["name"] == session_name
+    )
+    return {exercise["exercise_name"]: exercise["rest_seconds"] for exercise in routine["exercises"]}
+
+
+def test_all_nine_templates_use_their_source_reviewed_between_set_rest_rules():
+    assert {
+        exercise["rest_seconds"]
+        for routine in PROGRAMS["full_body_2"]["sessions"]
         for exercise in routine["exercises"]
-    ]
-    assert exercises
-    assert {exercise["rest_seconds"] for exercise in exercises} == {60}
+    } == {120}
+
+    beginner = {
+        name: rest
+        for routine in PROGRAMS["beginner_full_body_3"]["sessions"]
+        for name, rest in _rests("beginner_full_body_3", routine["name"]).items()
+    }
+    assert {beginner[name] for name in {"Trap Bar Deadlift", "Front Squat", "Bench Press"}} == {300}
+    assert beginner["Farmer's Carry"] == 45
+    assert set(beginner.values()) == {45, 90, 300}
+
+    ms_full_body = {
+        name: rest
+        for routine in PROGRAMS["ms_full_body_3"]["sessions"]
+        for name, rest in _rests("ms_full_body_3", routine["name"]).items()
+    }
+    assert {ms_full_body[name] for name in {"Squat", "Bench Press", "Barbell Row", "Deadlift", "Seated Overhead Press"}} == {120}
+    assert ms_full_body["Romanian Deadlift"] == 90
+    assert set(ms_full_body.values()) == {90, 120}
+
+    total_package = {
+        name: rest
+        for routine in PROGRAMS["total_package_3"]["sessions"]
+        for name, rest in _rests("total_package_3", routine["name"]).items()
+    }
+    assert {total_package[name] for name in {"Squat", "Bench Press", "Deadlift"}} == {180}
+    assert set(total_package.values()) == {60, 180}
+
+    upper_lower_compounds = {
+        "Bench Press", "Barbell Row", "Seated Overhead Dumbbell Press", "V-Bar Lat Pull Down",
+        "Squat", "Stiff Leg Deadlifts", "Incline Dumbbell Bench Press", "Rack Deadlifts",
+        "Military Press", "Machine Chest Press", "Machine Row", "Machine Shoulder Press",
+        "Leg Press", "Dumbbell Stiff Leg Deadlift", "Hack Squat",
+    }
+    upper_lower = {
+        name: rest
+        for routine in PROGRAMS["upper_lower_4"]["sessions"]
+        for name, rest in _rests("upper_lower_4", routine["name"]).items()
+    }
+    assert {upper_lower[name] for name in upper_lower_compounds} == {90}
+    assert {rest for name, rest in upper_lower.items() if name not in upper_lower_compounds} == {60}
+
+    assert set(_rests("shul_4", "Lower Strength").values()) == {120, 300}
+    assert set(_rests("shul_4", "Upper Strength").values()) == {120, 300}
+    shul_lower_hypertrophy = _rests("shul_4", "Lower Hypertrophy")
+    assert {shul_lower_hypertrophy[name] for name in {"Leg Extension", "Standing Machine Calf Raise"}} == {45}
+    assert {rest for name, rest in shul_lower_hypertrophy.items() if name not in {"Leg Extension", "Standing Machine Calf Raise"}} == {60}
+    shul_upper_hypertrophy = _rests("shul_4", "Upper Hypertrophy")
+    assert {shul_upper_hypertrophy[name] for name in {"Face Pull", "Lateral Raise", "Barbell Curl", "Incline Skullcrusher"}} == {45}
+    assert {rest for name, rest in shul_upper_hypertrophy.items() if name not in {"Face Pull", "Lateral Raise", "Barbell Curl", "Incline Skullcrusher"}} == {60}
+
+    assert {
+        exercise["rest_seconds"]
+        for routine in PROGRAMS["split_full_4"]["sessions"]
+        for exercise in routine["exercises"]
+    } == {45}
+    assert set(_rests("muscle_strength_5", "Upper Strength").values()) == {180}
+    assert set(_rests("muscle_strength_5", "Lower Strength").values()) == {180}
+    for session_name in {"Back & Shoulders Size", "Chest & Arms Size", "Legs Size"}:
+        assert set(_rests("muscle_strength_5", session_name).values()) == {90}
+    assert {
+        exercise["rest_seconds"]
+        for routine in PROGRAMS["ppl_6"]["sessions"]
+        for exercise in routine["exercises"]
+    } == {45}
 
 
 def test_every_curated_exercise_has_a_primary_muscle_group():

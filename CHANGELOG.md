@@ -14,6 +14,9 @@
 - Added a durable notification outbox, quiet hours, one-hour reminders,
   Saturday summaries, calendar-conflict handling, and daytime Poor-readiness
   corrections. ACWR remains descriptive UI data only.
+- Re-audited between-set rest guidance for all nine source routines and aligned
+  their Garmin timers, including phase- and exercise-specific rules. Existing
+  untouched source defaults migrate once; customized rest values are preserved.
 
 ## 2026-06-29 — Telegram Integration & Proactive Notifications
 

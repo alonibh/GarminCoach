@@ -783,6 +783,88 @@ def _migrate_add_columns() -> None:
                 {"key": rest_migration},
             )
 
+        source_rest_migration = "source_rest_periods_2026_07_18_v1"
+        already_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": source_rest_migration},
+        ).first()
+        if not already_applied:
+            # Only replace values that are still equal to the previous catalog
+            # default. Matching the source program, session, and exercise keeps
+            # custom routines and already-customized timers out of scope.
+            from coach.programs import PROGRAMS
+
+            beginner_anchors = {"Trap Bar Deadlift", "Front Squat", "Bench Press"}
+            shul_strength_anchors = {
+                "Front Squat", "Trap Bar Deadlift", "Dumbbell Bench Press",
+                "One Arm Dumbbell Row", "Overhead Press",
+            }
+            shul_hypertrophy_isolations = {
+                "Leg Extension", "Standing Machine Calf Raise", "Face Pull",
+                "Lateral Raise", "Barbell Curl", "Incline Skullcrusher",
+            }
+
+            def previous_rest(program_key: str, session_name: str, exercise_name: str, current: int) -> int:
+                if program_key == "beginner_full_body_3":
+                    if exercise_name in beginner_anchors:
+                        return 180
+                    if exercise_name == "Farmer's Carry":
+                        return 90
+                elif program_key == "ms_full_body_3" and exercise_name == "Romanian Deadlift":
+                    return 120
+                elif program_key == "total_package_3":
+                    return 60
+                elif program_key == "upper_lower_4":
+                    return 60
+                elif program_key == "shul_4":
+                    if session_name in {"Lower Strength", "Upper Strength"}:
+                        return 180 if exercise_name in shul_strength_anchors else 90
+                    if exercise_name in shul_hypertrophy_isolations:
+                        return 60
+                elif program_key == "muscle_strength_5":
+                    return 120 if session_name in {"Upper Strength", "Lower Strength"} else 60
+                return current
+
+            for program_key in (
+                "beginner_full_body_3", "ms_full_body_3", "total_package_3",
+                "upper_lower_4", "shul_4", "muscle_strength_5",
+            ):
+                for routine in PROGRAMS[program_key]["sessions"]:
+                    for exercise in routine["exercises"]:
+                        new_rest = exercise["rest_seconds"]
+                        old_rest = previous_rest(
+                            program_key, routine["name"], exercise["exercise_name"], new_rest,
+                        )
+                        if old_rest == new_rest:
+                            continue
+                        conn.execute(
+                            text(
+                                "UPDATE session_exercises SET rest_seconds = :new_rest "
+                                "WHERE exercise_name = :exercise_name "
+                                "AND rest_seconds = :old_rest "
+                                "AND program_session_id IN ("
+                                "SELECT ps.id FROM program_sessions ps "
+                                "JOIN training_programs tp ON tp.id = ps.program_id "
+                                "WHERE ps.name = :session_name "
+                                "AND tp.goal_tags LIKE :program_key"
+                                ")"
+                            ),
+                            {
+                                "new_rest": new_rest,
+                                "old_rest": old_rest,
+                                "exercise_name": exercise["exercise_name"],
+                                "session_name": routine["name"],
+                                "program_key": f"%{program_key}%",
+                            },
+                        )
+            conn.execute(
+                text(
+                    "INSERT INTO app_migrations (migration_key, applied_at) "
+                    "VALUES (:key, CURRENT_TIMESTAMP)"
+                ),
+                {"key": source_rest_migration},
+            )
+
 
 @contextmanager
 def get_session() -> Iterator:

@@ -18,6 +18,32 @@ the app; they are not a verbatim copy of every source range.
 | Muscle & Strength Building Split (5 days) | Intermediate | Same main-plan movements — Upper Strength: Weighted Wide Grip Pull Ups, Bent Over Barbell Row, Narrow Grip T-Bar Row, Standing Overhead Barbell Press, Incline Dumbbell Bench Press, Weighted Dips, EZ Bar Skullcrusher, EZ Bar Bicep Curls. Lower Strength: Squats, Hack Squats, Deadlifts, Lying Leg Curls, Standing Calf Raise, Seated Calf Raise. Back/Shoulders: Wide Grip Pull Down, Narrow Grip Pull Down, Chest Supported Machine Row, Narrow Grip Low Pulley Cable Row, Straight Arm Rope Pull Down, Lower Back Hyperextensions, Dumbbell Shoulder Press, Standing Dumbbell Side Lateral Raise, Standing EZ Bar Front Raise, Dumbbell Rear Delt Lateral Raise, Cable EZ Bar Upright Row, Rope Face Pull. Chest/Arms: Incline Barbell Bench Press, Flat Machine Chest Press, Incline Dumbbell Fly, Cable Crossover, Narrow Grip Bench Press, Seated Overhead EZ Bar Tricep Extension, Single Arm Cable Press Down, EZ Bar Preacher Curl, Standing Alternating Dumbbell Hammer Curl, High Pulley Single Arm Bicep Curl. Legs: Seated Hamstring Curl, Leg Extension, Front Squat, Leg Press, Barbell Walking Lunge, Abductor Machine, Adductor Machine, Glute Kick Backs, Donkey Calf Raise, Seated Calf Raise, Single Leg Calf Press. The source also supplies a separate optional 3×/week ab workout; it is not in the app's five gym sessions. |
 | Push/Pull/Legs Planet Fitness (6 days) | Beginner | Same — Push A: Dumbbell Bench Press, Incline Smith Machine Bench Press, Dips, Seated Arnold Press, Lateral Raise, Cable Overhead Tricep Extension. Pull A: Dumbbell Row, Seated Cable Row, Pull Up, Inverted Row, Dumbbell Curl. Legs A: Leg Press, Smith Machine Front Squat, Dumbbell Stiff Leg Deadlift, Lying Leg Curl, Bodyweight Hip Thrust, Standing Calf Raise. Push B: Standing Dumbbell Press, Seated Lateral Raise, Lateral Raise Machine, Incline Dumbbell Bench Press, Push Ups, Lying Dumbbell Tricep Extensions. Pull B: Lat Pull Down, Cable Face Pull, Smith Machine Row, Straight Arm Lat Pull Down, Cable Curl. Legs B: Dumbbell Rear Lunge, Goblet Squat, Seated Leg Curl, Dumbbell Deadlift, Glute Hyperextension, Leg Press Calf Press. The app calls the final movement `Leg Press Calf Raise`; it is the same source movement. |
 
+## Between-set rest audit
+
+Audited 2026-07-18 against the main article and FAQ text on every linked source
+page. A Garmin workout needs one concrete countdown for each exercise. When a
+source supplies a range, the catalog uses its upper bound: the athlete can skip
+the countdown when recovered sooner, while the watch should not prompt the next
+set before the source's full recovery window has elapsed. A source's exact
+single value or stated "sweet spot" takes precedence over that convention.
+
+| Program key | Source rule | Catalog between-set timer |
+| --- | --- | --- |
+| `full_body_2` | Rest as long as needed; shorter rests may be used to meet a time limit. | 120 seconds remains an adjustable starting prompt, not a source-imposed cap. |
+| `beginner_full_body_3` | First main lift 3-5 minutes; remaining compounds 60-90 seconds; arm, calf, and core work 30-45 seconds. | 300 seconds for each session's first main lift; 90 for remaining compounds and source-unclassified lower accessories; 45 for arm, calf, core, and lateral-raise work. |
+| `ms_full_body_3` | About 2 minutes for squat, deadlift, bench press, overhead press, and barbell row; 60-90 seconds for everything else. | 120 seconds for the named major lifts; 90 for all other movements. |
+| `total_package_3` | 2-3 minutes for the 5x5 strength lift; 45-60 seconds for the hypertrophy work. | 180 seconds for Squat, Bench Press, and Deadlift; 60 for every other exercise. |
+| `upper_lower_4` | Rest as needed, with a 60-90 second rule of thumb; about 90 seconds for compounds and shorter rests for isolation/accessory work. | 90 seconds for compound lifts; 60 for isolation and accessory lifts. |
+| `shul_4` | Strength-day big lifts 3-5 minutes; strength accessories 90-120 seconds; hypertrophy compounds 60 seconds and isolations closer to 45. | 300 seconds for strength anchors, 120 for strength accessories, 60 for hypertrophy compounds, and 45 for hypertrophy isolations. |
+| `split_full_4` | 45 seconds between every set and exercise. | 45 seconds throughout. |
+| `muscle_strength_5` | Strength phase 2-3 minutes; size phase 60-90 seconds. Superset partners have no intervening rest, followed by the prescribed rest. | 180 seconds in both strength sessions and 90 in all three size sessions. The app currently represents the listed exercises as straight sets, so this change does not claim to reproduce the source's supersets. |
+| `ppl_6` | 30-90 seconds, with a stated sweet spot of 45 seconds between sets and 90 seconds between exercises. | 45 seconds between sets. The per-exercise template field does not separately encode the 90-second transition recommendation. |
+
+Existing source-derived program rows are migrated once only when their program
+key, session name, exercise name, and rest value all still match the previous
+catalog default. A different value is treated as a user customization and is
+left unchanged.
+
 ## Sources
 
 - [A/B Full Body](https://www.muscleandstrength.com/workouts/a-b-2-day-workout-for-busy-people)

@@ -9,6 +9,7 @@ from coach.exercises import CATALOG_VERSION, exercise_key, exercise_metadata
 
 ACSM_SOURCE_URL = "https://acsm.org/resistance-training-guidelines-update-2026/"
 ACSM_ATTRIBUTION = "Muscle & Strength routine reviewed against ACSM 2026 resistance-training guidance."
+ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+source-rest-2026-07-18"
 
 # These labels describe the routine's demands—not an absolute judgment of the
 # athlete. They are assigned during catalog review from training age, weekly
@@ -241,7 +242,7 @@ def _program(name: str, source: str, level: str, sessions: list[dict], review: s
         "experience": level,
         "sessions": sessions,
         "volume_review": review,
-        "catalog_version": CATALOG_VERSION,
+        "catalog_version": ROUTINE_CATALOG_VERSION,
         "weekly_sets": weekly_sets,
         "weekly_exposures": exposures,
         "region_exposures": regions,
@@ -273,19 +274,19 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "new",
         [
             _session("Full Body A", "full body", [
-                _exercise("Trap Bar Deadlift", 3, 5, rest=180), _exercise("Bent Over Row", 3, 8, rest=90),
+                _exercise("Trap Bar Deadlift", 3, 5, rest=300), _exercise("Bent Over Row", 3, 8, rest=90),
                 _exercise("Dumbbell Overhead Press", 3, 10, rest=90), _exercise("Lat Pull Down", 3, 10, rest=90),
                 _exercise("Dumbbell Bicep Curl", 2, 12, rest=45), _exercise("Rope Pressdown", 2, 12, rest=45),
                 _exercise("Plank", 2, None, rest=45, notes="Hold to technical failure"),
             ], 75),
             _session("Full Body B", "full body", [
-                _exercise("Front Squat", 3, 5, rest=180), _exercise("Romanian Deadlift", 3, 10, rest=90),
-                _exercise("Farmer's Carry", 3, None, movement="core", rest=90, duration=45),
+                _exercise("Front Squat", 3, 5, rest=300), _exercise("Romanian Deadlift", 3, 10, rest=90),
+                _exercise("Farmer's Carry", 3, None, movement="core", rest=45, duration=45),
                 _exercise("Dumbbell Row", 3, 15, rest=90), _exercise("Incline Dumbbell Bench Press", 3, 12, rest=90),
                 _exercise("Calf Raise", 3, 20, rest=45), _exercise("Dead Bugs", 2, 12, rest=45, notes="Each side"),
             ], 75),
             _session("Full Body C", "full body", [
-                _exercise("Bench Press", 3, 5, rest=180), _exercise("Leg Press", 3, 10, rest=90),
+                _exercise("Bench Press", 3, 5, rest=300), _exercise("Leg Press", 3, 10, rest=90),
                 _exercise("Leg Curl", 3, 12, rest=90), _exercise("Lateral Raise", 3, 15, rest=45),
                 _exercise("Cable Row", 3, 12, rest=90), _exercise("EZ Bar Curl", 2, 12, rest=45),
                 _exercise("Skullcrusher", 2, 12, rest=45), _exercise("Pallof Press", 2, 12, rest=45, notes="Each side"),
@@ -305,7 +306,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
                 _exercise("Leg Curls", 3, 15, rest=90), _exercise("Ab Wheel Roll Out", 3, 15, rest=90),
             ], 90),
             _session("Workout B", "full body", [
-                _exercise("Deadlift", 1, 5, rest=120), _exercise("Romanian Deadlift", 2, 12, rest=120),
+                _exercise("Deadlift", 1, 5, rest=120), _exercise("Romanian Deadlift", 2, 12, rest=90),
                 _exercise("Seated Overhead Press", 3, 10, rest=120), _exercise("Pull Ups", 3, 15, rest=90),
                 _exercise("Dips", 3, 20, movement="vertical_push", rest=90), _exercise("Barbell Shrugs", 3, 10, rest=90),
                 _exercise("Seated Calf Raise", 3, 15, rest=90), _exercise("Plank", 3, None, rest=90, duration=60),
@@ -326,21 +327,21 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "six_to_twenty_four_months",
         [
             _session("Day 1", "full body", [
-                _exercise("Squat", 5, 5), _exercise("Dumbbell Bench Press", 4, 10),
+                _exercise("Squat", 5, 5, rest=180), _exercise("Dumbbell Bench Press", 4, 10),
                 _exercise("Dumbbell Row", 4, 10), _exercise("Seated Dumbbell Press", 4, 10),
                 _exercise("Lunge", 4, 10), _exercise("Dumbbell Curl", 3, 10),
                 _exercise("Standing Barbell Tricep Extension", 3, 10), _exercise("Calf Raise", 3, 12),
                 _exercise("Plank", 5, None, duration=20),
             ], 90),
             _session("Day 2", "full body", [
-                _exercise("Bench Press", 5, 5), _exercise("Machine Pec Deck", 3, 12),
+                _exercise("Bench Press", 5, 5, rest=180), _exercise("Machine Pec Deck", 3, 12),
                 _exercise("Leg Extension", 4, 10), _exercise("Leg Curl", 4, 10),
                 _exercise("Pullup", 4, 10), _exercise("Seated Lateral Raise", 4, 10),
                 _exercise("Dumbbell Hammer Curls", 3, 10), _exercise("Rope Extension", 3, 10),
                 _exercise("Plank", 5, None, duration=20),
             ], 90),
             _session("Day 3", "full body", [
-                _exercise("Deadlift", 5, 5), _exercise("Incline Dumbbell Press", 4, 10),
+                _exercise("Deadlift", 5, 5, rest=180), _exercise("Incline Dumbbell Press", 4, 10),
                 _exercise("Lateral Raise", 4, 10), _exercise("Pulldown", 4, 10),
                 _exercise("Leg Press", 4, 10), _exercise("EZ Bar Curl", 3, 10),
                 _exercise("Skullcrushers", 3, 10), _exercise("Dumbbell Shrugs", 3, 12),
@@ -355,23 +356,23 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "new",
         [
             _session("Upper A", "upper body", [
-                _exercise("Bench Press", 3, 12), _exercise("Barbell Row", 3, 12), _exercise("Seated Overhead Dumbbell Press", 3, 12),
-                _exercise("Pec Deck", 2, 12), _exercise("V-Bar Lat Pull Down", 2, 12), _exercise("Side Lateral Raise", 2, 15),
+                _exercise("Bench Press", 3, 12, rest=90), _exercise("Barbell Row", 3, 12, rest=90), _exercise("Seated Overhead Dumbbell Press", 3, 12, rest=90),
+                _exercise("Pec Deck", 2, 12), _exercise("V-Bar Lat Pull Down", 2, 12, rest=90), _exercise("Side Lateral Raise", 2, 15),
                 _exercise("Cable Tricep Extensions", 3, 12), _exercise("Cable Curls", 3, 12),
             ]),
             _session("Lower A", "lower body", [
-                _exercise("Squat", 3, 12), _exercise("Stiff Leg Deadlifts", 3, 12), _exercise("Standing Calf Raise", 3, 15),
+                _exercise("Squat", 3, 12, rest=90), _exercise("Stiff Leg Deadlifts", 3, 12, rest=90), _exercise("Standing Calf Raise", 3, 15),
                 _exercise("Leg Extension", 2, 12), _exercise("Leg Curl", 2, 12), _exercise("Seated Calf Raise", 2, 12),
                 _exercise("Cable Crunch", 3, 12), _exercise("Cable Pull Through", 3, 12),
             ]),
             _session("Upper B", "upper body", [
-                _exercise("Incline Dumbbell Bench Press", 3, 12), _exercise("Rack Deadlifts", 3, 8), _exercise("Military Press", 3, 12),
-                _exercise("Machine Chest Press", 2, 12), _exercise("Machine Row", 2, 12), _exercise("Machine Shoulder Press", 2, 12),
+                _exercise("Incline Dumbbell Bench Press", 3, 12, rest=90), _exercise("Rack Deadlifts", 3, 8, rest=90), _exercise("Military Press", 3, 12, rest=90),
+                _exercise("Machine Chest Press", 2, 12, rest=90), _exercise("Machine Row", 2, 12, rest=90), _exercise("Machine Shoulder Press", 2, 12, rest=90),
                 _exercise("Dumbbell Curls", 3, 12), _exercise("Machine Tricep Dip", 3, 12),
             ]),
             _session("Lower B", "lower body", [
-                _exercise("Leg Press", 3, 20), _exercise("Dumbbell Stiff Leg Deadlift", 3, 12), _exercise("Leg Press Calf Raise", 3, 15),
-                _exercise("Hack Squat", 2, 12), _exercise("Seated Leg Curl", 2, 12), _exercise("Seated Calf Raise", 2, 12),
+                _exercise("Leg Press", 3, 20, rest=90), _exercise("Dumbbell Stiff Leg Deadlift", 3, 12, rest=90), _exercise("Leg Press Calf Raise", 3, 15),
+                _exercise("Hack Squat", 2, 12, rest=90), _exercise("Seated Leg Curl", 2, 12), _exercise("Seated Calf Raise", 2, 12),
                 _exercise("Plank", 3, None, duration=60), _exercise("Hyperextension", 3, 12),
             ]),
         ],
@@ -383,24 +384,24 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "six_to_twenty_four_months",
         [
             _session("Lower Strength", "lower body", [
-                _exercise("Front Squat", 3, 5, rest=180), _exercise("Trap Bar Deadlift", 3, 5, rest=180),
-                _exercise("Hack Squat", 3, 15, rest=90), _exercise("Glute Ham Raise", 3, 10, movement="hip_hinge", rest=90),
-                _exercise("Seated Calf Raise", 4, 10, rest=90),
+                _exercise("Front Squat", 3, 5, rest=300), _exercise("Trap Bar Deadlift", 3, 5, rest=300),
+                _exercise("Hack Squat", 3, 15, rest=120), _exercise("Glute Ham Raise", 3, 10, movement="hip_hinge", rest=120),
+                _exercise("Seated Calf Raise", 4, 10, rest=120),
             ]),
             _session("Upper Strength", "upper body", [
-                _exercise("Dumbbell Bench Press", 3, 5, rest=180), _exercise("One Arm Dumbbell Row", 3, 5, rest=180),
-                _exercise("Overhead Press", 3, 5, rest=180), _exercise("Pull Up", 3, 10, rest=90),
-                _exercise("Incline Bench Press", 3, 10, rest=90), _exercise("Tricep Dip", 2, 10, movement="vertical_push", rest=90),
-                _exercise("Farmer's Carry", 2, None, movement="core", rest=90, duration=40),
+                _exercise("Dumbbell Bench Press", 3, 5, rest=300), _exercise("One Arm Dumbbell Row", 3, 5, rest=300),
+                _exercise("Overhead Press", 3, 5, rest=300), _exercise("Pull Up", 3, 10, rest=120),
+                _exercise("Incline Bench Press", 3, 10, rest=120), _exercise("Tricep Dip", 2, 10, movement="vertical_push", rest=120),
+                _exercise("Farmer's Carry", 2, None, movement="core", rest=120, duration=40),
             ]),
             _session("Lower Hypertrophy", "lower body", [
                 _exercise("Front Squat", 3, 12), _exercise("Dumbbell Reverse Lunge", 3, 12), _exercise("Barbell Hip Thrust", 3, 12),
-                _exercise("Leg Extension", 3, 15), _exercise("Romanian Deadlift", 3, 15), _exercise("Standing Machine Calf Raise", 3, 12),
+                _exercise("Leg Extension", 3, 15, rest=45), _exercise("Romanian Deadlift", 3, 15), _exercise("Standing Machine Calf Raise", 3, 12, rest=45),
             ]),
             _session("Upper Hypertrophy", "upper body", [
                 _exercise("Incline Dumbbell Bench Press", 3, 12), _exercise("Decline Bench Press", 3, 12),
-                _exercise("Lat Pull Down", 3, 12), _exercise("Inverted Row", 3, 12), _exercise("Face Pull", 3, 12),
-                _exercise("Lateral Raise", 3, 12), _exercise("Barbell Curl", 3, 12), _exercise("Incline Skullcrusher", 3, 12),
+                _exercise("Lat Pull Down", 3, 12), _exercise("Inverted Row", 3, 12), _exercise("Face Pull", 3, 12, rest=45),
+                _exercise("Lateral Raise", 3, 12, rest=45), _exercise("Barbell Curl", 3, 12, rest=45), _exercise("Incline Skullcrusher", 3, 12, rest=45),
             ]),
         ],
         "Strength and hypertrophy days each expose upper and lower regions twice weekly; advanced volume.",
@@ -441,37 +442,37 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "six_to_twenty_four_months",
         [
             _session("Upper Strength", "upper body", [
-                _exercise("Weighted Wide Grip Pull Ups", 2, 6, rest=120), _exercise("Bent Over Barbell Row", 4, 6, rest=120),
-                _exercise("Narrow Grip T-Bar Row", 2, 6, rest=120), _exercise("Standing Overhead Barbell Press", 4, 6, rest=120),
-                _exercise("Incline Dumbbell Bench Press", 4, 6, rest=120), _exercise("Weighted Dips", 2, 6, movement="vertical_push", rest=120),
-                _exercise("EZ Bar Skullcrusher", 2, 6, rest=120), _exercise("EZ Bar Bicep Curls", 2, 6, rest=120),
+                _exercise("Weighted Wide Grip Pull Ups", 2, 6, rest=180), _exercise("Bent Over Barbell Row", 4, 6, rest=180),
+                _exercise("Narrow Grip T-Bar Row", 2, 6, rest=180), _exercise("Standing Overhead Barbell Press", 4, 6, rest=180),
+                _exercise("Incline Dumbbell Bench Press", 4, 6, rest=180), _exercise("Weighted Dips", 2, 6, movement="vertical_push", rest=180),
+                _exercise("EZ Bar Skullcrusher", 2, 6, rest=180), _exercise("EZ Bar Bicep Curls", 2, 6, rest=180),
             ], 90),
             _session("Lower Strength", "lower body", [
-                _exercise("Squats", 4, 6, rest=120), _exercise("Hack Squats", 2, 6, rest=120),
-                _exercise("Deadlifts", 4, 6, rest=120), _exercise("Lying Leg Curls", 2, 6, rest=120),
-                _exercise("Standing Calf Raise", 4, 6, rest=120), _exercise("Seated Calf Raise", 2, 6, rest=120),
+                _exercise("Squats", 4, 6, rest=180), _exercise("Hack Squats", 2, 6, rest=180),
+                _exercise("Deadlifts", 4, 6, rest=180), _exercise("Lying Leg Curls", 2, 6, rest=180),
+                _exercise("Standing Calf Raise", 4, 6, rest=180), _exercise("Seated Calf Raise", 2, 6, rest=180),
             ], 90),
             _session("Back & Shoulders Size", "pull", [
-                _exercise("Wide Grip Pull Down", 4, 12), _exercise("Narrow Grip Pull Down", 4, 12),
-                _exercise("Chest Supported Machine Row", 4, 12), _exercise("Narrow Grip Low Pulley Cable Row", 2, 12),
-                _exercise("Straight Arm Rope Pull Down", 2, 12), _exercise("Lower Back Hyperextensions", 2, 12),
-                _exercise("Dumbbell Shoulder Press", 4, 12), _exercise("Standing Dumbbell Side Lateral Raise", 2, 12),
-                _exercise("Standing EZ Bar Front Raise", 2, 12), _exercise("Dumbbell Rear Delt Lateral Raise", 2, 12),
-                _exercise("Cable EZ Bar Upright Row", 2, 12), _exercise("Rope Face Pull", 2, 12),
+                _exercise("Wide Grip Pull Down", 4, 12, rest=90), _exercise("Narrow Grip Pull Down", 4, 12, rest=90),
+                _exercise("Chest Supported Machine Row", 4, 12, rest=90), _exercise("Narrow Grip Low Pulley Cable Row", 2, 12, rest=90),
+                _exercise("Straight Arm Rope Pull Down", 2, 12, rest=90), _exercise("Lower Back Hyperextensions", 2, 12, rest=90),
+                _exercise("Dumbbell Shoulder Press", 4, 12, rest=90), _exercise("Standing Dumbbell Side Lateral Raise", 2, 12, rest=90),
+                _exercise("Standing EZ Bar Front Raise", 2, 12, rest=90), _exercise("Dumbbell Rear Delt Lateral Raise", 2, 12, rest=90),
+                _exercise("Cable EZ Bar Upright Row", 2, 12, rest=90), _exercise("Rope Face Pull", 2, 12, rest=90),
             ], 90),
             _session("Chest & Arms Size", "push", [
-                _exercise("Incline Barbell Bench Press", 4, 12), _exercise("Flat Machine Chest Press", 2, 12),
-                _exercise("Incline Dumbbell Fly", 2, 12), _exercise("Cable Crossover", 2, 12),
-                _exercise("Narrow Grip Bench Press", 2, 12), _exercise("Seated Overhead EZ Bar Tricep Extension", 2, 12),
-                _exercise("Single Arm Cable Press Down", 2, 12), _exercise("EZ Bar Preacher Curl", 2, 12),
-                _exercise("Standing Alternating Dumbbell Hammer Curl", 2, 12), _exercise("High Pulley Single Arm Bicep Curl", 2, 12),
+                _exercise("Incline Barbell Bench Press", 4, 12, rest=90), _exercise("Flat Machine Chest Press", 2, 12, rest=90),
+                _exercise("Incline Dumbbell Fly", 2, 12, rest=90), _exercise("Cable Crossover", 2, 12, rest=90),
+                _exercise("Narrow Grip Bench Press", 2, 12, rest=90), _exercise("Seated Overhead EZ Bar Tricep Extension", 2, 12, rest=90),
+                _exercise("Single Arm Cable Press Down", 2, 12, rest=90), _exercise("EZ Bar Preacher Curl", 2, 12, rest=90),
+                _exercise("Standing Alternating Dumbbell Hammer Curl", 2, 12, rest=90), _exercise("High Pulley Single Arm Bicep Curl", 2, 12, rest=90),
             ], 90),
             _session("Legs Size", "lower body", [
-                _exercise("Seated Hamstring Curl", 4, 12), _exercise("Leg Extension", 4, 12), _exercise("Front Squat", 4, 12),
-                _exercise("Leg Press", 4, 12), _exercise("Barbell Walking Lunge", 4, 12, notes="Each side"),
-                _exercise("Abductor Machine", 2, 12, movement="hip_hinge"), _exercise("Adductor Machine", 2, 12, movement="hip_hinge"),
-                _exercise("Glute Kick Backs", 2, 12, notes="Each side"), _exercise("Donkey Calf Raise", 4, 12),
-                _exercise("Seated Calf Raise", 4, 12), _exercise("Single Leg Calf Press", 4, 12, notes="Each side"),
+                _exercise("Seated Hamstring Curl", 4, 12, rest=90), _exercise("Leg Extension", 4, 12, rest=90), _exercise("Front Squat", 4, 12, rest=90),
+                _exercise("Leg Press", 4, 12, rest=90), _exercise("Barbell Walking Lunge", 4, 12, rest=90, notes="Each side"),
+                _exercise("Abductor Machine", 2, 12, movement="hip_hinge", rest=90), _exercise("Adductor Machine", 2, 12, movement="hip_hinge", rest=90),
+                _exercise("Glute Kick Backs", 2, 12, rest=90, notes="Each side"), _exercise("Donkey Calf Raise", 4, 12, rest=90),
+                _exercise("Seated Calf Raise", 4, 12, rest=90), _exercise("Single Leg Calf Press", 4, 12, rest=90, notes="Each side"),
             ], 90),
         ],
         "Each major region has strength and size exposures; original lower-bound set ranges retained.",

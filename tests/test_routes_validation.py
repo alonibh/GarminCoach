@@ -261,7 +261,7 @@ def test_onboarding_creates_reviewable_program_proposal(client):
     assert "No heavy overhead press; max 45 minutes; never suggest after 21:00" in setup.text
 
 
-def test_existing_total_package_ninety_second_defaults_migrate_once(client):
+def test_existing_total_package_legacy_defaults_migrate_once(client):
     _, db_module = client
     from db import ProgramSession, SessionExercise, TrainingProgram
 
@@ -287,12 +287,75 @@ def test_existing_total_package_ninety_second_defaults_migrate_once(client):
 
     db_module._migrate_add_columns()
     with db_module.get_session() as s:
-        assert s.get(SessionExercise, exercise_id).rest_seconds == 60
-        s.get(SessionExercise, exercise_id).rest_seconds = 90
+        assert s.get(SessionExercise, exercise_id).rest_seconds == 180
+        s.get(SessionExercise, exercise_id).rest_seconds = 91
 
     db_module._migrate_add_columns()
     with db_module.get_session() as s:
-        assert s.get(SessionExercise, exercise_id).rest_seconds == 90
+        assert s.get(SessionExercise, exercise_id).rest_seconds == 91
+
+
+def test_existing_source_template_rest_defaults_are_migrated_without_touching_custom_values(client):
+    _, db_module = client
+    from db import ProgramSession, SessionExercise, TrainingProgram
+
+    fixtures = [
+        ("beginner_full_body_3", "Full Body A", "Trap Bar Deadlift", 180, 300),
+        ("ms_full_body_3", "Workout B", "Romanian Deadlift", 120, 90),
+        ("upper_lower_4", "Upper A", "Bench Press", 60, 90),
+        ("shul_4", "Lower Strength", "Front Squat", 180, 300),
+        ("shul_4", "Lower Strength", "Hack Squat", 90, 120),
+        ("shul_4", "Lower Hypertrophy", "Leg Extension", 60, 45),
+        ("muscle_strength_5", "Upper Strength", "Bent Over Barbell Row", 120, 180),
+        ("muscle_strength_5", "Legs Size", "Leg Press", 60, 90),
+    ]
+    exercise_ids = []
+    with db_module.get_session() as s:
+        for index, (program_key, session_name, exercise_name, old_rest, _) in enumerate(fixtures):
+            program = TrainingProgram(
+                name=f"Source program {index}",
+                goal_tags=f'["{program_key}"]',
+                status="draft",
+            )
+            s.add(program)
+            s.flush()
+            routine = ProgramSession(program_id=program.id, name=session_name)
+            s.add(routine)
+            s.flush()
+            exercise = SessionExercise(
+                program_session_id=routine.id,
+                exercise_name=exercise_name,
+                rest_seconds=old_rest,
+            )
+            s.add(exercise)
+            s.flush()
+            exercise_ids.append(exercise.id)
+
+        custom_program = TrainingProgram(
+            name="Customized source program",
+            goal_tags='["total_package_3"]',
+            status="draft",
+        )
+        s.add(custom_program)
+        s.flush()
+        custom_session = ProgramSession(program_id=custom_program.id, name="Day 1")
+        s.add(custom_session)
+        s.flush()
+        custom_exercise = SessionExercise(
+            program_session_id=custom_session.id,
+            exercise_name="Squat",
+            rest_seconds=61,
+        )
+        s.add(custom_exercise)
+        s.flush()
+        custom_exercise_id = custom_exercise.id
+
+    db_module._migrate_add_columns()
+    with db_module.get_session() as s:
+        assert [s.get(SessionExercise, exercise_id).rest_seconds for exercise_id in exercise_ids] == [
+            expected for *_, expected in fixtures
+        ]
+        assert s.get(SessionExercise, custom_exercise_id).rest_seconds == 61
 
 
 def test_onboarding_proposal_is_reviewed_before_activation(client):
