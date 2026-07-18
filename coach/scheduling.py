@@ -31,6 +31,7 @@ class TimeSuggestion:
     start: time
     duration_min: int
     session_name: str
+    program_session_id: int
 
     def render(self) -> str:
         return f"{self.session_name} — {self.day:%A} at {self.start:%H:%M}."
@@ -55,6 +56,16 @@ def is_timing_question(user_text: str) -> bool:
         "can i", "could i", "should i", "will", "would", "what about", "how about", "is there",
     ))
     return day_reference and workout_reference and question_reference
+
+
+def is_schedule_request(user_text: str) -> bool:
+    """Recognize requests that intend to create a scheduled workout."""
+    text = " ".join(user_text.lower().split())
+    schedule_verb = bool(re.search(r"\b(schedule|book)\b", text))
+    workout_reference = any(phrase in text for phrase in (
+        "do it", "work out", "workout", "session",
+    ))
+    return schedule_verb and workout_reference
 
 
 def requested_day(user_text: str, today: date) -> date | None:
@@ -145,7 +156,7 @@ def _round_up_to_quarter(value: datetime) -> datetime:
     return value.replace(second=0, microsecond=0)
 
 
-def _session_details(session: Session, today: date) -> tuple[str, int, date] | None:
+def _session_details(session: Session, today: date) -> tuple[int, str, int, date] | None:
     program = active_program(session)
     if not program:
         return None
@@ -158,7 +169,7 @@ def _session_details(session: Session, today: date) -> tuple[str, int, date] | N
     earliest = today
     if state and state.get("earliest_recommended_date"):
         earliest = date.fromisoformat(state["earliest_recommended_date"])
-    return next_session.name, next_session.duration_min or 60, earliest
+    return next_session.id, next_session.name, next_session.duration_min or 60, earliest
 
 
 def _event_bounds(item: dict) -> tuple[datetime, datetime] | None:
@@ -188,7 +199,7 @@ def next_available_time(
     details = _session_details(session, now.date())
     if not details:
         return None
-    session_name, duration_min, earliest_day = details
+    program_session_id, session_name, duration_min, earliest_day = details
     events = [bounds for item in schedule if (bounds := _event_bounds(item))]
 
     search_start = start_day or now.date()
@@ -210,5 +221,7 @@ def next_available_time(
             if event_start < end_limit and event_end > candidate:
                 candidate = max(candidate, event_end)
         if candidate + timedelta(minutes=duration_min) <= end_limit:
-            return TimeSuggestion(candidate_day, candidate.time(), duration_min, session_name)
+            return TimeSuggestion(
+                candidate_day, candidate.time(), duration_min, session_name, program_session_id
+            )
     return None

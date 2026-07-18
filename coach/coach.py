@@ -526,7 +526,7 @@ def handle_chat(session: Session, user_text: str) -> str:
             role="assistant",
             content=response_text,
             created_at=datetime.now(timezone.utc),
-            data_snapshot=snapshot_json,
+            data_snapshot=None,
             pending_action_json=(
                 json.dumps({"interaction_ids": [item.interaction_id for item in interactions]})
                 if interactions else None

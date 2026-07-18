@@ -181,6 +181,59 @@ def reply_markup_for_ids(session: Session, interaction_ids: list[str]) -> dict |
     return reply_markup([row for row in rows if row and row.status == "pending"])
 
 
+def _stage_explicit_schedule(
+    session: Session, user_text: str, now: datetime
+) -> tuple[str, list[PendingInteraction]]:
+    """Calculate and stage an explicit dated schedule request without using chat context."""
+    from coach.calendar import get_upcoming_schedule_result
+    from coach.scheduling import next_available_time, requested_day
+
+    target_day = requested_day(user_text, now.date())
+    if target_day is None:
+        return "State the target day, for example: today, tomorrow, or Monday.", []
+    calendar = get_upcoming_schedule_result(days=7)
+    if calendar["state"] == "unconfigured":
+        return "Calendar is not connected, so I cannot verify a workout time.", []
+    if calendar["state"] != "fresh":
+        return "Calendar data is unavailable, so I cannot verify a workout time.", []
+    suggestion = next_available_time(
+        session,
+        now=now,
+        schedule=calendar["events"],
+        start_day=target_day,
+        max_days=1,
+    )
+    if not suggestion:
+        return f"No schedulable workout slot is available {target_day:%A}.", []
+    versions = (program_version(session), sync_version(session), calendar_version(session))
+    payload = {
+        "action": "schedule_session",
+        "program_session_id": suggestion.program_session_id,
+        "activity_type": "strength_training",
+        "title": suggestion.session_name,
+        "target_date": suggestion.day.isoformat(),
+        "suggested_time": suggestion.start.strftime("%H:%M"),
+        "duration_min": suggestion.duration_min,
+        "intensity": "normal",
+        "modifications": [],
+    }
+    row = PendingInteraction(
+        interaction_id=str(uuid4()), decision_id=None,
+        action_type="schedule_original_session", target_type="program_session",
+        target_id=suggestion.program_session_id,
+        payload_json=json.dumps(payload, sort_keys=True),
+        program_version=versions[0], sync_version=versions[1], calendar_version=versions[2],
+        created_at=now, expires_at=now + timedelta(hours=1), status="pending",
+    )
+    session.add(row)
+    session.flush()
+    return (
+        f"Confirm: schedule {suggestion.session_name} on {suggestion.day:%A} "
+        f"at {suggestion.start:%H:%M}.",
+        [row],
+    )
+
+
 def stage_free_text_change(session: Session, user_text: str) -> tuple[str, list[PendingInteraction]] | None:
     """Recognize a small, explicit change vocabulary; everything else stays informational."""
     lowered = " ".join(user_text.lower().split())
@@ -233,6 +286,10 @@ def stage_free_text_change(session: Session, user_text: str) -> tuple[str, list[
         session.add(row)
         session.flush()
         return f"Confirm this report: {user_text}", [row]
+
+    from coach.scheduling import is_schedule_request
+    if is_schedule_request(user_text):
+        return _stage_explicit_schedule(session, user_text, now)
 
     requested = None
     if any(phrase in lowered for phrase in ("schedule today", "schedule the workout", "schedule the session", "book the workout")):
@@ -370,6 +427,67 @@ def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
         from notify.outbox import enqueue_pre_workout_reminder
         enqueue_pre_workout_reminder(session, planned)
         return "applied", f"{planned.title} moved to {planned.suggested_time}."
+
+    if row.action_type == "schedule_original_session" and row.decision_id is None:
+        if (
+            row.program_version != program_version(session)
+            or row.calendar_version != calendar_version(session)
+        ):
+            row.status = "superseded"
+            row.failure_reason = "program_or_calendar_changed"
+            return "stale", "Program or calendar data changed. Ask again."
+        payload = json.loads(row.payload_json)
+        target_day = date.fromisoformat(payload["target_date"])
+        from coach.calendar import get_upcoming_schedule_result
+        from coach.scheduling import next_available_time
+
+        calendar = get_upcoming_schedule_result(days=7)
+        if calendar["state"] != "fresh":
+            row.status = "superseded"
+            row.failure_reason = "calendar_unavailable"
+            return "stale", "Calendar data changed. Ask again."
+        current_slot = next_available_time(
+            session,
+            now=now,
+            schedule=calendar["events"],
+            start_day=target_day,
+            max_days=1,
+        )
+        expected = (
+            int(payload["program_session_id"]),
+            payload["target_date"],
+            payload["suggested_time"],
+        )
+        actual = (
+            current_slot.program_session_id,
+            current_slot.day.isoformat(),
+            current_slot.start.strftime("%H:%M"),
+        ) if current_slot else None
+        if actual != expected:
+            row.status = "superseded"
+            row.failure_reason = "schedule_slot_changed"
+            return "stale", "The available workout time changed. Ask again."
+        from coach.garmin_compiler import compile_and_schedule
+
+        if not compile_and_schedule(session, payload):
+            row.status = "failed"
+            row.failure_reason = "garmin_schedule_failed"
+            return "failed", "Garmin scheduling failed. No session was scheduled."
+        planned = (
+            session.query(PlannedSession)
+            .filter_by(program_session_id=payload["program_session_id"], target_date=target_day)
+            .order_by(PlannedSession.id.desc())
+            .first()
+        )
+        if planned:
+            from notify.outbox import enqueue_pre_workout_reminder
+            enqueue_pre_workout_reminder(session, planned)
+        row.status = "applied"
+        row.applied_at = now
+        return (
+            "applied",
+            f"{payload['title']} scheduled for {target_day:%A} at {payload['suggested_time']}.",
+        )
 
     record = session.get(DecisionRecord, row.decision_id) if row.decision_id else None
     if not record:

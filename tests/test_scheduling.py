@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from coach.scheduling import is_timing_question, next_available_time, requested_day
+from coach.scheduling import is_schedule_request, is_timing_question, next_available_time, requested_day
 from db import Goal, ProgramSession, TrainingProgram
 
 
@@ -90,6 +90,8 @@ def test_timing_intent_variants_and_requested_days():
     assert all(is_timing_question(text) for text in variants)
     assert requested_day("Can I do it tomorrow?", today).isoformat() == "2026-07-19"
     assert requested_day("Could I train Monday?", today).isoformat() == "2026-07-20"
+    assert is_schedule_request("Can we schedule a workout for tomorrow?")
+    assert is_schedule_request("Please book the session for Sunday")
 
 
 def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch):
