@@ -31,3 +31,103 @@ the app; they are not a verbatim copy of every source range.
 - [Three-Way Split + Full Body](https://www.muscleandstrength.com/workouts/4-day-workout-to-build-muscle)
 - [5-Day Muscle & Strength](https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split)
 - [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
+
+## Operating-rule audit
+
+Audited 2026-07-18. This second pass covers the rules that determine when a
+session is eligible, how the sequence advances, and whether the morning bot may
+mention an optional recovery activity. Weekday names on the source pages are
+translated into rolling rest slots; they are not fixed calendar requirements.
+
+`Rest after` is the number of complete non-strength days represented by the
+source schedule after each listed app session. A zero permits the next session
+on the following day. More rest is always allowed. The program cursor never
+resets at a week boundary and missed sessions are not debt.
+
+| Program key | Source sequence | Rolling rest after each session | Source recovery guidance | Catalog disposition |
+| --- | --- | --- | --- | --- |
+| `full_body_2` | Workout A -> Workout B | Prefer 1 after each; source explicitly tolerates consecutive days when necessary | No formal recovery activity in the main program text | Keep. The bot should not proactively choose consecutive days, but a user-initiated consecutive placement may be confirmed. |
+| `beginner_full_body_3` | Full Body A -> B -> C | 1, 1, 1 | None in the program prescription | Keep. The source explicitly requires at least one full recovery day between sessions. |
+| `ms_full_body_3` | Workout A -> B -> C | 1, 1, 1 | Light walking is suggested on rest days; HIIT is discouraged | Keep. Easy walking is eligible for a verbal optional recovery suggestion. |
+| `total_package_3` | Day 1 squat -> Day 2 bench -> Day 3 deadlift | 1, 1, 1 | 30-45 minutes of very light jogging and/or walking on off days; no weights | Keep. Monday/Wednesday/Friday is illustrative. Easy walking is the preferred evidence-reviewed verbal option. |
+| `upper_lower_full_3` | Upper -> Lower -> Full Body | The source's strength days are separated by conditioning/recovery days | Day 2 recovery jog, Day 4 HIIT, Day 6 timed mile, Day 7 complete rest with optional low-intensity activity | Source-incomplete adaptation. The app omits most of the source's defining conditioning cycle and must be relabeled clearly or removed before deterministic sequencing ships. |
+| `upper_lower_4` | Upper A -> Lower A -> Upper B -> Lower B | 0, 1, 0, 2 | Steady-state cardio may be added on rest days as active recovery | Keep. Preserve the two-session blocks and intervening rest slots without forcing weekdays. Easy low-intensity movement may be offered verbally. |
+| `shul_4` | Lower Strength -> Upper Strength -> Lower Hypertrophy -> Upper Hypertrophy | 0, 1, 0, 2 | Off days may include non-strenuous active recovery and mobility | Keep. Preserve strength-before-hypertrophy order. An evidence-reviewed easy activity may be offered verbally. |
+| `split_full_4` | Back/Biceps -> Legs -> Chest/Shoulders/Triceps -> Full Body | 0, 0, 1, 2 | No explicit recovery activity found in the source program | Keep. Preserve the three-day split block, rest slot, then full-body session. |
+| `muscle_strength_5` | Upper Strength -> Lower Strength -> Back/Shoulders Size -> Chest/Arms Size -> Legs Size | 0, 1, 0, 0, 1 | Cardio should be minimal and low intensity if added; it is not prescribed as a recovery session | Keep. Do not proactively present cardio as a recovery intervention from this source alone. |
+| `ppl_6` | Push A -> Pull A -> Legs A -> Push B -> Pull B -> Legs B | 0, 0, 0, 0, 0, 1 | Low-intensity cardio may be added based on goals; HIIT should be limited | Keep. Do not turn optional goal-dependent cardio into a default recovery prescription. |
+
+### Source findings supporting the rolling rules
+
+- [A/B Full Body](https://www.muscleandstrength.com/workouts/a-b-2-day-workout-for-busy-people)
+  calls for two sessions per week, prefers non-consecutive days, and explicitly
+  says consecutive days are acceptable when necessary.
+- [Beginner Full Body](https://www.muscleandstrength.com/workouts/3-day-workout-routine-and-diet-for-beginners)
+  calls for three sessions per week with at least one full recovery day between
+  them.
+- [M&S Full Body](https://www.muscleandstrength.com/workouts/muscle-strength-full-body-workout-routine)
+  calls for three sessions with at least one rest day between them and names
+  light walking as its preferred rest-day cardio.
+- [Total Package](https://www.muscleandstrength.com/workouts/total-package-workout)
+  uses squat, bench, and deadlift sessions on Monday, Wednesday, and Friday and
+  explicitly reserves intervening days from weight training. The application
+  preserves the separation and order, not the weekday names.
+- [Get RIPPED](https://www.muscleandstrength.com/workouts/get-ripped-3-day-split)
+  is a seven-day strength-and-conditioning cycle rather than a standalone
+  three-session lifting program. Its omitted days are material, not incidental.
+- [Upper/Lower Bodybuilding](https://www.muscleandstrength.com/workouts/upper-lower-4-day-gym-bodybuilding-workout)
+  uses two upper/lower blocks separated by rest, then two weekend rest days.
+- [SHUL](https://www.muscleandstrength.com/workouts/shul-workout) uses two
+  strength sessions, one off day, two hypertrophy sessions, and two off days.
+- [Three-Way Split + Full Body](https://www.muscleandstrength.com/workouts/4-day-workout-to-build-muscle)
+  uses three consecutive split sessions, a rest day, then the full-body session.
+- [5-Day Muscle & Strength](https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split)
+  places a rest day after the two strength sessions and another after the final
+  size session.
+- [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
+  presents the six sessions as one Push/Pull/Legs A/B cycle followed by an off
+  day.
+
+## Recovery-activity evidence gate
+
+The program page establishes that an activity belongs to the selected program;
+it does not, by itself, establish a scientific recovery effect. The morning bot
+may use a source activity only after this independent gate:
+
+| Review question | Policy |
+| --- | --- |
+| Is the activity clearly part of, or explicitly permitted by, the main source program? | Required. Advice found only in comments does not qualify. |
+| Is it low fatigue and compatible with the next source session? | Required. HIIT, a timed mile, or additional lifting is not a recovery suggestion. |
+| Does current evidence reliably show restored performance or injury prevention? | No. The bot must not make either claim. |
+| Is there evidence of possible soreness benefit or compatibility with recovery? | Some reviews report possible benefits, but certainty and outcomes are inconsistent. This supports optional language only. |
+| Does it create a Garmin workout, plan completion, or calendar obligation? | Never. The suggestion is verbal only. |
+
+The approved initial form is easy walking at conversational effort. A source may
+justify a duration, but the bot should choose the least fatiguing source-compatible
+option. “Optional light movement” is accurate; “this will accelerate recovery”
+is not.
+
+Evidence reviewed:
+
+- [The importance of recovery in resistance-training microcycle construction](https://pubmed.ncbi.nlm.nih.gov/38689583/)
+- [Post-exercise recovery techniques: systematic review and meta-analysis](https://pubmed.ncbi.nlm.nih.gov/29755363/)
+- [Physical therapies for DOMS: umbrella review](https://pubmed.ncbi.nlm.nih.gov/40120073/)
+
+## Program-policy fields required in the catalog
+
+The implementation should add a versioned policy beside each immutable program
+template. At minimum it must contain:
+
+- `program_key`, `source_url`, `source_reviewed_at`, and `policy_version`;
+- ordered immutable session keys;
+- `minimum_rest_days_after` and, where different, preferred rest days;
+- whether a user-confirmed exception is allowed;
+- source duration as display metadata;
+- progression and substitution rules supported by the application;
+- optional recovery activity, source text location, evidence status, and
+  approved wording constraints;
+- omitted source components and the catalog's adaptation label;
+- a session identity fingerprint used only inside the currently active program.
+
+Program duration and deload behavior remain metadata until separately approved.
+They must not silently stop, reset, or modify the active program.

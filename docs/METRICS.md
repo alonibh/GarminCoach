@@ -1,5 +1,12 @@
 # GarminCoach — Metrics Reference
 
+> **Coach redesign note (2026-07-18):** the custom composite readiness score
+> documented below is legacy and is being retired from coaching and user-facing
+> UI. Supported devices use Garmin Training Readiness; unsupported devices use
+> individual observations without a synthetic score. ACWR remains descriptive
+> UI data only and must not drive Telegram recommendations or alerts. See
+> [`coach_product_architecture.md`](coach_product_architecture.md).
+
 This is the source of truth for every computed metric: the exact formula as
 implemented, every constant, the citation(s), and whether it is **Validated**
 (a published formula) or a **Heuristic** (a defensible choice where no single

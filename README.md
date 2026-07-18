@@ -40,12 +40,21 @@ Python 3.11+.
   SQLite cache, trend dashboard, fitness-age/VO₂ tiles, and type-aware
   workout-detail views (strength sets, cardio stats, HR zones).
 - **Phase 2 ✅ — Metrics engine:** training load (Banister/Edwards TRIMP), EWMA
-  ACWR, readiness (HRV/RHR/sleep z-scores vs a personal baseline), sleep debt,
-  and strength progression (volume load + Epley estimated-1RM). Every formula is
-  science-based and cited — see [`docs/METRICS.md`](docs/METRICS.md).
+  ACWR, a legacy heuristic readiness composite, sleep debt, and strength
+  progression (volume load + Epley estimated-1RM). Formula scope and limitations
+  are documented in [`docs/METRICS.md`](docs/METRICS.md).
 - **Phase 3 ✅ — Coach (LLM):** daily suggestions + Telegram chat, swappable Ollama/Claude.
 - **Phase 4 ✅ — Cloud Security:** HTTP Basic Authentication locking down all routes and data, preparing the app for safe deployment to the public internet (e.g. Oracle Cloud Free Tier).
 - **Phase 5 🚧 — Lifestyle Integration (Planned):** sync to Google/Apple Calendar via `.ics` to suggest workout times, plus dynamic nutrition/food/vitamin suggestions based on goals and current recovery status.
+
+The Telegram coach is being redesigned around a deterministic evidence engine.
+The approved baseline is in
+[`docs/coach_product_architecture.md`](docs/coach_product_architecture.md), with
+program scheduling and recovery rules in
+[`docs/routine_source_audit.md`](docs/routine_source_audit.md). The current
+runtime still contains legacy LLM-led behavior until that architecture is
+implemented; the redesign retires the custom readiness composite from coaching
+and keeps ACWR in the UI only.
 
 ## Setup
 
