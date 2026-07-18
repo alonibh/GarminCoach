@@ -527,7 +527,7 @@ def _fitness_tiles() -> list[dict]:
 
 
 def _readiness_tiles() -> list[dict]:
-    """Garmin Training Readiness plus descriptive, UI-only ACWR."""
+    """Capability-aware recovery facts plus descriptive, UI-only ACWR."""
     with get_session() as s:
         today = date.today()
         # Latest row (today or most recent day with data) for load/ACWR.
@@ -537,11 +537,21 @@ def _readiness_tiles() -> list[dict]:
             .order_by(DailyMetrics.day.desc())
             .first()
         )
-        from coach.decision_engine import training_readiness_category
-        from metrics.freshness import FRESH, TRAINING_READINESS, capability_state
+        from coach.decision_engine import sleep_score_category, training_readiness_category
+        from metrics.freshness import (
+            FRESH,
+            HRV,
+            RESTING_HR,
+            SLEEP,
+            SLEEP_SCORE,
+            STRESS,
+            TRAINING_READINESS,
+            capability_state,
+        )
         from db import ObservationFreshness
 
         health = s.get(DailyHealth, today)
+        sleep = s.get(Sleep, today)
         freshness_row = s.get(ObservationFreshness, (TRAINING_READINESS, today))
         capability = capability_state(s)
         r_val = (
@@ -552,35 +562,128 @@ def _readiness_tiles() -> list[dict]:
         )
         category = training_readiness_category(int(r_val)) if r_val is not None else None
         if capability == "unsupported":
-            r_empty_value = "N/A"
-            r_empty_label = "Not supported by this watch"
-            r_desc = "No fallback readiness score is invented."
-        elif r_val is None:
-            r_empty_value = "-"
-            r_empty_label = "No data yet"
-            r_desc = "Waiting for today's Garmin Training Readiness."
-        else:
-            r_empty_value = None
-            r_empty_label = None
-            r_desc = category or ""
+            def is_fresh(signal: str) -> bool:
+                row = s.get(ObservationFreshness, (signal, today))
+                return bool(row and row.state == FRESH)
 
-        readiness_tile = {
-            "key": "readiness", "label": "Garmin Readiness",
-            "value": int(r_val) if r_val is not None else None,
-            "unit": "",
-            "empty_value": r_empty_value,
-            "empty_label": r_empty_label,
-            "prev": None,
-            "age": category,
-            "trend": None,
-            "desc": r_desc,
-            "color": ("green" if category in {"Prime", "High", "Moderate"}
-                      else "yellow" if category == "Low"
-                      else "red" if category == "Poor"
-                      else None),
-            "bar_pct": int(r_val) if r_val is not None else None,
-            "hint": "Garmin's 1-100 Training Readiness score and official category. It supports a decision but does not predict performance.",
-        }
+            signal_rows = []
+            if sleep and sleep.total_s and is_fresh(SLEEP):
+                total_minutes = int(round(sleep.total_s / 60.0))
+                hours, minutes = divmod(total_minutes, 60)
+                sleep_value = f"{hours}h {minutes:02d}m"
+                if sleep.score is not None and is_fresh(SLEEP_SCORE):
+                    sleep_category = sleep_score_category(sleep.score)
+                    sleep_value += f" · score {int(round(sleep.score))}"
+                    if sleep_category:
+                        sleep_value += f" ({sleep_category})"
+            else:
+                sleep_value = "Not available today"
+            signal_rows.append({"label": "Sleep", "value": sleep_value})
+
+            if health and health.hrv_overnight is not None and is_fresh(HRV):
+                hrv = int(round(health.hrv_overnight))
+                if health.hrv_baseline_low is not None and health.hrv_baseline_high is not None:
+                    low = int(round(health.hrv_baseline_low))
+                    high = int(round(health.hrv_baseline_high))
+                    if hrv < low:
+                        hrv_state = "below"
+                    elif hrv > high:
+                        hrv_state = "above"
+                    else:
+                        hrv_state = "within"
+                    hrv_value = f"{hrv} ms · {hrv_state} {low}–{high} baseline"
+                else:
+                    hrv_value = f"{hrv} ms · baseline unavailable"
+            else:
+                hrv_value = "Not available today"
+            signal_rows.append({"label": "HRV", "value": hrv_value})
+
+            if health and health.resting_hr is not None and is_fresh(RESTING_HR):
+                from statistics import median
+
+                rhr = int(round(health.resting_hr))
+                recent_rhr = [
+                    float(value)
+                    for (value,) in (
+                        s.query(DailyHealth.resting_hr)
+                        .filter(
+                            DailyHealth.day < today,
+                            DailyHealth.day >= today - timedelta(days=28),
+                            DailyHealth.resting_hr.isnot(None),
+                        )
+                        .all()
+                    )
+                ]
+                if len(recent_rhr) >= 7:
+                    recent_median = int(round(median(recent_rhr)))
+                    delta = rhr - recent_median
+                    if delta == 0:
+                        comparison = "matches 28-day median"
+                    else:
+                        direction = "above" if delta > 0 else "below"
+                        comparison = f"{abs(delta)} bpm {direction} 28-day median"
+                    rhr_value = f"{rhr} bpm · {comparison}"
+                else:
+                    rhr_value = f"{rhr} bpm · recent baseline unavailable"
+            else:
+                rhr_value = "Not available today"
+            signal_rows.append({"label": "Resting HR", "value": rhr_value})
+
+            if sleep and sleep.sleep_stress_avg is not None and is_fresh(SLEEP):
+                stress_label = "Sleep stress"
+                stress = int(round(sleep.sleep_stress_avg))
+            elif health and health.stress_avg is not None and is_fresh(STRESS):
+                stress_label = "Stress today"
+                stress = int(round(health.stress_avg))
+            else:
+                stress_label = "Stress"
+                stress = None
+            if stress is not None and 0 <= stress <= 100:
+                if stress <= 25:
+                    stress_category = "resting range"
+                elif stress <= 50:
+                    stress_category = "low"
+                elif stress <= 75:
+                    stress_category = "medium"
+                else:
+                    stress_category = "high"
+                stress_value = f"{stress} · Garmin {stress_category}"
+            else:
+                stress_value = "Not available today"
+            signal_rows.append({"label": stress_label, "value": stress_value})
+            signal_rows.append({
+                "label": "Recovery time",
+                "value": "Not exposed by this watch sync",
+            })
+
+            readiness_tile = {
+                "key": "recovery_signals",
+                "label": "Recovery signals",
+                "signal_rows": signal_rows,
+                "desc": "Separate observations; not a combined readiness score.",
+                "hint": "Your watch does not provide Garmin Training Readiness. These synced signals are shown separately without applying unvalidated composite weights.",
+            }
+        elif r_val is None:
+            readiness_tile = {
+                "key": "readiness", "label": "Garmin Readiness",
+                "value": None, "unit": "", "empty_value": "-", "empty_label": "No data yet",
+                "prev": None, "age": None, "trend": None,
+                "desc": "Waiting for today's Garmin Training Readiness.",
+                "color": None, "bar_pct": None,
+                "hint": "Garmin's 1-100 Training Readiness score and official category. It supports a decision but does not predict performance.",
+            }
+        else:
+            readiness_tile = {
+                "key": "readiness", "label": "Garmin Readiness",
+                "value": int(r_val), "unit": "", "empty_value": None, "empty_label": None,
+                "prev": None, "age": category, "trend": None, "desc": category or "",
+                "color": ("green" if category in {"Prime", "High", "Moderate"}
+                          else "yellow" if category == "Low"
+                          else "red" if category == "Poor"
+                          else None),
+                "bar_pct": int(r_val),
+                "hint": "Garmin's 1-100 Training Readiness score and official category. It supports a decision but does not predict performance.",
+            }
 
         # ACWR tile.
         a_val = latest_metrics.acwr if latest_metrics else None

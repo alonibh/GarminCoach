@@ -101,9 +101,10 @@ def test_dashboard_hides_readiness_when_today_is_unready(session, monkeypatch):
     assert acwr["value"] == 0.5
 
 
-def test_dashboard_explains_unsupported_readiness_without_claiming_data_is_missing(session, monkeypatch):
+def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals(session, monkeypatch):
     import app as app_module
 
+    today = date.today()
     freshness.note_capability_from_device(
         session,
         {
@@ -111,6 +112,25 @@ def test_dashboard_explains_unsupported_readiness_without_claiming_data_is_missi
             "lastUsedDeviceName": "v\ufffdvoactive 5",
         },
     )
+    session.add(Sleep(day=today, total_s=8 * 3600 + 15 * 60, score=91, sleep_stress_avg=18))
+    session.add(DailyHealth(
+        day=today,
+        hrv_overnight=61,
+        hrv_baseline_low=57,
+        hrv_baseline_high=66,
+        resting_hr=49,
+        stress_avg=18,
+    ))
+    for offset in range(1, 9):
+        session.add(DailyHealth(day=today - timedelta(days=offset), resting_hr=52))
+    for signal in (
+        freshness.SLEEP,
+        freshness.SLEEP_SCORE,
+        freshness.HRV,
+        freshness.RESTING_HR,
+        freshness.STRESS,
+    ):
+        freshness.record_signal(session, signal, today, freshness.FRESH, "test")
     session.commit()
     monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
 
@@ -128,11 +148,18 @@ def test_dashboard_explains_unsupported_readiness_without_claiming_data_is_missi
         activities=[],
     )
 
-    assert readiness["value"] is None
-    assert readiness["empty_value"] == "N/A"
-    assert readiness["empty_label"] == "Not supported by this watch"
-    assert "Not supported by this watch" in rendered
-    assert "No fallback readiness score is invented." in rendered
+    assert readiness["key"] == "recovery_signals"
+    assert readiness["signal_rows"] == [
+        {"label": "Sleep", "value": "8h 15m · score 91 (Excellent)"},
+        {"label": "HRV", "value": "61 ms · within 57–66 baseline"},
+        {"label": "Resting HR", "value": "49 bpm · 3 bpm below 28-day median"},
+        {"label": "Sleep stress", "value": "18 · Garmin resting range"},
+        {"label": "Recovery time", "value": "Not exposed by this watch sync"},
+    ]
+    assert "Recovery signals" in rendered
+    assert "Separate observations; not a combined readiness score." in rendered
+    assert "61 ms · within 57–66 baseline" in rendered
+    assert "No fallback readiness score is invented." not in rendered
     assert "No data yet" not in rendered
     assert "Waiting for today" not in rendered
 

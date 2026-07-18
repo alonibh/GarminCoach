@@ -67,7 +67,20 @@
 {% endif %}
 
 {% macro render_tile(t) %}
-  {% if t.is_gauge %}
+  {% if t.signal_rows is defined %}
+  <div class="tile recovery-signals-tile">
+    <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">i</span>{% endif %}</div>
+    <div class="recovery-signal-list">
+      {% for row in t.signal_rows %}
+      <div class="recovery-signal-row">
+        <span>{{ row.label }}</span>
+        <strong>{{ row.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+    {% if t.desc %}<div class="recovery-signals-note">{{ t.desc }}</div>{% endif %}
+  </div>
+  {% elif t.is_gauge %}
   <div class="tile tile-gauge">
     <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">i</span>{% endif %}</div>
     <div class="gauge-wrap">
