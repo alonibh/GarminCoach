@@ -602,6 +602,76 @@ def _priority_individual_health(session: Session, day: date, device_upload_at: d
     session.add(row)
 
 
+def _record_full_sync_freshness(
+    session: Session,
+    day: date,
+    device_upload_iso: str | None,
+) -> None:
+    """Align today's full-sync facts with the per-signal freshness contract."""
+    from metrics.freshness import (
+        EXPECTED_PENDING,
+        FRESH,
+        HRV,
+        MISSING,
+        RESTING_HR,
+        SLEEP,
+        SLEEP_SCORE,
+        STRESS,
+        TRAINING_READINESS,
+        UNSUPPORTED,
+        capability_state,
+        record_signal,
+    )
+    from time_utils import get_local_tz
+
+    fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    parsed_upload = _parse_state_dt(device_upload_iso)
+    device_upload_at = parsed_upload.replace(tzinfo=None) if parsed_upload else None
+    sleep = session.get(Sleep, day)
+    health = session.get(DailyHealth, day)
+
+    sleep_state = FRESH if sleep and sleep.total_s and sleep.total_s > 0 else MISSING
+    if sleep_state == FRESH and sleep.sleep_end_time and device_upload_at:
+        sleep_end = sleep.sleep_end_time
+        if sleep_end.tzinfo is None:
+            sleep_end = get_local_tz().localize(sleep_end)
+        sleep_end_utc = sleep_end.astimezone(timezone.utc).replace(tzinfo=None)
+        if device_upload_at < sleep_end_utc:
+            sleep_state = EXPECTED_PENDING
+    record_signal(
+        session, SLEEP, day, sleep_state, "get_sleep_data",
+        fetched_at=fetched_at, device_upload_at=device_upload_at,
+    )
+    record_signal(
+        session, SLEEP_SCORE, day,
+        FRESH if sleep and sleep.score is not None and sleep_state == FRESH else MISSING,
+        "get_sleep_data", fetched_at=fetched_at, device_upload_at=device_upload_at,
+    )
+
+    capability = capability_state(session)
+    if capability == "unsupported":
+        record_signal(
+            session, TRAINING_READINESS, day, UNSUPPORTED, "device_capability",
+            fetched_at=fetched_at, device_upload_at=device_upload_at,
+        )
+        individual = (
+            (HRV, health.hrv_overnight if health else None, "get_hrv_data"),
+            (RESTING_HR, health.resting_hr if health else None, "get_rhr_day"),
+            (STRESS, health.stress_avg if health else None, "get_all_day_stress"),
+        )
+        for signal, value, endpoint in individual:
+            record_signal(
+                session, signal, day, FRESH if value is not None else MISSING, endpoint,
+                fetched_at=fetched_at, device_upload_at=device_upload_at,
+            )
+    else:
+        record_signal(
+            session, TRAINING_READINESS, day,
+            FRESH if health and health.training_readiness is not None else MISSING,
+            "get_training_readiness", fetched_at=fetched_at, device_upload_at=device_upload_at,
+        )
+
+
 def run_priority_sync() -> dict:
     """Fetch and commit only facts needed by today's morning decision."""
     from metrics.freshness import (
@@ -844,6 +914,12 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 preflight = _preflight(session)
             if summary["activities"] or summary["days"]:
                 _store_preflight_markers(session, preflight)
+            if last_completed_day == today:
+                _record_full_sync_freshness(
+                    session,
+                    today,
+                    preflight.get("device_upload") if preflight else _get_state(session, "device_last_upload"),
+                )
         except GarminConnectTooManyRequestsError:
             _note_rate_limited(session)
         except Exception:

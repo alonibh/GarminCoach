@@ -274,6 +274,16 @@ def _legacy_metrics_ready(session: Session) -> bool:
     return device_upload.astimezone(get_local_tz()).date() == today
 
 
+def synced_raw_metrics_ready(session: Session) -> bool:
+    """Whether current raw facts are provably from a completed watch sync.
+
+    This supports databases created by the full-sync path before per-signal
+    freshness rows were introduced. An explicit per-signal state still takes
+    precedence wherever one exists.
+    """
+    return _legacy_metrics_ready(session)
+
+
 def proactive_metrics_ready(session: Session) -> bool:
     """True only when every capability-dependent critical signal is fresh."""
     today = get_local_date()

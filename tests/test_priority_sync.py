@@ -154,6 +154,33 @@ def test_authoritative_unsupported_device_uses_individual_facts_without_score(se
     assert result["states"][freshness.HRV] == freshness.FRESH
 
 
+def test_full_sync_records_today_individual_freshness_for_unsupported_watch(session):
+    from db import DailyHealth, Sleep
+
+    target = date(2026, 7, 4)
+    freshness.note_capability_from_device(
+        session,
+        {"lastUsedDeviceApplicationKey": "vivoactive5"},
+    )
+    session.add(Sleep(day=target, total_s=8 * 3600, score=90))
+    session.add(DailyHealth(day=target, hrv_overnight=52, resting_hr=50, stress_avg=20))
+    session.commit()
+
+    sync_service._record_full_sync_freshness(
+        session,
+        target,
+        "2026-07-04T08:00:00+00:00",
+    )
+    session.commit()
+
+    assert session.get(ObservationFreshness, (freshness.SLEEP, target)).state == freshness.FRESH
+    assert session.get(ObservationFreshness, (freshness.SLEEP_SCORE, target)).state == freshness.FRESH
+    assert session.get(ObservationFreshness, (freshness.TRAINING_READINESS, target)).state == freshness.UNSUPPORTED
+    assert session.get(ObservationFreshness, (freshness.HRV, target)).state == freshness.FRESH
+    assert session.get(ObservationFreshness, (freshness.RESTING_HR, target)).state == freshness.FRESH
+    assert session.get(ObservationFreshness, (freshness.STRESS, target)).state == freshness.FRESH
+
+
 def test_priority_endpoint_error_is_not_classified_as_missing(session, monkeypatch):
     _wire_priority(monkeypatch, session)
     monkeypatch.setattr(sync_service.client, "training_readiness", lambda _day: (_ for _ in ()).throw(TimeoutError()))

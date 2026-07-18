@@ -547,6 +547,7 @@ def _readiness_tiles() -> list[dict]:
             STRESS,
             TRAINING_READINESS,
             capability_state,
+            synced_raw_metrics_ready,
         )
         from db import ObservationFreshness
 
@@ -562,9 +563,13 @@ def _readiness_tiles() -> list[dict]:
         )
         category = training_readiness_category(int(r_val)) if r_val is not None else None
         if capability == "unsupported":
+            raw_facts_synced = synced_raw_metrics_ready(s)
+
             def is_fresh(signal: str) -> bool:
                 row = s.get(ObservationFreshness, (signal, today))
-                return bool(row and row.state == FRESH)
+                if row:
+                    return row.state == FRESH
+                return raw_facts_synced
 
             signal_rows = []
             if sleep and sleep.total_s and is_fresh(SLEEP):
@@ -651,11 +656,6 @@ def _readiness_tiles() -> list[dict]:
             else:
                 stress_value = "Not available today"
             signal_rows.append({"label": stress_label, "value": stress_value})
-            signal_rows.append({
-                "label": "Recovery time",
-                "value": "Not exposed by this watch sync",
-            })
-
             readiness_tile = {
                 "key": "recovery_signals",
                 "label": "Recovery signals",

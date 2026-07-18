@@ -154,7 +154,6 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
         {"label": "HRV", "value": "61 ms · within 57–66 baseline"},
         {"label": "Resting HR", "value": "49 bpm · 3 bpm below 28-day median"},
         {"label": "Sleep stress", "value": "18 · Garmin resting range"},
-        {"label": "Recovery time", "value": "Not exposed by this watch sync"},
     ]
     assert "Recovery signals" in rendered
     assert "Separate observations; not a combined readiness score." in rendered
@@ -162,6 +161,41 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
     assert "No fallback readiness score is invented." not in rendered
     assert "No data yet" not in rendered
     assert "Waiting for today" not in rendered
+
+
+def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(session, monkeypatch):
+    import app as app_module
+
+    today = date.today()
+    freshness.note_capability_from_device(
+        session,
+        {"lastUsedDeviceApplicationKey": "vivoactive5"},
+    )
+    session.add(Sleep(day=today, total_s=7.5 * 3600, score=86, sleep_stress_avg=20))
+    session.add(DailyHealth(
+        day=today,
+        hrv_overnight=55,
+        hrv_baseline_low=50,
+        hrv_baseline_high=60,
+        resting_hr=51,
+        stress_avg=22,
+    ))
+    synced_at = datetime.now(timezone.utc).replace(microsecond=0)
+    _state(session, "device_last_upload", synced_at.isoformat())
+    _state(session, "last_sync_at", (synced_at + timedelta(minutes=1)).isoformat())
+    session.commit()
+    monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+
+    recovery, _ = app_module._readiness_tiles()
+
+    assert recovery["key"] == "recovery_signals"
+    assert recovery["signal_rows"][0] == {
+        "label": "Sleep", "value": "7h 30m · score 86 (Good)",
+    }
+    assert recovery["signal_rows"][1] == {
+        "label": "HRV", "value": "55 ms · within 50–60 baseline",
+    }
+    assert all(row["label"] != "Recovery time" for row in recovery["signal_rows"])
 
 
 def test_dashboard_sleep_chart_does_not_turn_missing_today_into_zero(monkeypatch):
