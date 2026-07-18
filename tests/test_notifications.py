@@ -208,7 +208,7 @@ def test_weekly_completion_uses_activity_date_not_late_reconciliation_date(sessi
     assert "not defined" not in summary
 
 
-def test_weekly_summary_uses_plain_language_and_meaningful_sleep_changes(session):
+def test_weekly_summary_uses_plain_language_and_omits_sleep_stats(session):
     from tests.test_program_state import _add_program
 
     _add_program(session)
@@ -220,7 +220,8 @@ def test_weekly_summary_uses_plain_language_and_meaningful_sleep_changes(session
     summary = build_weekly_summary(session, date(2026, 7, 11))
 
     assert "Training: 0 of 2 program sessions completed." in summary
-    assert "Sleep: 6h 54m per night, 18 min less than last week; score 83 (Good), up 2." in summary
+    assert "Sleep" not in summary
+    assert "score 83" not in summary
     assert "Unmatched" not in summary
     assert "Uncompleted" not in summary
     assert "not defined" not in summary

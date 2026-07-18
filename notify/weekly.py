@@ -14,38 +14,10 @@ from db import (
     ExerciseSet,
     PlannedSession,
     ProgramSession,
-    Sleep,
     get_session,
 )
 from notify.outbox import enqueue_notification, process_due_notifications
 from time_utils import get_local_date, get_local_now
-
-
-def _avg(values) -> float | None:
-    values = [float(value) for value in values if value is not None]
-    return round(sum(values) / len(values), 1) if values else None
-
-
-def _duration_text(hours: float) -> str:
-    total_minutes = int(round(hours * 60))
-    whole_hours, minutes = divmod(total_minutes, 60)
-    return f"{whole_hours}h {minutes:02d}m"
-
-
-def _sleep_change(current: float, previous: float) -> str:
-    delta_minutes = int(round((current - previous) * 60))
-    if delta_minutes == 0:
-        return "unchanged from last week"
-    direction = "more" if delta_minutes > 0 else "less"
-    return f"{abs(delta_minutes)} min {direction} than last week"
-
-
-def _score_change(current: float, previous: float) -> str:
-    delta = int(round(current - previous))
-    if delta == 0:
-        return "unchanged from last week"
-    direction = "up" if delta > 0 else "down"
-    return f"{direction} {abs(delta)}"
 
 
 def _strength_progression(session: Session, week_start: date, week_end: date) -> str | None:
@@ -122,20 +94,8 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
     ).count()
     progression = _strength_progression(session, week_start, week_end)
 
-    current_sleep = session.query(Sleep).filter(Sleep.day >= week_start, Sleep.day <= week_end).all()
-    previous_sleep = session.query(Sleep).filter(
-        Sleep.day >= week_start - timedelta(days=7), Sleep.day < week_start
-    ).all()
-    current_hours = _avg([(row.total_s / 3600) if row.total_s else None for row in current_sleep])
-    current_score = _avg([row.score for row in current_sleep])
-    previous_hours = _avg([(row.total_s / 3600) if row.total_s else None for row in previous_sleep])
-    previous_score = _avg([row.score for row in previous_sleep])
     issues = session.query(AthleteSafetyReport).filter_by(active=True).count()
     state = program_state_facts(session, program, on_date=week_end) if program else None
-
-    if not strength and not current_sleep and not completed:
-        next_text = f" Next: {state['next_session_name']}." if state else ""
-        return f"*Weekly summary*\nNo new synced training or sleep data.{next_text}"
 
     if expected is not None and completed <= expected:
         training_text = f"Training: {completed} of {expected} program sessions completed."
@@ -154,25 +114,6 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
         lines.append(f"Schedule: {missed} planned {noun} incomplete.")
     if progression:
         lines.append(f"Progress: {progression}.")
-    if current_hours is not None or current_score is not None:
-        sleep_parts = []
-        if current_hours is not None:
-            duration = f"{_duration_text(current_hours)} per night"
-            if previous_hours is not None:
-                duration += f", {_sleep_change(current_hours, previous_hours)}"
-            sleep_parts.append(duration)
-        if current_score is not None:
-            from coach.decision_engine import sleep_score_category
-
-            rounded_score = int(round(current_score))
-            category = sleep_score_category(current_score)
-            score = f"score {rounded_score}"
-            if category:
-                score += f" ({category})"
-            if previous_score is not None:
-                score += f", {_score_change(current_score, previous_score)}"
-            sleep_parts.append(score)
-        lines.append(f"Sleep: {'; '.join(sleep_parts)}.")
     if issues:
         lines.append(f"Confirmed unresolved safety reports: {issues}.")
     if state:
