@@ -68,6 +68,39 @@ def test_missing_readiness_does_not_turn_unknown_capability_into_unsupported(ses
     assert result["states"][freshness.TRAINING_READINESS] == freshness.MISSING
 
 
+def test_vivoactive_5_device_identity_authoritatively_marks_readiness_unsupported(session, monkeypatch):
+    _wire_priority(monkeypatch, session)
+    monkeypatch.setattr(
+        sync_service.client,
+        "device_last_used",
+        lambda: {
+            **_device_upload(datetime(2026, 7, 4, 8, tzinfo=timezone.utc)),
+            "productDisplayName": "vívoactive® 5",
+        },
+    )
+    monkeypatch.setattr(
+        sync_service.client,
+        "training_readiness",
+        lambda _day: (_ for _ in ()).throw(AssertionError("unsupported endpoint called")),
+    )
+    monkeypatch.setattr(sync_service.client, "hrv", lambda _day: {"hrvSummary": {"lastNightAvg": 48}})
+    monkeypatch.setattr(
+        sync_service.client,
+        "resting_hr",
+        lambda _day: {"allMetrics": {"metricsMap": {"WELLNESS_RESTING_HEART_RATE": [{"value": 55}]}}},
+    )
+    monkeypatch.setattr(sync_service.client, "stress", lambda _day: {"avgStressLevel": 22})
+
+    result = sync_service.run_priority_sync()
+
+    capability = session.get(DeviceCapability, freshness.TRAINING_READINESS)
+    assert result["capability"] == "unsupported"
+    assert capability.support_state == "unsupported"
+    assert capability.override_state is None
+    assert capability.evidence_source == "garmin_device_model:vivoactive_5"
+    assert result["states"][freshness.TRAINING_READINESS] == freshness.UNSUPPORTED
+
+
 def test_authoritative_unsupported_device_uses_individual_facts_without_score(session, monkeypatch):
     _wire_priority(monkeypatch, session)
     freshness.set_capability_override(session, freshness.TRAINING_READINESS, "unsupported")

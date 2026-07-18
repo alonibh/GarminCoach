@@ -5,7 +5,8 @@
 - Added source-audited policies and rolling completion reconciliation for all
   nine supported program templates; removed the incomplete Get RIPPED program.
 - Added capability-aware priority sync, observation freshness, and the durable
-  11:30 manual-sync or answer-anyway morning flow.
+  11:30 manual-sync or answer-anyway morning flow. Vívoactive 5 is identified
+  from Garmin device metadata as not supporting Training Readiness.
 - Replaced LLM workout decisions with a persisted evidence-rule engine using
   Garmin Training Readiness categories and program-rest precedence.
 - Added versioned Telegram confirmation actions; metrics never rewrite workout

@@ -528,6 +528,9 @@ absence; `ObservationFreshness` records each endpoint independently; the
 morning scheduler commits sleep/readiness facts before starting the slower
 background sync. `MorningBriefState` persists the 11:30 prompt and the
 answer-anyway choice so application restarts cannot duplicate or erase them.
+The verified Vívoactive 5 model identity is classified as unsupported from
+Garmin's device metadata and official product comparison; an empty readiness
+endpoint by itself still never changes capability.
 
 ### Increment 3: deterministic decision engine
 
@@ -603,6 +606,7 @@ These are not silently assumed during implementation:
 ## References
 
 - [Garmin Training Readiness factors and score categories](https://www8.garmin.com/manuals/webhelp/GUID-025D75CF-3445-49E1-8D81-1AA74AB4E00F/EN-US/GUID-C21BE0C8-A08E-4DA1-B6C6-2E0E2DDDB372.html)
+- [Garmin product comparison showing Vívoactive 5 without Training Readiness](https://www.garmin.com/en-GB/compare/?compareProduct=1057989&compareProduct=775421&compareProduct=780139)
 - [Garmin: Training Readiness is not designed to predict performance](https://www.garmin.com/it-CH/garmin-technology/running-science/physiological-measurements/training-readiness/)
 - [ACSM 2026 resistance-training guidance summary](https://acsm.org/resistance-training-guidelines-update-2026/)
 - [Impellizzeri et al.: ACWR conceptual and methodological issues](https://pubmed.ncbi.nlm.nih.gov/32502973/)

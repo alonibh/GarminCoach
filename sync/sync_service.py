@@ -146,6 +146,8 @@ def _preflight(session) -> dict:
     _set_state(session, "last_sync_check_at", _utc_now().isoformat(timespec="seconds"))
 
     dev = client.device_last_used()
+    from metrics.freshness import note_capability_from_device
+    note_capability_from_device(session, dev)
     device_upload = _device_upload_iso_from_payload(dev)
     _set_state(session, "device_last_upload", device_upload)
 
@@ -613,6 +615,7 @@ def run_priority_sync() -> dict:
         UNSUPPORTED,
         capability_state,
         morning_freshness,
+        note_capability_from_device,
         note_capability_observed,
         record_signal,
     )
@@ -625,6 +628,7 @@ def run_priority_sync() -> dict:
         device_upload_at = None
         try:
             device = client.device_last_used() or {}
+            note_capability_from_device(session, device, observed_at=fetched_at)
             upload_iso = _device_upload_iso_from_payload(device)
             _set_state(session, "device_last_upload", upload_iso)
             parsed_upload = _parse_state_dt(upload_iso)

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import re
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -28,6 +30,79 @@ MISSING = "missing"
 STALE = "stale"
 UNSUPPORTED = "unsupported"
 ERROR = "error"
+
+
+_DEVICE_MODEL_FIELDS = {
+    "deviceName",
+    "deviceType",
+    "displayName",
+    "modelName",
+    "productDisplayName",
+    "productName",
+}
+
+# This registry contains only device models whose capability was verified
+# against Garmin's official product comparison. Absence is always unknown.
+_TRAINING_READINESS_UNSUPPORTED_MODELS = {
+    "vivoactive_5": re.compile(r"\bvivoactive\s*5\b"),
+}
+
+
+def _normalized_device_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    ascii_name = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_name.lower()).split())
+
+
+def _device_model_names(payload: object):
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in _DEVICE_MODEL_FIELDS and isinstance(value, str):
+                yield value
+            elif isinstance(value, (dict, list, tuple)):
+                yield from _device_model_names(value)
+    elif isinstance(payload, (list, tuple)):
+        for value in payload:
+            yield from _device_model_names(value)
+
+
+def training_readiness_capability_from_device(payload: object) -> tuple[str, str] | None:
+    """Resolve only officially verified models; never infer from an empty metric."""
+    for raw_name in _device_model_names(payload):
+        normalized = _normalized_device_name(raw_name)
+        for model_key, pattern in _TRAINING_READINESS_UNSUPPORTED_MODELS.items():
+            if pattern.search(normalized):
+                return "unsupported", model_key
+    return None
+
+
+def note_capability_from_device(
+    session: Session,
+    payload: object,
+    metric: str = TRAINING_READINESS,
+    *,
+    observed_at: datetime | None = None,
+) -> DeviceCapability | None:
+    resolved = training_readiness_capability_from_device(payload)
+    if not resolved:
+        return None
+    state, model_key = resolved
+    now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    row = session.get(DeviceCapability, metric) or DeviceCapability(
+        metric=metric,
+        support_state=state,
+        evidence_source=f"garmin_device_model:{model_key}",
+        first_observed_at=now,
+        updated_at=now,
+    )
+    row.support_state = state
+    row.evidence_source = f"garmin_device_model:{model_key}"
+    row.first_observed_at = row.first_observed_at or now
+    row.last_observed_at = now
+    row.updated_at = now
+    session.add(row)
+    return row
 
 
 def _parse_iso(value: str | None) -> datetime | None:
