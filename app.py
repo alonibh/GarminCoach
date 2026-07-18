@@ -1553,9 +1553,10 @@ def approve_program(program_id: int):
             existing.updated_at = datetime.now()
         program.active = True
         program.status = "active"
-        program.updated_at = datetime.now()
+        program.activated_at = datetime.now()
+        program.updated_at = program.activated_at
         from coach.program_state import initialize_program_cursor
-        initialize_program_cursor(session, program, activated_at=program.updated_at)
+        initialize_program_cursor(session, program, activated_at=program.activated_at)
     return RedirectResponse(url="/program?view=active&approved=1", status_code=303)
 
 

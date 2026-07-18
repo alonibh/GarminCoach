@@ -60,7 +60,7 @@ def initialize_program_cursor(
     policy, sessions = _policy_and_sessions(session, program)
     if not policy or not sessions:
         return None
-    now = activated_at or datetime.now()
+    now = activated_at or program.activated_at or program.created_at or datetime.now()
     cursor = session.get(ProgramCursor, program.id)
     if cursor is None:
         cursor = ProgramCursor(

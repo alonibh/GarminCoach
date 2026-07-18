@@ -228,6 +228,7 @@ class TrainingProgram(Base):
     status: Mapped[str] = mapped_column(String(16), default="draft")
     rationale: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     sessions: Mapped[list["ProgramSession"]] = relationship(
@@ -514,6 +515,7 @@ _PROGRAM_SESSION_ADD_COLUMNS = {
 _TRAINING_PROGRAM_ADD_COLUMNS = {
     "status": "VARCHAR(16) NOT NULL DEFAULT 'draft'",
     "rationale": "TEXT NOT NULL DEFAULT ''",
+    "activated_at": "DATETIME",
 }
 
 
@@ -610,6 +612,11 @@ def _migrate_add_columns() -> None:
         conn.execute(text(
             "UPDATE training_programs SET status = 'active' "
             "WHERE active = 1 AND status = 'draft'"
+        ))
+        conn.execute(text(
+            "UPDATE training_programs SET activated_at = "
+            "COALESCE(created_at, updated_at, CURRENT_TIMESTAMP) "
+            "WHERE active = 1 AND activated_at IS NULL"
         ))
 
         # Create session_exercises table if it doesn't exist yet

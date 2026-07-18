@@ -32,6 +32,7 @@ def _add_program(session, key="full_body_2", *, active=True, exercise_keys=None)
         active=active,
         status="active" if active else "archived",
         created_at=datetime(2026, 7, 1),
+        activated_at=datetime(2026, 7, 1) if active else None,
         updated_at=datetime(2026, 7, 1),
     )
     session.add(program)
@@ -149,6 +150,17 @@ def test_cursor_survives_week_boundary_and_uses_rolling_rest(session):
     assert monday["next_session_name"] == source_sessions[1].name
     assert monday["is_program_rest_day"] is False
     assert session.get(ProgramCursor, program.id).next_program_session_id == source_sessions[1].id
+
+
+def test_existing_active_program_reconciles_history_since_activation(session):
+    program, source_sessions = _add_program(session)
+    _activity(session, 104, datetime(2026, 7, 2, 9), exercise_name="ONLY_0")
+
+    assert reconcile_active_program(session) == 1
+
+    cursor = session.get(ProgramCursor, program.id)
+    assert cursor.created_at == program.activated_at
+    assert cursor.next_program_session_id == source_sessions[1].id
 
 
 def test_ambiguous_manual_fingerprint_does_not_advance(session):
