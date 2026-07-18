@@ -335,6 +335,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert 'placeholder="Auto"' not in review.text
     assert 'onclick="resetProgram(' in review.text
     assert "location.reload()" not in review.text
+    assert "window.scrollTo" not in review.text
     assert "function replaceProgramContent" in review.text
 
     missing_name = c.post(f"/api/program/{program_id}/sessions", json={})

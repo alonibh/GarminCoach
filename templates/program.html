@@ -108,7 +108,7 @@ document.addEventListener('input',event=>{if(!event.target.matches('.ex-weight')
 function markSessionReady(sessionId){const badge=document.getElementById('session-ready-'+sessionId);if(!badge)return;badge.classList.remove('is-incomplete');badge.classList.add('is-ready');badge.textContent='Ready for Garmin'}
 function refreshSessionReady(sessionId){const badge=document.getElementById('session-ready-'+sessionId),hasExercise=document.querySelector('#tbody-'+sessionId+' .exercise-row');if(!badge)return;badge.classList.toggle('is-ready',Boolean(hasExercise));badge.classList.toggle('is-incomplete',!hasExercise);badge.textContent=hasExercise?'Ready for Garmin':'Add an exercise to make this ready'}
 function removeExerciseRow(button){const list=button.closest('.exercise-list');button.closest('.exercise-row').remove();refreshSessionReady(list.id.replace('tbody-',''))}
-async function replaceProgramContent(response,{scrollTop=false}={}){
+async function replaceProgramContent(response){
   if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.detail||'Could not update the program.');}
   const html=await response.text();
   const next=new DOMParser().parseFromString(html,'text/html').getElementById('program-dynamic-content');
@@ -117,9 +117,8 @@ async function replaceProgramContent(response,{scrollTop=false}={}){
   current.replaceWith(next);
   const url=new URL(response.url,window.location.origin);
   history.replaceState({},'',url.pathname+url.search);
-  if(scrollTop)window.scrollTo({top:0,behavior:'smooth'});
 }
-async function refreshProgramContent(url,{scrollTop=false}={}){await replaceProgramContent(await fetch(url),{scrollTop})}
+async function refreshProgramContent(url){await replaceProgramContent(await fetch(url))}
 async function saveSession(sessionId){
   const status=document.getElementById('save-status-'+sessionId);
   const payload=[...document.querySelectorAll('#tbody-'+sessionId+' .exercise-row')].map((row,i)=>{const timed=row.querySelector('.ex-target-type').value==='time',target=row.querySelector('.ex-target').value,warmup=row.querySelector('.ex-warmup-enabled');return {exercise_key:row.dataset.key,exercise_name:row.querySelector('.exercise-name').textContent.trim(),sets:row.querySelector('.ex-sets').value||null,reps:timed?null:(target||null),duration_seconds:timed?(target||null):null,weight_kg:timed?null:(row.querySelector('.ex-weight').value||null),rest_seconds:row.querySelector('.ex-rest').value||60,warmup_enabled:warmup?warmup.checked:undefined,warmup_reps:row.querySelector('.ex-warmup-reps')?.value||null,warmup_weight_kg:row.querySelector('.ex-warmup-weight')?.value||null,order_index:i}});
@@ -136,7 +135,7 @@ async function approveProgram(){
   const sessionIds=[{% for s in strength_sessions %}{{ s.id }}{% if not loop.last %},{% endif %}{% endfor %}];
   const saved=await Promise.all(sessionIds.map(saveSession));
   if(saved.every(Boolean)){
-    try{await replaceProgramContent(await fetch(document.getElementById('approve-form').action,{method:'POST'}),{scrollTop:true});}
+    try{await replaceProgramContent(await fetch(document.getElementById('approve-form').action,{method:'POST'}));}
     catch(error){status.textContent=error.message;button.disabled=false;button.textContent='Save and approve program';}
     return;
   }
@@ -157,7 +156,7 @@ async function addSession(programId){
 async function removeAdditionalSession(programId,sessionId){if(!confirm('Remove this additional session?'))return;const response=await fetch('/api/program/'+programId+'/sessions/'+sessionId,{method:'DELETE'});if(response.ok){await refreshProgramContent('/program'+location.search);return}const body=await response.json().catch(()=>({}));alert(body.detail||'Could not remove session')}
 async function resetProgram(programId){
   if(!confirm('Reset every workout to the original template? Your exercise edits and added sessions will be removed. Recent matching Garmin weights will be reapplied.'))return;
-  try{await replaceProgramContent(await fetch('/program/'+programId+'/reset',{method:'POST'}),{scrollTop:true});}
+  try{await replaceProgramContent(await fetch('/program/'+programId+'/reset',{method:'POST'}));}
   catch(error){alert(error.message);}
 }
 </script>
