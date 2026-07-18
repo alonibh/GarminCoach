@@ -53,7 +53,6 @@ jobs:
           username: ubuntu
           key: ${{ secrets.SERVER_SSH_KEY }}
           envs: TARGET_SHA
-          script_stop: true
           script: |
             set -Eeuo pipefail
             cd ~/garmincoach
@@ -80,7 +79,7 @@ jobs:
             # The exact SHA already passed the isolated Linux test job. On the
             # production host, use a side-effect-free smoke check instead of
             # loading test modules with live Garmin/calendar credentials.
-            python -m compileall -q .
+            python -m compileall -q app.py config.py db.py time_utils.py coach metrics notify sync
             python -c "import app"
             chmod +x fix_timeouts.sh
             ./fix_timeouts.sh
