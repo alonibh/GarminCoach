@@ -97,7 +97,7 @@ def test_dashboard_hides_readiness_when_today_is_unready(session, monkeypatch):
 
     assert readiness["value"] is None
     assert readiness["age"] is None
-    assert readiness["desc"] == "Waiting for overnight watch data."
+    assert readiness["desc"] == "Waiting for today's Garmin Training Readiness."
     assert acwr["value"] == 0.5
 
 

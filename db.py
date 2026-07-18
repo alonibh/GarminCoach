@@ -461,6 +461,35 @@ class MorningBriefState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class DecisionRecord(Base):
+    """Immutable typed coaching result with its exact facts and rule versions."""
+
+    __tablename__ = "decision_records"
+
+    decision_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    decision_type: Mapped[str] = mapped_column(String(32), index=True)
+    active_program_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("training_programs.id", ondelete="SET NULL"), index=True
+    )
+    program_policy_version: Mapped[Optional[str]] = mapped_column(String(32))
+    planned_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("planned_sessions.id", ondelete="SET NULL")
+    )
+    next_program_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="SET NULL")
+    )
+    earliest_eligible_date: Mapped[Optional[date]] = mapped_column(Date)
+    observations_json: Mapped[str] = mapped_column(Text, default="[]")
+    missing_json: Mapped[str] = mapped_column(Text, default="[]")
+    rule_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    reason_codes_json: Mapped[str] = mapped_column(Text, default="[]")
+    permitted_actions_json: Mapped[str] = mapped_column(Text, default="[]")
+    result_json: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    supersedes_decision_id: Mapped[Optional[str]] = mapped_column(String(36))
+
+
 # The web request threads and the background sync thread both write to this
 # SQLite file. Without a busy timeout an overlapping write fails immediately
 # with "database is locked"; WAL mode lets readers and a writer coexist.

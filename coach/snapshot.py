@@ -318,37 +318,6 @@ def build_snapshot(session: Session) -> str:
         return f"{day.isoformat()} ({d} day{'s' if d != 1 else ''} ago)"
 
     # 2. Latest Metrics — fetch the last 3 days to provide a trend for ACWR.
-    recent_metrics = (
-        session.query(DailyMetrics)
-        .filter((DailyMetrics.readiness.isnot(None)) | (DailyMetrics.acwr.isnot(None)))
-        .order_by(DailyMetrics.day.desc())
-        .limit(3)
-        .all()
-    )
-    if not recent_metrics:
-        recent_metrics = session.query(DailyMetrics).order_by(DailyMetrics.day.desc()).limit(3).all()
-        
-    if recent_metrics:
-        latest_metrics = recent_metrics[0]
-        acwr_val = latest_metrics.acwr
-        
-        block = {
-            "date": latest_metrics.day.isoformat(),
-            "data_as_of": _staleness(latest_metrics.day),
-            "readiness_score_0_to_100": latest_metrics.readiness,
-            "acute_load_7d": latest_metrics.acute_load,
-            "chronic_load_28d": latest_metrics.chronic_load,
-            "acwr_ratio": acwr_val,
-            "acwr_status": acwr_label(acwr_val) if acwr_val is not None else None,
-            "acwr_3_day_trend": [round(m.acwr, 2) for m in reversed(recent_metrics) if m.acwr is not None],
-            "sleep_debt_hours": latest_metrics.sleep_debt_h,
-        }
-        pruned = _prune_block(block, keep_keys=("date",))
-        if pruned:
-            snapshot["daily_metrics"] = pruned
-        else:
-            snapshot["metrics_available"] = False
-
     # 3. Latest Health
     latest_health = session.query(DailyHealth).order_by(DailyHealth.day.desc()).first()
     if latest_health:
@@ -357,6 +326,7 @@ def build_snapshot(session: Session) -> str:
             "data_as_of": _staleness(latest_health.day),
             "resting_hr": latest_health.resting_hr,
             "hrv_overnight": latest_health.hrv_overnight,
+            "garmin_training_readiness": latest_health.training_readiness,
         }
         pruned = _prune_block(block, keep_keys=("date",))
         if pruned:

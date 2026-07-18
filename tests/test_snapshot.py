@@ -74,23 +74,18 @@ def test_all_null_metrics_block_dropped(session):
     session.commit()
     from coach.snapshot import build_snapshot
     snap = yaml.safe_load(build_snapshot(session))
-    # Should not emit an all-null daily_metrics block; flags availability instead.
+    # Composite readiness and ACWR are never exposed to the coach snapshot.
     assert "daily_metrics" not in snap
-    assert snap.get("metrics_available") is False
 
 
-def test_metrics_block_kept_when_real(session):
+def test_custom_readiness_and_acwr_are_excluded_from_coach_snapshot(session):
     _seed_workouts(session)
     session.add(DailyMetrics(day=date.today(), readiness=78.0, acute_load=120.0,
                              chronic_load=100.0, acwr=1.2, sleep_debt_h=0.0))
     session.commit()
     from coach.snapshot import build_snapshot
     snap = yaml.safe_load(build_snapshot(session))
-    assert snap["daily_metrics"]["readiness_score_0_to_100"] == 78.0
-    assert snap["daily_metrics"]["acwr_ratio"] == 1.2
-    assert snap["daily_metrics"]["acwr_status"]  # label present
-    # sleep_debt_h was 0.0 -> pruned as empty
-    assert "sleep_debt_hours" not in snap["daily_metrics"]
+    assert "daily_metrics" not in snap
 
 
 def test_days_since_last_trained(session):

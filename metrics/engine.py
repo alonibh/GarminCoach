@@ -483,19 +483,9 @@ def recompute_daily_metrics(session) -> None:
             in_bed = s.total_s + s.awake_s
             sleep_eff = (s.total_s / in_bed * 100.0) if in_bed > 0 else None
 
-        readiness = compute_readiness(
-            hrv, hrv_mean, hrv_sd,
-            rhr, rhr_mean, rhr_sd,
-            sleep_hours, SLEEP_TARGET_HOURS, sleep_eff,
-        )
-        if day == get_local_date():
-            try:
-                from metrics.freshness import proactive_metrics_ready
-
-                if not proactive_metrics_ready(session):
-                    readiness = None
-            except Exception:
-                readiness = None
+        # Kept as a nullable schema field for migration compatibility only.
+        # Coaching and UI use Garmin Training Readiness or individual facts.
+        readiness = None
 
         # Sleep debt: trailing 14 days, newest first.
         sleep_hist: list[float | None] = []

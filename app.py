@@ -527,10 +527,9 @@ def _fitness_tiles() -> list[dict]:
 
 
 def _readiness_tiles() -> list[dict]:
-    """Readiness + ACWR tiles from the latest DailyMetrics row."""
+    """Garmin Training Readiness plus descriptive, UI-only ACWR."""
     with get_session() as s:
         today = date.today()
-        overnight_ready = _overnight_metrics_ready(s)
         # Latest row (today or most recent day with data) for load/ACWR.
         latest_metrics = (
             s.query(DailyMetrics)
@@ -538,76 +537,45 @@ def _readiness_tiles() -> list[dict]:
             .order_by(DailyMetrics.day.desc())
             .first()
         )
-        # Readiness answers "how recovered am I today?", so yesterday's value
-        # is not a useful fallback. Hide it until today's overnight data is
-        # finalized.
-        latest_readiness = None
-        if overnight_ready:
-            latest_readiness = (
-                s.query(DailyMetrics)
-                .filter(DailyMetrics.day == today)
-                .filter(DailyMetrics.readiness.isnot(None))
-                .first()
-            )
-        # Previous day for trend arrows.
-        prev = None
-        if latest_readiness:
-            prev = (
-                s.query(DailyMetrics)
-                .filter(DailyMetrics.day < latest_readiness.day)
-                .filter(DailyMetrics.readiness.isnot(None))
-                .order_by(DailyMetrics.day.desc())
-                .first()
-            )
+        from coach.decision_engine import training_readiness_category
+        from metrics.freshness import FRESH, TRAINING_READINESS, capability_state
+        from db import ObservationFreshness
 
-        # Readiness tile.
-        r_val = latest_readiness.readiness if latest_readiness else None
-        
-        r_desc = ""
-        if not overnight_ready:
-            r_desc = "Waiting for overnight watch data."
-        elif r_val is not None:
-            if r_val >= 70:
-                r_desc = "Ready to push."
-            elif r_val >= 40:
-                r_desc = "Moderate recovery."
-            else:
-                r_desc = "Prioritize recovery."
+        health = s.get(DailyHealth, today)
+        freshness_row = s.get(ObservationFreshness, (TRAINING_READINESS, today))
+        capability = capability_state(s)
+        r_val = (
+            health.training_readiness
+            if health and health.training_readiness is not None
+            and freshness_row and freshness_row.state == FRESH
+            else None
+        )
+        category = training_readiness_category(int(r_val)) if r_val is not None else None
+        if capability == "unsupported":
+            r_desc = "This device does not support Garmin Training Readiness."
+        elif r_val is None:
+            r_desc = "Waiting for today's Garmin Training Readiness."
+        else:
+            r_desc = category or ""
 
         readiness_tile = {
-            "key": "readiness", "label": "Readiness",
+            "key": "readiness", "label": "Garmin Readiness",
             "value": int(r_val) if r_val is not None else None,
             "unit": "",
             "prev": None,
-            "age": _age_label(latest_readiness.day.isoformat()) if latest_readiness else None,
+            "age": category,
             "trend": None,
             "desc": r_desc,
-            "color": ("green" if r_val and r_val >= 70
-                      else "yellow" if r_val and r_val >= 40
-                      else "red" if r_val is not None
+            "color": ("green" if category in {"Prime", "High", "Moderate"}
+                      else "yellow" if category == "Low"
+                      else "red" if category == "Poor"
                       else None),
             "bar_pct": int(r_val) if r_val is not None else None,
-            "hint": "Daily recovery score (0-100) based on your overnight HRV, resting heart rate, sleep duration, and Body Battery, all compared to your own 60-day personal baselines. Green (70+) = ready to push, yellow (40-69) = moderate, red (<40) = prioritize recovery.",
+            "hint": "Garmin's 1-100 Training Readiness score and official category. It supports a decision but does not predict performance.",
         }
 
         # ACWR tile.
         a_val = latest_metrics.acwr if latest_metrics else None
-        # Color zones: green (balanced), yellow (ramping/detraining), red (spike).
-        a_color = None
-        a_desc = ""
-        if a_val is not None:
-            if a_val < 0.8:
-                a_color = "yellow"
-                a_desc = "Doing less than usual."
-            elif a_val <= 1.3:
-                a_color = "green"
-                a_desc = "Steady progression, low injury risk."
-            elif a_val <= 1.5:
-                a_color = "yellow"
-                a_desc = "Building up load."
-            else:
-                a_color = "red"
-                a_desc = "Sharp increase, higher injury risk."
         # Bar position: map ACWR 0–2.0 to 0–100%, capped.
         a_bar_pct = min(100, int(a_val / 2.0 * 100)) if a_val is not None else None
         acwr_tile = {
@@ -615,11 +583,11 @@ def _readiness_tiles() -> list[dict]:
             "value": a_val,
             "unit": "",
             "is_gauge": True,
-            "age": acwr_label(a_val),
-            "desc": a_desc,
-            "color": a_color,
+            "age": None,
+            "desc": "Descriptive 7-day to 28-day load ratio. Not used by the coach.",
+            "color": None,
             "bar_pct": a_bar_pct,
-            "hint": "Acute:Chronic Workload Ratio: your last 7 days of training load divided by your last 28 days. Balanced (0.8-1.3) = steady progression. Ramping (1.3-1.5) = building up. Spike (>1.5) = sharp increase, higher injury risk. Detraining (<0.8) = doing less than usual.",
+            "hint": "Acute:Chronic Workload Ratio. Display only; it has no authority in workout or injury-risk recommendations.",
         }
 
         return [readiness_tile, acwr_tile]
@@ -2016,9 +1984,9 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
             Activity.start_time <= end_dt
         ).all()
         
-        metrics = session.query(DailyMetrics).filter(
-            DailyMetrics.day >= start_date,
-            DailyMetrics.day <= end_date
+        metrics = session.query(DailyHealth).filter(
+            DailyHealth.day >= start_date,
+            DailyHealth.day <= end_date
         ).all()
         
         act_map = {}
@@ -2034,10 +2002,10 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
             week_data = []
             for d in week:
                 # Determine readiness color
-                r_val = metric_map.get(d).readiness if metric_map.get(d) else None
+                r_val = metric_map.get(d).training_readiness if metric_map.get(d) else None
                 color = None
                 if r_val is not None:
-                    color = "green" if r_val >= 70 else "yellow" if r_val >= 40 else "red"
+                    color = "green" if r_val >= 50 else "yellow" if r_val >= 25 else "red"
                 
                 week_data.append({
                     "date": d,

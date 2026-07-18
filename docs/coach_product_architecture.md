@@ -531,6 +531,8 @@ answer-anyway choice so application restarts cannot duplicate or erase them.
 
 ### Increment 3: deterministic decision engine
 
+Status: implemented 2026-07-18.
+
 - Implement the typed result and evidence rule registry.
 - Apply program eligibility before biometrics.
 - Apply Garmin Readiness category behavior exactly as specified.
@@ -538,6 +540,13 @@ answer-anyway choice so application restarts cannot duplicate or erase them.
 
 Gate: boundary tests cover scores 1, 24, 25, 49, 50, 74, 75, 94, 95, and 100;
 missing supported-device readiness never becomes a green light or fallback.
+
+Implementation notes: every evaluation is stored as an idempotent
+`DecisionRecord` with exact observations, missing-data classifications,
+reviewed-rule versions, reason codes, and permitted actions. Garmin's official
+categories are the only readiness thresholds with workout authority. The old
+composite score is no longer computed or displayed; ACWR remains descriptive
+in the UI and is absent from coach facts and notification rules.
 
 ### Increment 4: Telegram renderer and interactions
 
