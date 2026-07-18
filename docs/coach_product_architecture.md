@@ -494,6 +494,8 @@ Key baseline conclusions for this design:
 
 ### Increment 1: program truth and reconciliation
 
+Status: implemented 2026-07-18.
+
 - Add policies for all nine catalog programs.
 - Keep the removed, source-incomplete Get RIPPED adaptation unavailable.
 - Add persistent program cursor and completion matching.
@@ -501,6 +503,14 @@ Key baseline conclusions for this design:
 
 Gate: synthetic histories advance only the correct active program session;
 ambiguous and unrelated activities do not advance it.
+
+Implementation notes: source policies are validated against the catalog at
+load time; the rolling cursor is created on activation and persisted in the
+database; planned Garmin sessions reconcile through workout-id provenance;
+manual equivalents require every configured exercise and a unique fingerprint
+inside the active program. Explicit provenance for any other workout blocks the
+manual-fingerprint fallback. Completion records preserve the activity, method,
+and policy version used.
 
 ### Increment 2: observation freshness and priority sync
 

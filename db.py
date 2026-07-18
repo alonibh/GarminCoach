@@ -54,6 +54,10 @@ class Activity(Base):
     # Filled by the metrics engine (Phase 2); nullable until then.
     training_load: Mapped[Optional[float]] = mapped_column(Float)
     name: Mapped[Optional[str]] = mapped_column(String(255))
+    # Garmin workout template id when the recorded activity exposes it. This is
+    # the only exact provenance link used to complete a planned program session.
+    source_workout_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    provenance_checked: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Cardio / outdoor fields (soccer, running, cycling…). Null for strength.
     moving_duration_s: Mapped[Optional[float]] = mapped_column(Float)
@@ -317,6 +321,54 @@ class PlannedSession(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    completed_activity_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("activities.id", ondelete="SET NULL"), index=True
+    )
+    completion_match_method: Mapped[Optional[str]] = mapped_column(String(32))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class ProgramCursor(Base):
+    """Durable rolling position in one curated program; never week-based."""
+
+    __tablename__ = "program_cursors"
+
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("training_programs.id", ondelete="CASCADE"), primary_key=True
+    )
+    next_program_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="SET NULL"), index=True
+    )
+    last_completed_program_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="SET NULL")
+    )
+    last_completed_activity_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("activities.id", ondelete="SET NULL")
+    )
+    last_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    policy_version: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ActivityProgramMatch(Base):
+    """Auditable, deterministic link between a synced activity and program session."""
+
+    __tablename__ = "activity_program_matches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    activity_id: Mapped[int] = mapped_column(
+        ForeignKey("activities.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("training_programs.id", ondelete="CASCADE"), index=True
+    )
+    program_session_id: Mapped[int] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="CASCADE"), index=True
+    )
+    match_method: Mapped[str] = mapped_column(String(32))
+    policy_version: Mapped[str] = mapped_column(String(32))
+    matched_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class CoachMessage(Base):
@@ -394,6 +446,8 @@ def init_db() -> None:
     
     with engine.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_exercise_sets_name_activity ON exercise_sets (exercise_name, activity_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_activities_source_workout_id ON activities (source_workout_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_planned_sessions_completed_activity_id ON planned_sessions (completed_activity_id)"))
 
 
 # SQLite can't add columns via create_all on an existing table, so add any
@@ -416,6 +470,15 @@ _ACTIVITY_ADD_COLUMNS = {
     "rpe": "INTEGER",
     "feel": "INTEGER",
     "hr_zone_seconds": "TEXT",
+    "source_workout_id": "INTEGER",
+    "provenance_checked": "INTEGER NOT NULL DEFAULT 0",
+}
+
+
+_PLANNED_SESSION_ADD_COLUMNS = {
+    "completed_activity_id": "INTEGER",
+    "completion_match_method": "VARCHAR(32)",
+    "completed_at": "DATETIME",
 }
 
 
@@ -537,6 +600,12 @@ def _migrate_add_columns() -> None:
         }
         for col, sqltype in missing_programs.items():
             conn.execute(text(f"ALTER TABLE training_programs ADD COLUMN {col} {sqltype}"))
+
+        # Migrate planned_sessions completion audit fields.
+        existing_planned = {c["name"] for c in insp.get_columns("planned_sessions")}
+        for col, sqltype in _PLANNED_SESSION_ADD_COLUMNS.items():
+            if col not in existing_planned:
+                conn.execute(text(f"ALTER TABLE planned_sessions ADD COLUMN {col} {sqltype}"))
         # Existing programs predate proposal review and were already active.
         conn.execute(text(
             "UPDATE training_programs SET status = 'active' "

@@ -275,6 +275,13 @@ def build_snapshot(session: Session) -> str:
                 })
         if base_templates:
             snapshot["base_workout_templates"] = base_templates
+
+        # This is authoritative rolling sequence/rest state. It is deliberately
+        # separate from biometric readiness, which cannot override a program rest day.
+        from coach.program_state import program_state_facts
+        state_facts = program_state_facts(session, current_program, on_date=local_time.date())
+        if state_facts:
+            snapshot["program_state"] = state_facts
     
     # User Profile (Weight & Gender & Age)
     gender = session.get(SyncState, "user_gender")

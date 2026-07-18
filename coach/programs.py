@@ -516,6 +516,11 @@ PROGRAMS: dict[str, dict[str, Any]] = {
     ),
 }
 
+# Policy and source-template drift is a correctness failure, not a runtime
+# coaching choice. Validate it when the catalog is loaded.
+from coach.program_policy import validate_program_policies
+validate_program_policies(PROGRAMS)
+
 
 PLAN_CHOICES = tuple(
     {

@@ -194,6 +194,24 @@ def _is_strength(activity_type: str) -> bool:
     return any(h in t for h in _STRENGTH_HINTS)
 
 
+def _workout_id(payload: Any) -> Optional[int]:
+    """Extract only an explicit Garmin workout-template provenance id."""
+    if not isinstance(payload, dict):
+        return None
+    for key in ("workoutId", "workoutID", "associatedWorkoutId"):
+        value = payload.get(key)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    for key in ("summaryDTO", "metadataDTO", "activityDTO"):
+        found = _workout_id(payload.get(key))
+        if found is not None:
+            return found
+    return None
+
+
 def _upsert_activity(session, raw: dict) -> Optional[int]:
     act_id = raw.get("activityId")
     if act_id is None:
@@ -225,24 +243,35 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
     act.anaerobic_te_msg = raw.get("anaerobicTrainingEffectMessage")
     new_rpe = raw.get("directWorkoutRpe")
     new_feel = raw.get("directWorkoutFeel")
+    new_workout_id = _workout_id(raw)
+    if new_workout_id is not None:
+        act.provenance_checked = True
 
     # The activities_by_date endpoint doesn't actually include RPE/Feel for historical
     # workouts. We need to fetch the full activity details to reliably get them.
     # To avoid N+1 HTTP calls on every sync, we only fetch if we don't already have it.
-    if (new_rpe is None or new_feel is None) and (act.rpe is None or act.feel is None):
+    if (
+        ((new_rpe is None or new_feel is None) and (act.rpe is None or act.feel is None))
+        or not act.provenance_checked
+    ):
         try:
             full_act = client.api.get_activity(act_id)
-            if full_act and "summaryDTO" in full_act:
-                new_rpe = full_act["summaryDTO"].get("directWorkoutRpe")
-                new_feel = full_act["summaryDTO"].get("directWorkoutFeel")
+            if full_act:
+                summary_dto = full_act.get("summaryDTO", {})
+                new_rpe = summary_dto.get("directWorkoutRpe", new_rpe)
+                new_feel = summary_dto.get("directWorkoutFeel", new_feel)
+                new_workout_id = _workout_id(full_act) or new_workout_id
+                act.provenance_checked = True
         except Exception as e:
-            logger.warning("Failed to fetch full activity %s for RPE extraction: %s", act_id, e)
+            logger.warning("Failed to fetch full activity %s for RPE/provenance extraction: %s", act_id, e)
 
     # Only update if we found something new, otherwise preserve existing
     if new_rpe is not None:
         act.rpe = new_rpe
     if new_feel is not None:
         act.feel = new_feel
+    if new_workout_id is not None:
+        act.source_workout_id = new_workout_id
         
     if act.hr_zone_seconds is None:
         try:
@@ -532,7 +561,7 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
     Returns a summary dict for display in the UI.
     """
     today = date.today()
-    summary = {"activities": 0, "days": 0, "errors": [], "skipped": False}
+    summary = {"activities": 0, "program_matches": 0, "days": 0, "errors": [], "skipped": False}
     preflight = None
 
     with get_session() as session:
@@ -579,6 +608,12 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
             return summary
         except Exception as e:
             summary["errors"].append(f"Activities: {e}")
+
+        try:
+            from coach.program_state import reconcile_active_program
+            summary["program_matches"] = reconcile_active_program(session)
+        except Exception as e:
+            summary["errors"].append(f"Program reconciliation: {e}")
 
         if _workouts_due(session, full):
             try:

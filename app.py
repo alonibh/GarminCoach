@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 import config
 from db import (
     Activity,
+    ActivityProgramMatch,
     AthleteProfile,
     DailyHealth,
     DailyMetrics,
@@ -1553,6 +1554,8 @@ def approve_program(program_id: int):
         program.active = True
         program.status = "active"
         program.updated_at = datetime.now()
+        from coach.program_state import initialize_program_cursor
+        initialize_program_cursor(session, program, activated_at=program.updated_at)
     return RedirectResponse(url="/program?view=active&approved=1", status_code=303)
 
 
@@ -1570,6 +1573,11 @@ def reset_program_to_template(program_id: int):
         session_ids = [item.id for item in program_sessions_for(session, program.id)]
         if session_ids and session.query(PlannedSession).filter(PlannedSession.program_session_id.in_(session_ids)).first():
             raise HTTPException(status_code=422, detail="Remove scheduled workouts before resetting this program.")
+        if session.query(ActivityProgramMatch).filter_by(program_id=program.id).first():
+            raise HTTPException(
+                status_code=422,
+                detail="A program with matched completed sessions cannot be reset to its template.",
+            )
 
         proposal = recommend_program(
             plan_key=plan_key,
