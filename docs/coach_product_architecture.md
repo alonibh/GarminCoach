@@ -494,8 +494,8 @@ Key baseline conclusions for this design:
 
 ### Increment 1: program truth and reconciliation
 
-- Add policies for all ten catalog programs.
-- Quarantine or accurately relabel any source-incomplete adaptation.
+- Add policies for all nine catalog programs.
+- Keep the removed, source-incomplete Get RIPPED adaptation unavailable.
 - Add persistent program cursor and completion matching.
 - Demonstrate no weekly reset and no cross-program match.
 
@@ -546,8 +546,6 @@ These are not silently assumed during implementation:
   deload, or program review. For now it is metadata only.
 - Whether source-defined progression schemes should later update target weights.
   The current design records synced performance but does not invent progression.
-- Whether the strength-only Get RIPPED adaptation is relabeled or removed. It
-  must not retain a name that implies the omitted conditioning cycle is present.
 - Exact evidence rules for unsupported-device biometrics. No prescriptive rule
   ships until its review entry and tests exist.
 

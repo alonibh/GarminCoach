@@ -349,30 +349,6 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         ],
         "High-volume full-body routine with three weekly exposures; recommend only to established trainees.",
     ),
-    "upper_lower_full_3": _program(
-        "Upper / Lower / Full Body · 3 days",
-        "https://www.muscleandstrength.com/workouts/get-ripped-3-day-split",
-        "six_to_twenty_four_months",
-        [
-            _session("Upper", "upper body", [
-                _exercise("Push Up", 3, 10, rest=90), _exercise("Pull Up", 3, 10, rest=90),
-                _exercise("Band Pull Apart", 3, 10, rest=90), _exercise("Incline Bench Press", 3, 12, rest=90),
-                _exercise("Tricep Skull Crusher", 3, 12, rest=90), _exercise("Dumbbell Row", 3, 12, rest=90),
-                _exercise("Dumbbell Alternating Curl", 3, 12, rest=90), _exercise("Military Press", 3, 12, rest=90),
-            ], 45),
-            _session("Lower", "lower body", [
-                _exercise("Bodyweight Squats", 3, 10, rest=90), _exercise("Bodyweight Lunges", 3, 10, rest=90, notes="Each side"),
-                _exercise("Jump Tucks", 3, 10, movement="knee_dominant", rest=90), _exercise("Squat", 3, 12, rest=90),
-                _exercise("Deadlift", 3, 12, rest=90), _exercise("Leg Press", 3, 15, rest=90),
-            ], 45),
-            _session("Full Body", "full body", [
-                _exercise("Squat", 3, 12, rest=90), _exercise("Incline Dumbbell Press", 3, 12, rest=90),
-                _exercise("Barbell Row", 3, 12, rest=90), _exercise("Dumbbell Lateral Raise", 3, 12, movement="vertical_push", rest=90),
-                _exercise("Barbell Curl", 3, 12, rest=90), _exercise("Barbell Overhead Extension", 3, 12, rest=90),
-            ], 45),
-        ],
-        "Upper, lower, and full-body sessions provide two weekly exposures; source cardio is excluded.",
-    ),
     "upper_lower_4": _program(
         "Upper / Lower Bodybuilding · 4 days",
         "https://www.muscleandstrength.com/workouts/upper-lower-4-day-gym-bodybuilding-workout",

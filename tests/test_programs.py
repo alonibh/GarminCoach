@@ -2,14 +2,19 @@ from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommen
 from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
 
 
-def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
+def test_catalog_contains_nine_reviewed_routines_from_two_to_six_days():
     assert len(GARMIN_EXERCISES) > 1800
-    assert len(PROGRAMS) == 10
+    assert len(PROGRAMS) == 9
     assert {len(program["sessions"]) for program in PROGRAMS.values()} == {2, 3, 4, 5, 6}
     for program in PROGRAMS.values():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
         assert all(count >= 2 for count in program["region_exposures"].values())
         assert program["weekly_sets"]
+
+
+def test_get_ripped_adaptation_is_not_selectable():
+    assert "upper_lower_full_3" not in PROGRAMS
+    assert "upper_lower_full_3" not in {choice["key"] for choice in PLAN_CHOICES}
 
 
 def test_plan_choices_include_clear_experience_badges():
@@ -34,7 +39,6 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "beginner_full_body_3": "Beginner",
         "ms_full_body_3": "Beginner",
         "total_package_3": "Intermediate",
-        "upper_lower_full_3": "Intermediate",
         "upper_lower_4": "Beginner",
         "shul_4": "Intermediate",
         "split_full_4": "Expert",
@@ -66,7 +70,7 @@ def test_templates_follow_daily_anchor_and_cold_joint_warmup_rules():
     assert "Cable Row" not in {exercise["exercise_name"] for exercise in warmed}
     assert all(1 <= exercise["warmup_reps"] <= 8 for exercise in warmed)
     assert all(exercise["warmup_weight_kg"] is None for exercise in warmed)
-    assert PROGRAMS["upper_lower_full_3"]["sessions"][0]["exercises"][0]["warmup_enabled"] is True
+    assert PROGRAMS["upper_lower_4"]["sessions"][0]["exercises"][0]["warmup_enabled"] is True
 
 
 def test_templates_warm_the_first_isolation_for_a_new_major_region_only():
@@ -112,7 +116,7 @@ def test_long_break_return_to_a_heavy_compound_gets_one_warmup_set():
 
 def test_all_program_sessions_are_gym_only_and_undated():
     proposal = recommend_program(
-        plan_key="upper_lower_full_3", limitations="",
+        plan_key="ms_full_body_3", limitations="",
         session_duration_min=60, history_summary="Running is common.",
     )
     assert all(s["sport_type"] == "strength_training" and s["session_role"] == "coach_strength" for s in proposal["sessions"])

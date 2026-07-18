@@ -12,7 +12,6 @@ the app; they are not a verbatim copy of every source range.
 | Beginner Full Body (3 days) | Beginner | Same — A: Trap Bar Deadlift, Bent Over Row, Dumbbell Overhead Press, Lat Pull Down, Dumbbell Bicep Curl, Rope Pressdown, Plank. B: Front Squat, Romanian Deadlift, Farmer's Carry, Dumbbell Row, Incline Dumbbell Bench Press, Calf Raise, Dead Bugs. C: Bench Press, Leg Press, Leg Curl, Lateral Raise, Cable Row, EZ Bar Curl, Skullcrusher, Pallof Press. |
 | M&S Full Body (3 days) | Beginner | Same movements — A: Squat, Bench Press, Barbell Row, Upright Row, Skullcrushers, Dumbbell Curls, Leg Curls, Ab Wheel Roll Out. B: Deadlift, Romanian Deadlift, Seated Overhead Press, Pull Ups, Dips, Barbell Shrugs, Seated Calf Raise, Plank. C: Squat, Incline Dumbbell Bench Press, One Arm Dumbbell Row, Seated Arnold Press, Cable Tricep Extensions, Barbell Curls, Leg Curls, Ab Wheel Roll Out. The app replaces the source's ramped sets with its one warm-up per movement. |
 | Total Package (3 days) | Intermediate | Same — Day 1: Squat, Dumbbell Bench Press, Dumbbell Row, Seated Dumbbell Press, Lunge, Dumbbell Curl, Standing Barbell Tricep Extension, Calf Raise, Plank. Day 2: Bench Press, Machine Pec Deck, Leg Extension, Leg Curl, Pullup, Seated Lateral Raise, Dumbbell Hammer Curl, Rope Extension, Plank. Day 3: Deadlift, Incline Dumbbell Press, Lateral Raise, Pulldown, Leg Press, EZ Bar Curl, Skullcrushers, Dumbbell Shrugs, Plank. |
-| Get RIPPED (3 days) | Intermediate | Same strength movements — Upper: Push Up, Pull Up, Band Pull Apart, Incline Bench Press, Tricep Skull Crusher, Dumbbell Row, Dumbbell Alternating Curl, Military Press. Lower: Bodyweight Squats, Bodyweight Lunges, Jump Tucks, Squat, Deadlift, Leg Press. Full: Squat, Dumbbell Incline Press, Barbell Row, Dumbbell Lateral Raise, Barbell Curl, Barbell Overhead Extension. The app intentionally omits the source's treadmill/rowing HIIT, recovery jog/walk, jump-rope circuit, and timed mile because this catalog is gym-strength only. |
 | Upper/Lower Bodybuilding (4 days) | Beginner | Same primary movements — Upper A: Bench Press, Barbell Row, Seated Overhead Dumbbell Press, Pec Deck, V-Bar Lat Pull Down, Side Lateral Raise, Cable Tricep Extensions, Cable Curls. Lower A: Squat, Stiff Leg Deadlift, Standing Calf Raise, Leg Extension, Leg Curl, Seated Calf Raise, Cable Crunch, Cable Pull Through. Upper B: Incline Dumbbell Bench Press, Rack Deadlifts, Military Press, Machine Chest Press, Machine Row, Machine Shoulder Press, Dumbbell Curls, Machine Tricep Dip. Lower B: Leg Press, Dumbbell Stiff Leg Deadlift, Leg Press Calf Raise, Hack Squat, Seated Leg Curl, Seated Calf Raise, Plank, Hyperextension. The source offers Pull Ups *or* Machine Rows; the app records Machine Row. Its source-prescribed 3-second negatives are not represented as execution tempo. |
 | SHUL (4 days) | Intermediate | Same chosen movements — Lower Strength: Front Squat, Trap Bar Deadlift, Hack Squat, Glute Ham Raise, Seated Calf Raise. Upper Strength: Dumbbell Bench Press, One Arm Dumbbell Row, Overhead Press, Pull Up, Incline Bench Press, Tricep Dip, Farmer's Carry. Lower Hypertrophy: Front Squat, Dumbbell Reverse Lunge, Barbell Hip Thrust, Leg Extension, Romanian Deadlift, Standing Machine Calf Raise. Upper Hypertrophy: Incline Dumbbell Bench Press, Decline Bench Press, Lat Pull Down, Inverted Row, Face Pull, Lateral Raise, Barbell Curl, Incline Skullcrusher. The source also offers Safety Bar Squat and Goblet Squat alternatives; the app chooses Front Squat. |
 | Three-Way Split + Full Body (4 days) | Advanced (shown as Expert) | Same — Back/Biceps: Chin Up, T-bar Machine Row, Close Grip Pull Down, One Arm Dumbbell Row, Barbell Curl, Hammer Curl. Legs: Seated Leg Curl, Barbell Squat, Trap Bar Deadlift, Dumbbell Stiff Legged Deadlift, Leg Extension, Seated Calf Raise, Standing Machine Calf Raise. Chest/Shoulders/Triceps: Standing Military Press, Side Lateral Raise, Face Pull, Incline Bench Press, Dumbbell Bench Press, Incline Skullcrusher, Tricep Pushdown. Full Body: Deadlift, Front Squat, Barbell Hip Thrust, Dips, Inverted Row, Push Ups. |
@@ -25,7 +24,6 @@ the app; they are not a verbatim copy of every source range.
 - [Beginner Full Body](https://www.muscleandstrength.com/workouts/3-day-workout-routine-and-diet-for-beginners)
 - [M&S Full Body](https://www.muscleandstrength.com/workouts/muscle-strength-full-body-workout-routine)
 - [Total Package](https://www.muscleandstrength.com/workouts/total-package-workout)
-- [Get RIPPED](https://www.muscleandstrength.com/workouts/get-ripped-3-day-split)
 - [Upper/Lower Bodybuilding](https://www.muscleandstrength.com/workouts/upper-lower-4-day-gym-bodybuilding-workout)
 - [SHUL](https://www.muscleandstrength.com/workouts/shul-workout)
 - [Three-Way Split + Full Body](https://www.muscleandstrength.com/workouts/4-day-workout-to-build-muscle)
@@ -50,7 +48,6 @@ resets at a week boundary and missed sessions are not debt.
 | `beginner_full_body_3` | Full Body A -> B -> C | 1, 1, 1 | None in the program prescription | Keep. The source explicitly requires at least one full recovery day between sessions. |
 | `ms_full_body_3` | Workout A -> B -> C | 1, 1, 1 | Light walking is suggested on rest days; HIIT is discouraged | Keep. Easy walking is eligible for a verbal optional recovery suggestion. |
 | `total_package_3` | Day 1 squat -> Day 2 bench -> Day 3 deadlift | 1, 1, 1 | 30-45 minutes of very light jogging and/or walking on off days; no weights | Keep. Monday/Wednesday/Friday is illustrative. Easy walking is the preferred evidence-reviewed verbal option. |
-| `upper_lower_full_3` | Upper -> Lower -> Full Body | The source's strength days are separated by conditioning/recovery days | Day 2 recovery jog, Day 4 HIIT, Day 6 timed mile, Day 7 complete rest with optional low-intensity activity | Source-incomplete adaptation. The app omits most of the source's defining conditioning cycle and must be relabeled clearly or removed before deterministic sequencing ships. |
 | `upper_lower_4` | Upper A -> Lower A -> Upper B -> Lower B | 0, 1, 0, 2 | Steady-state cardio may be added on rest days as active recovery | Keep. Preserve the two-session blocks and intervening rest slots without forcing weekdays. Easy low-intensity movement may be offered verbally. |
 | `shul_4` | Lower Strength -> Upper Strength -> Lower Hypertrophy -> Upper Hypertrophy | 0, 1, 0, 2 | Off days may include non-strenuous active recovery and mobility | Keep. Preserve strength-before-hypertrophy order. An evidence-reviewed easy activity may be offered verbally. |
 | `split_full_4` | Back/Biceps -> Legs -> Chest/Shoulders/Triceps -> Full Body | 0, 0, 1, 2 | No explicit recovery activity found in the source program | Keep. Preserve the three-day split block, rest slot, then full-body session. |
@@ -72,9 +69,6 @@ resets at a week boundary and missed sessions are not debt.
   uses squat, bench, and deadlift sessions on Monday, Wednesday, and Friday and
   explicitly reserves intervening days from weight training. The application
   preserves the separation and order, not the weekday names.
-- [Get RIPPED](https://www.muscleandstrength.com/workouts/get-ripped-3-day-split)
-  is a seven-day strength-and-conditioning cycle rather than a standalone
-  three-session lifting program. Its omitted days are material, not incidental.
 - [Upper/Lower Bodybuilding](https://www.muscleandstrength.com/workouts/upper-lower-4-day-gym-bodybuilding-workout)
   uses two upper/lower blocks separated by rest, then two weekend rest days.
 - [SHUL](https://www.muscleandstrength.com/workouts/shul-workout) uses two
@@ -131,3 +125,11 @@ template. At minimum it must contain:
 
 Program duration and deload behavior remain metadata until separately approved.
 They must not silently stop, reset, or modify the active program.
+
+## Removed templates
+
+- `upper_lower_full_3` / “Get RIPPED” was removed from the selectable catalog on
+  2026-07-18. Its [source program](https://www.muscleandstrength.com/workouts/get-ripped-3-day-split)
+  is a seven-day strength-and-conditioning cycle, while the app represented only
+  its three strength sessions. Removing it prevents the adaptation from being
+  mistaken for the complete source program.

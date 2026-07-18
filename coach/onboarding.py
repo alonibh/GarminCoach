@@ -292,7 +292,7 @@ def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | N
 
 
 def recommend_plan_from_history(session: Session, activities: list[Activity]) -> dict[str, str]:
-    """Rank the ten-routine catalog from exercise-backed recent history."""
+    """Rank the nine-routine catalog from exercise-backed recent history."""
     strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
     if len(strength) < 3:
         return {"key": "full_body_2", "reason": "No reliable gym pattern found yet; start with the two-day A/B full-body routine."}
@@ -318,7 +318,7 @@ def recommend_plan_from_history(session: Session, activities: list[Activity]) ->
     if weekly == 2:
         key = "full_body_2"
     elif weekly == 3:
-        key = "upper_lower_full_3" if labels["upper"] and labels["lower"] else "ms_full_body_3" if labels["full_body"] >= 4 else "beginner_full_body_3"
+        key = "ms_full_body_3" if labels["full_body"] >= 4 or (labels["upper"] and labels["lower"]) else "beginner_full_body_3"
     elif weekly == 4:
         key = "upper_lower_4" if labels["upper"] >= 2 and labels["lower"] >= 2 else "split_full_4"
     elif weekly == 5:
@@ -333,7 +333,7 @@ def recommend_plan_from_history(session: Session, activities: list[Activity]) ->
         if usable >= 3 else
         f"Recent frequency suggests {weekly} gym days, but no reliable split was found from the exercises."
     )
-    recommended_days = {"full_body_2": 2, "beginner_full_body_3": 3, "ms_full_body_3": 3, "upper_lower_full_3": 3, "upper_lower_4": 4, "split_full_4": 4, "muscle_strength_5": 5, "ppl_6": 6}[key]
+    recommended_days = {"full_body_2": 2, "beginner_full_body_3": 3, "ms_full_body_3": 3, "upper_lower_4": 4, "split_full_4": 4, "muscle_strength_5": 5, "ppl_6": 6}[key]
     return {"key": key, "reason": reason, "days_per_week": recommended_days}
 
 
