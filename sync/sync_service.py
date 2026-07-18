@@ -428,14 +428,14 @@ def _sync_activities(session: Session, start: date, end: date) -> int:
 
 
 # --- daily health + sleep -------------------------------------------------
-def _sync_sleep(session, day: date) -> None:
+def _sync_sleep(session, day: date) -> bool:
     try:
         data = client.sleep(day)
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
         logger.warning("Sleep fetch failed for %s", day, exc_info=True)
-        return
+        return False
     dto = _g(data, "dailySleepDTO", default={}) or {}
     row = session.get(Sleep, day) or Sleep(day=day)
     row.sleep_start_time = (
@@ -461,6 +461,7 @@ def _sync_sleep(session, day: date) -> None:
     row.respiration_avg = dto.get("averageRespirationValue")
     row.sleep_stress_avg = dto.get("avgSleepStress")
     session.add(row)
+    return True
 
 
 def _sync_daily_health(session, day: date) -> None:
@@ -555,6 +556,165 @@ def _sync_daily_health(session, day: date) -> None:
 
 
 # --- orchestration --------------------------------------------------------
+def _freshness_error_code(exc: Exception) -> str:
+    name = type(exc).__name__.lower()
+    if "authentication" in name or "mfa" in name:
+        return "authentication_required"
+    if isinstance(exc, GarminConnectTooManyRequestsError):
+        return "rate_limited"
+    if "timeout" in name:
+        return "timeout"
+    return "endpoint_error"
+
+
+def _priority_individual_health(session: Session, day: date, device_upload_at: datetime | None) -> None:
+    """Fetch only unsupported-device observations used as independent facts."""
+    from metrics.freshness import ERROR, FRESH, HRV, MISSING, RESTING_HR, STRESS, record_signal
+
+    row = session.get(DailyHealth, day) or DailyHealth(day=day)
+    fetches = (
+        (HRV, "get_hrv_data", client.hrv, lambda data: _g(data, "hrvSummary", "lastNightAvg")),
+        (RESTING_HR, "get_rhr_day", client.resting_hr, lambda data: (
+            (_g(data, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE", default=[]) or [{}])[0].get("value")
+        )),
+        (STRESS, "get_all_day_stress", client.stress, lambda data: (data or {}).get("avgStressLevel")),
+    )
+    for signal, endpoint, fetcher, extract in fetches:
+        try:
+            value = extract(fetcher(day))
+            if signal == HRV:
+                row.hrv_overnight = value
+            elif signal == RESTING_HR:
+                row.resting_hr = value
+            else:
+                row.stress_avg = value
+            record_signal(
+                session, signal, day, FRESH if value is not None else MISSING, endpoint,
+                device_upload_at=device_upload_at,
+            )
+        except Exception as exc:
+            record_signal(
+                session, signal, day, ERROR, endpoint,
+                device_upload_at=device_upload_at, error_code=_freshness_error_code(exc),
+            )
+    session.add(row)
+
+
+def run_priority_sync() -> dict:
+    """Fetch and commit only facts needed by today's morning decision."""
+    from metrics.freshness import (
+        ERROR,
+        EXPECTED_PENDING,
+        FRESH,
+        MISSING,
+        SLEEP,
+        SLEEP_SCORE,
+        TRAINING_READINESS,
+        UNSUPPORTED,
+        capability_state,
+        morning_freshness,
+        note_capability_observed,
+        record_signal,
+    )
+    from time_utils import get_local_date, get_local_tz
+
+    target = get_local_date()
+    summary = {"priority": True, "day": target.isoformat(), "errors": []}
+    fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    with get_session() as session:
+        device_upload_at = None
+        try:
+            device = client.device_last_used() or {}
+            upload_iso = _device_upload_iso_from_payload(device)
+            _set_state(session, "device_last_upload", upload_iso)
+            parsed_upload = _parse_state_dt(upload_iso)
+            device_upload_at = parsed_upload.replace(tzinfo=None) if parsed_upload else None
+        except Exception as exc:
+            code = _freshness_error_code(exc)
+            summary["errors"].append(f"device:{code}")
+            for signal, endpoint in ((SLEEP, "get_sleep_data"), (TRAINING_READINESS, "get_training_readiness")):
+                record_signal(session, signal, target, ERROR, endpoint, fetched_at=fetched_at, error_code=code)
+            _set_state(session, "last_priority_sync_at", fetched_at.isoformat())
+            return summary
+
+        sleep_ok = False
+        try:
+            sleep_ok = _sync_sleep(session, target)
+        except Exception as exc:
+            code = _freshness_error_code(exc)
+            summary["errors"].append(f"sleep:{code}")
+            record_signal(
+                session, SLEEP, target, ERROR, "get_sleep_data",
+                fetched_at=fetched_at, device_upload_at=device_upload_at, error_code=code,
+            )
+        sleep = session.get(Sleep, target)
+        if sleep_ok and sleep and sleep.total_s and sleep.total_s > 0:
+            state = FRESH
+            if sleep.sleep_end_time and device_upload_at:
+                local_end = get_local_tz().localize(sleep.sleep_end_time).astimezone(timezone.utc).replace(tzinfo=None)
+                if device_upload_at < local_end:
+                    state = EXPECTED_PENDING
+            record_signal(
+                session, SLEEP, target, state, "get_sleep_data",
+                fetched_at=fetched_at, device_upload_at=device_upload_at,
+            )
+            record_signal(
+                session, SLEEP_SCORE, target, FRESH if sleep.score is not None else MISSING,
+                "get_sleep_data", fetched_at=fetched_at, device_upload_at=device_upload_at,
+            )
+        elif not summary["errors"]:
+            record_signal(
+                session, SLEEP, target, MISSING, "get_sleep_data",
+                fetched_at=fetched_at, device_upload_at=device_upload_at,
+            )
+            record_signal(
+                session, SLEEP_SCORE, target, MISSING, "get_sleep_data",
+                fetched_at=fetched_at, device_upload_at=device_upload_at,
+            )
+
+        capability = capability_state(session)
+        if capability == "unsupported":
+            record_signal(
+                session, TRAINING_READINESS, target, UNSUPPORTED, "device_capability",
+                fetched_at=fetched_at, device_upload_at=device_upload_at,
+            )
+            _priority_individual_health(session, target, device_upload_at)
+        else:
+            try:
+                payload = client.training_readiness(target)
+                value = None
+                if isinstance(payload, dict):
+                    value = payload.get("trainingReadiness")
+                    if value is None:
+                        value = payload.get("value")
+                health = session.get(DailyHealth, target) or DailyHealth(day=target)
+                if value is not None:
+                    health.training_readiness = int(value)
+                    session.add(health)
+                    note_capability_observed(session, observed_at=fetched_at)
+                    record_signal(
+                        session, TRAINING_READINESS, target, FRESH, "get_training_readiness",
+                        fetched_at=fetched_at, device_upload_at=device_upload_at,
+                    )
+                else:
+                    record_signal(
+                        session, TRAINING_READINESS, target, MISSING, "get_training_readiness",
+                        fetched_at=fetched_at, device_upload_at=device_upload_at,
+                    )
+            except Exception as exc:
+                code = _freshness_error_code(exc)
+                summary["errors"].append(f"training_readiness:{code}")
+                record_signal(
+                    session, TRAINING_READINESS, target, ERROR, "get_training_readiness",
+                    fetched_at=fetched_at, device_upload_at=device_upload_at, error_code=code,
+                )
+
+        _set_state(session, "last_priority_sync_at", fetched_at.isoformat())
+        _set_state(session, "overnight_facts_updated_at", fetched_at.isoformat())
+        summary.update(morning_freshness(session, target))
+    return summary
+
+
 def run_sync(full: bool = False, force: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 

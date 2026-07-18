@@ -63,11 +63,10 @@ def _morning_watch() -> None:
         except Exception:
             return
 
-    if _maybe_send_ready_morning_brief():
+    if _morning_brief_sent_today():
         return
-
-    if not sync_runner.is_running():
-        sync_runner.try_start_sync(full=False)
+    from notify.morning import start_priority_fetch
+    start_priority_fetch()
 
 
 def start_scheduler() -> BackgroundScheduler:
@@ -97,6 +96,14 @@ def start_scheduler() -> BackgroundScheduler:
             minute=f"*/{config.MORNING_WATCH_INTERVAL_MINUTES}",
         ),
         id="morning_watch",
+        replace_existing=True,
+    )
+
+    from notify.morning import morning_deadline
+    sched.add_job(
+        morning_deadline,
+        CronTrigger(hour=11, minute=30),
+        id="morning_deadline",
         replace_existing=True,
     )
 

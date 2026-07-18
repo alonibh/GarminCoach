@@ -514,12 +514,20 @@ and policy version used.
 
 ### Increment 2: observation freshness and priority sync
 
+Status: implemented 2026-07-18.
+
 - Add capability state and per-signal freshness.
 - Split priority overnight fetch from background sync.
 - Add the 11:30 pending/manual-sync/answer-anyway flow.
 
 Gate: delayed uploads, endpoint errors, unsupported devices, and app restarts
 produce distinct deterministic states without a fallback readiness score.
+
+Implementation notes: `DeviceCapability` never infers unsupported status from
+absence; `ObservationFreshness` records each endpoint independently; the
+morning scheduler commits sleep/readiness facts before starting the slower
+background sync. `MorningBriefState` persists the 11:30 prompt and the
+answer-anyway choice so application restarts cannot duplicate or erase them.
 
 ### Increment 3: deterministic decision engine
 

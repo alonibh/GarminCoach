@@ -417,6 +417,50 @@ class MetricSnapshot(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class DeviceCapability(Base):
+    """Tri-state device support; missing observations never imply unsupported."""
+
+    __tablename__ = "device_capabilities"
+
+    metric: Mapped[str] = mapped_column(String(64), primary_key=True)
+    support_state: Mapped[str] = mapped_column(String(16), default="unknown")
+    evidence_source: Mapped[str] = mapped_column(String(64), default="unresolved")
+    first_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    override_state: Mapped[Optional[str]] = mapped_column(String(16))
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ObservationFreshness(Base):
+    """Per-signal fetch result for one local decision date."""
+
+    __tablename__ = "observation_freshness"
+
+    signal: Mapped[str] = mapped_column(String(64), primary_key=True)
+    observed_for: Mapped[date] = mapped_column(Date, primary_key=True)
+    state: Mapped[str] = mapped_column(String(24))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime)
+    source_endpoint: Mapped[str] = mapped_column(String(128))
+    device_upload_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    error_code: Mapped[Optional[str]] = mapped_column(String(64))
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class MorningBriefState(Base):
+    """Durable one-per-day state for priority sync and the 11:30 flow."""
+
+    __tablename__ = "morning_brief_state"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), default="waiting")
+    wait_notice_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    deadline_prompt_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    answer_anyway: Mapped[bool] = mapped_column(Boolean, default=False)
+    briefing_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_priority_fetch_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 # The web request threads and the background sync thread both write to this
 # SQLite file. Without a busy timeout an overlapping write fails immediately
 # with "database is locked"; WAL mode lets readers and a writer coexist.

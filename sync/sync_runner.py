@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from sync.sync_service import run_sync
+from sync.sync_service import run_priority_sync, run_sync
 from db import get_session, SyncState
 
 log = logging.getLogger(__name__)
@@ -76,6 +76,18 @@ def try_start_sync(full: bool, force: bool = False) -> bool:
     return True
 
 
+def try_start_priority_sync() -> bool:
+    """Start the overnight-only fetch under the same lease as every other sync."""
+    if is_running():
+        return False
+    now = time.time()
+    _set_lock_ts(now)
+    status["running"] = True
+    status["started_at"] = now
+    threading.Thread(target=_run_priority, daemon=True).start()
+    return True
+
+
 def reset() -> None:
     """Escape hatch: force-clear a stuck 'running' state."""
     _set_lock_ts(0.0)
@@ -93,4 +105,24 @@ def _run(full: bool, force: bool = False) -> None:
         _set_lock_ts(0.0)
         status["running"] = False
         status["started_at"] = None
+
+
+def _run_priority() -> None:
+    try:
+        status["summary"] = run_priority_sync()
+    except Exception as e:
+        log.exception("Priority sync failed with unhandled exception")
+        status["summary"] = {"priority": True, "errors": [str(e)]}
+    finally:
+        _set_lock_ts(0.0)
+        status["running"] = False
+        status["started_at"] = None
+    try:
+        from notify.morning import priority_sync_finished
+        priority_sync_finished()
+    except Exception:
+        log.exception("Morning flow failed after priority sync")
+    # The briefing-critical facts are already committed; finish the slower
+    # activity/history/dashboard work under a new acquisition of the same lock.
+    try_start_sync(full=False)
 

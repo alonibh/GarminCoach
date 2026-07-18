@@ -2180,7 +2180,20 @@ async def telegram_webhook(request: Request):
             telegram.answer_callback_query(callback_id)
             
             if str(chat_id) == config.TELEGRAM_CHAT_ID:
-                if callback_data.startswith("approve_workout_"):
+                if callback_data.startswith("morning_synced_"):
+                    from notify.morning import start_priority_fetch
+                    started = start_priority_fetch()
+                    text = "Fetching the new Garmin data. The briefing will follow automatically." if started else "A fetch is already running or today's briefing is complete."
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith("morning_anyway_"):
+                    from notify.morning import answer_anyway
+                    day_key = callback_data.rsplit("_", 1)[-1]
+                    accepted = answer_anyway(day_key)
+                    text = "Preparing the briefing without the missing data." if accepted else "This choice is no longer current."
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith("approve_workout_"):
                     msg_id = int(callback_data.split("_")[-1])
                     with get_session() as db:
                         from db import CoachMessage

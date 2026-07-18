@@ -283,7 +283,7 @@ def _generate_with_retry(system_prompt: str, user_prompt: str, history: list = N
                 
     return chat_text, None
 
-def generate_daily_suggestion(session: Session) -> None:
+def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = False) -> None:
     """Generate a daily proactive coaching suggestion if one doesn't exist for today."""
     
     # We generate a fresh suggestion every time this is called (both on the
@@ -296,7 +296,7 @@ def generate_daily_suggestion(session: Session) -> None:
     if not is_evening:
         from metrics.freshness import proactive_metrics_ready
 
-        if not proactive_metrics_ready(session):
+        if not allow_incomplete and not proactive_metrics_ready(session):
             logger.info("Skipping morning briefing until today's sleep data is finalized.")
             return
 
