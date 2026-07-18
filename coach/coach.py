@@ -516,8 +516,6 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
 
 def handle_chat(session: Session, user_text: str) -> str:
     """Handle an interactive chat message from the user."""
-    
-    snapshot_json = build_snapshot(session)
 
     from coach.interactions import stage_free_text_change
     staged_change = stage_free_text_change(session, user_text)
@@ -537,6 +535,31 @@ def handle_chat(session: Session, user_text: str) -> str:
         session.add_all((user_msg, asst_msg))
         session.commit()
         return response_text, asst_msg
+
+    from coach.scheduling import is_timing_question, next_available_time
+    if is_timing_question(user_text):
+        from coach.calendar import get_upcoming_schedule_result
+        from time_utils import get_local_now
+
+        calendar = get_upcoming_schedule_result(days=7)
+        if calendar["state"] == "fresh":
+            suggestion = next_available_time(
+                session,
+                now=get_local_now().replace(tzinfo=None),
+                schedule=calendar["events"],
+            )
+            if suggestion:
+                response_text = suggestion.render()
+                user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
+                asst_msg = CoachMessage(
+                    role="assistant", content=response_text, created_at=datetime.now(timezone.utc),
+                    data_snapshot=None, pending_action_json=None,
+                )
+                session.add_all((user_msg, asst_msg))
+                session.commit()
+                return response_text, asst_msg
+
+    snapshot_json = build_snapshot(session)
     
     # Load recent conversation history (last 10 messages, excluding daily suggestions)
     recent_msgs = session.query(CoachMessage).filter(
