@@ -714,7 +714,6 @@ def _readiness_tiles() -> list[dict]:
                 "key": "recovery_signals",
                 "label": "Recovery signals",
                 "signal_rows": signal_rows,
-                "desc": "Separate observations; not a combined readiness score.",
                 "hint": "Your watch does not provide Garmin Training Readiness. These synced signals are shown separately without applying unvalidated composite weights.",
             }
         elif r_val is None:
@@ -749,7 +748,7 @@ def _readiness_tiles() -> list[dict]:
             "unit": "",
             "is_gauge": True,
             "age": None,
-            "desc": "Descriptive 7-day to 28-day load ratio. Not used by the coach.",
+            "desc": None,
             "color": None,
             "bar_pct": a_bar_pct,
             "hint": "Acute:Chronic Workload Ratio. Display only; it has no authority in workout or injury-risk recommendations.",

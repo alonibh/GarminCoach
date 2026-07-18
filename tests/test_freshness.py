@@ -156,7 +156,7 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
         {"label": "Sleep stress", "value": "18 · Garmin resting range", "indicator": "Resting Range", "tone": "positive"},
     ]
     assert "Recovery signals" in rendered
-    assert "Separate observations; not a combined readiness score." in rendered
+    assert "Separate observations; not a combined readiness score." not in rendered
     assert "61 ms · within 57–66 baseline" in rendered
     assert 'class="recovery-signal-indicator positive"' in rendered
     assert "Within baseline" in rendered
