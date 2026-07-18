@@ -74,7 +74,12 @@
       {% for row in t.signal_rows %}
       <div class="recovery-signal-row">
         <span>{{ row.label }}</span>
-        <strong>{{ row.value }}</strong>
+        <div class="recovery-signal-detail">
+          <span class="recovery-signal-indicator {{ row.tone }}">
+            <span class="recovery-signal-dot" aria-hidden="true"></span>{{ row.indicator }}
+          </span>
+          <strong>{{ row.value }}</strong>
+        </div>
       </div>
       {% endfor %}
     </div>

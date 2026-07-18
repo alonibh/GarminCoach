@@ -150,14 +150,17 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
 
     assert readiness["key"] == "recovery_signals"
     assert readiness["signal_rows"] == [
-        {"label": "Sleep", "value": "8h 15m · score 91 (Excellent)"},
-        {"label": "HRV", "value": "61 ms · within 57–66 baseline"},
-        {"label": "Resting HR", "value": "49 bpm · 3 bpm below 28-day median"},
-        {"label": "Sleep stress", "value": "18 · Garmin resting range"},
+        {"label": "Sleep", "value": "8h 15m · score 91 (Excellent)", "indicator": "Excellent", "tone": "positive"},
+        {"label": "HRV", "value": "61 ms · within 57–66 baseline", "indicator": "Within baseline", "tone": "positive"},
+        {"label": "Resting HR", "value": "49 bpm · 3 bpm below 28-day median", "indicator": "Below median", "tone": "comparison"},
+        {"label": "Sleep stress", "value": "18 · Garmin resting range", "indicator": "Resting Range", "tone": "positive"},
     ]
     assert "Recovery signals" in rendered
     assert "Separate observations; not a combined readiness score." in rendered
     assert "61 ms · within 57–66 baseline" in rendered
+    assert 'class="recovery-signal-indicator positive"' in rendered
+    assert "Within baseline" in rendered
+    assert 'class="recovery-signal-indicator comparison"' in rendered
     assert "No fallback readiness score is invented." not in rendered
     assert "No data yet" not in rendered
     assert "Waiting for today" not in rendered
@@ -191,9 +194,11 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
     assert recovery["key"] == "recovery_signals"
     assert recovery["signal_rows"][0] == {
         "label": "Sleep", "value": "7h 30m · score 86 (Good)",
+        "indicator": "Good", "tone": "positive",
     }
     assert recovery["signal_rows"][1] == {
         "label": "HRV", "value": "55 ms · within 50–60 baseline",
+        "indicator": "Within baseline", "tone": "positive",
     }
     assert all(row["label"] != "Recovery time" for row in recovery["signal_rows"])
 

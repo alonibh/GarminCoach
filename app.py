@@ -581,9 +581,26 @@ def _readiness_tiles() -> list[dict]:
                     sleep_value += f" · score {int(round(sleep.score))}"
                     if sleep_category:
                         sleep_value += f" ({sleep_category})"
+                    sleep_indicator = sleep_category
+                    sleep_tone = {
+                        "Excellent": "positive",
+                        "Good": "positive",
+                        "Fair": "caution",
+                        "Poor": "alert",
+                    }.get(sleep_category, "neutral")
+                else:
+                    sleep_indicator = "Measured"
+                    sleep_tone = "neutral"
             else:
                 sleep_value = "Not available today"
-            signal_rows.append({"label": "Sleep", "value": sleep_value})
+                sleep_indicator = "No data"
+                sleep_tone = "neutral"
+            signal_rows.append({
+                "label": "Sleep",
+                "value": sleep_value,
+                "indicator": sleep_indicator,
+                "tone": sleep_tone,
+            })
 
             if health and health.hrv_overnight is not None and is_fresh(HRV):
                 hrv = int(round(health.hrv_overnight))
@@ -597,11 +614,22 @@ def _readiness_tiles() -> list[dict]:
                     else:
                         hrv_state = "within"
                     hrv_value = f"{hrv} ms · {hrv_state} {low}–{high} baseline"
+                    hrv_indicator = f"{hrv_state.title()} baseline"
+                    hrv_tone = "positive" if hrv_state == "within" else "caution"
                 else:
                     hrv_value = f"{hrv} ms · baseline unavailable"
+                    hrv_indicator = "Measured"
+                    hrv_tone = "neutral"
             else:
                 hrv_value = "Not available today"
-            signal_rows.append({"label": "HRV", "value": hrv_value})
+                hrv_indicator = "No data"
+                hrv_tone = "neutral"
+            signal_rows.append({
+                "label": "HRV",
+                "value": hrv_value,
+                "indicator": hrv_indicator,
+                "tone": hrv_tone,
+            })
 
             if health and health.resting_hr is not None and is_fresh(RESTING_HR):
                 from statistics import median
@@ -624,15 +652,27 @@ def _readiness_tiles() -> list[dict]:
                     delta = rhr - recent_median
                     if delta == 0:
                         comparison = "matches 28-day median"
+                        rhr_indicator = "At median"
                     else:
                         direction = "above" if delta > 0 else "below"
                         comparison = f"{abs(delta)} bpm {direction} 28-day median"
+                        rhr_indicator = f"{direction.title()} median"
                     rhr_value = f"{rhr} bpm · {comparison}"
+                    rhr_tone = "comparison"
                 else:
                     rhr_value = f"{rhr} bpm · recent baseline unavailable"
+                    rhr_indicator = "Measured"
+                    rhr_tone = "neutral"
             else:
                 rhr_value = "Not available today"
-            signal_rows.append({"label": "Resting HR", "value": rhr_value})
+                rhr_indicator = "No data"
+                rhr_tone = "neutral"
+            signal_rows.append({
+                "label": "Resting HR",
+                "value": rhr_value,
+                "indicator": rhr_indicator,
+                "tone": rhr_tone,
+            })
 
             if sleep and sleep.sleep_stress_avg is not None and is_fresh(SLEEP):
                 stress_label = "Sleep stress"
@@ -653,9 +693,23 @@ def _readiness_tiles() -> list[dict]:
                 else:
                     stress_category = "high"
                 stress_value = f"{stress} · Garmin {stress_category}"
+                stress_indicator = stress_category.title()
+                stress_tone = {
+                    "resting range": "positive",
+                    "low": "positive",
+                    "medium": "caution",
+                    "high": "alert",
+                }[stress_category]
             else:
                 stress_value = "Not available today"
-            signal_rows.append({"label": stress_label, "value": stress_value})
+                stress_indicator = "No data"
+                stress_tone = "neutral"
+            signal_rows.append({
+                "label": stress_label,
+                "value": stress_value,
+                "indicator": stress_indicator,
+                "tone": stress_tone,
+            })
             readiness_tile = {
                 "key": "recovery_signals",
                 "label": "Recovery signals",
