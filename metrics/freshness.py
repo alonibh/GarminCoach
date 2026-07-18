@@ -36,6 +36,9 @@ _DEVICE_MODEL_FIELDS = {
     "deviceName",
     "deviceType",
     "displayName",
+    # get_device_last_used() uses these two fields for the active watch.
+    "lastUsedDeviceApplicationKey",
+    "lastUsedDeviceName",
     "modelName",
     "productDisplayName",
     "productName",

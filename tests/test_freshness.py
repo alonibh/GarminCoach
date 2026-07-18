@@ -101,6 +101,42 @@ def test_dashboard_hides_readiness_when_today_is_unready(session, monkeypatch):
     assert acwr["value"] == 0.5
 
 
+def test_dashboard_explains_unsupported_readiness_without_claiming_data_is_missing(session, monkeypatch):
+    import app as app_module
+
+    freshness.note_capability_from_device(
+        session,
+        {
+            "lastUsedDeviceApplicationKey": "vivoactive5",
+            "lastUsedDeviceName": "v\ufffdvoactive 5",
+        },
+    )
+    session.commit()
+    monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+
+    readiness, _ = app_module._readiness_tiles()
+    rendered = app_module.templates.get_template("dashboard.html").render(
+        needs_login=False,
+        last_sync_at=None,
+        device_last_upload=None,
+        sync_running=False,
+        sync_summary=None,
+        fitness_tiles=[],
+        readiness_tiles=[readiness],
+        health_series=[],
+        sleep_series=[],
+        activities=[],
+    )
+
+    assert readiness["value"] is None
+    assert readiness["empty_value"] == "N/A"
+    assert readiness["empty_label"] == "Not supported by this watch"
+    assert "Not supported by this watch" in rendered
+    assert "No fallback readiness score is invented." in rendered
+    assert "No data yet" not in rendered
+    assert "Waiting for today" not in rendered
+
+
 def test_dashboard_sleep_chart_does_not_turn_missing_today_into_zero(monkeypatch):
     import app as app_module
 

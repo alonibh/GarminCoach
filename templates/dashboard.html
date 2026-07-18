@@ -95,10 +95,10 @@
           {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">Down</span>
           {% else %}<span class="trend flat" title="No change">Flat</span>{% endif %}
         {% endif %}
-      {% else %}<span class="muted">-</span>{% endif %}
+      {% else %}<span class="muted">{{ t.empty_value|default('-', true) }}</span>{% endif %}
     </div>
     <div class="tile-sub muted">
-      {% if t.value is none %}No data yet
+      {% if t.value is none %}{{ t.empty_label|default('No data yet', true) }}
       {% else %}
         {%- if t.prev is not none %}from {{ t.prev }}{% if t.age %} | {% endif %}{% endif -%}
         {%- if t.age %}<span class="acwr-label">{{ t.age }}</span>{% endif -%}

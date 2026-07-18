@@ -552,16 +552,24 @@ def _readiness_tiles() -> list[dict]:
         )
         category = training_readiness_category(int(r_val)) if r_val is not None else None
         if capability == "unsupported":
-            r_desc = "This device does not support Garmin Training Readiness."
+            r_empty_value = "N/A"
+            r_empty_label = "Not supported by this watch"
+            r_desc = "No fallback readiness score is invented."
         elif r_val is None:
+            r_empty_value = "-"
+            r_empty_label = "No data yet"
             r_desc = "Waiting for today's Garmin Training Readiness."
         else:
+            r_empty_value = None
+            r_empty_label = None
             r_desc = category or ""
 
         readiness_tile = {
             "key": "readiness", "label": "Garmin Readiness",
             "value": int(r_val) if r_val is not None else None,
             "unit": "",
+            "empty_value": r_empty_value,
+            "empty_label": r_empty_label,
             "prev": None,
             "age": category,
             "trend": None,
