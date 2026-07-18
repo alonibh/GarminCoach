@@ -490,6 +490,41 @@ class DecisionRecord(Base):
     supersedes_decision_id: Mapped[Optional[str]] = mapped_column(String(36))
 
 
+class PendingInteraction(Base):
+    """Versioned button action that must be revalidated before application."""
+
+    __tablename__ = "pending_interactions"
+
+    interaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    decision_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("decision_records.decision_id", ondelete="SET NULL"), index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(48), index=True)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[Optional[int]] = mapped_column(Integer)
+    payload_json: Mapped[str] = mapped_column(Text)
+    program_version: Mapped[str] = mapped_column(String(64), default="")
+    sync_version: Mapped[str] = mapped_column(String(128), default="")
+    calendar_version: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    failure_reason: Mapped[str] = mapped_column(Text, default="")
+
+
+class AthleteSafetyReport(Base):
+    """Only confirmed voluntary safety reports; free text alone is not persisted here."""
+
+    __tablename__ = "athlete_safety_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_type: Mapped[str] = mapped_column(String(32))
+    report_text: Mapped[str] = mapped_column(Text)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 # The web request threads and the background sync thread both write to this
 # SQLite file. Without a busy timeout an overlapping write fails immediately
 # with "database is locked"; WAL mode lets readers and a writer coexist.

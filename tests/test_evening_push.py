@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import json
 
 import pytz
 
@@ -95,9 +96,10 @@ def test_morning_workout_proposal_is_actionable_and_includes_fixed_short_sleep_o
     coach_module.generate_daily_suggestion(session)
 
     msg = session.query(CoachMessage).one()
-    assert msg.pending_action_json is None
+    assert json.loads(msg.pending_action_json)["interaction_ids"]
     assert "Garmin readiness 75 (High)" in msg.content
     assert "sleep 6.2h, score 79 (Fair)" in msg.content
     assert "Workout A" in msg.content
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
+    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Schedule session"

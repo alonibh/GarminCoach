@@ -2148,7 +2148,22 @@ async def telegram_webhook(request: Request):
             telegram.answer_callback_query(callback_id)
             
             if str(chat_id) == config.TELEGRAM_CHAT_ID:
-                if callback_data.startswith("morning_synced_"):
+                if callback_data.startswith("decision_action_"):
+                    from coach.interactions import apply_interaction
+                    interaction_id = callback_data.removeprefix("decision_action_")
+                    with get_session() as db:
+                        _status, text = apply_interaction(db, interaction_id)
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith("decision_cancel_"):
+                    from coach.interactions import cancel_interaction
+                    interaction_id = callback_data.removeprefix("decision_cancel_")
+                    with get_session() as db:
+                        cancelled = cancel_interaction(db, interaction_id)
+                    text = "Action cancelled." if cancelled else "This action is no longer available."
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith("morning_synced_"):
                     from notify.morning import start_priority_fetch
                     started = start_priority_fetch()
                     text = "Fetching the new Garmin data. The briefing will follow automatically." if started else "A fetch is already running or today's briefing is complete."
@@ -2160,6 +2175,12 @@ async def telegram_webhook(request: Request):
                     accepted = answer_anyway(day_key)
                     text = "Preparing the briefing without the missing data." if accepted else "This choice is no longer current."
                     telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith(("approve_workout_", "reject_workout_", "reschedule_workout_")):
+                    telegram.edit_message_text(
+                        "This legacy action expired. Ask for a current proposal.",
+                        chat_id=str(chat_id), message_id=message_id,
+                    )
 
                 elif callback_data.startswith("approve_workout_"):
                     msg_id = int(callback_data.split("_")[-1])
@@ -2214,7 +2235,7 @@ async def telegram_webhook(request: Request):
         
         # We only care about text messages from the authorized chat
         if text and str(chat_id) == config.TELEGRAM_CHAT_ID:
-            from coach.coach import handle_chat, telegram_workout_reply_markup
+            from coach.coach import handle_chat
             from notify import telegram
             
             telegram.send_chat_action(str(chat_id), "typing")
@@ -2225,7 +2246,13 @@ async def telegram_webhook(request: Request):
                 
                 reply_markup = None
                 if asst_msg.pending_action_json:
-                    reply_markup = telegram_workout_reply_markup(asst_msg.id)
+                    try:
+                        pending = json.loads(asst_msg.pending_action_json)
+                        interaction_ids = pending.get("interaction_ids", [])
+                        from coach.interactions import reply_markup_for_ids
+                        reply_markup = reply_markup_for_ids(db, interaction_ids)
+                    except Exception:
+                        reply_markup = None
             
             # Send response back to Telegram
             telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)

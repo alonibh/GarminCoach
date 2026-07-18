@@ -59,6 +59,17 @@ exact `suggested_time` remains in Telegram and the personal calendar.
 </scheduling_json>
 """
 
+CHAT_SYSTEM_PROMPT = """You are GarminCoach, a cold and concise AI assistant.
+Use only facts supplied in the current snapshot. Never imply that you are human.
+Do not create workout, readiness, recovery, scheduling, medical, or injury-risk
+rules. Do not generate JSON or executable actions. Deterministic application
+rules own all workout decisions and mutations. If the user asks for today's
+workout recommendation, refer to the current morning decision. Explain factual
+questions in at most three short paragraphs and name missing data. Never ask the
+user to type weights, sets, repetitions, or post-workout RPE. Do not infer an
+effect from age, sex, or another demographic unless the supplied facts include
+an explicitly reviewed rule that models it. Always respond in English."""
+
 def _is_error_response(text: str) -> bool:
     return text.startswith("Coach is currently") or text.startswith("Coach encountered")
 
@@ -462,8 +473,9 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
         logger.info("Evening workout proposals are disabled until next morning's overnight data.")
         return
     from coach.decision_engine import evaluate_morning_decision
+    from coach.renderer import render_morning
     result = evaluate_morning_decision(session, allow_incomplete=allow_incomplete)
-    text = _render_typed_decision(result)
+    text, reply_markup, interaction_ids = render_morning(session, result)
     if not text:
         return
     existing = (
@@ -480,13 +492,13 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
         content=text,
         created_at=get_local_now(),
         data_snapshot=json.dumps(result.to_dict(), sort_keys=True),
-        pending_action_json=None,
+        pending_action_json=(json.dumps({"interaction_ids": interaction_ids}) if interaction_ids else None),
     )
     session.add(msg)
     session.commit()
     try:
         from notify.telegram import send_message
-        send_message(f"*Morning Briefing*\n\n{text}")
+        send_message(f"*Morning Briefing*\n\n{text}", reply_markup=reply_markup)
     except Exception:
         logger.exception("Failed to send deterministic morning briefing")
 
@@ -495,6 +507,25 @@ def handle_chat(session: Session, user_text: str) -> str:
     """Handle an interactive chat message from the user."""
     
     snapshot_json = build_snapshot(session)
+
+    from coach.interactions import stage_free_text_change
+    staged_change = stage_free_text_change(session, user_text)
+    if staged_change is not None:
+        response_text, interactions = staged_change
+        user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
+        asst_msg = CoachMessage(
+            role="assistant",
+            content=response_text,
+            created_at=datetime.now(timezone.utc),
+            data_snapshot=snapshot_json,
+            pending_action_json=(
+                json.dumps({"interaction_ids": [item.interaction_id for item in interactions]})
+                if interactions else None
+            ),
+        )
+        session.add_all((user_msg, asst_msg))
+        session.commit()
+        return response_text, asst_msg
     
     # Load recent conversation history (last 10 messages, excluding daily suggestions)
     recent_msgs = session.query(CoachMessage).filter(
@@ -523,8 +554,9 @@ User Message: {user_text}"""
     )
     session.add(user_msg)
     
-    # Generate response
-    chat_text, json_str = _generate_with_retry(SYSTEM_PROMPT, prompt_with_context, history, session=session)
+    # Informational generation only. Any JSON/action-like output is discarded.
+    chat_text = llm.generate(CHAT_SYSTEM_PROMPT, prompt_with_context, history)
+    chat_text, _discarded_action = _extract_and_strip_json(chat_text)
     
     # Save assistant message
     asst_msg = CoachMessage(
@@ -532,7 +564,7 @@ User Message: {user_text}"""
         content=chat_text,
         created_at=datetime.now(timezone.utc),
         data_snapshot=snapshot_json,
-        pending_action_json=json_str
+        pending_action_json=None
     )
     session.add(asst_msg)
     session.commit()

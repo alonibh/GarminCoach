@@ -550,12 +550,22 @@ in the UI and is absent from coach facts and notification rules.
 
 ### Increment 4: Telegram renderer and interactions
 
+Status: implemented 2026-07-18.
+
 - Replace model-generated actions with deterministic staged actions.
 - Add concise templates and constrained optional rendering.
 - Revalidate every button and apply mutations atomically.
 
 Gate: stale buttons cannot mutate state, and no metrics path changes the
 original workout contents.
+
+Implementation notes: the renderer consumes only `DecisionResult`; it cannot
+add actions. Buttons reference `PendingInteraction` rows containing exact
+targets, expiry, program/sync/calendar versions, and empty workout
+modifications. Clicks recompute the decision before applying. Free text can
+initiate an explicit scheduling, skip, original-workout, or safety-report flow,
+but confirmation buttons are required. Legacy model-generated approval buttons
+are expired rather than executed.
 
 ### Increment 5: durable notifications
 

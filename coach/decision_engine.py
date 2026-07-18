@@ -244,7 +244,7 @@ def evaluate_morning_decision(
             if facts["capability"] in {"supported", "unknown"}:
                 reasons.append("GARMIN_READINESS_UNAVAILABLE_NO_SUBSTITUTE")
 
-        if decision_type in {"PROPOSE_NEXT_SESSION", "BEST_EFFORT"} and outcome == "PROPOSE_NEXT_SESSION":
+        if outcome == "PROPOSE_NEXT_SESSION" and decision_type != "ADVISE_SKIP_SESSION":
             actions = [{
                 "type": "schedule_original_session",
                 "program_session_id": state["next_session_id"],
@@ -270,8 +270,14 @@ def evaluate_morning_decision(
         "program_id": program.id if program else None,
         "planned_id": planned.id if planned else None,
         "state": state,
-        "observations": observations,
-        "missing": missing,
+        "observations": [
+            {"signal": item["signal"], "value": item["value"], "freshness": item["freshness"]}
+            for item in observations
+        ],
+        "missing": [
+            {"signal": item["signal"], "critical": item["critical"], "freshness": item["freshness"]}
+            for item in missing
+        ],
         "rules": [item["rule_id"] + ":" + item["version"] for item in rules],
         "actions": actions,
     }
