@@ -70,6 +70,8 @@ class DecisionResult:
     reason_codes: list[str] = field(default_factory=list)
     permitted_actions: list[dict] = field(default_factory=list)
     optional_recovery_activity: dict | None = None
+    calendar_conflict: dict | None = None
+    decision_date: str | None = None
     best_effort: bool = False
     idempotency_key: str = ""
 
@@ -162,6 +164,30 @@ def evaluate_morning_decision(
     rules: list[dict] = []
     reasons: list[str] = []
     actions: list[dict] = []
+    calendar_conflict = None
+    if planned and planned.suggested_time:
+        from coach.calendar import find_calendar_conflict, get_upcoming_schedule_result
+        calendar = get_upcoming_schedule_result(days=2)
+        observations.append({
+            "signal": "calendar",
+            "value": calendar["state"],
+            "source": "ICS calendar",
+            "observed_for": target.isoformat(),
+            "fetched_at": now.isoformat(),
+            "freshness": calendar["state"],
+        })
+        if calendar["state"] == "error":
+            missing.append({
+                "signal": "calendar",
+                "critical": False,
+                "freshness": "error",
+                "error_code": calendar["error"],
+            })
+            reasons.append("CALENDAR_ACCESS_ERROR")
+        else:
+            calendar_conflict = find_calendar_conflict(
+                calendar["events"], target, planned.suggested_time, planned.duration_min
+            )
     facts = morning_freshness(session, target)
     for signal in facts["missing_critical"]:
         row = _freshness_row(session, signal, target)
@@ -257,6 +283,19 @@ def evaluate_morning_decision(
             reasons.append("PLANNED_SESSION_ALREADY_EXISTS")
         elif outcome == "PROPOSE_NEXT_SESSION":
             reasons.append("NEXT_PROGRAM_SESSION_ELIGIBLE")
+        if calendar_conflict and decision_type != "ADVISE_SKIP_SESSION":
+            reasons.append("CALENDAR_CONFLICT")
+            actions = [
+                {"type": "keep_calendar_time", "planned_session_id": planned.id, "conflict": calendar_conflict},
+                {"type": "request_reschedule", "planned_session_id": planned.id, "conflict": calendar_conflict},
+            ]
+        elif calendar_conflict:
+            reasons.append("CALENDAR_CONFLICT")
+            actions.append({
+                "type": "request_reschedule",
+                "planned_session_id": planned.id,
+                "conflict": calendar_conflict,
+            })
 
     # Values are assigned in the waiting branch too for a stable result shape.
     if "readiness_score" not in locals():
@@ -309,6 +348,8 @@ def evaluate_morning_decision(
         reason_codes=reasons,
         permitted_actions=actions,
         optional_recovery_activity=state["optional_recovery_activity"] if state else None,
+        calendar_conflict=calendar_conflict,
+        decision_date=target.isoformat(),
         best_effort=best_effort,
         idempotency_key=idempotency_key,
     )

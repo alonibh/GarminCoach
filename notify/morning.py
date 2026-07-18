@@ -1,12 +1,12 @@
 """Durable morning data-wait and 11:30 deadline flow."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
+import json
 
 from coach.coach import generate_daily_suggestion
-from db import MorningBriefState, get_session
+from db import DecisionRecord, MorningBriefState, NotificationOutbox, get_session
 from metrics.freshness import ERROR, morning_freshness
-from notify.telegram import send_message
 from time_utils import get_local_date, get_local_now
 
 
@@ -46,6 +46,7 @@ def priority_sync_finished() -> None:
         row.last_priority_fetch_at = _now_naive()
         facts = morning_freshness(session)
         if row.briefing_sent_at:
+            _enqueue_late_material_update(session)
             return
         if facts["ready"] or row.answer_anyway:
             row.status = "evaluating"
@@ -55,6 +56,53 @@ def priority_sync_finished() -> None:
         else:
             row.status = "waiting"
         row.updated_at = _now_naive()
+
+
+def _enqueue_late_material_update(session) -> None:
+    """Notify only when new daytime readiness changes the same-day call to Poor."""
+    now = get_local_now()
+    if now.hour < 7 or now.hour >= 22:
+        return
+    from coach.decision_engine import evaluate_morning_decision
+    day = get_local_date()
+    sent_brief = (
+        session.query(NotificationOutbox)
+        .filter(
+            NotificationOutbox.event_type == "morning_briefing",
+            NotificationOutbox.status == "sent",
+            NotificationOutbox.sent_at >= datetime.combine(day, time.min),
+            NotificationOutbox.sent_at <= datetime.combine(day, time.max),
+        )
+        .order_by(NotificationOutbox.sent_at, NotificationOutbox.id)
+        .first()
+    )
+    if not sent_brief or not sent_brief.decision_id:
+        return
+    first = session.get(DecisionRecord, sent_brief.decision_id)
+    if not first:
+        return
+    original = json.loads(first.result_json)
+    current = evaluate_morning_decision(session, target=day, evaluated_at=now)
+    if original.get("decision_type") == "ADVISE_SKIP_SESSION" or current.decision_type != "ADVISE_SKIP_SESSION":
+        return
+    existing = session.query(NotificationOutbox).filter_by(
+        idempotency_key=f"late-update:{current.idempotency_key}"
+    ).first()
+    if existing:
+        return
+    from coach.renderer import render_morning
+    text, _markup, interaction_ids = render_morning(session, current)
+    if not text:
+        return
+    from notify.outbox import enqueue_notification
+    enqueue_notification(
+        session,
+        event_type="late_material_update",
+        due_at=now.replace(tzinfo=None),
+        payload={"text": f"Update: {text}", "interaction_ids": interaction_ids},
+        decision_id=current.decision_id,
+        idempotency_key=f"late-update:{current.idempotency_key}",
+    )
 
 
 def morning_deadline() -> bool:
@@ -85,7 +133,16 @@ def morning_deadline() -> bool:
                 {"text": "Answer anyway", "callback_data": f"morning_anyway_{day_key}"},
             ]]
         }
-        send_message(text, reply_markup=markup)
+        from notify.outbox import deliver_notification, enqueue_notification
+        queued = enqueue_notification(
+            session,
+            event_type="morning_deadline",
+            due_at=_now_naive(),
+            payload={"text": text, "reply_markup": markup},
+            idempotency_key=f"morning-deadline:{get_local_date().isoformat()}",
+        )
+        session.flush()
+        deliver_notification(session, queued, _now_naive())
         row.deadline_prompt_sent_at = _now_naive()
         row.status = "sync_required" if not fetch_error else "fetch_error"
         row.updated_at = _now_naive()

@@ -50,12 +50,24 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         else:
             body = "No workout action is available today."
 
+    if result.calendar_conflict:
+        conflict = result.calendar_conflict
+        body += f" Calendar conflict: {conflict.get('title', 'another event')} at {conflict.get('start', '')[-5:]}."
+    elif "CALENDAR_ACCESS_ERROR" in result.reason_codes:
+        body += " Calendar could not be checked."
+
     if result.best_effort:
         omitted = ", ".join(
             item["signal"].replace("_", " ")
             for item in result.missing_observations if item["critical"]
         )
         body += f" Best effort; missing {omitted}."
+    noncritical = [
+        item["signal"].replace("_", " ")
+        for item in result.missing_observations if not item["critical"]
+    ]
+    if noncritical:
+        body += f" Missing non-critical data: {', '.join(noncritical)}."
     text = "\n".join(part for part in (metrics, body) if part)
     interactions = stage_decision_actions(session, result)
     return text, reply_markup(interactions), [item.interaction_id for item in interactions]

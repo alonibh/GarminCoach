@@ -525,6 +525,27 @@ class AthleteSafetyReport(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class NotificationOutbox(Base):
+    """Durable, idempotent notification job processed after app restarts."""
+
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(48), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    quiet_hour_policy: Mapped[str] = mapped_column(String(24), default="defer")
+    payload_json: Mapped[str] = mapped_column(Text)
+    decision_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("decision_records.decision_id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 # The web request threads and the background sync thread both write to this
 # SQLite file. Without a busy timeout an overlapping write fails immediately
 # with "database is locked"; WAL mode lets readers and a writer coexist.

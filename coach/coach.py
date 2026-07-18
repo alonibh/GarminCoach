@@ -497,10 +497,21 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
     session.add(msg)
     session.commit()
     try:
-        from notify.telegram import send_message
-        send_message(f"*Morning Briefing*\n\n{text}", reply_markup=reply_markup)
+        from notify.outbox import deliver_notification, enqueue_notification
+        now = get_local_now().replace(tzinfo=None)
+        queued = enqueue_notification(
+            session,
+            event_type="morning_briefing",
+            due_at=now,
+            payload={"text": f"*Morning Briefing*\n\n{text}", "interaction_ids": interaction_ids},
+            decision_id=result.decision_id,
+            idempotency_key=f"briefing:{result.idempotency_key}",
+        )
+        session.commit()
+        deliver_notification(session, queued, now)
+        session.commit()
     except Exception:
-        logger.exception("Failed to send deterministic morning briefing")
+        logger.exception("Failed to queue deterministic morning briefing")
 
 
 def handle_chat(session: Session, user_text: str) -> str:

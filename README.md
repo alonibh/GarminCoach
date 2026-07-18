@@ -39,22 +39,26 @@ Python 3.11+.
 - **Phase 1 ✅ — Foundation + Dashboard:** Garmin sync (token cache + MFA),
   SQLite cache, trend dashboard, fitness-age/VO₂ tiles, and type-aware
   workout-detail views (strength sets, cardio stats, HR zones).
-- **Phase 2 ✅ — Metrics engine:** training load (Banister/Edwards TRIMP), EWMA
-  ACWR, a legacy heuristic readiness composite, sleep debt, and strength
-  progression (volume load + Epley estimated-1RM). Formula scope and limitations
-  are documented in [`docs/METRICS.md`](docs/METRICS.md).
-- **Phase 3 ✅ — Coach (LLM):** daily suggestions + Telegram chat, swappable Ollama/Claude.
-- **Phase 4 ✅ — Cloud Security:** HTTP Basic Authentication locking down all routes and data, preparing the app for safe deployment to the public internet (e.g. Oracle Cloud Free Tier).
-- **Phase 5 🚧 — Lifestyle Integration (Planned):** sync to Google/Apple Calendar via `.ics` to suggest workout times, plus dynamic nutrition/food/vitamin suggestions based on goals and current recovery status.
+- **Phase 2 ✅ — Metrics and freshness:** descriptive training metrics, per-signal
+  freshness, device capability, and priority overnight sync. The custom
+  readiness composite is retired; its database column remains only for schema
+  compatibility.
+- **Phase 3 ✅ — Evidence decision engine:** deterministic program/readiness
+  decisions with stored facts, rule versions, and boundary tests. Telegram chat
+  remains informational; it cannot invent or execute coaching actions.
+- **Phase 4 ✅ — Safe interactions and security:** versioned confirmation
+  buttons, stale-action rejection, atomic scheduling, and HTTP Basic Authentication.
+- **Phase 5 ✅ — Durable notifications:** immediate morning briefing with an
+  11:30 deadline, Saturday 20:00 summary, one-hour workout reminders, quiet
+  hours, late material updates, and calendar-conflict handling.
 
-The Telegram coach is being redesigned around a deterministic evidence engine.
-The approved baseline is in
+The Telegram coach runs on a deterministic evidence engine. Its implemented
+baseline is in
 [`docs/coach_product_architecture.md`](docs/coach_product_architecture.md), with
 program scheduling and recovery rules in
 [`docs/routine_source_audit.md`](docs/routine_source_audit.md). The current
-runtime still contains legacy LLM-led behavior until that architecture is
-implemented; the redesign retires the custom readiness composite from coaching
-and keeps ACWR in the UI only.
+workout decisions and mutations do not depend on LLM output. The custom
+readiness composite is retired from coaching, and ACWR remains UI-only.
 
 ## Setup
 

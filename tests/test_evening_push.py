@@ -32,8 +32,10 @@ def test_evening_no_push_is_not_saved_or_sent(session, monkeypatch):
     monkeypatch.setattr(coach_module.llm, "generate", lambda *args, **kwargs: "NO_PUSH")
 
     sent = []
-    import notify.telegram as telegram
-    monkeypatch.setattr(telegram, "send_message", lambda text, **kwargs: sent.append((text, kwargs)))
+    monkeypatch.setattr(
+        "notify.outbox.send_message",
+        lambda text, **kwargs: sent.append((text, kwargs)) or True,
+    )
 
     coach_module.generate_daily_suggestion(session)
 
@@ -59,8 +61,10 @@ def test_evening_never_creates_tomorrow_workout_before_new_sleep(session, monkey
     )
 
     sent = []
-    import notify.telegram as telegram
-    monkeypatch.setattr(telegram, "send_message", lambda text, **kwargs: sent.append((text, kwargs)))
+    monkeypatch.setattr(
+        "notify.outbox.send_message",
+        lambda text, **kwargs: sent.append((text, kwargs)) or True,
+    )
 
     coach_module.generate_daily_suggestion(session)
 
@@ -90,8 +94,10 @@ def test_morning_workout_proposal_is_actionable_and_includes_fixed_short_sleep_o
     )
 
     sent = []
-    import notify.telegram as telegram
-    monkeypatch.setattr(telegram, "send_message", lambda text, **kwargs: sent.append((text, kwargs)))
+    monkeypatch.setattr(
+        "notify.outbox.send_message",
+        lambda text, **kwargs: sent.append((text, kwargs)) or True,
+    )
 
     coach_module.generate_daily_suggestion(session)
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-18 — Deterministic Coach Redesign
+
+- Added source-audited policies and rolling completion reconciliation for all
+  nine supported program templates; removed the incomplete Get RIPPED program.
+- Added capability-aware priority sync, observation freshness, and the durable
+  11:30 manual-sync or answer-anyway morning flow.
+- Replaced LLM workout decisions with a persisted evidence-rule engine using
+  Garmin Training Readiness categories and program-rest precedence.
+- Added versioned Telegram confirmation actions; metrics never rewrite workout
+  contents, and stale buttons cannot mutate program or calendar state.
+- Added a durable notification outbox, quiet hours, one-hour reminders,
+  Saturday summaries, calendar-conflict handling, and daytime Poor-readiness
+  corrections. ACWR remains descriptive UI data only.
+
 ## 2026-06-29 — Telegram Integration & Proactive Notifications
 
 - **Telegram Integration:** Built a complete Telegram bot integration (`notify` module).

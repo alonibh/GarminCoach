@@ -569,11 +569,25 @@ are expired rather than executed.
 
 ### Increment 5: durable notifications
 
+Status: implemented 2026-07-18.
+
 - Add the outbox, quiet hours, revalidation, pre-workout reminder, Saturday
   summary, calendar conflicts, and late material-update behavior.
 
 Gate: restart tests do not duplicate or lose reminders; quiet-hour events are
 revalidated before delivery.
+
+Implementation notes: `NotificationOutbox` persists idempotent jobs and retry
+state in SQLite. A minute poller drains due rows after restarts, defers all
+22:00-07:00 messages, and reconstructs content only after checking the current
+decision, planned-session status, workout time, and calendar. Confirmed workout
+times enqueue a one-line reminder for exactly one hour before the session.
+Calendar conflicts offer versioned `Keep time` and `Reschedule` actions; a
+same-day replacement time is checked again before mutation. The Saturday 20:00
+summary is deterministic and uses only matched program history, synced sets,
+sleep, confirmed safety reports, and cursor state. Late daytime data produces
+one linked update only when fresh Garmin readiness changes a previously sent
+same-day recommendation to `Poor`.
 
 ## 14. Decisions deliberately deferred
 

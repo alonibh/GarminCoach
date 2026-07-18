@@ -109,7 +109,10 @@ def test_deadline_prompt_is_durable_and_not_duplicated(session, monkeypatch):
     monkeypatch.setattr(morning, "get_local_date", lambda: target)
     monkeypatch.setattr(morning, "get_local_now", lambda: datetime(2026, 7, 4, 11, 30))
     sent = []
-    monkeypatch.setattr(morning, "send_message", lambda text, reply_markup=None: sent.append((text, reply_markup)))
+    monkeypatch.setattr(
+        "notify.outbox.send_message",
+        lambda text, reply_markup=None: sent.append((text, reply_markup)) or True,
+    )
     freshness.record_signal(session, freshness.SLEEP, target, freshness.MISSING, "get_sleep_data")
     freshness.record_signal(
         session, freshness.TRAINING_READINESS, target, freshness.MISSING, "get_training_readiness"

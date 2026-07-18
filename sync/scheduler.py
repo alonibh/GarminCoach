@@ -107,12 +107,21 @@ def start_scheduler() -> BackgroundScheduler:
         replace_existing=True,
     )
 
-    # Weekly summary (Sundays at 19:05)
+    # Deterministic weekly summary: Saturday 20:00 local.
     from notify.weekly import send_weekly_summary
     sched.add_job(
         send_weekly_summary,
-        CronTrigger(day_of_week='sun', hour=19, minute=5),
+        CronTrigger(day_of_week="sat", hour=20, minute=0),
         id="weekly_summary",
+        replace_existing=True,
+    )
+
+    # Database-backed jobs survive restarts; this poller simply drains what is due.
+    from notify.outbox import process_due_notifications
+    sched.add_job(
+        process_due_notifications,
+        CronTrigger(minute="*", second=15),
+        id="notification_outbox",
         replace_existing=True,
     )
 

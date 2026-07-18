@@ -4,7 +4,7 @@ import pytest
 
 from coach.decision_engine import evaluate_morning_decision, training_readiness_category
 from coach.program_state import initialize_program_cursor
-from db import DailyHealth, DecisionRecord, ProgramCursor, Sleep
+from db import DailyHealth, DecisionRecord, PlannedSession, ProgramCursor, Sleep
 from metrics import freshness
 from tests.test_program_state import _add_program
 
@@ -101,6 +101,38 @@ def test_program_rest_day_precedes_prime_readiness(session):
     assert result.decision_type == "PROGRAM_REST_DAY"
     assert result.readiness_category == "Prime"
     assert result.permitted_actions == []
+
+
+def test_poor_readiness_with_calendar_conflict_keeps_skip_original_and_reschedule(session, monkeypatch):
+    _add_program(session)
+    _fresh_sleep(session)
+    _fresh_readiness(session, 20)
+    session.add(PlannedSession(
+        title="Workout A",
+        activity_type="strength_training",
+        target_date=TARGET,
+        suggested_time="18:00",
+        duration_min=60,
+        status="planned",
+        source="coach",
+    ))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=2: {
+            "events": [{"title": "Appointment", "start": "2026-07-06 17:45", "end": "18:30"}],
+            "state": "fresh",
+            "error": None,
+        },
+    )
+
+    result = evaluate_morning_decision(
+        session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
+    )
+
+    assert result.decision_type == "ADVISE_SKIP_SESSION"
+    assert {item["type"] for item in result.permitted_actions} == {
+        "skip_today", "do_original_workout", "request_reschedule",
+    }
 
 
 def test_unsupported_device_has_no_metric_only_warning_or_skip(session):
