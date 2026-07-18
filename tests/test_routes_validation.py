@@ -172,7 +172,7 @@ def test_goal_route_and_setup_nav_removed(client):
 
     assert resp.status_code == 404
     assert 'href="/goal"' not in nav.text
-    nav_html = nav.text.split("<nav>", 1)[1].split("</nav>", 1)[0]
+    nav_html = nav.text.split("<nav", 1)[1].split("</nav>", 1)[0]
     assert ">Setup<" not in nav_html
     assert 'href="/program"' in nav_html
 

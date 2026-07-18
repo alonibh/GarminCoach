@@ -8,6 +8,7 @@
   <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary">Next</a>
 </div>
 
+<div class="calendar-scroll" tabindex="0" role="region" aria-label="Monthly workout calendar">
 <div class="calendar-grid">
   <div class="weekday-header">Mon</div>
   <div class="weekday-header">Tue</div>
@@ -38,5 +39,6 @@
       </div>
     {% endfor %}
   {% endfor %}
+</div>
 </div>
 {% endblock %}
