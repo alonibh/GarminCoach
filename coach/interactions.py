@@ -301,7 +301,7 @@ def _stage_explicit_schedule(
     session.add(row)
     session.flush()
     return (
-        f"Confirm: schedule {suggestion.session_name} on {suggestion.day:%A} "
+        f"Please confirm: {suggestion.session_name} on {suggestion.day:%A} "
         f"at {suggestion.start:%H:%M}.",
         [row],
     )

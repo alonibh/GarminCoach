@@ -112,7 +112,7 @@ def test_free_text_can_initiate_but_not_apply_schedule_change(session, monkeypat
 
     response, staged = stage_free_text_change(session, "Schedule the session today")
 
-    assert response == "Confirm: schedule Full Body 1 on Monday at 18:00."
+    assert response == "Please confirm: Full Body 1 on Monday at 18:00."
     assert len(staged) == 1
     assert staged[0].status == "pending"
 
@@ -148,8 +148,8 @@ def test_after_midnight_schedule_requests_use_current_day_and_ignore_chat_contex
     tomorrow_response, tomorrow_message = handle_chat(session, "can we schedule a workout for tomorrow")
     today_response, today_message = handle_chat(session, "can we schedule a workout for today")
 
-    assert tomorrow_response == "Confirm: schedule Full Body 1 on Monday at 18:00."
-    assert today_response == "Confirm: schedule Full Body 1 on Sunday at 18:00."
+    assert tomorrow_response == "Please confirm: Full Body 1 on Monday at 18:00."
+    assert today_response == "Please confirm: Full Body 1 on Sunday at 18:00."
     tomorrow_id = json.loads(tomorrow_message.pending_action_json)["interaction_ids"][0]
     today_id = json.loads(today_message.pending_action_json)["interaction_ids"][0]
     tomorrow_payload = json.loads(session.get(PendingInteraction, tomorrow_id).payload_json)
