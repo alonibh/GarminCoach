@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 
 from coach.scheduling import is_schedule_request, is_timing_question, next_available_time, requested_day
 from db import Goal, ProgramSession, TrainingProgram
@@ -74,9 +75,10 @@ def test_chat_timing_question_uses_calculated_slot_without_llm(session, monkeypa
     monkeypatch.setattr("coach.intent_router.get_local_now", lambda: datetime(2026, 7, 18, 19, 31))
     monkeypatch.setattr("coach.llm.generate", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")))
 
-    response, _message = handle_chat(session, "Can I do it tomorrow?")
+    response, message = handle_chat(session, "Can I do it tomorrow?")
 
-    assert response == "Day 1 — Sunday at 18:00."
+    assert response == "Please confirm: Day 1 on Sunday at 18:00."
+    assert json.loads(message.pending_action_json)["interaction_ids"]
 
 
 def test_timing_intent_variants_and_requested_days():

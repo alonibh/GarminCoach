@@ -742,7 +742,10 @@ def _route_deterministic(
             max_days=1 if target else 7,
         )
         if suggestion:
-            return RoutedTurn(suggestion.render(), [])
+            from coach.interactions import _stage_explicit_schedule
+            request = f"schedule workout {suggestion.day.isoformat()} {suggestion.start:%H:%M}"
+            text, interactions = _stage_explicit_schedule(session, request, now)
+            return RoutedTurn(text, interactions)
         return RoutedTurn(
             f"No full workout slot is available {target:%A}." if target
             else "No full workout slot is available in the next 7 days.",
