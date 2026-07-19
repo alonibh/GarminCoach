@@ -12,6 +12,7 @@ from coach.interactions import (
     request_different_time,
 )
 from db import (
+    Activity,
     ChatDialogueState,
     ChatIntentAudit,
     DailyHealth,
@@ -358,6 +359,20 @@ def test_calendar_response_uses_chat_datetime_format_for_current_and_legacy_even
         "Calendar: Dinner — 20/07/2026 20:00.\n"
         "Calendar: GymnastFit — 24/07/2026 11:15."
     )
+
+
+def test_recent_activities_hides_legacy_schedule_placeholders_and_formats_datetimes(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    session.add_all([
+        Activity(id=1, name="Cardio", activity_type="cardio", start_time=datetime(2026, 7, 17, 8, 30)),
+        Activity(id=2, name="🏋 Chest & Biceps @ 18:00", activity_type="strength_training", start_time=datetime(2026, 7, 18, 18)),
+    ])
+    session.commit()
+
+    routed = route_chat(session, "Recent activities")
+
+    assert routed.text == "Recent activities:\n• Cardio — 17/07/2026 08:30"
+    assert "Chest & Biceps" not in routed.text
 
 
 def test_delivery_failure_invalidates_pending_controls(session, monkeypatch):

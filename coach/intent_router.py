@@ -32,7 +32,7 @@ from db import (
     Sleep,
     SyncState,
 )
-from time_utils import format_chat_date, format_chat_datetime, get_local_now
+from time_utils import format_chat_datetime, get_local_now
 
 
 IntentName = Literal[
@@ -546,11 +546,15 @@ def _calendar_response(session: Session, now: datetime) -> str:
 
 
 def _activity_response(session: Session) -> str:
-    rows = session.query(Activity).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(5).all()
+    rows = session.query(Activity).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(10).all()
+    # Older local versions stored proposed gym sessions as activities with this
+    # marker. They were not completed Garmin activities and should not appear
+    # in the athlete's history.
+    rows = [row for row in rows if not (row.name or "").startswith("🏋")][:5]
     if not rows:
         return "No synced activities are available."
     return "Recent activities:\n" + "\n".join(
-        f"• {(row.name or row.activity_type or 'Activity')} — {format_chat_date(row.start_time)}"
+        f"• {(row.name or row.activity_type or 'Activity')} — {format_chat_datetime(row.start_time)}"
         for row in rows if row.start_time
     )
 
