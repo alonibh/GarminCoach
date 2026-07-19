@@ -213,7 +213,7 @@ def test_date_change_moves_verified_garmin_occurrence_before_local_state(session
         lambda days=7: {"events": [], "state": "fresh", "error": None},
     )
 
-    assert route_chat(session, "Change workout date").text == "Which new date should I use?"
+    assert route_chat(session, "Change workout date").text == "Which new date should I use? You can also type another date."
     assert "Available on Tuesday" in route_chat(session, "tomorrow").text
     confirmation = route_chat(session, "18:15")
 
