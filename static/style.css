@@ -1785,11 +1785,15 @@ details summary {
   border-top: 1px dashed var(--border-soft);
 }
 .exercise-warmup label { display: grid; gap: .25rem; color: var(--muted); font-size: .72rem; font-weight: 700; }
-.exercise-warmup label:first-child { display: flex; align-items: center; min-height: 34px; color: var(--fg); }
+.exercise-warmup > label:first-child { display: flex; align-items: center; min-height: 34px; color: var(--fg); }
 .warmup-inputs { display: flex; align-items: end; flex-wrap: wrap; gap: .55rem .9rem; }
 .warmup-inputs.is-hidden { display: none; }
 .exercise-warmup input[type="checkbox"] { width: auto; min-height: 0; margin: 0 .2rem 0 0; accent-color: var(--accent); }
 .exercise-warmup input[type="number"] { width: 86px; min-height: 34px; padding: .3rem .45rem; border-radius: 8px; font-size: .82rem; text-align: center; }
+.warmup-target > span, .warmup-weight > span { color: var(--muted); font-size: .68rem; font-weight: 750; letter-spacing: .055em; text-align: center; text-transform: uppercase; }
+.warmup-target .target-control { grid-template-columns: 92px 70px; }
+.warmup-target .target-control select, .warmup-target .target-control input { min-height: 34px; height: 34px; font-size: .82rem; }
+.warmup-weight.is-hidden { display: none; }
 .exercise-warmup .field-hint { margin: 0 0 .3rem; font-size: .74rem; }
 .target-control { display: grid; grid-template-columns: minmax(70px, .95fr) minmax(58px, .7fr); align-items: center; }
 .target-control:has(.target-unit:not(:empty)) { grid-template-columns: minmax(70px, .95fr) minmax(58px, .7fr) 28px; }

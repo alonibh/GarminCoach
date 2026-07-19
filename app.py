@@ -1899,12 +1899,15 @@ async def save_session_exercises(session_id: int, request: Request):
             warmup_enabled = defaults["warmup_enabled"] if "warmup_enabled" not in row else bool(row["warmup_enabled"])
             if warmup_enabled and reps is None and duration is None:
                 raise HTTPException(status_code=422, detail="Set a rep or time target before adding a warm-up set.")
-            default_warmup_reps = 8 if reps is not None else None
-            default_warmup_duration = max(1, round(duration * 0.5)) if duration is not None else None
+            warmup_target_type = str(row.get("warmup_target_type") or ("time" if duration is not None else "reps"))
+            if warmup_target_type not in {"reps", "time"}:
+                raise HTTPException(status_code=422, detail="Warm-up target must be reps or time.")
+            default_warmup_reps = 8 if warmup_target_type == "reps" else None
+            default_warmup_duration = max(1, round((duration or 30) * 0.5)) if warmup_target_type == "time" else None
             default_warmup_weight = defaults["warmup_weight_kg"] if defaults["warmup_weight_kg"] is not None else (round(weight * 0.5, 1) if weight else None)
-            warmup_reps = int(row["warmup_reps"]) if warmup_enabled and duration is None and row.get("warmup_reps") not in (None, "") else default_warmup_reps
-            warmup_duration = int(row["warmup_duration_seconds"]) if warmup_enabled and duration is not None and row.get("warmup_duration_seconds") not in (None, "") else default_warmup_duration
-            warmup_weight = float(row["warmup_weight_kg"]) if warmup_enabled and duration is None and row.get("warmup_weight_kg") not in (None, "") else default_warmup_weight
+            warmup_reps = int(row["warmup_reps"]) if warmup_enabled and warmup_target_type == "reps" and row.get("warmup_reps") not in (None, "") else default_warmup_reps
+            warmup_duration = int(row["warmup_duration_seconds"]) if warmup_enabled and warmup_target_type == "time" and row.get("warmup_duration_seconds") not in (None, "") else default_warmup_duration
+            warmup_weight = float(row["warmup_weight_kg"]) if warmup_enabled and warmup_target_type == "reps" and row.get("warmup_weight_kg") not in (None, "") else None
             if warmup_reps is not None and not 1 <= warmup_reps <= 100:
                 raise HTTPException(status_code=422, detail="Warm-up reps must be between 1 and 100.")
             if warmup_duration is not None and not 1 <= warmup_duration <= 3600:
