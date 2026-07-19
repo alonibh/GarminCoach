@@ -65,23 +65,23 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
     "full_body_2": ProgramPolicy(
         "full_body_2",
         "https://www.muscleandstrength.com/workouts/a-b-2-day-workout-for-busy-people",
-        ("Workout A", "Workout B"), (0, 0), (1, 1),
+        ("Full Body 1", "Full Body 2"), (0, 0), (1, 1),
         consecutive_day_override_allowed=True,
     ),
     "beginner_full_body_3": ProgramPolicy(
         "beginner_full_body_3",
         "https://www.muscleandstrength.com/workouts/3-day-workout-routine-and-diet-for-beginners",
-        ("Full Body A", "Full Body B", "Full Body C"), (1, 1, 1), (1, 1, 1),
+        ("Full Body 1", "Full Body 2", "Full Body 3"), (1, 1, 1), (1, 1, 1),
     ),
     "ms_full_body_3": ProgramPolicy(
         "ms_full_body_3",
         "https://www.muscleandstrength.com/workouts/muscle-strength-full-body-workout-routine",
-        ("Workout A", "Workout B", "Workout C"), (1, 1, 1), (1, 1, 1), _EASY_WALK,
+        ("Full Body 1", "Full Body 2", "Full Body 3"), (1, 1, 1), (1, 1, 1), _EASY_WALK,
     ),
     "total_package_3": ProgramPolicy(
         "total_package_3",
         "https://www.muscleandstrength.com/workouts/total-package-workout",
-        ("Day 1", "Day 2", "Day 3"), (1, 1, 1), (1, 1, 1), _SOURCE_WALK,
+        ("Full Body 1", "Full Body 2", "Full Body 3"), (1, 1, 1), (1, 1, 1), _SOURCE_WALK,
     ),
     "upper_lower_4": ProgramPolicy(
         "upper_lower_4",

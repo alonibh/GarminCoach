@@ -255,12 +255,12 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "https://www.muscleandstrength.com/workouts/a-b-2-day-workout-for-busy-people",
         "new",
         [
-            _session("Workout A", "full body", [
+            _session("Full Body 1", "full body", [
                 _exercise("Trap Bar Deadlift", 5, 6, rest=120), _exercise("Military Press", 5, 6, rest=120),
                 _exercise("Lat Pull Down", 4, 12, rest=120), _exercise("T Bar Row", 4, 12, rest=120),
                 _exercise("Push Up", 3, None, rest=120, notes="AMRAP; leave one rep in reserve"),
             ], 90),
-            _session("Workout B", "full body", [
+            _session("Full Body 2", "full body", [
                 _exercise("Front Squat", 5, 6, rest=120), _exercise("Dumbbell Bench Press", 5, 8, rest=120),
                 _exercise("Chin Up", 4, 8, rest=120), _exercise("Cable Row", 4, 12, rest=120),
                 _exercise("Bodyweight Hip Thrust", 3, 12, rest=120),
@@ -273,19 +273,19 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "https://www.muscleandstrength.com/workouts/3-day-workout-routine-and-diet-for-beginners",
         "new",
         [
-            _session("Full Body A", "full body", [
+            _session("Full Body 1", "full body", [
                 _exercise("Trap Bar Deadlift", 3, 5, rest=300), _exercise("Bent Over Row", 3, 8, rest=90),
                 _exercise("Dumbbell Overhead Press", 3, 10, rest=90), _exercise("Lat Pull Down", 3, 10, rest=90),
                 _exercise("Dumbbell Bicep Curl", 2, 12, rest=45), _exercise("Rope Pressdown", 2, 12, rest=45),
                 _exercise("Plank", 2, None, rest=45, notes="Hold to technical failure"),
             ], 75),
-            _session("Full Body B", "full body", [
+            _session("Full Body 2", "full body", [
                 _exercise("Front Squat", 3, 5, rest=300), _exercise("Romanian Deadlift", 3, 10, rest=90),
                 _exercise("Farmer's Carry", 3, None, movement="core", rest=45, duration=45),
                 _exercise("Dumbbell Row", 3, 15, rest=90), _exercise("Incline Dumbbell Bench Press", 3, 12, rest=90),
                 _exercise("Calf Raise", 3, 20, rest=45), _exercise("Dead Bugs", 2, 12, rest=45, notes="Each side"),
             ], 75),
-            _session("Full Body C", "full body", [
+            _session("Full Body 3", "full body", [
                 _exercise("Bench Press", 3, 5, rest=300), _exercise("Leg Press", 3, 10, rest=90),
                 _exercise("Leg Curl", 3, 12, rest=90), _exercise("Lateral Raise", 3, 15, rest=45),
                 _exercise("Cable Row", 3, 12, rest=90), _exercise("EZ Bar Curl", 2, 12, rest=45),
@@ -299,19 +299,19 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "https://www.muscleandstrength.com/workouts/muscle-strength-full-body-workout-routine",
         "new",
         [
-            _session("Workout A", "full body", [
+            _session("Full Body 1", "full body", [
                 _exercise("Squat", 3, 5, rest=120), _exercise("Bench Press", 3, 5, rest=120),
                 _exercise("Barbell Row", 3, 5, rest=120), _exercise("Upright Row", 3, 10, rest=90),
                 _exercise("Skullcrushers", 3, 10, rest=90), _exercise("Dumbbell Curls", 3, 10, rest=90),
                 _exercise("Leg Curls", 3, 15, rest=90), _exercise("Ab Wheel Roll Out", 3, 15, rest=90),
             ], 90),
-            _session("Workout B", "full body", [
+            _session("Full Body 2", "full body", [
                 _exercise("Deadlift", 1, 5, rest=120), _exercise("Romanian Deadlift", 2, 12, rest=90),
                 _exercise("Seated Overhead Press", 3, 10, rest=120), _exercise("Pull Ups", 3, 15, rest=90),
                 _exercise("Dips", 3, 20, movement="vertical_push", rest=90), _exercise("Barbell Shrugs", 3, 10, rest=90),
                 _exercise("Seated Calf Raise", 3, 15, rest=90), _exercise("Plank", 3, None, rest=90, duration=60),
             ], 90),
-            _session("Workout C", "full body", [
+            _session("Full Body 3", "full body", [
                 _exercise("Squat", 1, 5, rest=120), _exercise("Squat", 1, 20, rest=120, notes="Back-off set"),
                 _exercise("Incline Dumbbell Bench Press", 3, 10, rest=90), _exercise("One Arm Dumbbell Row", 3, 15, rest=90),
                 _exercise("Seated Arnold Press", 3, 15, rest=90), _exercise("Cable Tricep Extensions", 3, 10, rest=90),
@@ -326,21 +326,21 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "https://www.muscleandstrength.com/workouts/total-package-workout",
         "six_to_twenty_four_months",
         [
-            _session("Day 1", "full body", [
+            _session("Full Body 1", "full body", [
                 _exercise("Squat", 5, 5, rest=180), _exercise("Dumbbell Bench Press", 4, 10),
                 _exercise("Dumbbell Row", 4, 10), _exercise("Seated Dumbbell Press", 4, 10),
                 _exercise("Lunge", 4, 10), _exercise("Dumbbell Curl", 3, 10),
                 _exercise("Standing Barbell Tricep Extension", 3, 10), _exercise("Calf Raise", 3, 12),
                 _exercise("Plank", 5, None, duration=20),
             ], 90),
-            _session("Day 2", "full body", [
+            _session("Full Body 2", "full body", [
                 _exercise("Bench Press", 5, 5, rest=180), _exercise("Machine Pec Deck", 3, 12),
                 _exercise("Leg Extension", 4, 10), _exercise("Leg Curl", 4, 10),
                 _exercise("Pullup", 4, 10), _exercise("Seated Lateral Raise", 4, 10),
                 _exercise("Dumbbell Hammer Curls", 3, 10), _exercise("Rope Extension", 3, 10),
                 _exercise("Plank", 5, None, duration=20),
             ], 90),
-            _session("Day 3", "full body", [
+            _session("Full Body 3", "full body", [
                 _exercise("Deadlift", 5, 5, rest=180), _exercise("Incline Dumbbell Press", 4, 10),
                 _exercise("Lateral Raise", 4, 10), _exercise("Pulldown", 4, 10),
                 _exercise("Leg Press", 4, 10), _exercise("EZ Bar Curl", 3, 10),

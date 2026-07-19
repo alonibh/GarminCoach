@@ -300,8 +300,8 @@ def test_existing_source_template_rest_defaults_are_migrated_without_touching_cu
     from db import ProgramSession, SessionExercise, TrainingProgram
 
     fixtures = [
-        ("beginner_full_body_3", "Full Body A", "Trap Bar Deadlift", 180, 300),
-        ("ms_full_body_3", "Workout B", "Romanian Deadlift", 120, 90),
+        ("beginner_full_body_3", "Full Body 1", "Trap Bar Deadlift", 180, 300),
+        ("ms_full_body_3", "Full Body 2", "Romanian Deadlift", 120, 90),
         ("upper_lower_4", "Upper A", "Bench Press", 60, 90),
         ("shul_4", "Lower Strength", "Front Squat", 180, 300),
         ("shul_4", "Lower Strength", "Hack Squat", 90, 120),
@@ -475,7 +475,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert reset.headers["location"] == "/program?view=active"
     with db_module.get_session() as s:
         sessions = s.query(ProgramSession).filter_by(program_id=program_id).order_by(ProgramSession.sequence_order).all()
-        assert [item.name for item in sessions] == ["Workout A", "Workout B"]
+        assert [item.name for item in sessions] == ["Full Body 1", "Full Body 2"]
         restored_names = [item.exercise_name for item in sessions[0].exercises]
         assert "Rope Pressdown" not in restored_names
         assert "Trap Bar Deadlift" in restored_names
