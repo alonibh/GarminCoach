@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-19 - Natural Reminders and Cancellation Language
+
+- Reworded the one-hour alert as a natural workout reminder that names the
+  upcoming workout and says it starts one hour from now.
+- Added `delete` to the shared deterministic cancellation vocabulary while
+  preserving fail-closed handling for negated requests such as "don't delete".
+
 ## 2026-07-19 - Closed Deterministic Telegram Catalog
 
 - Removed runtime AI classification and informational chat generation in favor

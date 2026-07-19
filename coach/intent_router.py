@@ -77,17 +77,18 @@ _EXPLICIT_TIME_PATTERN = re.compile(
     r"\b((?:[01]?\d|2[0-3]):[0-5]\d|(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?))\b",
     re.IGNORECASE,
 )
-_NEGATED_MUTATION = re.compile(
-    r"\b(?:do\s+not|don't|dont|never|not)\s+(?:want\s+to\s+)?(?:schedule|book|cancel|remove|unschedule|reschedule|move|start|sync|record|report)\b",
-    re.IGNORECASE,
+_CANCEL_VERBS = r"cancel|delete|remove|unschedule"
+_CANCEL_VERB = re.compile(rf"\b(?:{_CANCEL_VERBS})\b")
+_MUTATION_VERB = re.compile(
+    rf"\b(?:schedule|book|{_CANCEL_VERBS}|reschedule|move|start|sync|record|report)\b"
 )
-_MUTATION_VERB = re.compile(r"\b(schedule|book|cancel|remove|unschedule|reschedule|move|start|sync|record|report)\b")
 _NEGATION_WORD = re.compile(r"\b(?:no|not|never|don't|dont|do\s+not|shouldn't|shouldnt|cannot|can't|cant|without)\b")
 _WORKOUT_REFERENCE = re.compile(r"\b(workout|work out|session|training|day\s+\d+|it)\b", re.IGNORECASE)
 
 
 def _normalized(value: str) -> str:
     value = unicodedata.normalize("NFKC", value or "").casefold()
+    value = value.replace("’", "'")
     value = value.replace("’", "'")
     return " ".join(value.strip().split())
 
@@ -136,7 +137,7 @@ def _explicit_classification(user_text: str) -> IntentClassification:
     if first_person and symptom:
         return IntentClassification(intent="report_safety_issue", topic=symptom.group(1))
 
-    if not negated_mutation and re.search(r"\b(cancel|unschedule|remove)\b", text):
+    if not negated_mutation and _CANCEL_VERB.search(text):
         if workout_text or date_text or re.search(r"\bbooking\b", text):
             return IntentClassification(
                 intent="cancel_workout", date_text=date_text, workout_text=workout_text,

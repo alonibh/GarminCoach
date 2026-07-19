@@ -148,7 +148,9 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
                 f"overlaps {conflict.get('title', 'another event')}."
             )
             return text, reply_markup(staged)
-        return f"{planned.title} - {planned.suggested_time}", None
+        title = planned.title.strip()
+        workout_name = title if title.casefold().endswith("workout") else f"{title} workout"
+        return f"Workout reminder — you have the {workout_name} one hour from now.", None
 
     if row.event_type == "weekly_summary":
         from notify.weekly import build_weekly_summary

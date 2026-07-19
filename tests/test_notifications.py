@@ -57,8 +57,23 @@ def test_preworkout_reminder_is_exactly_one_hour_and_one_line(session, monkeypat
     outcome = deliver_notification(session, queued, datetime(2026, 7, 6, 17, 0))
 
     assert outcome == "sent"
-    assert sent == ["Upper Body - 18:00"]
+    assert sent == ["Workout reminder — you have the Upper Body workout one hour from now."]
     assert "\n" not in sent[0]
+
+
+def test_preworkout_reminder_does_not_repeat_workout_in_title(session, monkeypatch):
+    planned = _planned(session)
+    planned.title = "Day 1 Workout"
+    queued = enqueue_pre_workout_reminder(session, planned)
+    sent = []
+    monkeypatch.setattr("notify.outbox.send_message", lambda text, reply_markup=None: sent.append(text) or True)
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=2: {"events": [], "state": "fresh", "error": None},
+    )
+
+    assert deliver_notification(session, queued, datetime(2026, 7, 6, 17, 0)) == "sent"
+    assert sent == ["Workout reminder — you have the Day 1 Workout one hour from now."]
 
 
 def test_quiet_hour_reminder_is_deferred_then_revalidated(session, monkeypatch):

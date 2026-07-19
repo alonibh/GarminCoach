@@ -32,6 +32,10 @@ from tests.test_program_state import _add_program
     ("Find a workout time", "find_workout_time"),
     ("Schedule workout", "schedule_workout"),
     ("Change workout date", "reschedule_workout"),
+    ("Delete today's workout", "cancel_workout"),
+    ("Delete today’s workout", "cancel_workout"),
+    ("Remove today's workout", "cancel_workout"),
+    ("Unschedule today's workout", "cancel_workout"),
     ("Start Garmin sync", "request_sync"),
     ("What is my next workout?", "get_workout_details"),
     ("Explain today's recommendation", "explain_decision"),
@@ -49,6 +53,8 @@ from tests.test_program_state import _add_program
     ("I felt dizzy during training", "report_safety_issue"),
     ("What can cause dizziness during exercise?", "unknown"),
     ("Don't cancel my workout", "unknown"),
+    ("Don't delete today's workout", "unknown"),
+    ("Don’t delete today’s workout", "unknown"),
     ("Please don't ever cancel my workout", "unknown"),
     ("I don't think you should cancel my workout", "unknown"),
     ("I don't want to skip today", "unknown"),
@@ -102,6 +108,8 @@ def test_schedule_request_stages_complete_proposal_without_ai(session, monkeypat
 
 @pytest.mark.parametrize("message", [
     "Don't cancel my workout",
+    "Don't delete today's workout",
+    "Don’t delete today’s workout",
     "Please don't ever cancel my workout",
     "I don't think you should cancel my workout",
     "I don't want to skip today",
@@ -170,6 +178,29 @@ def test_cancel_request_has_keep_and_cancel_buttons(session, monkeypatch):
         "Keep workout", "Cancel workout",
     ]
     assert "program workout will remain pending" in routed.text
+
+
+def test_delete_todays_workout_stages_cancellation_confirmation(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    planned = PlannedSession(
+        title="Day 1", target_date=date(2026, 7, 19), suggested_time="18:00",
+        duration_min=60, status="approved",
+    )
+    session.add(planned)
+    session.commit()
+    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
+
+    routed = route_chat(session, "delete today's workout")
+    markup = reply_markup(routed.interactions)
+
+    assert len(routed.interactions) == 1
+    assert routed.interactions[0].action_type == "cancel_planned_session"
+    assert routed.interactions[0].status == "pending"
+    assert "Day 1" in routed.text and "Sunday" in routed.text and "18:00" in routed.text
+    assert [button["text"] for button in markup["inline_keyboard"][0]] == [
+        "Keep workout", "Cancel workout",
+    ]
+    assert planned.status == "approved"
 
 
 def test_multiple_planned_workouts_require_explicit_cancellation_choice(session, monkeypatch):

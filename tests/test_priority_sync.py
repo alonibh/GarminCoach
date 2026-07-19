@@ -201,6 +201,7 @@ def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeyp
     monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
     monkeypatch.setattr(morning, "get_local_date", lambda: target)
     monkeypatch.setattr(morning, "get_local_now", lambda: datetime(2026, 7, 4, 11, 30))
+    monkeypatch.setattr("time_utils.get_local_now", lambda: datetime(2026, 7, 4, 11, 30))
     sent = []
     monkeypatch.setattr(
         "notify.outbox.send_message",
