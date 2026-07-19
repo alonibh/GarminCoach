@@ -516,6 +516,20 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         assert exercise.warmup_reps == 8
         assert exercise.warmup_weight_kg == 5
 
+    timed_manual_warmup = c.post(
+        f"/api/session/{session_id}/exercises",
+        json=[{
+            "exercise_name": "Plank", "sets": 2, "duration_seconds": 30,
+            "warmup_enabled": True, "warmup_duration_seconds": 15,
+        }],
+    )
+    assert timed_manual_warmup.status_code == 200
+    with db_module.get_session() as s:
+        exercise = s.query(SessionExercise).filter_by(program_session_id=session_id).one()
+        assert exercise.warmup_enabled is True
+        assert exercise.warmup_reps is None
+        assert exercise.warmup_duration_seconds == 15
+
     rejected = c.post(
         f"/api/session/{session_id}/exercises",
         json=[{"exercise_name": "Made Up Exercise", "sets": 3, "reps": 10}],
