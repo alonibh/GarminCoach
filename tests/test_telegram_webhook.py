@@ -95,6 +95,30 @@ def test_static_catalog_menu_is_delivered_without_pending_action(monkeypatch):
     assert sent == [("Choose an action.", markup)]
 
 
+def test_standard_response_refreshes_the_current_persistent_menu(monkeypatch):
+    sent = []
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr("notify.telegram.send_chat_action", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None: sent.append((text, reply_markup)) or True,
+    )
+    monkeypatch.setattr(
+        "coach.coach.handle_chat",
+        lambda *_args, **_kwargs: ("Current metrics.", SimpleNamespace(pending_action_json=None, content="Current metrics.")),
+    )
+
+    response = client.post(
+        "/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
+        json={"message": {"chat": {"id": 123, "type": "private"}, "text": "Metrics"}},
+    )
+
+    assert response.status_code == 200
+    labels = [button["text"] for row in sent[0][1]["keyboard"] for button in row]
+    assert "Explain recommendation" not in labels
+
+
 def test_date_choice_inline_button_continues_the_schedule_flow(monkeypatch):
     edited = []
     choices = []

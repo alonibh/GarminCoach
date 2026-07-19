@@ -2501,6 +2501,11 @@ async def telegram_webhook(request: Request):
                         asst_msg.pending_action_json = None
                         asst_msg.content = "I couldn't create safe confirmation controls. No action was taken."
                         response_text = asst_msg.content
+                else:
+                    # Refresh Telegram's persistent reply keyboard so menu
+                    # changes replace older client-cached button layouts.
+                    from coach.intent_router import _menu_markup
+                    reply_markup = _menu_markup()
             
             # Send response back to Telegram
             delivered = telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)
