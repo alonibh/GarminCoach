@@ -350,6 +350,16 @@ def _menu_markup() -> dict:
     }
 
 
+def _date_prompt_markup() -> dict:
+    """Offer common dates without preventing a typed weekday or calendar date."""
+    return {
+        "keyboard": [[{"text": "Today"}, {"text": "Tomorrow"}]],
+        "resize_keyboard": True,
+        "one_time_keyboard": True,
+        "input_field_placeholder": "Or type another date",
+    }
+
+
 def _last_sync_text(session: Session) -> str:
     row = session.get(SyncState, "last_sync_at")
     formatted = format_chat_datetime(row.value) if row and row.value else None
@@ -597,7 +607,7 @@ def _route_deterministic(
         date_text = slots.get("date_text")
         if not date_text:
             _save_dialogue(session, result.intent, slots, "date", now)
-            return RoutedTurn("Which date should I use?", [])
+            return RoutedTurn("Which date should I use?", [], _date_prompt_markup())
         target_day = requested_day(date_text, now.date())
         if not target_day:
             return RoutedTurn("Use today, tomorrow, a weekday, or YYYY-MM-DD.", [])
@@ -647,7 +657,7 @@ def _route_deterministic(
                 {**slots, "planned_session_id": planned.id, "duration_min": planned.duration_min},
                 "date", now,
             )
-            return RoutedTurn("Which new date should I use?", [])
+            return RoutedTurn("Which new date should I use?", [], _date_prompt_markup())
         target_day = requested_day(date_text, now.date())
         if not target_day:
             return RoutedTurn("Use today, tomorrow, a weekday, or YYYY-MM-DD.", [])

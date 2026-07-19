@@ -106,6 +106,20 @@ def test_schedule_request_stages_complete_proposal_without_ai(session, monkeypat
     assert audit.model == "closed-catalog-v1"
 
 
+def test_date_prompt_offers_today_and_tomorrow_but_allows_typed_dates(session, monkeypatch):
+    _fixed_router(monkeypatch)
+
+    routed = route_chat(session, "Schedule workout")
+
+    assert routed.text == "Which date should I use?"
+    assert routed.reply_markup == {
+        "keyboard": [[{"text": "Today"}, {"text": "Tomorrow"}]],
+        "resize_keyboard": True,
+        "one_time_keyboard": True,
+        "input_field_placeholder": "Or type another date",
+    }
+
+
 @pytest.mark.parametrize("message", [
     "Don't cancel my workout",
     "Don't delete today's workout",
@@ -243,7 +257,7 @@ def test_multiple_mutations_are_split_into_independent_confirmations(session, mo
     assert {row.action_type for row in routed.interactions} == {
         "schedule_original_session", "cancel_planned_session",
     }
-    assert "schedule" in routed.text.lower() and "cancel" in routed.text.lower()
+    assert "please confirm" in routed.text.lower() and "cancel" in routed.text.lower()
 
 
 def test_prompt_injection_cannot_choose_workout_id_or_apply(session, monkeypatch):
