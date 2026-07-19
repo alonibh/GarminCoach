@@ -73,6 +73,19 @@ def test_templates_follow_daily_anchor_and_cold_joint_warmup_rules():
     assert PROGRAMS["upper_lower_4"]["sessions"][0]["exercises"][0]["warmup_enabled"] is True
 
 
+def test_templates_do_not_add_warmups_to_abdominal_exercises():
+    abdominal_categories = {"CHOP", "CORE", "CRUNCH", "LEG_RAISE", "PLANK", "SIT_UP"}
+    abdominal_exercises = [
+        exercise
+        for program in PROGRAMS.values()
+        for session in program["sessions"]
+        for exercise in session["exercises"]
+        if (exercise_metadata(exercise["exercise_name"]) or {}).get("category") in abdominal_categories
+    ]
+    assert abdominal_exercises
+    assert all(exercise["warmup_enabled"] is False for exercise in abdominal_exercises)
+
+
 def test_templates_warm_the_first_isolation_for_a_new_major_region_only():
     day_two = PROGRAMS["total_package_3"]["sessions"][1]["exercises"]
     enabled = {exercise["exercise_name"] for exercise in day_two if exercise["warmup_enabled"]}

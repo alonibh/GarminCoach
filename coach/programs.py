@@ -27,6 +27,11 @@ _WARMUP_COMPOUND_CATEGORIES = {
     "SQUAT", "LUNGE", "DEADLIFT", "HIP_RAISE", "BENCH_PRESS",
     "SHOULDER_PRESS", "PULL_UP", "ROW",
 }
+# Abdominal work is deliberately performed after the session's compounds and
+# accessories.  It therefore has no separate rehearsal set: the trunk and
+# overall body temperature have already been prepared by the preceding work.
+# Keep CARRY out of this set, since loaded carries are not abdominal isolation.
+_ABDOMINAL_CATEGORIES = {"CHOP", "CORE", "CRUNCH", "LEG_RAISE", "PLANK", "SIT_UP"}
 _MAJOR_REGION_BY_MUSCLE_GROUP = {
     "quads": "lower_body",
     "hamstrings_glutes": "lower_body",
@@ -44,7 +49,11 @@ def warmup_defaults(
     weight_kg: float | None = None,
 ) -> dict[str, Any]:
     """Return a rep-based warm-up's editable defaults, including bodyweight work."""
-    if reps is None or duration_seconds is not None:
+    if (
+        reps is None
+        or duration_seconds is not None
+        or (meta or {}).get("category") in _ABDOMINAL_CATEGORIES
+    ):
         return {
             "warmup_enabled": False,
             "warmup_reps": None,
