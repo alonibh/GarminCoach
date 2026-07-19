@@ -6,17 +6,6 @@ from sqlalchemy.orm import sessionmaker
 import db as db_module
 
 
-@pytest.fixture(autouse=True)
-def no_live_intent_provider(monkeypatch):
-    """Unit tests never call a configured external classifier implicitly."""
-    from coach.intent_router import IntentClassification
-
-    monkeypatch.setattr(
-        "coach.intent_router.classify_intent",
-        lambda *_args, **_kwargs: IntentClassification(intent="unknown"),
-    )
-
-
 @pytest.fixture
 def session():
     """A fresh in-memory SQLite session with the full schema, per test.

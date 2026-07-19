@@ -7,7 +7,7 @@ recommendations through a deterministic evidence-rule engine.
 
 The product is deliberately not a simulated human coach. It communicates in a
 cold, short, factual style; explains the decisive data; and requires explicit
-confirmation before scheduling, skipping, or rescheduling a workout.
+confirmation before scheduling, cancelling, or rescheduling a workout.
 
 ## Goals
 
@@ -28,12 +28,11 @@ confirmation before scheduling, skipping, or rescheduling a workout.
 
 - Recommendations use synced observations, their freshness and provenance,
   device capabilities, the active program, calendar state, and versioned rules.
-- A language model may answer informational free-text questions, but it cannot
-  decide or execute workout, readiness, recovery, or scheduling actions.
+- Telegram chat uses a closed deterministic catalog. A language model does not
+  route, fill slots, answer, or execute chat requests.
 - Metrics never silently change exercises, sets, repetitions, or target
-  weights. Low readiness adds a warning; Poor Garmin readiness may produce a
-  skip recommendation while preserving an explicit option to do the original
-  workout.
+  weights. Low readiness adds a warning; Poor Garmin readiness recommends rest
+  while keeping the approved program workout pending.
 - Garmin is the source of completed sets, repetitions, weights, and available
   RPE. The bot never asks for manual post-workout logging and sends no proactive
   post-workout questionnaire.
@@ -101,13 +100,13 @@ The complete nine-routine audit is in
 ### Deterministic Telegram coach
 
 - Sends the morning result as soon as required data is available.
-- At 11:30 local time, crucial missing data produces buttons to confirm a watch
-  sync or request a clearly labeled best-effort answer.
+- At 11:30 local time, the bot stops waiting and automatically sends a clearly
+  labeled best-effort workout/rest briefing that names missing data.
 - Applies program eligibility before biometrics: a source-required rest day is
   not overridden by a readiness metric.
 - Garmin Training Readiness categories have limited authority: Prime, High, and
-  Moderate do not change the session; Low adds a warning; Poor advises skipping
-  while offering the unchanged original session.
+  Moderate do not change the session; Low adds a warning; Poor recommends rest
+  without marking the program workout skipped.
 - On devices without Garmin Training Readiness, the coach does not invent a
   replacement score. Until individual-metric rules are separately approved,
   program and calendar rules determine workout eligibility.
@@ -127,23 +126,22 @@ The complete nine-routine audit is in
 - Deterministic weekly summary every Saturday at 20:00 with matched program
   completion, unmatched strength activity, missed sessions, synced progression,
   sleep comparison, safety reports, and next-session state when available.
-- Calendar conflicts offer explicit keep-time or reschedule actions.
+- Calendar conflicts offer `Keep workout`, `Set another date`, and
+  `Cancel workout` actions.
 - Notifications are stored in a durable SQLite outbox, deduplicated, retried,
   and deferred during 22:00-07:00 quiet hours.
 - A late same-day update is sent only when fresh Garmin readiness materially
   changes a prior recommendation to Poor.
 
-### Guarded semantic chat routing
+### Closed deterministic chat routing
 
-- Free text is classified into a closed intent catalog with schema-constrained
-  output. The classifier may quote the user's date, time, or workout words but
-  cannot provide database IDs or executable actions.
-- Deterministic handlers resolve every referenced session and calendar slot.
-  All state changes require versioned Telegram confirmation buttons.
-- `CHAT_ROUTER_MODE=guarded` (the default) uses typed, confirmation-only chat actions and Telegram controls. Set it to `shadow` only to audit classifications without changing replies.
-  Switch to `guarded` only after reviewing the shadow audit; invalid or timed
-  out classifications fail closed.
-- Incomplete requests use a typed, 30-minute dialogue state. A generic text
+- A reviewed English alias grammar maps free text into a closed interaction
+  catalog. Negated, ambiguous, and unsupported messages fail closed.
+- Deterministic handlers resolve every referenced session, date, metric, and
+  calendar slot. All state changes require versioned Telegram confirmation buttons.
+- The router has no AI or rollout mode. Unsupported messages show the persistent
+  menu and cannot fall through to generated answers.
+- Incomplete requests use typed, semantically revalidated dialogue state. A generic text
   reply such as “yes” never approves an action.
 
 ## Technical architecture
@@ -155,8 +153,7 @@ The complete nine-routine audit is in
 - `garminconnect` for Garmin Connect synchronization
 - Chart.js for dashboard charts
 - Telegram Bot API for messages and confirmation buttons
-- Optional Ollama, Claude, or Gemini provider for non-authoritative free-text
-  answers only
+- Optional Ollama, Claude, or Gemini provider for legacy non-chat generation
 
 Important modules:
 

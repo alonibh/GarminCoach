@@ -28,8 +28,21 @@ def _fixed_now(monkeypatch):
     monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
 
 
+def _fresh_calendar(monkeypatch):
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"events": [], "state": "fresh", "error": None},
+    )
+
+
+def _constraints(session):
+    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
+
+
 def test_renderer_stages_only_deterministic_original_session(session, monkeypatch):
     _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
+    _constraints(session)
     result = _decision(session, 74)
 
     text, markup, ids = render_morning(session, result)
@@ -37,8 +50,8 @@ def test_renderer_stages_only_deterministic_original_session(session, monkeypatc
     assert "Suggested today: Full Body 1." in text
     assert len(ids) == 1
     assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
-    assert markup["inline_keyboard"][0][1]["text"] == "Different time"
-    assert markup["inline_keyboard"][1][0]["text"] == "Dismiss"
+    assert markup["inline_keyboard"][0][1]["text"] == "Set another date"
+    assert markup["inline_keyboard"][1][0]["text"] == "Reject"
     pending = session.get(PendingInteraction, ids[0])
     payload = json.loads(pending.payload_json)
     assert payload["program_session_id"] == result.next_program_session_id
@@ -47,6 +60,8 @@ def test_renderer_stages_only_deterministic_original_session(session, monkeypatc
 
 def test_interaction_revalidates_and_schedules_once(session, monkeypatch):
     _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
+    _constraints(session)
     result = _decision(session, 74)
     pending = stage_decision_actions(session, result)[0]
     calls = []
@@ -66,6 +81,8 @@ def test_interaction_revalidates_and_schedules_once(session, monkeypatch):
 
 def test_program_change_supersedes_old_button(session, monkeypatch):
     _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
+    _constraints(session)
     result = _decision(session, 74)
     pending = stage_decision_actions(session, result)[0]
     from db import TrainingProgram

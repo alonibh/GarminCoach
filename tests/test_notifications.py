@@ -11,6 +11,7 @@ from db import (
     Base,
     DailyHealth,
     ExerciseSet,
+    Goal,
     NotificationOutbox,
     PendingInteraction,
     PlannedSession,
@@ -127,7 +128,9 @@ def test_calendar_conflict_offers_revalidated_buttons(session, monkeypatch):
     assert deliver_notification(session, queued, datetime(2026, 7, 6, 17)) == "sent"
     text, markup = sent[0]
     assert text == "Calendar conflict: Upper Body at 18:00 overlaps Appointment."
-    assert [button["text"] for button in markup["inline_keyboard"][0]] == ["Keep time", "Reschedule"]
+    assert [button["text"] for button in markup["inline_keyboard"][0]] == [
+        "Keep workout", "Set another date", "Cancel workout",
+    ]
     keep = session.query(PendingInteraction).filter_by(action_type="keep_calendar_time").one()
 
     version["value"] = "calendar-v2"
@@ -137,7 +140,14 @@ def test_calendar_conflict_offers_revalidated_buttons(session, monkeypatch):
 
 
 def test_reschedule_confirmation_rechecks_the_new_time(session, monkeypatch):
+    from coach.intent_router import route_chat
+
     planned = _planned(session)
+    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
+    session.commit()
+    fixed = datetime(2026, 7, 6, 17)
+    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: fixed)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
     monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
     actions = stage_calendar_conflict(
         session,
@@ -146,11 +156,17 @@ def test_reschedule_confirmation_rechecks_the_new_time(session, monkeypatch):
     )
     reschedule = next(row for row in actions if row.action_type == "request_reschedule")
     assert apply_interaction(session, reschedule.interaction_id)[0] == "awaiting_input"
-    _text, confirmations = stage_free_text_change(session, "19:00")
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"events": [], "state": "fresh", "error": None},
+    )
+    assert "Available on Tuesday" in route_chat(session, "tomorrow").text
+    confirmation = route_chat(session, "18:15")
+    confirmations = confirmation.interactions
     monkeypatch.setattr(
         "coach.calendar.get_upcoming_schedule_result",
         lambda days=2: {
-            "events": [{"title": "Second conflict", "start": "2026-07-06 18:45", "end": "19:30"}],
+            "events": [{"title": "Second conflict", "start": "2026-07-07 18:45", "end": "19:30"}],
             "state": "fresh",
             "error": None,
         },
@@ -160,7 +176,59 @@ def test_reschedule_confirmation_rechecks_the_new_time(session, monkeypatch):
 
     assert status == "stale"
     assert "Second conflict" in message
+    assert planned.target_date == date(2026, 7, 6)
     assert planned.suggested_time == "18:00"
+
+
+def test_date_change_moves_verified_garmin_occurrence_before_local_state(session, monkeypatch):
+    from coach.intent_router import route_chat
+    from sync.garmin_client import client
+
+    planned = _planned(session)
+    planned.status = "approved"
+    planned.garmin_workout_id = 77
+    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
+    session.commit()
+    fixed = datetime(2026, 7, 6, 17)
+    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: fixed)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
+    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"events": [], "state": "fresh", "error": None},
+    )
+
+    assert route_chat(session, "Change workout date").text == "Which new date should I use?"
+    assert "Available on Tuesday" in route_chat(session, "tomorrow").text
+    confirmation = route_chat(session, "18:15")
+
+    class FakeApi:
+        def __init__(self):
+            self.scheduled = []
+            self.unscheduled = []
+
+        def get_scheduled_workouts(self, year, month):
+            return {"workouts": [{
+                "scheduledWorkoutId": 13, "workoutId": 77, "date": "2026-07-06",
+            }]}
+
+        def schedule_workout(self, workout_id, target_day):
+            self.scheduled.append((workout_id, target_day))
+
+        def unschedule_workout(self, occurrence_id):
+            self.unscheduled.append(occurrence_id)
+
+    api = FakeApi()
+    monkeypatch.setattr(client, "login", lambda: None)
+    monkeypatch.setattr(client, "_api", api)
+
+    status, _message = apply_interaction(session, confirmation.interactions[0].interaction_id)
+
+    assert status == "applied"
+    assert api.scheduled == [(77, "2026-07-07")]
+    assert api.unscheduled == [13]
+    assert planned.target_date == date(2026, 7, 7)
+    assert planned.suggested_time == "18:15"
 
 
 def test_weekly_summary_uses_synced_same_rep_progression_without_acwr(session):
@@ -259,4 +327,4 @@ def test_late_poor_readiness_update_is_daytime_only_and_idempotent(session, monk
 
     rows = session.query(NotificationOutbox).filter_by(event_type="late_material_update").all()
     assert len(rows) == 1
-    assert "Skip" in rows[0].payload_json
+    assert "Rest is recommended" in rows[0].payload_json

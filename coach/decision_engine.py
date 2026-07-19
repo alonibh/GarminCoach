@@ -260,7 +260,14 @@ def evaluate_morning_decision(
                 if readiness_category == "Poor":
                     decision_type = "ADVISE_SKIP_SESSION"
                     reasons.append("GARMIN_READINESS_POOR")
-                    actions = [{"type": "skip_today"}, {"type": "do_original_workout"}]
+                    actions = (
+                        [
+                            {"type": "keep_planned_session", "planned_session_id": planned.id},
+                            {"type": "cancel_planned_session", "planned_session_id": planned.id},
+                            {"type": "request_reschedule", "planned_session_id": planned.id},
+                        ]
+                        if planned else []
+                    )
                 elif readiness_category == "Low":
                     decision_type = "WARN_ORIGINAL_SESSION"
                     reasons.append("GARMIN_READINESS_LOW")
@@ -288,14 +295,10 @@ def evaluate_morning_decision(
             actions = [
                 {"type": "keep_calendar_time", "planned_session_id": planned.id, "conflict": calendar_conflict},
                 {"type": "request_reschedule", "planned_session_id": planned.id, "conflict": calendar_conflict},
+                {"type": "cancel_planned_session", "planned_session_id": planned.id, "conflict": calendar_conflict},
             ]
         elif calendar_conflict:
             reasons.append("CALENDAR_CONFLICT")
-            actions.append({
-                "type": "request_reschedule",
-                "planned_session_id": planned.id,
-                "conflict": calendar_conflict,
-            })
 
     # Values are assigned in the waiting branch too for a stable result shape.
     if "readiness_score" not in locals():

@@ -3,7 +3,7 @@ import json
 
 import pytz
 
-from db import CoachMessage, DailyHealth, DailyMetrics, Sleep, Workout
+from db import CoachMessage, DailyHealth, DailyMetrics, Goal, Sleep, Workout
 
 
 def _set_evening(monkeypatch):
@@ -82,12 +82,18 @@ def test_morning_workout_proposal_is_actionable_and_includes_fixed_short_sleep_o
     today = date(2026, 7, 4)
     session.add(Sleep(day=today, total_s=(6 * 3600) + (12 * 60), deep_s=1.4 * 3600, score=79))
     session.add(DailyHealth(day=today, training_readiness=75))
+    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
     _add_program(session)
     freshness.note_capability_observed(session, observed_at=datetime(2026, 7, 4, 7, 30))
     freshness.record_signal(session, freshness.SLEEP, today, freshness.FRESH, "get_sleep_data")
     freshness.record_signal(session, freshness.SLEEP_SCORE, today, freshness.FRESH, "get_sleep_data")
     freshness.record_signal(session, freshness.TRAINING_READINESS, today, freshness.FRESH, "get_training_readiness")
     session.commit()
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: datetime(2026, 7, 4, 8, 0))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
     monkeypatch.setattr(
         coach_module.llm, "generate",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM called")),

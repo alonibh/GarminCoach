@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 
 from sqlalchemy.orm import Session
 
@@ -51,7 +52,7 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         name = result.planned_session_name or result.next_program_session_name or "Workout"
         at = f" at {result.planned_start_time}" if result.planned_start_time else ""
         if result.decision_type == "ADVISE_SKIP_SESSION":
-            body = f"Skip {name}{at}. Readiness is Poor. The original session is unchanged."
+            body = f"Rest is recommended instead of {name}{at}. Readiness is Poor. The program workout remains pending."
         elif result.decision_type == "WARN_ORIGINAL_SESSION":
             body = f"{name}{at} remains unchanged. Low readiness warrants caution, not a modified workout."
         elif result.workout_outcome == "KEEP_PLANNED_SESSION":
@@ -81,4 +82,14 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         body += f" Missing non-critical data: {', '.join(noncritical)}."
     text = "\n".join(part for part in (metrics, body) if part)
     interactions = stage_decision_actions(session, result)
+    schedule = next(
+        (item for item in interactions if item.action_type == "schedule_original_session"),
+        None,
+    )
+    if result.workout_outcome == "PROPOSE_NEXT_SESSION":
+        if schedule:
+            payload = json.loads(schedule.payload_json)
+            text += f" Best available time: {payload['suggested_time']}."
+        elif result.decision_type != "ADVISE_SKIP_SESSION":
+            text += " No calendar-validated full-workout slot is currently available."
     return text, reply_markup(interactions), [item.interaction_id for item in interactions]

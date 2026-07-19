@@ -104,7 +104,7 @@ def test_program_rest_day_precedes_prime_readiness(session):
     assert result.permitted_actions == []
 
 
-def test_poor_readiness_with_calendar_conflict_keeps_skip_original_and_reschedule(session, monkeypatch):
+def test_poor_readiness_with_calendar_conflict_offers_keep_cancel_and_new_date(session, monkeypatch):
     _add_program(session)
     _fresh_sleep(session)
     _fresh_readiness(session, 20)
@@ -132,7 +132,7 @@ def test_poor_readiness_with_calendar_conflict_keeps_skip_original_and_reschedul
 
     assert result.decision_type == "ADVISE_SKIP_SESSION"
     assert {item["type"] for item in result.permitted_actions} == {
-        "skip_today", "do_original_workout", "request_reschedule",
+        "keep_planned_session", "cancel_planned_session", "request_reschedule",
     }
 
 

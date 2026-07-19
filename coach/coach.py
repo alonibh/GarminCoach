@@ -515,130 +515,24 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
         logger.exception("Failed to queue deterministic morning briefing")
 
 
-def handle_chat(session: Session, user_text: str) -> str:
-    """Handle an interactive chat message from the user."""
-
+def handle_chat(session: Session, user_text: str) -> tuple[str, CoachMessage]:
+    """Handle chat exclusively through the deterministic closed catalog."""
     from coach.intent_router import route_chat
+
     routed = route_chat(session, user_text)
-    if routed is not None:
-        response_text, interactions = routed.text, routed.interactions
-        user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
-        asst_msg = CoachMessage(
-            role="assistant", content=response_text, created_at=datetime.now(timezone.utc),
-            data_snapshot=None,
-            pending_action_json=(
-                json.dumps({"interaction_ids": [item.interaction_id for item in interactions]})
-                if interactions else None
-            ),
-        )
-        session.add_all((user_msg, asst_msg))
-        session.commit()
-        return response_text, asst_msg
-
-    from coach.interactions import stage_free_text_change
-    from coach.scheduling import is_schedule_request
-    # Keep explicit "schedule/book" phrases as a deterministic fallback when
-    # the semantic classifier returns unknown. Other guarded classifications
-    # must not be overridden by legacy keyword matching.
-    staged_change = (
-        stage_free_text_change(session, user_text)
-        if config.CHAT_ROUTER_MODE != "guarded" or is_schedule_request(user_text)
-        else None
-    )
-    if staged_change is not None:
-        response_text, interactions = staged_change
-        user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
-        asst_msg = CoachMessage(
-            role="assistant",
-            content=response_text,
-            created_at=datetime.now(timezone.utc),
-            data_snapshot=None,
-            pending_action_json=(
-                json.dumps({"interaction_ids": [item.interaction_id for item in interactions]})
-                if interactions else None
-            ),
-        )
-        session.add_all((user_msg, asst_msg))
-        session.commit()
-        return response_text, asst_msg
-
-    from coach.scheduling import is_timing_question, next_available_time, requested_day
-    if is_timing_question(user_text):
-        from coach.calendar import get_upcoming_schedule_result
-        from time_utils import get_local_now
-
-        local_now = get_local_now().replace(tzinfo=None)
-        target_day = requested_day(user_text, local_now.date())
-        calendar = get_upcoming_schedule_result(days=7)
-        if calendar["state"] == "fresh":
-            suggestion = next_available_time(
-                session,
-                now=local_now,
-                schedule=calendar["events"],
-                start_day=target_day,
-                max_days=1 if target_day else 7,
-            )
-            if suggestion:
-                response_text = suggestion.render()
-            elif target_day:
-                response_text = f"No full workout slot is available {target_day:%A}."
-            else:
-                response_text = "No full workout slot is available in the next 7 days."
-        elif calendar["state"] == "unconfigured":
-            response_text = "Calendar is not connected, so I cannot verify a workout time."
-        else:
-            response_text = "Calendar data is unavailable, so I cannot verify a workout time."
-        user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
-        asst_msg = CoachMessage(
-            role="assistant", content=response_text, created_at=datetime.now(timezone.utc),
-            data_snapshot=None, pending_action_json=None,
-        )
-        session.add_all((user_msg, asst_msg))
-        session.commit()
-        return response_text, asst_msg
-
-    snapshot_json = build_snapshot(session)
-    
-    # Load recent conversation history (last 10 messages, excluding daily suggestions)
-    recent_msgs = session.query(CoachMessage).filter(
-        CoachMessage.role.in_(["user", "assistant"])
-    ).order_by(CoachMessage.created_at.desc()).limit(10).all()
-    
-    recent_msgs.reverse() # chronological order
-    
-    history = []
-    for m in recent_msgs:
-        history.append({"role": m.role, "content": m.content})
-    history = _trim_history(history)
-        
-    # Inject the snapshot into the current user prompt invisibly
-    prompt_with_context = f"""[SYSTEM: Current Data Snapshot]
-{snapshot_json}
-[END SYSTEM DATA]
-
-User Message: {user_text}"""
-
-    # Save user message
-    user_msg = CoachMessage(
-        role="user",
-        content=user_text,
-        created_at=datetime.now(timezone.utc)
-    )
-    session.add(user_msg)
-    
-    # Informational generation only. Any JSON/action-like output is discarded.
-    chat_text = llm.generate(CHAT_SYSTEM_PROMPT, prompt_with_context, history)
-    chat_text, _discarded_action = _extract_and_strip_json(chat_text)
-    
-    # Save assistant message
+    payload = {}
+    if routed.interactions:
+        payload["interaction_ids"] = [item.interaction_id for item in routed.interactions]
+    if routed.reply_markup:
+        payload["reply_markup"] = routed.reply_markup
+    user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
     asst_msg = CoachMessage(
         role="assistant",
-        content=chat_text,
+        content=routed.text,
         created_at=datetime.now(timezone.utc),
-        data_snapshot=snapshot_json,
-        pending_action_json=None
+        data_snapshot=None,
+        pending_action_json=json.dumps(payload) if payload else None,
     )
-    session.add(asst_msg)
+    session.add_all((user_msg, asst_msg))
     session.commit()
-    
-    return chat_text, asst_msg
+    return routed.text, asst_msg

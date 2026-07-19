@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-19 - Closed Deterministic Telegram Catalog
+
+- Removed runtime AI classification and informational chat generation in favor
+  of a reviewed English interaction grammar and deterministic response templates.
+- Added fail-closed negation handling, a persistent action menu, semantic
+  dialogue revalidation, and adversarial routing regression coverage.
+- Standardized workout proposals on approve/reject/set-another-date and
+  cancellations on keep/cancel; removed skip operations from Telegram.
+- Changed the 11:30 deadline to automatically send a clearly labeled
+  best-effort workout/rest brief and retained material late-data corrections.
+
 ## 2026-07-19 - Morning Brief and Telegram Corrections
 
 - Added sleep-start and wake-up times to deterministic morning briefings.

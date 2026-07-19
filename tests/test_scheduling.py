@@ -71,6 +71,7 @@ def test_chat_timing_question_uses_calculated_slot_without_llm(session, monkeypa
         ]},
     )
     monkeypatch.setattr("time_utils.get_local_now", lambda: datetime(2026, 7, 18, 19, 31))
+    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: datetime(2026, 7, 18, 19, 31))
     monkeypatch.setattr("coach.llm.generate", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")))
 
     response, _message = handle_chat(session, "Can I do it tomorrow?")
@@ -110,6 +111,7 @@ def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch
         lambda days: {"state": "fresh", "events": []},
     )
     monkeypatch.setattr("time_utils.get_local_now", lambda: datetime(2026, 7, 18, 9, 0))
+    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: datetime(2026, 7, 18, 9, 0))
     monkeypatch.setattr("coach.llm.generate", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")))
 
     response, _message = handle_chat(session, "Can I do it tomorrow?")

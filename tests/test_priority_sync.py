@@ -194,7 +194,7 @@ def test_priority_endpoint_error_is_not_classified_as_missing(session, monkeypat
     assert row.error_code == "timeout"
 
 
-def test_deadline_prompt_is_durable_and_not_duplicated(session, monkeypatch):
+def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeypatch):
     import notify.morning as morning
 
     target = date(2026, 7, 4)
@@ -215,9 +215,10 @@ def test_deadline_prompt_is_durable_and_not_duplicated(session, monkeypatch):
     assert morning.morning_deadline() is True
     assert morning.morning_deadline() is False
     assert len(sent) == 1
-    assert "Retry the Garmin fetch" in sent[0][0]
-    assert sent[0][1]["inline_keyboard"][0][0]["text"] == "Retry Garmin fetch"
-    assert session.get(MorningBriefState, target).status == "sync_required"
+    assert "Morning Briefing" in sent[0][0]
+    assert "Best effort; missing sleep, training readiness" in sent[0][0]
+    assert session.get(MorningBriefState, target).status == "complete"
+    assert session.get(MorningBriefState, target).answer_anyway is True
 
 
 def test_deadline_reconciles_an_already_sent_morning_brief(session, monkeypatch):

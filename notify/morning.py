@@ -6,7 +6,7 @@ import json
 
 from coach.coach import generate_daily_suggestion
 from db import DecisionRecord, MorningBriefState, NotificationOutbox, get_session
-from metrics.freshness import ERROR, morning_freshness
+from metrics.freshness import morning_freshness
 from time_utils import get_local_date, get_local_now
 
 
@@ -151,7 +151,7 @@ def _enqueue_late_material_update(session) -> None:
 
 
 def morning_deadline() -> bool:
-    """At 11:30, turn unresolved critical data into an explicit user choice."""
+    """At 11:30, stop waiting and issue one explicit best-effort briefing."""
     with get_session() as session:
         row = _state(session)
         if reconcile_sent_brief(session, row) or row.deadline_prompt_sent_at:
@@ -164,32 +164,11 @@ def morning_deadline() -> bool:
             row.updated_at = _now_naive()
             return True
 
-        critical_states = [facts["states"].get(signal) for signal in facts["missing_critical"]]
-        fetch_error = ERROR in critical_states
-        text = (
-            "Garmin data could not be fetched. Retry the fetch, or continue without the missing data."
-            if fetch_error else
-            "Required overnight data is unavailable. Retry the Garmin fetch, or continue without it."
-        )
-        day_key = get_local_date().strftime("%Y%m%d")
-        markup = {
-            "inline_keyboard": [[
-                {"text": "Retry Garmin fetch", "callback_data": f"morning_synced_{day_key}"},
-                {"text": "Answer anyway", "callback_data": f"morning_anyway_{day_key}"},
-            ]]
-        }
-        from notify.outbox import deliver_notification, enqueue_notification
-        queued = enqueue_notification(
-            session,
-            event_type="morning_deadline",
-            due_at=_now_naive(),
-            payload={"text": text, "reply_markup": markup},
-            idempotency_key=f"morning-deadline:{get_local_date().isoformat()}",
-        )
-        session.flush()
-        deliver_notification(session, queued, _now_naive())
-        row.deadline_prompt_sent_at = _now_naive()
-        row.status = "sync_required" if not fetch_error else "fetch_error"
+        row.answer_anyway = True
+        row.status = "evaluating"
+        generate_daily_suggestion(session, allow_incomplete=True)
+        row.briefing_sent_at = _now_naive()
+        row.status = "complete"
         row.updated_at = _now_naive()
         return True
 

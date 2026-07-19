@@ -71,7 +71,7 @@ def is_schedule_request(user_text: str) -> bool:
 def requested_day(user_text: str, today: date) -> date | None:
     """Resolve an explicitly requested relative day or weekday."""
     text = " ".join(user_text.lower().split())
-    if re.search(r"\btoday\b", text):
+    if re.search(r"\b(today|tonight|this evening)\b", text):
         return today
     if re.search(r"\btomorrow\b", text):
         return today + timedelta(days=1)
@@ -190,51 +190,62 @@ def _event_bounds(item: dict) -> tuple[datetime, datetime] | None:
     return start, end
 
 
-def next_available_time(
-    session: Session, *, now: datetime, schedule: list[dict], max_days: int = 7,
-    start_day: date | None = None, preferred_time: time | None = None,
-) -> TimeSuggestion | None:
-    """Return the first valid full session slot; never delegate time arithmetic to the LLM."""
+def available_start_times(
+    session: Session, *, now: datetime, schedule: list[dict], target_day: date,
+    duration_min: int, limit: int = 3,
+) -> list[time]:
+    """Return valid quarter-hour starts for one day under hard constraints.
+
+    This is also the typed date/time dialogue source: the chat layer may only
+    accept a replacement time that appears in this deterministic result.
+    """
     goal = session.get(Goal, 1)
     constraints = (goal.custom_input if goal else "") or ""
     lower_by_day, global_lower = _bound_rules(constraints, "before")
     upper_by_day, global_upper = _bound_rules(constraints, "after")
     if not (lower_by_day or global_lower or upper_by_day or global_upper):
-        return None
+        return []
 
+    opening = lower_by_day.get(target_day.weekday(), global_lower or time(6, 0))
+    closing = upper_by_day.get(target_day.weekday(), global_upper or time(22, 0))
+    candidate = datetime.combine(target_day, opening)
+    if target_day == now.date():
+        candidate = max(candidate, _round_up_to_quarter(now))
+    end_limit = datetime.combine(target_day, closing)
+    events = [bounds for item in schedule if (bounds := _event_bounds(item))]
+    starts: list[time] = []
+    while candidate + timedelta(minutes=duration_min) <= end_limit and len(starts) < limit:
+        blocked = any(
+            candidate < event_end and event_start < candidate + timedelta(minutes=duration_min)
+            for event_start, event_end in events
+        )
+        if not blocked:
+            starts.append(candidate.time())
+        candidate += timedelta(minutes=15)
+    return starts
+
+
+def next_available_time(
+    session: Session, *, now: datetime, schedule: list[dict], max_days: int = 7,
+    start_day: date | None = None, preferred_time: time | None = None,
+) -> TimeSuggestion | None:
+    """Return the first valid full session slot; never delegate time arithmetic to the LLM."""
     details = _session_details(session, now.date())
     if not details:
         return None
     program_session_id, session_name, duration_min, earliest_day = details
-    events = [bounds for item in schedule if (bounds := _event_bounds(item))]
-
     search_start = start_day or now.date()
     for offset in range(max_days):
         candidate_day = search_start + timedelta(days=offset)
         if candidate_day < earliest_day:
             continue
-        opening = lower_by_day.get(candidate_day.weekday(), global_lower or time(6, 0))
-        closing = upper_by_day.get(candidate_day.weekday(), global_upper or time(22, 0))
-        candidate = datetime.combine(candidate_day, preferred_time or opening)
-        if preferred_time and (preferred_time < opening or preferred_time > closing):
-            continue
-        if candidate_day == now.date() and not preferred_time:
-            candidate = max(candidate, _round_up_to_quarter(now))
-        if candidate < now:
-            continue
-        end_limit = datetime.combine(candidate_day, closing)
-        for event_start, event_end in events:
-            if event_end <= candidate or event_start.date() > candidate_day:
-                continue
-            if preferred_time and event_start < candidate + timedelta(minutes=duration_min) and candidate < event_end:
-                candidate = end_limit
-                break
-            if candidate + timedelta(minutes=duration_min) <= event_start:
-                break
-            if event_start < end_limit and event_end > candidate:
-                candidate = max(candidate, event_end)
-        if candidate + timedelta(minutes=duration_min) <= end_limit:
+        starts = available_start_times(
+            session, now=now, schedule=schedule, target_day=candidate_day,
+            duration_min=duration_min, limit=96,
+        )
+        chosen = preferred_time if preferred_time in starts else (starts[0] if starts and not preferred_time else None)
+        if chosen is not None:
             return TimeSuggestion(
-                candidate_day, candidate.time(), duration_min, session_name, program_session_id
+                candidate_day, chosen, duration_min, session_name, program_session_id
             )
     return None

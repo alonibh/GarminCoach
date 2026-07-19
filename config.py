@@ -38,10 +38,6 @@ GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
 GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.9"))
 GEMINI_TOP_K = int(os.getenv("GEMINI_TOP_K", "40"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
-CHAT_ROUTER_MODE = os.getenv("CHAT_ROUTER_MODE", "guarded").strip().lower()
-if CHAT_ROUTER_MODE not in {"shadow", "guarded"}:
-    raise RuntimeError("CHAT_ROUTER_MODE must be 'shadow' or 'guarded'")
-CHAT_DIALOGUE_TTL_MINUTES = int(os.getenv("CHAT_DIALOGUE_TTL_MINUTES", "30"))
 
 # --- Sync ---
 INITIAL_BACKFILL_DAYS = int(os.getenv("INITIAL_BACKFILL_DAYS", "90"))

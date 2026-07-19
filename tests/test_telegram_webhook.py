@@ -57,8 +57,53 @@ def test_actionable_message_serializes_reply_markup(monkeypatch):
     response = client.post(
         "/telegram/webhook",
         headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
-        json={"message": {"chat": {"id": 123}, "text": "Schedule today"}},
+        json={"message": {"chat": {"id": 123, "type": "private"}, "text": "Schedule today"}},
     )
 
     assert response.status_code == 200
     assert sent == [("Confirm workout.", markup)]
+
+
+def test_static_catalog_menu_is_delivered_without_pending_action(monkeypatch):
+    sent = []
+    markup = {"keyboard": [[{"text": "Today's recommendation"}]], "is_persistent": True}
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr("notify.telegram.send_chat_action", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None: sent.append((text, reply_markup)) or True,
+    )
+    monkeypatch.setattr(
+        "coach.coach.handle_chat",
+        lambda *_args, **_kwargs: (
+            "Choose an action.",
+            SimpleNamespace(
+                pending_action_json=json.dumps({"reply_markup": markup}),
+                content="Choose an action.",
+            ),
+        ),
+    )
+
+    response = client.post(
+        "/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
+        json={"message": {"chat": {"id": 123, "type": "private"}, "text": "/menu"}},
+    )
+
+    assert response.status_code == 200
+    assert sent == [("Choose an action.", markup)]
+
+
+def test_personal_data_is_ignored_in_group_chats(monkeypatch):
+    sent = []
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr("notify.telegram.send_message", lambda *args, **kwargs: sent.append(args) or True)
+
+    response = client.post(
+        "/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
+        json={"message": {"chat": {"id": 123, "type": "group"}, "text": "Show my readiness"}},
+    )
+
+    assert response.status_code == 200
+    assert sent == []

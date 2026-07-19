@@ -213,16 +213,11 @@ Before 11:30, an expected server-side observation triggers a priority fetch.
 The bot may send: “Overnight data is available on Garmin. Fetching it now. The
 briefing will follow automatically.” It sends the result when the fetch ends.
 
-At 11:30, if a critical observation is confidently absent because the watch did
-not sync, send a concise prompt with buttons:
-
-- `I synced the watch`
-- `Answer anyway`
-
-After `I synced the watch`, run the priority fetch and answer automatically.
-After `Answer anyway`, evaluate with remaining fresh facts and name the omitted
-critical observation. A temporary Garmin error is not described as a missed
-watch sync.
+At 11:30, stop waiting and automatically evaluate with the remaining fresh
+facts. Send one clearly labeled best-effort workout/rest briefing and name each
+omitted critical observation. Later data creates a separate update only when it
+materially changes the decision. A temporary Garmin error is not described as
+a missed watch sync.
 
 Non-critical missing data never blocks the briefing. The result states the
 omission in one short clause.
@@ -233,8 +228,9 @@ omission in one short clause.
 - If no workout is planned and the next program session is eligible, propose
   that exact session.
 - Low Training Readiness adds a warning without modifying the session.
-- Poor Training Readiness advises skipping and shows buttons such as
-  `Skip today` and `Do original workout`.
+- Poor Training Readiness recommends rest without advancing the program. If a
+  workout is already scheduled, show `Keep workout`, `Cancel workout`, and
+  `Set another date`.
 - A program rest day is not overridden by favorable metrics. The bot explains
   the spacing rule in one line.
 
@@ -294,8 +290,8 @@ Check conflicts:
 2. immediately before approving, replacing, or rescheduling a workout; and
 3. immediately before the pre-workout reminder.
 
-An alert offers `Keep time` and `Reschedule`. No continuous calendar polling is
-required.
+An alert offers `Keep workout`, `Set another date`, and `Cancel workout`. No
+continuous calendar polling is required.
 
 ### Metric anomalies and quiet hours
 
@@ -569,9 +565,9 @@ Implementation notes: the renderer consumes only `DecisionResult`; it cannot
 add actions. Buttons reference `PendingInteraction` rows containing exact
 targets, expiry, program/sync/calendar versions, and empty workout
 modifications. Clicks recompute the decision before applying. Free text can
-initiate an explicit scheduling, skip, original-workout, or safety-report flow,
-but confirmation buttons are required. Legacy model-generated approval buttons
-are expired rather than executed.
+initiate only a closed-catalog scheduling, cancellation, rescheduling, sync, or
+safety-report flow, and confirmation buttons are required. Legacy
+model-generated approval buttons are expired rather than executed.
 
 ### Increment 5: durable notifications
 
@@ -588,8 +584,8 @@ state in SQLite. A minute poller drains due rows after restarts, defers all
 22:00-07:00 messages, and reconstructs content only after checking the current
 decision, planned-session status, workout time, and calendar. Confirmed workout
 times enqueue a one-line reminder for exactly one hour before the session.
-Calendar conflicts offer versioned `Keep time` and `Reschedule` actions; a
-same-day replacement time is checked again before mutation. The Saturday 20:00
+Calendar conflicts offer versioned `Keep workout`, `Set another date`, and
+`Cancel workout` actions; a replacement date and time are checked again before mutation. The Saturday 20:00
 summary is deterministic and uses only matched program history, synced sets,
 sleep, confirmed safety reports, and cursor state. Late daytime data produces
 one linked update only when fresh Garmin readiness changes a previously sent

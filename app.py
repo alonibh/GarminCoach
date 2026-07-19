@@ -2309,14 +2309,22 @@ async def telegram_webhook(request: Request):
             callback = data["callback_query"]
             callback_id = callback.get("id")
             chat_id = callback.get("message", {}).get("chat", {}).get("id")
+            chat_type = callback.get("message", {}).get("chat", {}).get("type")
             message_id = callback.get("message", {}).get("message_id")
             callback_data = callback.get("data", "")
             
             from notify import telegram
             telegram.answer_callback_query(callback_id)
             
-            if str(chat_id) == config.TELEGRAM_CHAT_ID:
-                if callback_data.startswith("decision_different_time_"):
+            if str(chat_id) == config.TELEGRAM_CHAT_ID and chat_type == "private":
+                if callback_data.startswith("catalog_details_metric_"):
+                    from coach.intent_router import metric_detail_response
+                    topic = callback_data.removeprefix("catalog_details_metric_")
+                    with get_session() as db:
+                        text = metric_detail_response(db, topic)
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+
+                elif callback_data.startswith("decision_different_time_"):
                     from coach.interactions import request_different_time
                     interaction_id = callback_data.removeprefix("decision_different_time_")
                     with get_session() as db:
@@ -2331,11 +2339,10 @@ async def telegram_webhook(request: Request):
                     telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
 
                 elif callback_data.startswith("decision_cancel_"):
-                    from coach.interactions import cancel_interaction
+                    from coach.interactions import reject_interaction
                     interaction_id = callback_data.removeprefix("decision_cancel_")
                     with get_session() as db:
-                        cancelled = cancel_interaction(db, interaction_id)
-                    text = "Action cancelled." if cancelled else "This action is no longer available."
+                        text = reject_interaction(db, interaction_id)
                     telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
 
                 elif callback_data.startswith("morning_synced_"):
@@ -2405,10 +2412,11 @@ async def telegram_webhook(request: Request):
         # Regular text message
         message = data.get("message", {})
         chat_id = message.get("chat", {}).get("id")
+        chat_type = message.get("chat", {}).get("type")
         text = message.get("text")
         
         # We only care about text messages from the authorized chat
-        if text and str(chat_id) == config.TELEGRAM_CHAT_ID:
+        if text and str(chat_id) == config.TELEGRAM_CHAT_ID and chat_type == "private":
             from coach.coach import handle_chat
             from notify import telegram
             
@@ -2422,9 +2430,11 @@ async def telegram_webhook(request: Request):
                 if asst_msg.pending_action_json:
                     pending = json.loads(asst_msg.pending_action_json)
                     interaction_ids = pending.get("interaction_ids", [])
-                    from coach.interactions import reply_markup_for_ids
-                    reply_markup = reply_markup_for_ids(db, interaction_ids)
-                    if not reply_markup:
+                    reply_markup = pending.get("reply_markup")
+                    if interaction_ids:
+                        from coach.interactions import reply_markup_for_ids
+                        reply_markup = reply_markup_for_ids(db, interaction_ids)
+                    if interaction_ids and not reply_markup:
                         from coach.interactions import mark_delivery_failed
                         mark_delivery_failed(db, interaction_ids, "markup_unavailable")
                         asst_msg.pending_action_json = None
@@ -2445,7 +2455,7 @@ async def telegram_webhook(request: Request):
             from notify import telegram
             chat_id = (data.get("message") or {}).get("chat", {}).get("id")
             if chat_id and str(chat_id) == config.TELEGRAM_CHAT_ID:
-                telegram.send_message(f"*Coach error:*\nAn error occurred while processing your request:\n`{str(e)}`\n\nThis could be a temporary issue with the AI provider, such as a rate limit. Please try again later.", chat_id=str(chat_id))
+                telegram.send_message(f"*Coach error:*\nAn error occurred while processing your request:\n`{str(e)}`\n\nNo operation was applied. Please try again later.", chat_id=str(chat_id))
         except Exception:
             pass
         

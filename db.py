@@ -514,7 +514,7 @@ class PendingInteraction(Base):
 
 
 class ChatDialogueState(Base):
-    """Single-user, typed context for one incomplete conversational request."""
+    """Single-user typed context, invalidated by semantics rather than inactivity."""
 
     __tablename__ = "chat_dialogue_state"
 
@@ -528,7 +528,7 @@ class ChatDialogueState(Base):
 
 
 class ChatIntentAudit(Base):
-    """Auditable result of an untrusted model classification."""
+    """Auditable result of closed-catalog deterministic classification."""
 
     __tablename__ = "chat_intent_audit"
 
