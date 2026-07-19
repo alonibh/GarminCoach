@@ -293,7 +293,7 @@ def test_sync_request_is_confirmation_only(session, monkeypatch):
     assert routed.interactions[0].status == "pending"
 
 
-def test_metric_answer_is_deterministic_and_offers_details(session, monkeypatch):
+def test_metric_answer_is_deterministic_without_a_more_details_button(session, monkeypatch):
     from coach.intent_router import metric_detail_response
 
     _fixed_router(monkeypatch)
@@ -309,9 +309,9 @@ def test_metric_answer_is_deterministic_and_offers_details(session, monkeypatch)
     details = metric_detail_response(session, "readiness")
 
     assert routed.text.startswith("Training readiness: 72.")
-    assert routed.reply_markup["inline_keyboard"][0][0]["text"] == "More details"
+    assert routed.reply_markup is None
     assert "Training readiness: 72 (Moderate)." in details
-    assert "Freshness: fresh" in details
+    assert "Freshness:" not in details
 
 
 def test_metrics_summary_renders_a_useful_daily_snapshot(session, monkeypatch):
@@ -319,7 +319,8 @@ def test_metrics_summary_renders_a_useful_daily_snapshot(session, monkeypatch):
     session.add_all([
         DailyHealth(
             day=date(2026, 7, 19), training_readiness=72, body_battery_current=53,
-            hrv_overnight=54, resting_hr=48, steps=4_120, step_goal=8_000,
+            hrv_overnight=54, hrv_baseline_low=50, hrv_baseline_high=60,
+            resting_hr=48, stress_avg=43, steps=4_120, step_goal=8_000,
         ),
         Sleep(day=date(2026, 7, 19), total_s=(7 * 3600) + (6 * 60), score=86),
         DailyMetrics(day=date(2026, 7, 19), sleep_debt_h=0.4),
@@ -333,11 +334,12 @@ def test_metrics_summary_renders_a_useful_daily_snapshot(session, monkeypatch):
         "Today's snapshot\n"
         "• Sleep: 7h 06m · score 86 (Good)\n"
         "• Readiness: 72 (Moderate)\n"
-        "• Body Battery: 53\n"
-        "• Overnight HRV: 54 ms\n"
+        "• Body Battery: 53 (Good)\n"
+        "• Overnight HRV: 54 ms (within your usual range)\n"
         "• Resting HR: 48 bpm\n"
-        "• Sleep debt: 0.4 h\n"
-        "• Steps: 4,120 / 8,000\n"
+        "• Stress: 43 (Low)\n"
+        "• Sleep debt: 0.4 h (Low)\n"
+        "• Steps: 4,120 / 8,000 (52% of goal)\n"
         "Last sync: 19/07/2026 18:42."
     )
 

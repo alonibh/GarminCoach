@@ -24,7 +24,6 @@ from db import (
     DailyHealth,
     DailyMetrics,
     DecisionRecord,
-    ObservationFreshness,
     PendingInteraction,
     PlannedSession,
     ProgramSession,
@@ -366,6 +365,36 @@ def _last_sync_text(session: Session) -> str:
     return f"Last sync: {formatted}." if formatted else "Last sync: unavailable."
 
 
+def _body_battery_category(value: float) -> str:
+    if value <= 25:
+        return "Low"
+    if value <= 50:
+        return "Fair"
+    if value <= 75:
+        return "Good"
+    return "High"
+
+
+def _sleep_debt_category(value: float) -> str:
+    if value == 0:
+        return "None"
+    if value <= 1:
+        return "Low"
+    if value <= 3:
+        return "Moderate"
+    return "High"
+
+
+def _stress_category(value: float) -> str:
+    if value <= 25:
+        return "Resting"
+    if value <= 50:
+        return "Low"
+    if value <= 75:
+        return "Medium"
+    return "High"
+
+
 def _metric_response(session: Session, topic: str | None, today: date) -> str:
     health = session.get(DailyHealth, today)
     sleep = session.get(Sleep, today)
@@ -410,34 +439,40 @@ def _metric_response(session: Session, topic: str | None, today: date) -> str:
             category = training_readiness_category(score)
             parts.append(f"Readiness: {score}" + (f" ({category})" if category else ""))
         if health and health.body_battery_current is not None:
-            parts.append(f"Body Battery: {int(health.body_battery_current)}")
+            battery = int(health.body_battery_current)
+            parts.append(f"Body Battery: {battery} ({_body_battery_category(battery)})")
         if health and health.hrv_overnight is not None:
-            parts.append(f"Overnight HRV: {health.hrv_overnight:.0f} ms")
+            hrv = f"Overnight HRV: {health.hrv_overnight:.0f} ms"
+            if health.hrv_baseline_low is not None and health.hrv_baseline_high is not None:
+                if health.hrv_overnight < health.hrv_baseline_low:
+                    hrv += " (below your usual range)"
+                elif health.hrv_overnight > health.hrv_baseline_high:
+                    hrv += " (above your usual range)"
+                else:
+                    hrv += " (within your usual range)"
+            parts.append(hrv)
         if health and health.resting_hr is not None:
             parts.append(f"Resting HR: {health.resting_hr:.0f} bpm")
+        if health and health.stress_avg is not None:
+            stress = int(round(health.stress_avg))
+            parts.append(f"Stress: {stress} ({_stress_category(stress)})")
         if metrics and metrics.sleep_debt_h is not None:
-            parts.append(f"Sleep debt: {metrics.sleep_debt_h:.1f} h")
+            debt = metrics.sleep_debt_h
+            parts.append(f"Sleep debt: {debt:.1f} h ({_sleep_debt_category(debt)})")
         if health and health.steps is not None:
             goal = f" / {health.step_goal:,}" if health.step_goal else ""
-            parts.append(f"Steps: {health.steps:,}{goal}")
+            progress = f" ({round(health.steps / health.step_goal * 100):.0f}% of goal)" if health.step_goal else ""
+            parts.append(f"Steps: {health.steps:,}{goal}{progress}")
         answer = "Today's snapshot\n" + "\n".join(f"• {part}" for part in parts) if parts else "Today's supported metrics are unavailable."
     return f"{answer}\n{_last_sync_text(session)}"
 
 
 def metric_detail_response(session: Session, topic: str) -> str:
-    """Render the fixed expanded metric contract for a More details callback."""
+    """Render legacy metric-detail callbacks without exposing freshness metadata."""
     today = get_local_now().date()
     health = session.get(DailyHealth, today)
     sleep = session.get(Sleep, today)
     metrics = session.get(DailyMetrics, today)
-    signal = {
-        "readiness": "training_readiness", "sleep": "sleep", "hrv": "hrv",
-        "recovery": "training_readiness", "training_load": "training_load",
-        "summary": "sleep",
-    }.get(topic, topic)
-    freshness = session.get(ObservationFreshness, (signal, today))
-    fetched = format_chat_datetime(freshness.fetched_at) if freshness else None
-    freshness_text = f"Freshness: {freshness.state}; fetched {fetched}." if fetched else "Freshness: unavailable."
     if topic == "readiness":
         value = health.training_readiness if health else None
         from coach.decision_engine import training_readiness_category
@@ -480,14 +515,7 @@ def metric_detail_response(session: Session, topic: str) -> str:
         body = "Training load: " + ", ".join(values) + "." if values else "Training load is unavailable."
     else:
         body = _metric_response(session, "summary", today).rsplit("\nLast sync:", 1)[0]
-    return f"{body}\n{freshness_text}\n{_last_sync_text(session)}"
-
-
-def _details_markup(topic: str) -> dict:
-    return {"inline_keyboard": [[{
-        "text": "More details",
-        "callback_data": f"catalog_details_metric_{topic}",
-    }]]}
+    return f"{body}\n{_last_sync_text(session)}"
 
 
 def _workout_details(session: Session) -> str:
@@ -806,7 +834,7 @@ def _route_deterministic(
         return RoutedTurn(_calendar_response(session, now), [])
     if result.intent == "get_metrics":
         topic = result.topic or "summary"
-        return RoutedTurn(_metric_response(session, topic, now.date()), [], _details_markup(topic))
+        return RoutedTurn(_metric_response(session, topic, now.date()), [])
     if result.intent == "get_activity_history":
         return RoutedTurn(_activity_response(session), [])
     if result.intent == "explain_decision":
