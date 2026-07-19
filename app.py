@@ -117,29 +117,35 @@ def _replace_program_sessions(session, program: TrainingProgram, routines: list[
         )
         session.add(planned_session)
         session.flush()
-        for exercise_order, exercise in enumerate(routine["exercises"]):
-            session.add(
-                SessionExercise(
-                    program_session_id=planned_session.id,
-                    exercise_name=exercise["exercise_name"],
-                    exercise_key=exercise["exercise_key"],
-                    garmin_category=exercise["garmin_category"],
-                    garmin_name=exercise["garmin_name"],
-                    movement_pattern=exercise["movement_pattern"],
-                    is_generic=exercise["is_generic"],
-                    sets=exercise["sets"],
-                    reps=exercise["reps"],
-                    duration_seconds=exercise["duration_seconds"],
-                    rest_seconds=exercise["rest_seconds"],
-                    warmup_enabled=exercise["warmup_enabled"],
-                    warmup_reps=exercise["warmup_reps"],
-                    warmup_duration_seconds=exercise["warmup_duration_seconds"],
-                    warmup_weight_kg=exercise["warmup_weight_kg"],
-                    weight_kg=exercise.get("weight_kg"),
-                    order_index=exercise_order,
-                    notes=exercise.get("notes", ""),
-                )
+        _replace_session_exercises(session, planned_session, routine["exercises"])
+
+
+def _replace_session_exercises(session, program_session: ProgramSession, exercises: list[dict]) -> None:
+    """Restore one session's editable exercises without replacing the session itself."""
+    session.query(SessionExercise).filter_by(program_session_id=program_session.id).delete()
+    for exercise_order, exercise in enumerate(exercises):
+        session.add(
+            SessionExercise(
+                program_session_id=program_session.id,
+                exercise_name=exercise["exercise_name"],
+                exercise_key=exercise["exercise_key"],
+                garmin_category=exercise["garmin_category"],
+                garmin_name=exercise["garmin_name"],
+                movement_pattern=exercise["movement_pattern"],
+                is_generic=exercise["is_generic"],
+                sets=exercise["sets"],
+                reps=exercise["reps"],
+                duration_seconds=exercise["duration_seconds"],
+                rest_seconds=exercise["rest_seconds"],
+                warmup_enabled=exercise["warmup_enabled"],
+                warmup_reps=exercise["warmup_reps"],
+                warmup_duration_seconds=exercise["warmup_duration_seconds"],
+                warmup_weight_kg=exercise["warmup_weight_kg"],
+                weight_kg=exercise.get("weight_kg"),
+                order_index=exercise_order,
+                notes=exercise.get("notes", ""),
             )
+        )
 
 
 import hashlib
@@ -1727,6 +1733,44 @@ def reset_program_to_template(program_id: int):
         program.name = proposal["name"]
         program.days_per_week = proposal["days_per_week"]
         program.rationale = proposal["rationale"]
+        program.updated_at = datetime.now()
+        target = f"/program?proposal={program.id}" if program.status == "draft" else "/program?view=active"
+    return RedirectResponse(url=target, status_code=303)
+
+
+@app.post("/program/{program_id}/sessions/{session_id}/reset")
+def reset_program_session_to_template(program_id: int, session_id: int):
+    """Restore one curated template day while retaining the rest of the program."""
+    with get_session() as session:
+        program = session.get(TrainingProgram, program_id)
+        program_session = session.get(ProgramSession, session_id)
+        plan_keys = _json_list(program.goal_tags) if program else []
+        plan_key = plan_keys[0] if plan_keys else ""
+        template = PROGRAMS.get(plan_key)
+        if (
+            not program
+            or not template
+            or program.source_type != "curated_archetype"
+            or not program_session
+            or program_session.program_id != program.id
+            or program_session.is_custom
+            or not 1 <= program_session.sequence_order <= len(template["sessions"])
+        ):
+            raise HTTPException(status_code=404, detail="A curated template day was not found for this session.")
+        if session.query(PlannedSession).filter_by(program_session_id=session_id).first():
+            raise HTTPException(status_code=422, detail="Remove this day's scheduled workout before resetting it.")
+        if session.query(ActivityProgramMatch).filter_by(program_session_id=session_id).first():
+            raise HTTPException(status_code=422, detail="A completed template day cannot be reset.")
+
+        proposal = recommend_program(
+            plan_key=plan_key,
+            limitations="",
+            session_duration_min=max(item["duration_min"] for item in template["sessions"]),
+            history_summary="Program day reset to the original curated template.",
+        )
+        _apply_recent_strength_weights(session, proposal)
+        template_day = proposal["sessions"][program_session.sequence_order - 1]
+        _replace_session_exercises(session, program_session, template_day["exercises"])
         program.updated_at = datetime.now()
         target = f"/program?proposal={program.id}" if program.status == "draft" else "/program?view=active"
     return RedirectResponse(url=target, status_code=303)

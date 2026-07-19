@@ -428,9 +428,12 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     active_page = c.get("/program?view=active")
     assert active_page.status_code == 200
     assert "This remains editable" in active_page.text
+    assert "<h1>A/B Full Body" in active_page.text
+    assert "View original plan" in active_page.text
     assert "Adjust plan" in active_page.text
     assert "Nothing scheduled yet" in active_page.text
     assert "Reset to template" in active_page.text
+    assert "Reset day" in active_page.text
 
     edited = c.post(
         f"/api/session/{session_id}/exercises",
@@ -448,6 +451,17 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
         assert exercise.warmup_enabled is True
         assert exercise.warmup_reps == 7
         assert exercise.warmup_weight_kg == 6
+
+    reset_day = c.post(f"/program/{program_id}/sessions/{session_id}/reset", follow_redirects=False)
+    assert reset_day.status_code == 303
+    assert reset_day.headers["location"] == "/program?view=active"
+    with db_module.get_session() as s:
+        restored_names = [
+            exercise.exercise_name
+            for exercise in s.query(SessionExercise).filter_by(program_session_id=session_id).order_by(SessionExercise.order_index)
+        ]
+        assert "Goblet Squat" not in restored_names
+        assert "Trap Bar Deadlift" in restored_names
 
     manual_warmup = c.post(
         f"/api/session/{session_id}/exercises",
