@@ -9,7 +9,7 @@
 {% if profile.injuries_limitations %}<div class="card plan-profile-card"><div class="profile-card-heading"><h3>Protected constraints</h3><a href="/onboarding">Edit</a></div><p>{{ profile.injuries_limitations }}</p></div>{% endif %}
 <div class="card"><h3>Target weekly routine</h3><p class="muted">{{ strength_sessions | length }} gym sessions. Calendar events, recent training load, and recovery are considered only when suggesting which session to do and when.</p><div class="plan-sessions-list">{% for s in strength_sessions %}<div class="plan-session-badge"><span class="plan-session-num">{{ s.sequence_order }}</span><span class="plan-session-name">{{ s.name }}</span><span class="plan-session-type muted">Gym strength</span></div>{% endfor %}</div></div>
 {% if not is_draft %}<div class="card next-session-empty"><span class="card-kicker">Next session</span><h3>Nothing scheduled yet</h3><p>Telegram will show the complete workout and exact suggested time before anything is uploaded.</p></div>{% endif %}
-<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Every session marked ready can be compiled, uploaded to Garmin Connect, and synced to your watch when it is scheduled.</p></div>{% if program.source_type == 'curated_archetype' %}<button class="btn-danger-outline btn-sm" type="button" onclick="resetProgram({{ program.id }})">Reset to template</button>{% endif %}</div>
+<div class="plan-templates-heading"><div><h2>Workout templates</h2><p class="muted">This remains editable. Every session marked ready can be compiled, uploaded to Garmin Connect, and synced to your watch when it is scheduled.</p></div><div class="plan-templates-actions"><span class="plan-save-status muted" id="save-all-status" role="status"></span><button class="btn btn-sm" id="save-all-button" type="button" onclick="saveAllSessions()">Save all days</button>{% if program.source_type == 'curated_archetype' %}<button class="btn-danger-outline btn-sm" type="button" onclick="resetProgram({{ program.id }})">Reset to template</button>{% endif %}</div></div>
 {% for s in strength_sessions %}
 <section class="card plan-template-card" id="session-card-{{ s.id }}">
   <div class="plan-template-header">
@@ -125,6 +125,16 @@ async function saveSession(sessionId){
   status.textContent='Saving…';
   const res=await fetch('/api/session/'+sessionId+'/exercises',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   if(res.ok){status.textContent='✓ Saved';return true}const body=await res.json().catch(()=>({}));status.textContent=body.detail||'Could not save';return false
+}
+async function saveAllSessions(){
+  const button=document.getElementById('save-all-button');
+  const status=document.getElementById('save-all-status');
+  const sessionIds=[...document.querySelectorAll('.exercise-list[id^="tbody-"]')].map(list=>list.id.replace('tbody-',''));
+  button.disabled=true;status.textContent='Saving all days…';
+  const saved=await Promise.all(sessionIds.map(saveSession));
+  if(saved.every(Boolean)){status.textContent='✓ All days saved';}
+  else{status.textContent='Some days could not be saved. Review the messages on each day.';}
+  button.disabled=false;
 }
 async function approveProgram(){
   const button=document.getElementById('approve-button');

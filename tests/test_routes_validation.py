@@ -433,6 +433,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "Adjust plan" in active_page.text
     assert "Nothing scheduled yet" in active_page.text
     assert "Reset to template" in active_page.text
+    assert "Save all days" in active_page.text
     assert "Reset day" in active_page.text
 
     edited = c.post(
