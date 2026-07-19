@@ -2361,7 +2361,24 @@ async def telegram_webhook(request: Request):
             telegram.answer_callback_query(callback_id)
             
             if str(chat_id) == config.TELEGRAM_CHAT_ID and chat_type == "private":
-                if callback_data.startswith("catalog_details_metric_"):
+                if callback_data in {"date_choice_today", "date_choice_tomorrow"}:
+                    from coach.coach import handle_chat
+                    choice = callback_data.removeprefix("date_choice_")
+                    with get_session() as db:
+                        text, asst_msg = handle_chat(db, choice)
+                        markup = None
+                        if asst_msg.pending_action_json:
+                            pending = json.loads(asst_msg.pending_action_json)
+                            interaction_ids = pending.get("interaction_ids", [])
+                            markup = pending.get("reply_markup")
+                            if interaction_ids:
+                                from coach.interactions import reply_markup_for_ids
+                                markup = reply_markup_for_ids(db, interaction_ids)
+                    telegram.edit_message_text(
+                        text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup,
+                    )
+
+                elif callback_data.startswith("catalog_details_metric_"):
                     from coach.intent_router import metric_detail_response
                     topic = callback_data.removeprefix("catalog_details_metric_")
                     with get_session() as db:

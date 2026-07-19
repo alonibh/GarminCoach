@@ -114,12 +114,12 @@ def test_date_prompt_offers_today_and_tomorrow_but_allows_typed_dates(session, m
 
     routed = route_chat(session, "Schedule workout")
 
-    assert routed.text == "Which date should I use?"
+    assert routed.text == "Which date should I use? You can also type another date."
     assert routed.reply_markup == {
-        "keyboard": [[{"text": "Today"}, {"text": "Tomorrow"}]],
-        "resize_keyboard": True,
-        "one_time_keyboard": True,
-        "input_field_placeholder": "Or type another date",
+        "inline_keyboard": [[
+            {"text": "Today", "callback_data": "date_choice_today"},
+            {"text": "Tomorrow", "callback_data": "date_choice_tomorrow"},
+        ]],
     }
 
 

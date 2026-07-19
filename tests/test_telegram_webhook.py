@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from app import app
 import config
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 client = TestClient(app)
@@ -92,6 +93,40 @@ def test_static_catalog_menu_is_delivered_without_pending_action(monkeypatch):
 
     assert response.status_code == 200
     assert sent == [("Choose an action.", markup)]
+
+
+def test_date_choice_inline_button_continues_the_schedule_flow(monkeypatch):
+    edited = []
+    choices = []
+    markup = {"inline_keyboard": [[{"text": "Approve and schedule", "callback_data": "decision_action_1"}]]}
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr("notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda text, chat_id, message_id, reply_markup=None: edited.append((text, chat_id, message_id, reply_markup)) or True,
+    )
+    monkeypatch.setattr("app.get_session", lambda: nullcontext(object()))
+    monkeypatch.setattr(
+        "coach.coach.handle_chat",
+        lambda _db, choice: (
+            choices.append(choice) or "Please confirm: Full Body 1 on Sunday at 18:00.",
+            SimpleNamespace(pending_action_json=json.dumps({"interaction_ids": ["interaction-1"]})),
+        ),
+    )
+    monkeypatch.setattr("coach.interactions.reply_markup_for_ids", lambda *_args: markup)
+
+    response = client.post(
+        "/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
+        json={"callback_query": {
+            "id": "callback-1", "data": "date_choice_today",
+            "message": {"message_id": 7, "chat": {"id": 123, "type": "private"}},
+        }},
+    )
+
+    assert response.status_code == 200
+    assert choices == ["today"]
+    assert edited == [("Please confirm: Full Body 1 on Sunday at 18:00.", "123", 7, markup)]
 
 
 def test_personal_data_is_ignored_in_group_chats(monkeypatch):
