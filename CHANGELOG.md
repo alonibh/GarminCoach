@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-19 - Morning Brief and Telegram Corrections
+
+- Added sleep-start and wake-up times to deterministic morning briefings.
+- Reconciled the morning state machine with already-delivered briefings so the
+  11:30 deadline cannot prompt or emit a duplicate brief afterward.
+- Reworded missing-data controls as a Garmin fetch retry instead of incorrectly
+  asking the athlete to sync an already-synced watch.
+- Enabled guarded chat routing by default so workout cancellation requests
+  produce typed Telegram confirmation buttons.
+- Added regressions for planned-workout rendering and safe schedule fallbacks.
+
 ## 2026-07-19 — Guarded Semantic Chat Router
 
 - Added AI-first, closed-schema intent classification with verbatim evidence

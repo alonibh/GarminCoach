@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 
 from db import (
+    CoachMessage,
     DeviceCapability,
     MorningBriefState,
     ObservationFreshness,
@@ -214,4 +215,32 @@ def test_deadline_prompt_is_durable_and_not_duplicated(session, monkeypatch):
     assert morning.morning_deadline() is True
     assert morning.morning_deadline() is False
     assert len(sent) == 1
+    assert "Retry the Garmin fetch" in sent[0][0]
+    assert sent[0][1]["inline_keyboard"][0][0]["text"] == "Retry Garmin fetch"
     assert session.get(MorningBriefState, target).status == "sync_required"
+
+
+def test_deadline_reconciles_an_already_sent_morning_brief(session, monkeypatch):
+    import notify.morning as morning
+
+    target = date(2026, 7, 4)
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(morning, "get_local_date", lambda: target)
+    monkeypatch.setattr(morning, "get_local_now", lambda: datetime(2026, 7, 4, 11, 30))
+    session.add(CoachMessage(
+        role="suggestion",
+        content="Morning briefing already delivered.",
+        created_at=datetime(2026, 7, 4, 10),
+    ))
+    session.commit()
+    sent = []
+    monkeypatch.setattr(
+        "notify.outbox.send_message",
+        lambda text, reply_markup=None: sent.append((text, reply_markup)) or True,
+    )
+
+    assert morning.morning_deadline() is False
+    state = session.get(MorningBriefState, target)
+    assert state.status == "complete"
+    assert state.briefing_sent_at == datetime(2026, 7, 4, 10)
+    assert sent == []

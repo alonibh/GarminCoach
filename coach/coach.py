@@ -536,9 +536,14 @@ def handle_chat(session: Session, user_text: str) -> str:
         return response_text, asst_msg
 
     from coach.interactions import stage_free_text_change
+    from coach.scheduling import is_schedule_request
+    # Keep explicit "schedule/book" phrases as a deterministic fallback when
+    # the semantic classifier returns unknown. Other guarded classifications
+    # must not be overridden by legacy keyword matching.
     staged_change = (
-        None if config.CHAT_ROUTER_MODE == "guarded"
-        else stage_free_text_change(session, user_text)
+        stage_free_text_change(session, user_text)
+        if config.CHAT_ROUTER_MODE != "guarded" or is_schedule_request(user_text)
+        else None
     )
     if staged_change is not None:
         response_text, interactions = staged_change
@@ -558,7 +563,7 @@ def handle_chat(session: Session, user_text: str) -> str:
         return response_text, asst_msg
 
     from coach.scheduling import is_timing_question, next_available_time, requested_day
-    if config.CHAT_ROUTER_MODE != "guarded" and is_timing_question(user_text):
+    if is_timing_question(user_text):
         from coach.calendar import get_upcoming_schedule_result
         from time_utils import get_local_now
 

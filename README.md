@@ -140,7 +140,7 @@ The complete nine-routine audit is in
   cannot provide database IDs or executable actions.
 - Deterministic handlers resolve every referenced session and calendar slot.
   All state changes require versioned Telegram confirmation buttons.
-- `CHAT_ROUTER_MODE=shadow` records classifications without changing replies.
+- `CHAT_ROUTER_MODE=guarded` (the default) uses typed, confirmation-only chat actions and Telegram controls. Set it to `shadow` only to audit classifications without changing replies.
   Switch to `guarded` only after reviewing the shadow audit; invalid or timed
   out classifications fail closed.
 - Incomplete requests use a typed, 30-minute dialogue state. A generic text

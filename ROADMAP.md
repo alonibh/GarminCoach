@@ -37,7 +37,7 @@ no metric-driven workout rewriting, and explicit user confirmation.
   fallback composite score on unsupported devices.
 - [x] Program-rest precedence and immutable workout content under metric-based
   warnings.
-- [x] Immediate morning briefing plus 11:30 manual-sync/answer-anyway flow.
+- [x] Immediate morning briefing plus 11:30 retry-fetch/answer-anyway flow.
 - [x] Versioned confirmation buttons, stale-action rejection, and atomic
   scheduling/rescheduling.
 - [x] Durable outbox, 22:00-07:00 quiet hours, one-hour reminder, calendar

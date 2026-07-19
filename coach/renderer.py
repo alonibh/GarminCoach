@@ -1,13 +1,20 @@
 """Cold, concise rendering of an already-decided coaching result."""
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy.orm import Session
 
 from coach.decision_engine import DecisionResult
 from coach.interactions import reply_markup, stage_decision_actions
+from db import Sleep
 
 
-def _metric_line(result: DecisionResult) -> str:
+def _clock(value) -> str | None:
+    return value.strftime("%H:%M") if value else None
+
+
+def _metric_line(session: Session, result: DecisionResult) -> str:
     parts = []
     if result.readiness_score is not None:
         parts.append(f"Garmin readiness {result.readiness_score} ({result.readiness_category})")
@@ -15,7 +22,11 @@ def _metric_line(result: DecisionResult) -> str:
     duration = values.get("sleep_duration_hours")
     score = values.get("sleep_score")
     if duration is not None:
-        sleep = f"sleep {duration:g}h"
+        sleep_day = date.fromisoformat(result.decision_date) if result.decision_date else None
+        sleep_row = session.get(Sleep, sleep_day) if sleep_day else None
+        start = _clock(sleep_row.sleep_start_time) if sleep_row else None
+        end = _clock(sleep_row.sleep_end_time) if sleep_row else None
+        sleep = f"sleep {start}-{end}, {duration:g}h" if start and end else f"sleep {duration:g}h"
         if isinstance(score, dict):
             sleep += f", score {score['score']} ({score['category']})"
         parts.append(sleep)
@@ -26,7 +37,7 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
     if result.decision_type in {"WAITING_FOR_DATA", "SYNC_REQUIRED"}:
         return None, None, []
 
-    metrics = _metric_line(result)
+    metrics = _metric_line(session, result)
     if result.workout_outcome == "PROGRAM_REST_DAY":
         body = (
             f"Program rest day. {result.next_program_session_name} is next; "

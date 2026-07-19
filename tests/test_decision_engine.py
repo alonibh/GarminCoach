@@ -3,6 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from coach.decision_engine import evaluate_morning_decision, training_readiness_category
+from coach.renderer import render_morning
 from coach.program_state import initialize_program_cursor
 from db import DailyHealth, DecisionRecord, PlannedSession, ProgramCursor, Sleep
 from metrics import freshness
@@ -161,3 +162,40 @@ def test_decision_record_is_idempotent_for_identical_facts(session):
 
     assert second.decision_id == first.decision_id
     assert session.query(DecisionRecord).count() == 1
+
+
+def test_morning_render_includes_sleep_and_wakeup_times(session, monkeypatch):
+    _add_program(session)
+    session.add(Sleep(
+        day=TARGET,
+        sleep_start_time=datetime(2026, 7, 5, 23, 37),
+        sleep_end_time=datetime(2026, 7, 6, 6, 45),
+        total_s=7.1 * 3600,
+        score=86,
+    ))
+    session.add(PlannedSession(
+        title="Day 1",
+        activity_type="strength_training",
+        target_date=TARGET,
+        suggested_time="18:00",
+        duration_min=60,
+        status="approved",
+        source="coach",
+    ))
+    freshness.set_capability_override(session, freshness.TRAINING_READINESS, "unsupported")
+    freshness.record_signal(session, freshness.SLEEP, TARGET, freshness.FRESH, "get_sleep_data")
+    freshness.record_signal(session, freshness.SLEEP_SCORE, TARGET, freshness.FRESH, "get_sleep_data")
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=2: {"events": [], "state": "fresh", "error": None},
+    )
+    session.commit()
+
+    result = evaluate_morning_decision(
+        session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
+    )
+    text, _markup, _ids = render_morning(session, result)
+
+    assert "sleep 23:37-06:45, 7.1h, score 86 (Good)" in text
+    assert "Planned: Day 1 at 18:00." in text
+    assert "No workout action" not in text

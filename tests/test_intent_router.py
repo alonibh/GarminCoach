@@ -189,6 +189,12 @@ def test_cancel_unschedules_garmin_before_changing_local_state(session, monkeypa
     monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
     routed = route_chat(session, "Cancel my workout")
 
+    markup = reply_markup(routed.interactions)
+    assert [button["text"] for button in markup["inline_keyboard"][0]] == [
+        "Confirm cancellation",
+    ]
+    assert markup["inline_keyboard"][1][0]["text"] == "Cancel"
+
     class FakeApi:
         def __init__(self):
             self.unscheduled = []

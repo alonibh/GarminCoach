@@ -7,7 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 import config
 from sync import sync_runner
 from sync.garmin_client import client
-from db import CoachMessage, get_session
+from db import get_session
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -25,21 +25,9 @@ def _scheduled_sync() -> None:
 
 
 def _morning_brief_sent_today() -> bool:
-    from time_utils import get_local_date
-
-    today = get_local_date()
+    from notify.morning import reconcile_sent_brief
     with get_session() as session:
-        recent = (
-            session.query(CoachMessage)
-            .filter_by(role="suggestion")
-            .order_by(CoachMessage.created_at.desc())
-            .limit(10)
-            .all()
-        )
-        for msg in recent:
-            if msg.created_at and msg.created_at.date() == today and msg.created_at.hour < 17:
-                return True
-    return False
+        return reconcile_sent_brief(session)
 
 
 def _maybe_send_ready_morning_brief() -> bool:

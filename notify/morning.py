@@ -24,6 +24,51 @@ def _now_naive() -> datetime:
     return get_local_now().replace(tzinfo=None)
 
 
+def _sent_brief_at(session) -> datetime | None:
+    """Return today's actual briefing time, including pre-state-machine sends."""
+    day = get_local_date()
+    sent = (
+        session.query(NotificationOutbox)
+        .filter(
+            NotificationOutbox.event_type == "morning_briefing",
+            NotificationOutbox.status == "sent",
+            NotificationOutbox.sent_at >= datetime.combine(day, time.min),
+            NotificationOutbox.sent_at <= datetime.combine(day, time.max),
+        )
+        .order_by(NotificationOutbox.sent_at)
+        .first()
+    )
+    if sent:
+        return sent.sent_at
+
+    # Compatibility with briefings sent directly before the durable outbox was
+    # introduced. CoachMessage is the only durable receipt for those sends.
+    from db import CoachMessage
+    message = (
+        session.query(CoachMessage)
+        .filter(
+            CoachMessage.role == "suggestion",
+            CoachMessage.created_at >= datetime.combine(day, time.min),
+            CoachMessage.created_at <= datetime.combine(day, time.max),
+        )
+        .order_by(CoachMessage.created_at)
+        .first()
+    )
+    return message.created_at.replace(tzinfo=None) if message and message.created_at else None
+
+
+def reconcile_sent_brief(session, row: MorningBriefState | None = None) -> bool:
+    """Keep the daily state machine aligned with the delivery ledger."""
+    row = row or _state(session)
+    sent_at = row.briefing_sent_at or _sent_brief_at(session)
+    if not sent_at:
+        return False
+    row.briefing_sent_at = sent_at.replace(tzinfo=None)
+    row.status = "complete"
+    row.updated_at = _now_naive()
+    return True
+
+
 def start_priority_fetch() -> bool:
     """Mark required facts pending and start the shared-lock priority fetch."""
     from metrics.freshness import mark_priority_pending
@@ -31,7 +76,7 @@ def start_priority_fetch() -> bool:
 
     with get_session() as session:
         row = _state(session)
-        if row.briefing_sent_at:
+        if reconcile_sent_brief(session, row):
             return False
         mark_priority_pending(session)
         row.status = "fetching"
@@ -45,7 +90,7 @@ def priority_sync_finished() -> None:
         row = _state(session)
         row.last_priority_fetch_at = _now_naive()
         facts = morning_freshness(session)
-        if row.briefing_sent_at:
+        if reconcile_sent_brief(session, row):
             _enqueue_late_material_update(session)
             return
         if facts["ready"] or row.answer_anyway:
@@ -109,7 +154,7 @@ def morning_deadline() -> bool:
     """At 11:30, turn unresolved critical data into an explicit user choice."""
     with get_session() as session:
         row = _state(session)
-        if row.briefing_sent_at or row.deadline_prompt_sent_at:
+        if reconcile_sent_brief(session, row) or row.deadline_prompt_sent_at:
             return False
         facts = morning_freshness(session)
         if facts["ready"]:
@@ -124,12 +169,12 @@ def morning_deadline() -> bool:
         text = (
             "Garmin data could not be fetched. Retry the fetch, or continue without the missing data."
             if fetch_error else
-            "Required overnight data is missing. Sync your watch, then retry, or continue without it."
+            "Required overnight data is unavailable. Retry the Garmin fetch, or continue without it."
         )
         day_key = get_local_date().strftime("%Y%m%d")
         markup = {
             "inline_keyboard": [[
-                {"text": "I synced the watch", "callback_data": f"morning_synced_{day_key}"},
+                {"text": "Retry Garmin fetch", "callback_data": f"morning_synced_{day_key}"},
                 {"text": "Answer anyway", "callback_data": f"morning_anyway_{day_key}"},
             ]]
         }
