@@ -815,6 +815,34 @@ def _migrate_add_columns() -> None:
                 {"key": rest_migration},
             )
 
+        total_package_name_migration = "total_package_session_names_2026_07_19_v1"
+        already_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": total_package_name_migration},
+        ).first()
+        if not already_applied:
+            # Rename only unchanged legacy labels in the curated Total Package
+            # program. Other programs and user-created sessions stay untouched.
+            conn.execute(text(
+                "UPDATE program_sessions SET name = CASE name "
+                "WHEN 'Day 1' THEN 'Full Body 1' "
+                "WHEN 'Day 2' THEN 'Full Body 2' "
+                "WHEN 'Day 3' THEN 'Full Body 3' "
+                "END "
+                "WHERE name IN ('Day 1', 'Day 2', 'Day 3') "
+                "AND program_id IN ("
+                "SELECT id FROM training_programs "
+                "WHERE goal_tags LIKE '%total_package_3%'"
+                ")"
+            ))
+            conn.execute(
+                text(
+                    "INSERT INTO app_migrations (migration_key, applied_at) "
+                    "VALUES (:key, CURRENT_TIMESTAMP)"
+                ),
+                {"key": total_package_name_migration},
+            )
+
         source_rest_migration = "source_rest_periods_2026_07_18_v1"
         already_applied = conn.execute(
             text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),

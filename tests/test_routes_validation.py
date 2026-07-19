@@ -358,6 +358,43 @@ def test_existing_source_template_rest_defaults_are_migrated_without_touching_cu
         assert s.get(SessionExercise, custom_exercise_id).rest_seconds == 61
 
 
+def test_existing_total_package_sessions_receive_full_body_names(client):
+    _, db_module = client
+    from db import ProgramSession, TrainingProgram
+
+    with db_module.get_session() as s:
+        total_package = TrainingProgram(
+            name="Total Package · 3 days",
+            goal_tags='["total_package_3"]',
+            status="active",
+        )
+        unrelated = TrainingProgram(
+            name="Custom routine",
+            goal_tags='["custom"]',
+            status="active",
+        )
+        s.add_all([total_package, unrelated])
+        s.flush()
+        s.add_all([
+            ProgramSession(program_id=total_package.id, name="Day 1"),
+            ProgramSession(program_id=total_package.id, name="Day 2"),
+            ProgramSession(program_id=total_package.id, name="Day 3"),
+            ProgramSession(program_id=unrelated.id, name="Day 1"),
+        ])
+
+    db_module._migrate_add_columns()
+
+    with db_module.get_session() as s:
+        total_names = [item.name for item in s.query(ProgramSession).filter_by(
+            program_id=total_package.id
+        ).order_by(ProgramSession.id)]
+        unrelated_name = s.query(ProgramSession).filter_by(
+            program_id=unrelated.id
+        ).one().name
+        assert total_names == ["Full Body 1", "Full Body 2", "Full Body 3"]
+        assert unrelated_name == "Day 1"
+
+
 def test_onboarding_proposal_is_reviewed_before_activation(client):
     c, db_module = client
     from datetime import datetime, timedelta
