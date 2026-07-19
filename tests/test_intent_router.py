@@ -123,6 +123,15 @@ def test_date_prompt_offers_today_and_tomorrow_but_allows_typed_dates(session, m
     }
 
 
+def test_menu_does_not_offer_explain_recommendation(session, monkeypatch):
+    _fixed_router(monkeypatch)
+
+    routed = route_chat(session, "Help")
+
+    labels = [button["text"] for row in routed.reply_markup["keyboard"] for button in row]
+    assert "Explain recommendation" not in labels
+
+
 @pytest.mark.parametrize("message", [
     "Don't cancel my workout",
     "Don't delete today's workout",
