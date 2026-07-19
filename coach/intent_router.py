@@ -396,14 +396,31 @@ def _metric_response(session: Session, topic: str | None, today: date) -> str:
         value = metrics.acute_load if metrics else None
         answer = f"Current training load: {value:.1f}." if value is not None else f"Training load is {unavailable}."
     else:
+        from coach.decision_engine import sleep_score_category, training_readiness_category
         parts = []
-        if health and health.training_readiness is not None:
-            parts.append(f"readiness {int(health.training_readiness)}")
         if sleep and sleep.total_s:
-            parts.append(f"sleep {sleep.total_s / 3600:.1f} h")
+            total_minutes = int(round(sleep.total_s / 60.0))
+            sleep_value = f"Sleep: {total_minutes // 60}h {total_minutes % 60:02d}m"
+            if sleep.score is not None:
+                category = sleep_score_category(sleep.score)
+                sleep_value += f" · score {int(round(sleep.score))}" + (f" ({category})" if category else "")
+            parts.append(sleep_value)
+        if health and health.training_readiness is not None:
+            score = int(health.training_readiness)
+            category = training_readiness_category(score)
+            parts.append(f"Readiness: {score}" + (f" ({category})" if category else ""))
         if health and health.body_battery_current is not None:
-            parts.append(f"Body Battery {int(health.body_battery_current)}")
-        answer = f"Today's metrics: {', '.join(parts)}." if parts else "Today's supported metrics are unavailable."
+            parts.append(f"Body Battery: {int(health.body_battery_current)}")
+        if health and health.hrv_overnight is not None:
+            parts.append(f"Overnight HRV: {health.hrv_overnight:.0f} ms")
+        if health and health.resting_hr is not None:
+            parts.append(f"Resting HR: {health.resting_hr:.0f} bpm")
+        if metrics and metrics.sleep_debt_h is not None:
+            parts.append(f"Sleep debt: {metrics.sleep_debt_h:.1f} h")
+        if health and health.steps is not None:
+            goal = f" / {health.step_goal:,}" if health.step_goal else ""
+            parts.append(f"Steps: {health.steps:,}{goal}")
+        answer = "Today's snapshot\n" + "\n".join(f"• {part}" for part in parts) if parts else "Today's supported metrics are unavailable."
     return f"{answer}\n{_last_sync_text(session)}"
 
 
@@ -462,7 +479,7 @@ def metric_detail_response(session: Session, topic: str) -> str:
             values.append(f"chronic {metrics.chronic_load:.1f}")
         body = "Training load: " + ", ".join(values) + "." if values else "Training load is unavailable."
     else:
-        body = _metric_response(session, "summary", today).splitlines()[0]
+        body = _metric_response(session, "summary", today).rsplit("\nLast sync:", 1)[0]
     return f"{body}\n{freshness_text}\n{_last_sync_text(session)}"
 
 

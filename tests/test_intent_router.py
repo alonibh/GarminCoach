@@ -15,10 +15,12 @@ from db import (
     ChatDialogueState,
     ChatIntentAudit,
     DailyHealth,
+    DailyMetrics,
     Goal,
     ObservationFreshness,
     PendingInteraction,
     PlannedSession,
+    Sleep,
     SyncState,
 )
 from tests.test_program_state import _add_program
@@ -300,6 +302,34 @@ def test_metric_answer_is_deterministic_and_offers_details(session, monkeypatch)
     assert routed.reply_markup["inline_keyboard"][0][0]["text"] == "More details"
     assert "Training readiness: 72 (Moderate)." in details
     assert "Freshness: fresh" in details
+
+
+def test_metrics_summary_renders_a_useful_daily_snapshot(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    session.add_all([
+        DailyHealth(
+            day=date(2026, 7, 19), training_readiness=72, body_battery_current=53,
+            hrv_overnight=54, resting_hr=48, steps=4_120, step_goal=8_000,
+        ),
+        Sleep(day=date(2026, 7, 19), total_s=(7 * 3600) + (6 * 60), score=86),
+        DailyMetrics(day=date(2026, 7, 19), sleep_debt_h=0.4),
+        SyncState(key="last_sync_at", value="2026-07-19T15:42:23+00:00"),
+    ])
+    session.commit()
+
+    routed = route_chat(session, "Metrics")
+
+    assert routed.text == (
+        "Today's snapshot\n"
+        "• Sleep: 7h 06m · score 86 (Good)\n"
+        "• Readiness: 72 (Moderate)\n"
+        "• Body Battery: 53\n"
+        "• Overnight HRV: 54 ms\n"
+        "• Resting HR: 48 bpm\n"
+        "• Sleep debt: 0.4 h\n"
+        "• Steps: 4,120 / 8,000\n"
+        "Last sync: 19/07/2026 18:42."
+    )
 
 
 def test_sync_status_uses_local_chat_datetime_format(session, monkeypatch):
