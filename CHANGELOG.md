@@ -10,6 +10,8 @@
 - Enabled guarded chat routing by default so workout cancellation requests
   produce typed Telegram confirmation buttons.
 - Added regressions for planned-workout rendering and safe schedule fallbacks.
+- Preserved legacy full-body session-name aliases in rest-period migrations so
+  renamed templates still migrate existing rows correctly.
 
 ## 2026-07-19 — Guarded Semantic Chat Router
 

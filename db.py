@@ -857,6 +857,24 @@ def _migrate_add_columns() -> None:
                     return 120 if session_name in {"Upper Strength", "Lower Strength"} else 60
                 return current
 
+            legacy_session_names = {
+                "beginner_full_body_3": {
+                    "Full Body 1": "Full Body A",
+                    "Full Body 2": "Full Body B",
+                    "Full Body 3": "Full Body C",
+                },
+                "ms_full_body_3": {
+                    "Full Body 1": "Workout A",
+                    "Full Body 2": "Workout B",
+                    "Full Body 3": "Workout C",
+                },
+                "total_package_3": {
+                    "Full Body 1": "Day 1",
+                    "Full Body 2": "Day 2",
+                    "Full Body 3": "Day 3",
+                },
+            }
+
             for program_key in (
                 "beginner_full_body_3", "ms_full_body_3", "total_package_3",
                 "upper_lower_4", "shul_4", "muscle_strength_5",
@@ -877,7 +895,8 @@ def _migrate_add_columns() -> None:
                                 "AND program_session_id IN ("
                                 "SELECT ps.id FROM program_sessions ps "
                                 "JOIN training_programs tp ON tp.id = ps.program_id "
-                                "WHERE ps.name = :session_name "
+                                "WHERE (ps.name = :session_name "
+                                "OR ps.name = :legacy_session_name) "
                                 "AND tp.goal_tags LIKE :program_key"
                                 ")"
                             ),
@@ -886,6 +905,9 @@ def _migrate_add_columns() -> None:
                                 "old_rest": old_rest,
                                 "exercise_name": exercise["exercise_name"],
                                 "session_name": routine["name"],
+                                "legacy_session_name": legacy_session_names.get(
+                                    program_key, {}
+                                ).get(routine["name"], routine["name"]),
                                 "program_key": f"%{program_key}%",
                             },
                         )
