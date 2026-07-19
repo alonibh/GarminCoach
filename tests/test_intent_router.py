@@ -315,6 +315,21 @@ def test_sync_status_uses_local_chat_datetime_format(session, monkeypatch):
     assert routed.text == "No Garmin sync is currently running.\nLast sync: 19/07/2026 18:42."
 
 
+def test_calendar_response_uses_chat_datetime_format_for_current_and_legacy_events(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _fresh_calendar(monkeypatch, events=[
+        {"title": "Dinner", "start": "2026-07-20 20:00"},
+        {"title": "11:15 2026-07-24", "start": "GymnastFit"},
+    ])
+
+    routed = route_chat(session, "My calendar")
+
+    assert routed.text == (
+        "Calendar: Dinner — 20/07/2026 20:00.\n"
+        "Calendar: GymnastFit — 24/07/2026 11:15."
+    )
+
+
 def test_delivery_failure_invalidates_pending_controls(session, monkeypatch):
     _fixed_router(monkeypatch)
     routed = route_chat(session, "Please refresh my Garmin data")

@@ -22,7 +22,14 @@ def format_chat_datetime(value: datetime | str | None) -> str | None:
         try:
             value = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
-            return None
+            for fmt in ("%H:%M %Y-%m-%d", "%H:%M:%S %Y-%m-%d"):
+                try:
+                    value = datetime.strptime(value, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return None
     if value.tzinfo is not None:
         value = value.astimezone(get_local_tz())
     return value.strftime("%d/%m/%Y %H:%M")

@@ -512,15 +512,19 @@ def _calendar_response(session: Session, now: datetime) -> str:
     calendar = get_upcoming_schedule_result(days=7)
     if calendar["state"] == "error":
         return "Calendar data is unavailable. No scheduling conclusion was inferred."
-    lines = [
-        f"Workout: {item.title} — {item.target_date:%a} {item.suggested_time}."
-        for item in planned
-    ]
-    lines.extend(
-        f"Calendar: {event.get('title') or 'Untitled event'} — "
-        f"{format_chat_datetime(event.get('start')) or event.get('start', '')}."
-        for event in calendar["events"][:5]
-    )
+    lines = []
+    for item in planned:
+        scheduled_at = datetime.combine(item.target_date, datetime.strptime(item.suggested_time, "%H:%M").time())
+        lines.append(f"Workout: {item.title} — {format_chat_datetime(scheduled_at)}.")
+    for event in calendar["events"][:5]:
+        title = str(event.get("title") or "Untitled event")
+        start = str(event.get("start") or "")
+        start_at = format_chat_datetime(start)
+        if not start_at:
+            title_at = format_chat_datetime(title)
+            if title_at:
+                title, start_at = start or "Untitled event", title_at
+        lines.append(f"Calendar: {title} — {start_at or start}.")
     return "\n".join(lines) if lines else "Nothing is scheduled in the next 7 days."
 
 
