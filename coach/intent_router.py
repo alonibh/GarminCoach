@@ -32,7 +32,7 @@ from db import (
     Sleep,
     SyncState,
 )
-from time_utils import get_local_now
+from time_utils import format_chat_date, format_chat_datetime, get_local_now
 
 
 IntentName = Literal[
@@ -352,7 +352,8 @@ def _menu_markup() -> dict:
 
 def _last_sync_text(session: Session) -> str:
     row = session.get(SyncState, "last_sync_at")
-    return f"Last sync: {row.value}." if row and row.value else "Last sync: unavailable."
+    formatted = format_chat_datetime(row.value) if row and row.value else None
+    return f"Last sync: {formatted}." if formatted else "Last sync: unavailable."
 
 
 def _metric_response(session: Session, topic: str | None, today: date) -> str:
@@ -408,10 +409,8 @@ def metric_detail_response(session: Session, topic: str) -> str:
         "summary": "sleep",
     }.get(topic, topic)
     freshness = session.get(ObservationFreshness, (signal, today))
-    freshness_text = (
-        f"Freshness: {freshness.state}; fetched {freshness.fetched_at.isoformat(timespec='minutes')}."
-        if freshness else "Freshness: unavailable."
-    )
+    fetched = format_chat_datetime(freshness.fetched_at) if freshness else None
+    freshness_text = f"Freshness: {freshness.state}; fetched {fetched}." if fetched else "Freshness: unavailable."
     if topic == "readiness":
         value = health.training_readiness if health else None
         from coach.decision_engine import training_readiness_category
@@ -423,7 +422,7 @@ def metric_detail_response(session: Session, topic: str) -> str:
         if sleep and sleep.total_s:
             score = f" Score: {int(sleep.score)}." if sleep.score is not None else ""
             window = (
-                f" Window: {sleep.sleep_start_time} to {sleep.sleep_end_time}."
+                f" Window: {format_chat_datetime(sleep.sleep_start_time)} to {format_chat_datetime(sleep.sleep_end_time)}."
                 if sleep.sleep_start_time and sleep.sleep_end_time else ""
             )
             body = f"Sleep duration: {sleep.total_s / 3600:.1f} hours.{score}{window}"
@@ -508,7 +507,8 @@ def _calendar_response(session: Session, now: datetime) -> str:
         for item in planned
     ]
     lines.extend(
-        f"Calendar: {event.get('title') or 'Untitled event'} — {event.get('start', '')}."
+        f"Calendar: {event.get('title') or 'Untitled event'} — "
+        f"{format_chat_datetime(event.get('start')) or event.get('start', '')}."
         for event in calendar["events"][:5]
     )
     return "\n".join(lines) if lines else "Nothing is scheduled in the next 7 days."
@@ -519,7 +519,7 @@ def _activity_response(session: Session) -> str:
     if not rows:
         return "No synced activities are available."
     return "Recent activities:\n" + "\n".join(
-        f"• {(row.name or row.activity_type or 'Activity')} — {row.start_time:%Y-%m-%d}"
+        f"• {(row.name or row.activity_type or 'Activity')} — {format_chat_date(row.start_time)}"
         for row in rows if row.start_time
     )
 

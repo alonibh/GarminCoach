@@ -38,7 +38,22 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
     if result.decision_type in {"WAITING_FOR_DATA", "SYNC_REQUIRED"}:
         return None, None, []
 
-    metrics = _metric_line(session, result)
+    interactions = stage_decision_actions(session, result)
+    schedule = next(
+        (item for item in interactions if item.action_type == "schedule_original_session"),
+        None,
+    )
+    proposed_time = json.loads(schedule.payload_json)["suggested_time"] if schedule else None
+
+    # A positive workout proposal should be immediately actionable. Keep the
+    # evidence for decisions that advise against training, where it explains
+    # why the athlete should not train today.
+    recommends_workout = (
+        result.workout_outcome in {"KEEP_PLANNED_SESSION", "PROPOSE_NEXT_SESSION"}
+        and result.decision_type not in {"ADVISE_SKIP_SESSION"}
+        and not result.calendar_conflict
+    )
+    metrics = "" if recommends_workout else _metric_line(session, result)
     if result.workout_outcome == "PROGRAM_REST_DAY":
         body = (
             f"Program rest day. {result.next_program_session_name} is next; "
@@ -54,11 +69,15 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         if result.decision_type == "ADVISE_SKIP_SESSION":
             body = f"Rest is recommended instead of {name}{at}. Readiness is Poor. The program workout remains pending."
         elif result.decision_type == "WARN_ORIGINAL_SESSION":
-            body = f"{name}{at} remains unchanged. Low readiness warrants caution, not a modified workout."
+            body = f"Keep {name}{at}."
         elif result.workout_outcome == "KEEP_PLANNED_SESSION":
             body = f"Planned: {name}{at}."
         elif result.workout_outcome == "PROPOSE_NEXT_SESSION":
-            body = f"Suggested today: {name}."
+            body = (
+                f"Suggested today: {name} at {proposed_time}."
+                if proposed_time else
+                f"No workout is recommended today: no calendar-validated full-workout slot is available for {name}."
+            )
         else:
             body = "No workout action is available today."
 
@@ -68,7 +87,7 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
     elif "CALENDAR_ACCESS_ERROR" in result.reason_codes:
         body += " Calendar could not be checked."
 
-    if result.best_effort:
+    if result.best_effort and not recommends_workout:
         omitted = ", ".join(
             item["signal"].replace("_", " ")
             for item in result.missing_observations if item["critical"]
@@ -78,18 +97,7 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         item["signal"].replace("_", " ")
         for item in result.missing_observations if not item["critical"]
     ]
-    if noncritical:
+    if noncritical and not recommends_workout:
         body += f" Missing non-critical data: {', '.join(noncritical)}."
     text = "\n".join(part for part in (metrics, body) if part)
-    interactions = stage_decision_actions(session, result)
-    schedule = next(
-        (item for item in interactions if item.action_type == "schedule_original_session"),
-        None,
-    )
-    if result.workout_outcome == "PROPOSE_NEXT_SESSION":
-        if schedule:
-            payload = json.loads(schedule.payload_json)
-            text += f" Best available time: {payload['suggested_time']}."
-        elif result.decision_type != "ADVISE_SKIP_SESSION":
-            text += " No calendar-validated full-workout slot is currently available."
     return text, reply_markup(interactions), [item.interaction_id for item in interactions]

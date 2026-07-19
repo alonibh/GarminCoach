@@ -338,7 +338,8 @@ def stage_free_text_change(session: Session, user_text: str) -> tuple[str, list[
         )
         session.add(row)
         session.flush()
-        return f"Confirm: move {planned.title} to {time_text} on {planned.target_date.isoformat()}.", [row]
+        from time_utils import format_chat_date
+        return f"Confirm: move {planned.title} to {time_text} on {format_chat_date(planned.target_date)}.", [row]
     safety_terms = ("pain", "dizzy", "dizziness", "faint", "chest pain", "unusual difficulty")
     if any(term in lowered for term in safety_terms):
         report_type = "pain" if "pain" in lowered else "dizziness" if "dizz" in lowered or "faint" in lowered else "difficulty"

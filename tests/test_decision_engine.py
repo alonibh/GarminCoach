@@ -164,7 +164,7 @@ def test_decision_record_is_idempotent_for_identical_facts(session):
     assert session.query(DecisionRecord).count() == 1
 
 
-def test_morning_render_includes_sleep_and_wakeup_times(session, monkeypatch):
+def test_morning_render_keeps_positive_planned_workouts_concise(session, monkeypatch):
     _add_program(session)
     session.add(Sleep(
         day=TARGET,
@@ -196,6 +196,5 @@ def test_morning_render_includes_sleep_and_wakeup_times(session, monkeypatch):
     )
     text, _markup, _ids = render_morning(session, result)
 
-    assert "sleep 23:37-06:45, 7.1h, score 86 (Good)" in text
-    assert "Planned: Day 1 at 18:00." in text
+    assert text == "Planned: Day 1 at 18:00."
     assert "No workout action" not in text

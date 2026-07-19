@@ -288,6 +288,19 @@ def test_metric_answer_is_deterministic_and_offers_details(session, monkeypatch)
     assert "Freshness: fresh" in details
 
 
+def test_sync_status_uses_local_chat_datetime_format(session, monkeypatch):
+    from sync import sync_runner
+
+    _fixed_router(monkeypatch)
+    session.add(SyncState(key="last_sync_at", value="2026-07-19T15:42:23+00:00"))
+    session.commit()
+    monkeypatch.setattr(sync_runner, "is_running", lambda: False)
+
+    routed = route_chat(session, "Sync status")
+
+    assert routed.text == "No Garmin sync is currently running.\nLast sync: 19/07/2026 18:42."
+
+
 def test_delivery_failure_invalidates_pending_controls(session, monkeypatch):
     _fixed_router(monkeypatch)
     routed = route_chat(session, "Please refresh my Garmin data")
