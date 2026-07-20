@@ -245,9 +245,9 @@ def morning_freshness(session: Session, day: date | None = None) -> dict:
     }
 
 
-def _legacy_metrics_ready(session: Session) -> bool:
+def _legacy_metrics_ready(session: Session, day: date | None = None) -> bool:
     """Compatibility for data created before per-signal freshness existed."""
-    today = get_local_date()
+    today = day or get_local_date()
     sleep = session.get(Sleep, today)
     if not (sleep and sleep.total_s and sleep.total_s > 0):
         return False
@@ -274,20 +274,20 @@ def _legacy_metrics_ready(session: Session) -> bool:
     return device_upload.astimezone(get_local_tz()).date() == today
 
 
-def synced_raw_metrics_ready(session: Session) -> bool:
+def synced_raw_metrics_ready(session: Session, day: date | None = None) -> bool:
     """Whether current raw facts are provably from a completed watch sync.
 
     This supports databases created by the full-sync path before per-signal
     freshness rows were introduced. An explicit per-signal state still takes
     precedence wherever one exists.
     """
-    return _legacy_metrics_ready(session)
+    return _legacy_metrics_ready(session, day)
 
 
-def proactive_metrics_ready(session: Session) -> bool:
+def proactive_metrics_ready(session: Session, day: date | None = None) -> bool:
     """True only when every capability-dependent critical signal is fresh."""
-    today = get_local_date()
+    today = day or get_local_date()
     has_rows = session.query(ObservationFreshness).filter_by(observed_for=today).first()
     if has_rows:
         return morning_freshness(session, today)["ready"]
-    return _legacy_metrics_ready(session)
+    return _legacy_metrics_ready(session, today)

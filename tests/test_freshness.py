@@ -187,7 +187,10 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
         resting_hr=51,
         stress_avg=22,
     ))
-    synced_at = datetime.now(timezone.utc).replace(microsecond=0)
+    # Keep the sync timestamps on the displayed athlete day. The host's actual
+    # date is deliberately different, so this verifies that the dashboard
+    # passes its selected local day into the freshness check.
+    synced_at = datetime(2026, 7, 19, 8, 0, tzinfo=timezone.utc)
     _state(session, "device_last_upload", synced_at.isoformat())
     _state(session, "last_sync_at", (synced_at + timedelta(minutes=1)).isoformat())
     session.commit()

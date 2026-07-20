@@ -573,7 +573,7 @@ def _readiness_tiles() -> list[dict]:
         )
         category = training_readiness_category(int(r_val)) if r_val is not None else None
         if capability == "unsupported":
-            raw_facts_synced = synced_raw_metrics_ready(s)
+            raw_facts_synced = synced_raw_metrics_ready(s, today)
 
             def is_fresh(signal: str) -> bool:
                 row = s.get(ObservationFreshness, (signal, today))
