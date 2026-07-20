@@ -337,7 +337,6 @@ def _menu_markup() -> dict:
     return {
         "keyboard": [
             [{"text": "Today's recommendation"}, {"text": "Next workout"}],
-            [{"text": "Find a workout time"}],
             [{"text": "Schedule workout"}, {"text": "Change workout date"}],
             [{"text": "Cancel workout"}, {"text": "My calendar"}],
             [{"text": "Metrics"}, {"text": "Recent activities"}],

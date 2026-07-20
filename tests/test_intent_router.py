@@ -130,6 +130,7 @@ def test_menu_does_not_offer_explain_recommendation(session, monkeypatch):
 
     labels = [button["text"] for row in routed.reply_markup["keyboard"] for button in row]
     assert "Explain recommendation" not in labels
+    assert "Find a workout time" not in labels
 
 
 @pytest.mark.parametrize("message", [
