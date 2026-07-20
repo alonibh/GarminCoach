@@ -1,7 +1,7 @@
 from datetime import datetime
 import json
 
-from coach.scheduling import is_schedule_request, is_timing_question, next_available_time, requested_day
+from coach.scheduling import _parse_clock, is_schedule_request, is_timing_question, next_available_time, requested_day
 from db import Goal, ProgramSession, TrainingProgram
 
 
@@ -95,6 +95,12 @@ def test_timing_intent_variants_and_requested_days():
     assert requested_day("Could I train Monday?", today).isoformat() == "2026-07-20"
     assert is_schedule_request("Can we schedule a workout for tomorrow?")
     assert is_schedule_request("Please book the session for Sunday")
+
+
+def test_clock_parser_accepts_common_twelve_hour_variants():
+    assert _parse_clock("6:30 pm").strftime("%H:%M") == "18:30"
+    assert _parse_clock("6:30 p.m.").strftime("%H:%M") == "18:30"
+    assert _parse_clock("6 am").strftime("%H:%M") == "06:00"
 
 
 def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch):

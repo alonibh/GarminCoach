@@ -116,10 +116,11 @@ def test_standard_response_refreshes_the_current_persistent_menu(monkeypatch):
 
     assert response.status_code == 200
     labels = [button["text"] for row in sent[0][1]["keyboard"] for button in row]
-    assert "Explain recommendation" not in labels
+    assert "Explain recommendation" in labels
+    assert "Find a workout time" in labels
 
 
-def test_date_choice_inline_button_continues_the_schedule_flow(monkeypatch):
+def test_state_bound_flow_button_continues_the_schedule_flow(monkeypatch):
     edited = []
     choices = []
     markup = {"inline_keyboard": [[{"text": "Approve and schedule", "callback_data": "decision_action_1"}]]}
@@ -131,25 +132,29 @@ def test_date_choice_inline_button_continues_the_schedule_flow(monkeypatch):
     )
     monkeypatch.setattr("app.get_session", lambda: nullcontext(object()))
     monkeypatch.setattr(
-        "coach.coach.handle_chat",
+        "coach.intent_router.handle_flow_callback",
         lambda _db, choice: (
-            choices.append(choice) or "Please confirm: Full Body 1 on Sunday at 18:00.",
-            SimpleNamespace(pending_action_json=json.dumps({"interaction_ids": ["interaction-1"]})),
+            choices.append(choice)
+            or SimpleNamespace(
+                text="Please confirm: Full Body 1 on Sunday at 18:00.",
+                interactions=[SimpleNamespace()],
+                reply_markup=None,
+            )
         ),
     )
-    monkeypatch.setattr("coach.interactions.reply_markup_for_ids", lambda *_args: markup)
+    monkeypatch.setattr("coach.interactions.reply_markup", lambda *_args: markup)
 
     response = client.post(
         "/telegram/webhook",
         headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
         json={"callback_query": {
-            "id": "callback-1", "data": "date_choice_today",
+            "id": "callback-1", "data": "flow:abcd1234:d:20260719",
             "message": {"message_id": 7, "chat": {"id": 123, "type": "private"}},
         }},
     )
 
     assert response.status_code == 200
-    assert choices == ["today"]
+    assert choices == ["flow:abcd1234:d:20260719"]
     assert edited == [("Please confirm: Full Body 1 on Sunday at 18:00.", "123", 7, markup)]
 
 

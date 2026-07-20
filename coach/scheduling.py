@@ -22,7 +22,7 @@ _DAY_NAMES = {
     "saturday": 5, "sat": 5,
     "sunday": 6, "sun": 6,
 }
-_CLOCK_PATTERN = r"\d{1,2}(?::\d{2})?\s*(?:a\.?(?:m\.)?|p\.?(?:m\.)?)?"
+_CLOCK_PATTERN = r"\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?"
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ def requested_day(user_text: str, today: date) -> date | None:
 
 def _parse_clock(value: str) -> time | None:
     match = re.fullmatch(
-        r"\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?(?:m\.)?|p\.?(?:m\.)?)?\s*",
+        r"\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*",
         value,
         flags=re.IGNORECASE,
     )

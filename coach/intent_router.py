@@ -73,7 +73,7 @@ _DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_TIME_PATTERN = re.compile(
-    r"\b((?:[01]?\d|2[0-3]):[0-5]\d|(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?))\b",
+    r"\b((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?)|(?:[01]?\d|2[0-3]):[0-5]\d)\b",
     re.IGNORECASE,
 )
 _CANCEL_VERBS = r"cancel|delete|remove|unschedule"
@@ -125,7 +125,10 @@ def _explicit_classification(user_text: str) -> IntentClassification:
     # verb prevents that clause from reaching a mutating intent.
     negated_mutation = bool(_MUTATION_VERB.search(text) and _NEGATION_WORD.search(text))
 
-    if text in {"/start", "/help", "/menu", "help", "menu", "what can you do"}:
+    if text in {
+        "/start", "/help", "/menu", "help", "menu", "what can you do",
+        "safety help", "report safety issue",
+    }:
         return IntentClassification(intent="help")
 
     first_person = bool(re.search(r"\b(i|i'm|im|my|me)\b", text))
@@ -215,28 +218,69 @@ def classify_intent(user_text: str, dialogue: ChatDialogueState | None = None) -
     if explicit.intent != "unknown" or dialogue is None:
         return explicit
 
-    if dialogue.missing_slot == "date":
-        date_text = _evidence(_DATE_PATTERN, user_text)
-        if date_text:
-            return IntentClassification(intent=dialogue.intent, date_text=date_text)
-    if dialogue.missing_slot == "time":
-        from coach.scheduling import _parse_clock
-        time_text = _evidence(_EXPLICIT_TIME_PATTERN, user_text)
-        if time_text is None and _parse_clock(user_text.strip()):
-            time_text = user_text.strip()
-        if time_text:
-            return IntentClassification(intent=dialogue.intent, time_text=time_text)
-    return explicit
+    # A reply to a guided flow may satisfy more than the one slot currently
+    # being requested. Extract every supported slot before advancing the state
+    # machine so "Today at 18:30" never loses its already-supplied time.
+    from coach.scheduling import _parse_clock
+    date_text = _evidence(_DATE_PATTERN, user_text)
+    time_text = _evidence(_EXPLICIT_TIME_PATTERN, user_text)
+    if time_text is None and _parse_clock(user_text.strip()):
+        time_text = user_text.strip()
+    workout_text = _workout_evidence(user_text)
+    if date_text or time_text or workout_text:
+        return IntentClassification(
+            intent=dialogue.intent,
+            date_text=date_text,
+            time_text=time_text,
+            workout_text=workout_text,
+        )
+    # An unsupported reply does not silently abandon a valid active flow.
+    # The current state will redraw its choices; explicit supported commands
+    # still override it through the early return above.
+    return IntentClassification(intent=dialogue.intent)
 
 
-def _audit(session: Session, user_text: str, result: IntentClassification, status: str = "valid") -> None:
+def _audit(
+    session: Session, user_text: str, result: IntentClassification,
+    *, dialogue: ChatDialogueState | None = None, turn: RoutedTurn | None = None,
+    input_method: str = "text", status: str = "valid",
+) -> None:
+    ending = session.get(ChatDialogueState, 1)
+    evidence = result.model_dump()
+    starting_state = dialogue.missing_slot if dialogue else None
+    ending_state = ending.missing_slot if ending else None
+    supplied_for_requested_slot = (
+        getattr(result, f"{starting_state}_text", None)
+        if starting_state in {"date", "time", "workout"} else None
+    )
+    evidence.update({
+        "input_method": input_method,
+        "starting_state": starting_state,
+        "starting_intent": dialogue.intent if dialogue else None,
+        "ending_state": ending_state,
+        "ending_intent": ending.intent if ending else None,
+        "transition": (
+            f"{starting_state or 'idle'}->"
+            f"{ending_state or ('confirm' if turn and turn.interactions else 'completed')}"
+        ),
+        "prompt_reason": ending_state,
+        "interaction_count": len(turn.interactions) if turn else 0,
+        "has_buttons": bool(turn and (turn.reply_markup or turn.interactions)),
+        "abandoned_flow": bool(
+            dialogue and result.intent != dialogue.intent and result.intent != "unknown"
+        ),
+        "unnecessary_repeat": bool(
+            supplied_for_requested_slot and ending_state == starting_state
+            and turn and not turn.text.startswith(("That ", "Use ", "No valid", "State "))
+        ),
+    })
     session.add(ChatIntentAudit(
         message_text=user_text,
         provider="deterministic",
-        model="closed-catalog-v1",
+        model="closed-catalog-v2",
         router_mode="deterministic",
         intent=result.intent,
-        evidence_json=json.dumps(result.model_dump(), sort_keys=True),
+        evidence_json=json.dumps(evidence, sort_keys=True),
         validation_status=status,
         failure_reason="",
         latency_ms=0,
@@ -273,9 +317,12 @@ def _dialogue(session: Session, now: datetime) -> ChatDialogueState | None:
     return row
 
 
-def _save_dialogue(session: Session, intent: str, slots: dict, missing: str, now: datetime) -> None:
+def _save_dialogue(session: Session, intent: str, slots: dict, missing: str, now: datetime) -> dict:
     existing = session.get(ChatDialogueState, 1)
     created_at = existing.created_at if existing else now
+    slots = dict(slots)
+    slots.setdefault("flow_nonce", uuid4().hex[:8])
+    slots["step"] = missing
     session.merge(ChatDialogueState(
         state_id=1,
         intent=intent,
@@ -287,6 +334,8 @@ def _save_dialogue(session: Session, intent: str, slots: dict, missing: str, now
         # value preserves the existing non-null schema during migration.
         expires_at=datetime(2099, 12, 31, 23, 59),
     ))
+    session.flush()
+    return slots
 
 
 def _clear_dialogue(session: Session) -> None:
@@ -337,25 +386,126 @@ def _menu_markup() -> dict:
     return {
         "keyboard": [
             [{"text": "Today's recommendation"}, {"text": "Next workout"}],
-            [{"text": "Schedule workout"}, {"text": "Change workout date"}],
-            [{"text": "Cancel workout"}, {"text": "My calendar"}],
+            [{"text": "Find a workout time"}, {"text": "Schedule workout"}],
+            [{"text": "Change workout date"}, {"text": "Cancel workout"}],
+            [{"text": "My calendar"}, {"text": "Explain recommendation"}],
             [{"text": "Metrics"}, {"text": "Recent activities"}],
             [{"text": "Program status"}, {"text": "Sync status"}],
-            [{"text": "Start Garmin sync"}, {"text": "Help"}],
+            [{"text": "Start Garmin sync"}, {"text": "Safety help"}],
+            [{"text": "Help"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
     }
 
 
-def _date_prompt_markup() -> dict:
-    """Offer common dates without preventing a typed weekday or calendar date."""
-    return {
-        "inline_keyboard": [[
-            {"text": "Today", "callback_data": "date_choice_today"},
-            {"text": "Tomorrow", "callback_data": "date_choice_tomorrow"},
-        ]],
-    }
+def _flow_callback(nonce: str, kind: str, value: str = "") -> str:
+    """Build a compact, state-bound callback below Telegram's 64-byte limit."""
+    return f"flow:{nonce}:{kind}" + (f":{value}" if value else "")
+
+
+def _date_prompt_markup(
+    now: datetime, nonce: str, *, include_back: bool = False,
+    dates: list[date] | None = None,
+) -> dict:
+    """Offer the next seven exact dates while retaining typed-date fallback."""
+    buttons = []
+    choices = dates if dates is not None else [now.date() + timedelta(days=offset) for offset in range(7)]
+    for value in choices:
+        offset = (value - now.date()).days
+        if offset == 0:
+            label = f"Today · {value:%d/%m}"
+        elif offset == 1:
+            label = f"Tomorrow · {value:%d/%m}"
+        else:
+            label = f"{value:%a} · {value:%d/%m}"
+        buttons.append({
+            "text": label,
+            "callback_data": _flow_callback(nonce, "d", value.strftime("%Y%m%d")),
+        })
+    rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
+    controls = []
+    if include_back:
+        controls.append({"text": "‹ Back", "callback_data": _flow_callback(nonce, "b")})
+    controls.append({"text": "Cancel", "callback_data": _flow_callback(nonce, "x")})
+    rows.append(controls)
+    return {"inline_keyboard": rows}
+
+
+def _time_prompt_markup(nonce: str, values: list[str], page: int = 0) -> dict:
+    """Render all valid times in bounded pages with navigation controls."""
+    page_size = 12
+    page_count = max(1, (len(values) + page_size - 1) // page_size)
+    page = max(0, min(page, page_count - 1))
+    selected = values[page * page_size:(page + 1) * page_size]
+    buttons = [{
+        "text": value,
+        "callback_data": _flow_callback(nonce, "t", value.replace(":", "")),
+    } for value in selected]
+    rows = [buttons[index:index + 3] for index in range(0, len(buttons), 3)]
+    controls = [{"text": "‹ Back", "callback_data": _flow_callback(nonce, "b")}]
+    if page > 0:
+        controls.append({"text": "Earlier", "callback_data": _flow_callback(nonce, "p", str(page - 1))})
+    if page + 1 < page_count:
+        controls.append({"text": "Later", "callback_data": _flow_callback(nonce, "p", str(page + 1))})
+    controls.append({"text": "Cancel", "callback_data": _flow_callback(nonce, "x")})
+    rows.append(controls)
+    return {"inline_keyboard": rows}
+
+
+def dialogue_reply_markup(session: Session, now: datetime | None = None) -> dict | None:
+    """Rebuild safe controls for the current dialogue state."""
+    now = now or get_local_now().replace(tzinfo=None)
+    state = _dialogue(session, now)
+    if not state:
+        return None
+    slots = json.loads(state.slots_json or "{}")
+    nonce = slots.get("flow_nonce")
+    if not nonce:
+        return None
+    if state.missing_slot == "date":
+        dates = [date.fromisoformat(value) for value in slots.get("offered_dates", [])]
+        if not dates:
+            dates = _eligible_date_choices(session, now, slots, state.intent)
+        return _date_prompt_markup(
+            now, nonce, include_back=bool(slots.get("planned_session_id")),
+            dates=dates or None,
+        )
+    if state.missing_slot == "time":
+        return _time_prompt_markup(nonce, slots.get("available_times", []), int(slots.get("time_page", 0)))
+    return None
+
+
+def _eligible_date_choices(
+    session: Session, now: datetime, slots: dict, intent: str,
+) -> list[date]:
+    """Return up to seven upcoming dates that have at least one valid slot."""
+    from coach.calendar import get_upcoming_schedule_result
+    from coach.scheduling import _session_details, available_start_times
+
+    calendar = get_upcoming_schedule_result(days=30)
+    if calendar["state"] != "fresh":
+        return [now.date() + timedelta(days=offset) for offset in range(7)]
+    duration = int(slots.get("duration_min") or 60)
+    earliest = now.date()
+    if intent == "schedule_workout":
+        details = _session_details(session, now.date())
+        if details:
+            duration = details[2]
+            earliest = details[3]
+    choices = []
+    for offset in range(30):
+        candidate = now.date() + timedelta(days=offset)
+        if candidate < earliest:
+            continue
+        if available_start_times(
+            session, now=now, schedule=calendar["events"], target_day=candidate,
+            duration_min=duration, limit=1,
+        ):
+            choices.append(candidate)
+            if len(choices) == 7:
+                break
+    return choices
 
 
 def _last_sync_text(session: Session) -> str:
@@ -622,19 +772,25 @@ def _available_time_prompt(
         return RoutedTurn("Calendar is unavailable, so no valid times can be offered.", [])
     times = available_start_times(
         session, now=now, schedule=calendar["events"], target_day=target_day,
-        duration_min=duration_min, limit=3,
+        duration_min=duration_min, limit=96,
     )
     if not times:
         return RoutedTurn(f"No valid full-workout time is available on {target_day:%A}.", [])
     values = [value.strftime("%H:%M") for value in times]
-    _save_dialogue(
+    saved = _save_dialogue(
         session, intent,
-        {**slots, "target_date": target_day.isoformat(), "available_times": values},
+        {
+            **slots,
+            "target_date": target_day.isoformat(),
+            "available_times": values,
+            "offered_choices": values,
+            "time_page": 0,
+        },
         "time", now,
     )
     return RoutedTurn(
         f"Available on {target_day:%A}: {', '.join(values)}. Which time should I use?",
-        [],
+        [], _time_prompt_markup(saved["flow_nonce"], values),
     )
 
 
@@ -658,22 +814,70 @@ def _route_deterministic(
         from coach.scheduling import requested_day
         date_text = slots.get("date_text")
         if not date_text:
-            _save_dialogue(session, result.intent, slots, "date", now)
-            return RoutedTurn("Which date should I use? You can also type another date.", [], _date_prompt_markup())
+            from coach.scheduling import _session_details
+            details = _session_details(session, now.date())
+            guided_slots = {
+                **slots,
+                "selection_mode": True,
+                "duration_min": details[2] if details else int(slots.get("duration_min") or 60),
+            }
+            guided_slots["offered_dates"] = [
+                value.isoformat() for value in _eligible_date_choices(session, now, guided_slots, result.intent)
+            ]
+            saved = _save_dialogue(session, result.intent, guided_slots, "date", now)
+            return RoutedTurn(
+                "Which date should I use? You can also type another date.", [],
+                _date_prompt_markup(
+                    now, saved["flow_nonce"],
+                    dates=[date.fromisoformat(value) for value in saved.get("offered_dates", [])] or None,
+                ),
+            )
         target_day = requested_day(date_text, now.date())
         if not target_day:
-            return RoutedTurn("Use today, tomorrow, a weekday, or YYYY-MM-DD.", [])
+            return RoutedTurn(
+                "Use one of the available dates or type today, tomorrow, a weekday, or YYYY-MM-DD.", [],
+                dialogue_reply_markup(session, now),
+            )
+        if target_day < now.date():
+            return RoutedTurn("That date has passed. Choose a current date.", [], dialogue_reply_markup(session, now))
         if slots.get("selection_mode") and not slots.get("time_text"):
             return _available_time_prompt(
                 session, intent=result.intent, slots=slots, target_day=target_day,
                 duration_min=int(slots.get("duration_min") or 60), now=now,
             )
+        if slots.get("selection_mode") and slots.get("time_text") and not slots.get("available_times"):
+            from coach.calendar import get_upcoming_schedule_result
+            from coach.scheduling import _parse_clock, available_start_times
+            calendar = get_upcoming_schedule_result(days=7)
+            values = [] if calendar["state"] != "fresh" else [
+                item.strftime("%H:%M") for item in available_start_times(
+                    session, now=now, schedule=calendar["events"], target_day=target_day,
+                    duration_min=int(slots.get("duration_min") or 60), limit=96,
+                )
+            ]
+            parsed = _parse_clock(slots["time_text"])
+            value = parsed.strftime("%H:%M") if parsed else ""
+            if value not in values:
+                saved = _save_dialogue(
+                    session, result.intent,
+                    {**slots, "target_date": target_day.isoformat(), "available_times": values, "offered_choices": values},
+                    "time", now,
+                )
+                if not values:
+                    return RoutedTurn(f"No valid full-workout time is available on {target_day:%A}.", [])
+                return RoutedTurn(
+                    f"That time is unavailable. Choose one of these valid times: {', '.join(values)}.", [],
+                    _time_prompt_markup(saved["flow_nonce"], values),
+                )
         if slots.get("available_times") and slots.get("time_text"):
             from coach.scheduling import _parse_clock
             parsed = _parse_clock(slots["time_text"])
             value = parsed.strftime("%H:%M") if parsed else ""
             if value not in slots["available_times"]:
-                return RoutedTurn(f"Choose one of these valid times: {', '.join(slots['available_times'])}.", [])
+                return RoutedTurn(
+                    f"That time is unavailable. Choose one of these valid times: {', '.join(slots['available_times'])}.",
+                    [], dialogue_reply_markup(session, now),
+                )
         combined = " ".join(filter(None, ("schedule workout", date_text, slots.get("time_text"))))
         text, interactions = _stage_explicit_schedule(session, combined, now)
         if interactions:
@@ -690,7 +894,11 @@ def _route_deterministic(
                     _stage_simple_action(
                         session, action_type="request_reschedule", target_type="planned_session",
                         target_id=item.id,
-                        payload={"planned_session_id": item.id, "title": item.title}, now=now,
+                        payload={
+                            "planned_session_id": item.id,
+                            "title": item.title,
+                            "selection_label": f"{item.title} · {item.target_date:%a %d/%m} {item.suggested_time}",
+                        }, now=now,
                     )
                     for item in candidates
                 ]
@@ -704,15 +912,30 @@ def _route_deterministic(
             return RoutedTurn("There is no current scheduled workout to change.", [])
         date_text = slots.get("date_text")
         if not date_text:
-            _save_dialogue(
+            guided_slots = {**slots, "planned_session_id": planned.id, "duration_min": planned.duration_min}
+            guided_slots["offered_dates"] = [
+                value.isoformat() for value in _eligible_date_choices(session, now, guided_slots, result.intent)
+            ]
+            saved = _save_dialogue(
                 session, result.intent,
-                {**slots, "planned_session_id": planned.id, "duration_min": planned.duration_min},
+                guided_slots,
                 "date", now,
             )
-            return RoutedTurn("Which new date should I use? You can also type another date.", [], _date_prompt_markup())
+            return RoutedTurn(
+                "Which new date should I use? You can also type another date.", [],
+                _date_prompt_markup(
+                    now, saved["flow_nonce"], include_back=True,
+                    dates=[date.fromisoformat(value) for value in saved.get("offered_dates", [])] or None,
+                ),
+            )
         target_day = requested_day(date_text, now.date())
         if not target_day:
-            return RoutedTurn("Use today, tomorrow, a weekday, or YYYY-MM-DD.", [])
+            return RoutedTurn(
+                "Use one of the available dates or type today, tomorrow, a weekday, or YYYY-MM-DD.", [],
+                dialogue_reply_markup(session, now),
+            )
+        if target_day < now.date():
+            return RoutedTurn("That date has passed. Choose a current date.", [], dialogue_reply_markup(session, now))
         if not slots.get("time_text"):
             return _available_time_prompt(
                 session, intent=result.intent,
@@ -721,9 +944,31 @@ def _route_deterministic(
             )
         parsed = _parse_clock(slots["time_text"])
         value = parsed.strftime("%H:%M") if parsed else ""
-        if not value or (slots.get("available_times") and value not in slots["available_times"]):
-            choices = ", ".join(slots.get("available_times", []))
-            return RoutedTurn(f"Choose one of these valid times: {choices}." if choices else "State an exact valid time.", [])
+        available_values = list(slots.get("available_times", []))
+        if not available_values:
+            from coach.calendar import get_upcoming_schedule_result
+            from coach.scheduling import available_start_times
+            calendar = get_upcoming_schedule_result(days=7)
+            if calendar["state"] == "fresh":
+                available_values = [item.strftime("%H:%M") for item in available_start_times(
+                    session, now=now, schedule=calendar["events"], target_day=target_day,
+                    duration_min=planned.duration_min or 60, limit=96,
+                )]
+        if not value or value not in available_values:
+            choices = ", ".join(available_values)
+            saved = _save_dialogue(
+                session, result.intent,
+                {
+                    **slots, "planned_session_id": planned.id, "duration_min": planned.duration_min,
+                    "target_date": target_day.isoformat(), "available_times": available_values,
+                    "offered_choices": available_values,
+                },
+                "time", now,
+            )
+            return RoutedTurn(
+                f"That time is unavailable. Choose one of these valid times: {choices}." if choices else "State an exact valid time.",
+                [], _time_prompt_markup(saved["flow_nonce"], available_values) if available_values else None,
+            )
         row = _stage_simple_action(
             session, action_type="reschedule_planned_time", target_type="planned_session",
             target_id=planned.id,
@@ -741,7 +986,11 @@ def _route_deterministic(
             _stage_simple_action(
                 session, action_type="cancel_planned_session", target_type="planned_session",
                 target_id=planned.id,
-                payload={"planned_session_id": planned.id, "title": planned.title}, now=now,
+                payload={
+                    "planned_session_id": planned.id,
+                    "title": planned.title,
+                    "selection_label": f"{planned.title} · {planned.target_date:%a %d/%m} {planned.suggested_time}",
+                }, now=now,
             )
             for planned in candidates
         ]
@@ -861,7 +1110,110 @@ def _multiple_mutations(user_text: str) -> list[tuple[str, IntentClassification]
     return mutations if len(mutations) > 1 else []
 
 
-def route_chat(session: Session, user_text: str) -> RoutedTurn:
+def _stale_flow_turn(
+    session: Session, callback_data: str, state: ChatDialogueState | None,
+    text: str, now: datetime,
+) -> RoutedTurn:
+    turn = RoutedTurn(
+        text, [], dialogue_reply_markup(session, now) if state else _menu_markup(),
+    )
+    result = IntentClassification(intent=state.intent if state else "unknown")
+    _audit(
+        session, callback_data, result, dialogue=state, turn=turn,
+        input_method="button", status="stale_button",
+    )
+    return turn
+
+
+def handle_flow_callback(session: Session, callback_data: str) -> RoutedTurn:
+    """Apply a state-bound button through the same router used by typed text."""
+    now = get_local_now().replace(tzinfo=None)
+    state = _dialogue(session, now)
+    parts = callback_data.split(":")
+    if len(parts) < 3 or parts[0] != "flow" or not state:
+        return _stale_flow_turn(
+            session, callback_data, state,
+            "This choice has expired. Choose an action from the menu.", now,
+        )
+    slots = json.loads(state.slots_json or "{}")
+    nonce, kind = parts[1], parts[2]
+    if nonce != slots.get("flow_nonce"):
+        return _stale_flow_turn(
+            session, callback_data, state,
+            "This choice belongs to an older flow. Your current choices are unchanged.", now,
+        )
+
+    if kind == "d" and len(parts) == 4 and state.missing_slot == "date":
+        try:
+            chosen = datetime.strptime(parts[3], "%Y%m%d").date().isoformat()
+        except ValueError:
+            return RoutedTurn("That date choice is invalid.", [], dialogue_reply_markup(session, now))
+        return route_chat(session, chosen, input_method="button")
+
+    if kind == "t" and len(parts) == 4 and state.missing_slot == "time":
+        value = parts[3]
+        chosen = f"{value[:2]}:{value[2:]}" if len(value) == 4 else ""
+        if chosen not in slots.get("available_times", []):
+            return _stale_flow_turn(
+                session, callback_data, state,
+                "That time is no longer offered. Choose a current time.", now,
+            )
+        return route_chat(session, chosen, input_method="button")
+
+    if kind == "p" and len(parts) == 4 and state.missing_slot == "time":
+        try:
+            slots["time_page"] = max(0, int(parts[3]))
+        except ValueError:
+            slots["time_page"] = 0
+        saved = _save_dialogue(session, state.intent, slots, "time", now)
+        values = saved.get("available_times", [])
+        turn = RoutedTurn(
+            f"Choose a valid time ({len(values)} available).", [],
+            _time_prompt_markup(saved["flow_nonce"], values, saved["time_page"]),
+        )
+        result = IntentClassification(intent=state.intent)
+        _audit(session, callback_data, result, dialogue=state, turn=turn, input_method="button")
+        return turn
+
+    if kind == "b":
+        if state.missing_slot == "time":
+            for key in (
+                "date_text", "time_text", "target_date", "available_times",
+                "offered_choices", "offered_dates", "time_page",
+            ):
+                slots.pop(key, None)
+            slots["offered_dates"] = [
+                value.isoformat() for value in _eligible_date_choices(session, now, slots, state.intent)
+            ]
+            saved = _save_dialogue(session, state.intent, slots, "date", now)
+            turn = RoutedTurn(
+                "Choose a different date.", [],
+                _date_prompt_markup(
+                    now, saved["flow_nonce"], include_back=bool(saved.get("planned_session_id")),
+                    dates=[date.fromisoformat(value) for value in saved.get("offered_dates", [])] or None,
+                ),
+            )
+        else:
+            _clear_dialogue(session)
+            turn = RoutedTurn("Back at the main menu.", [], _menu_markup())
+        result = IntentClassification(intent=state.intent)
+        _audit(session, callback_data, result, dialogue=state, turn=turn, input_method="button")
+        return turn
+
+    if kind == "x":
+        _clear_dialogue(session)
+        turn = RoutedTurn("Flow cancelled. Nothing was changed.", [], _menu_markup())
+        result = IntentClassification(intent=state.intent)
+        _audit(session, callback_data, result, dialogue=state, turn=turn, input_method="button", status="cancelled")
+        return turn
+
+    return _stale_flow_turn(
+        session, callback_data, state,
+        "That choice is not valid for the current step. Your current choices are unchanged.", now,
+    )
+
+
+def route_chat(session: Session, user_text: str, *, input_method: str = "text") -> RoutedTurn:
     """Route one message through the deterministic catalog."""
     now = get_local_now().replace(tzinfo=None)
     dialogue = _dialogue(session, now)
@@ -872,12 +1224,64 @@ def route_chat(session: Session, user_text: str) -> RoutedTurn:
         turns = []
         interactions: list[PendingInteraction] = []
         for clause, result in mutations:
-            _audit(session, clause, result)
             turn = _route_deterministic(session, clause, result, None, now)
+            _audit(session, clause, result, turn=turn, input_method=input_method)
             turns.append(turn.text)
             interactions.extend(turn.interactions)
         return RoutedTurn("\n\n".join(turns), interactions)
 
     result = classify_intent(user_text, dialogue)
-    _audit(session, user_text, result)
-    return _route_deterministic(session, user_text, result, dialogue, now)
+    turn = _route_deterministic(session, user_text, result, dialogue, now)
+    _audit(session, user_text, result, dialogue=dialogue, turn=turn, input_method=input_method)
+    return turn
+
+
+def chat_reliability_metrics(session: Session) -> dict[str, int | float]:
+    """Summarize closed-catalog outcomes without retaining a second metrics store."""
+    rows = session.query(ChatIntentAudit).all()
+    total = len(rows)
+    unknown = sum(row.intent == "unknown" for row in rows)
+    button_turns = 0
+    completed = 0
+    cancelled = 0
+    stale_buttons = 0
+    repeated_slot_prompts = 0
+    started_flows = 0
+    completed_flows = 0
+    abandoned_flows = 0
+    applied_actions = 0
+    failed_actions = 0
+    for row in rows:
+        try:
+            evidence = json.loads(row.evidence_json or "{}")
+        except ValueError:
+            continue
+        button_turns += evidence.get("input_method") == "button"
+        completed += evidence.get("ending_state") is None
+        cancelled += row.validation_status == "cancelled"
+        stale_buttons += row.validation_status == "stale_button"
+        starting = evidence.get("starting_state")
+        ending = evidence.get("ending_state")
+        started_flows += bool(evidence.get("interaction_count"))
+        final_outcome = evidence.get("final_outcome")
+        completed_flows += final_outcome in {"applied", "rejected"}
+        abandoned_flows += bool(evidence.get("abandoned_flow"))
+        applied_actions += final_outcome == "applied"
+        failed_actions += final_outcome in {"failed", "stale"}
+        repeated_slot_prompts += bool(evidence.get("unnecessary_repeat"))
+    return {
+        "turns": total,
+        "unknown_turns": unknown,
+        "unknown_rate": round(unknown / total, 4) if total else 0.0,
+        "button_turns": button_turns,
+        "completed_turns": completed,
+        "cancelled_flows": cancelled,
+        "stale_button_turns": stale_buttons,
+        "started_flows": started_flows,
+        "completed_flows": completed_flows,
+        "flow_completion_rate": round(completed_flows / started_flows, 4) if started_flows else 0.0,
+        "abandoned_flows": abandoned_flows,
+        "applied_actions": applied_actions,
+        "failed_actions": failed_actions,
+        "repeated_slot_prompts": repeated_slot_prompts,
+    }

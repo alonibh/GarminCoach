@@ -2368,21 +2368,23 @@ async def telegram_webhook(request: Request):
             telegram.answer_callback_query(callback_id)
             
             if str(chat_id) == config.TELEGRAM_CHAT_ID and chat_type == "private":
-                if callback_data in {"date_choice_today", "date_choice_tomorrow"}:
-                    from coach.coach import handle_chat
-                    choice = callback_data.removeprefix("date_choice_")
+                if callback_data.startswith("flow:"):
+                    from coach.intent_router import handle_flow_callback
                     with get_session() as db:
-                        text, asst_msg = handle_chat(db, choice)
-                        markup = None
-                        if asst_msg.pending_action_json:
-                            pending = json.loads(asst_msg.pending_action_json)
-                            interaction_ids = pending.get("interaction_ids", [])
-                            markup = pending.get("reply_markup")
-                            if interaction_ids:
-                                from coach.interactions import reply_markup_for_ids
-                                markup = reply_markup_for_ids(db, interaction_ids)
+                        turn = handle_flow_callback(db, callback_data)
+                        text = turn.text
+                        markup = turn.reply_markup
+                        if turn.interactions:
+                            from coach.interactions import reply_markup
+                            markup = reply_markup(turn.interactions)
                     telegram.edit_message_text(
                         text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup,
+                    )
+
+                elif callback_data in {"date_choice_today", "date_choice_tomorrow"}:
+                    telegram.edit_message_text(
+                        "This old date choice expired. Start the scheduling flow again.",
+                        chat_id=str(chat_id), message_id=message_id,
                     )
 
                 elif callback_data.startswith("catalog_details_metric_"):
@@ -2397,14 +2399,20 @@ async def telegram_webhook(request: Request):
                     interaction_id = callback_data.removeprefix("decision_different_time_")
                     with get_session() as db:
                         text = request_different_time(db, interaction_id)
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+                        from coach.intent_router import dialogue_reply_markup
+                        markup = dialogue_reply_markup(db)
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup)
 
                 elif callback_data.startswith("decision_action_"):
                     from coach.interactions import apply_interaction
                     interaction_id = callback_data.removeprefix("decision_action_")
                     with get_session() as db:
-                        _status, text = apply_interaction(db, interaction_id)
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
+                        status, text = apply_interaction(db, interaction_id)
+                        markup = None
+                        if status == "awaiting_input":
+                            from coach.intent_router import dialogue_reply_markup
+                            markup = dialogue_reply_markup(db)
+                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup)
 
                 elif callback_data.startswith("decision_cancel_"):
                     from coach.interactions import reject_interaction

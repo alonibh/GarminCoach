@@ -13,6 +13,7 @@ from coach.decision_engine import DecisionResult, evaluate_morning_decision
 from coach.onboarding import active_program
 from db import (
     AthleteSafetyReport,
+    ChatIntentAudit,
     DecisionRecord,
     MorningBriefState,
     PendingInteraction,
@@ -222,14 +223,14 @@ def reply_markup(interactions: list[PendingInteraction]) -> dict | None:
             ])
         elif item.action_type == "cancel_planned_session":
             payload = json.loads(item.payload_json)
-            title = payload.get("title")
+            title = payload.get("selection_label") or payload.get("title")
             rows.append([
                 {"text": f"Keep {title}" if title else "Keep workout", "callback_data": f"decision_cancel_{item.interaction_id}"},
                 {"text": f"Cancel {title}" if title else "Cancel workout", "callback_data": f"decision_action_{item.interaction_id}"},
             ])
         elif item.action_type == "request_reschedule":
             payload = json.loads(item.payload_json)
-            title = payload.get("title")
+            title = payload.get("selection_label") or payload.get("title")
             rows.append([
                 {"text": f"Change {title}" if title else "Set another date", "callback_data": f"decision_action_{item.interaction_id}"},
                 {"text": "Dismiss", "callback_data": f"decision_cancel_{item.interaction_id}"},
@@ -263,7 +264,7 @@ def _stage_explicit_schedule(
     if calendar["state"] != "fresh":
         return "Calendar data is unavailable, so I cannot verify a workout time.", []
     clock_matches = re.findall(
-        r"\b((?:[01]?\d|2[0-3]):[0-5]\d|(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?))\b",
+        r"\b((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?)|(?:[01]?\d|2[0-3]):[0-5]\d)\b",
         user_text,
         re.IGNORECASE,
     )
@@ -403,6 +404,17 @@ def cancel_interaction(session: Session, interaction_id: str) -> bool:
     return True
 
 
+def _interaction_intent(action_type: str) -> str:
+    return {
+        "schedule_original_session": "schedule_workout",
+        "reschedule_planned_time": "reschedule_workout",
+        "request_reschedule": "reschedule_workout",
+        "cancel_planned_session": "cancel_workout",
+        "start_sync": "request_sync",
+        "confirm_safety_report": "report_safety_issue",
+    }.get(action_type, "unknown")
+
+
 def reject_interaction(session: Session, interaction_id: str) -> str:
     """Reject a proposal without applying its underlying operation."""
     row = session.get(PendingInteraction, interaction_id)
@@ -411,12 +423,27 @@ def reject_interaction(session: Session, interaction_id: str) -> str:
     row.status = "rejected"
     row.failure_reason = "user_rejected"
     if row.action_type == "schedule_original_session":
-        return "Proposal rejected. The workout remains pending and will not be proactively proposed again today."
-    if row.action_type in {"cancel_planned_session", "reschedule_planned_time"}:
-        return "Workout kept unchanged."
-    if row.action_type == "confirm_safety_report":
-        return "Safety report not recorded."
-    return "Action dismissed. Nothing was changed."
+        text = "Proposal rejected. The workout remains pending and will not be proactively proposed again today."
+    elif row.action_type in {"cancel_planned_session", "reschedule_planned_time"}:
+        text = "Workout kept unchanged."
+    elif row.action_type == "confirm_safety_report":
+        text = "Safety report not recorded."
+    else:
+        text = "Action dismissed. Nothing was changed."
+    session.add(ChatIntentAudit(
+        message_text=f"button:{row.action_type}", provider="deterministic",
+        model="closed-catalog-v2", router_mode="deterministic",
+        intent=_interaction_intent(row.action_type),
+        evidence_json=json.dumps({
+            "input_method": "button", "interaction_id": interaction_id,
+            "action_type": row.action_type, "starting_state": "confirm",
+            "ending_state": None, "transition": "confirm->rejected",
+            "final_outcome": "rejected", "failure_reason": row.failure_reason,
+        }, sort_keys=True),
+        validation_status="rejected", failure_reason=row.failure_reason,
+        latency_ms=0, created_at=get_local_now().replace(tzinfo=None),
+    ))
+    return text
 
 
 def mark_delivery_failed(session: Session, interaction_ids: list[str], reason: str) -> None:
@@ -445,6 +472,8 @@ def request_different_time(session: Session, interaction_id: str) -> str:
             "program_session_id": payload.get("program_session_id"),
             "duration_min": payload.get("duration_min") or 60,
             "selection_mode": True,
+            "flow_nonce": uuid4().hex[:8],
+            "step": "date",
         }, sort_keys=True),
         missing_slot="date",
         created_at=now,
@@ -452,6 +481,19 @@ def request_different_time(session: Session, interaction_id: str) -> str:
         expires_at=datetime(2099, 12, 31, 23, 59),
     ))
     session.flush()
+    session.add(ChatIntentAudit(
+        message_text="button:schedule_different_time", provider="deterministic",
+        model="closed-catalog-v2", router_mode="deterministic",
+        intent="schedule_workout",
+        evidence_json=json.dumps({
+            "input_method": "button", "interaction_id": interaction_id,
+            "action_type": "schedule_different_time", "starting_state": "confirm",
+            "ending_state": "date", "transition": "confirm->date",
+            "final_outcome": "awaiting_input", "failure_reason": "",
+        }, sort_keys=True),
+        validation_status="awaiting_input", failure_reason="", latency_ms=0,
+        created_at=now,
+    ))
     return "Which new date should I use?"
 
 
@@ -481,7 +523,7 @@ def _scheduled_occurrence_id(raw, workout_id: int, target_day: date) -> int | No
     return None
 
 
-def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
+def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
     row = session.get(PendingInteraction, interaction_id)
     now = get_local_now().replace(tzinfo=None)
     if not row or row.status != "pending":
@@ -600,6 +642,8 @@ def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
                 "planned_session_id": planned.id,
                 "duration_min": planned.duration_min,
                 "selection_mode": True,
+                "flow_nonce": uuid4().hex[:8],
+                "step": "date",
             }, sort_keys=True),
             missing_slot="date",
             created_at=now,
@@ -797,6 +841,37 @@ def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
     row.status = "applied"
     row.applied_at = now
     return "applied", "Original program session scheduled."
+
+
+def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
+    """Apply and audit the final outcome of a confirmation button."""
+    row = session.get(PendingInteraction, interaction_id)
+    status, text = _apply_interaction(session, interaction_id)
+    action_type = row.action_type if row else "unknown"
+    intent = _interaction_intent(action_type)
+    ending_state = "date" if status == "awaiting_input" else None
+    session.add(ChatIntentAudit(
+        message_text=f"button:{action_type}",
+        provider="deterministic",
+        model="closed-catalog-v2",
+        router_mode="deterministic",
+        intent=intent,
+        evidence_json=json.dumps({
+            "input_method": "button",
+            "interaction_id": interaction_id,
+            "action_type": action_type,
+            "starting_state": "confirm",
+            "ending_state": ending_state,
+            "transition": f"confirm->{ending_state or status}",
+            "final_outcome": status,
+            "failure_reason": row.failure_reason if row else "interaction_missing",
+        }, sort_keys=True),
+        validation_status=status,
+        failure_reason=row.failure_reason if row else "interaction_missing",
+        latency_ms=0,
+        created_at=get_local_now().replace(tzinfo=None),
+    ))
+    return status, text
 
 
 def stage_calendar_conflict(session: Session, planned, conflict: dict) -> list[PendingInteraction]:

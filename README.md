@@ -119,6 +119,9 @@ The complete nine-routine audit is in
 
 - Telegram buttons carry exact pending actions, expiry, and program/sync/
   calendar versions. Every click reloads and revalidates current state.
+- Guided scheduling offers state-bound buttons for eligible dates and all valid
+  times, with paging, Back, and Cancel controls. Stale controls cannot alter a
+  newer conversation.
 - Free text may initiate a scheduling or change request; a button confirmation
   is still required before mutation. A generic “yes” never executes the latest
   message.
@@ -140,8 +143,10 @@ The complete nine-routine audit is in
 - Deterministic handlers resolve every referenced session, date, metric, and
   calendar slot. All state changes require versioned Telegram confirmation buttons.
 - The router has no AI or rollout mode. Unsupported messages show the persistent
-  menu and cannot fall through to generated answers.
-- Incomplete requests use typed, semantically revalidated dialogue state. A generic text
+  menu when idle and redraw the current choices during an active guided flow.
+- Incomplete requests use typed, semantically revalidated dialogue state and
+  merge every recognized slot from each reply. Combined date/time replies
+  advance directly to confirmation. A generic text
   reply such as “yes” never approves an action.
 
 ## Technical architecture

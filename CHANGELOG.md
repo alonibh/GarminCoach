@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-20 - Button-First Telegram Scheduling
+
+- Fixed guided replies such as "Today at 18:30" so date and time are consumed
+  together instead of asking for an already supplied time again.
+- Added state-bound date and time buttons, seven eligible date choices, complete
+  valid-time lists with paging, and Back/Cancel controls.
+- Preserved unfinished flows after unsupported replies, rejected stale or
+  duplicate controls, and added exact workout labels for ambiguous changes.
+- Versioned the deterministic router as `closed-catalog-v2` and added transition,
+  button, completion, abandonment, stale-control, and repeated-prompt metrics.
+
 ## 2026-07-19 - Natural Reminders and Cancellation Language
 
 - Reworded the one-hour alert as a natural workout reminder that names the

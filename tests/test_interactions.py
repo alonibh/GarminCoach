@@ -8,7 +8,7 @@ from coach.interactions import (
     stage_free_text_change,
 )
 from coach.renderer import render_morning
-from db import AthleteSafetyReport, Goal, PendingInteraction
+from db import AthleteSafetyReport, ChatIntentAudit, Goal, PendingInteraction
 from tests.test_decision_engine import TARGET, _fresh_readiness, _fresh_sleep
 from tests.test_program_state import _add_program
 
@@ -77,6 +77,11 @@ def test_interaction_revalidates_and_schedules_once(session, monkeypatch):
     assert second[0] == "stale"
     assert len(calls) == 1
     assert calls[0]["modifications"] == []
+    outcomes = [
+        json.loads(row.evidence_json)["final_outcome"]
+        for row in session.query(ChatIntentAudit).order_by(ChatIntentAudit.id)
+    ]
+    assert outcomes == ["applied", "stale"]
 
 
 def test_program_change_supersedes_old_button(session, monkeypatch):

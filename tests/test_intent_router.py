@@ -3,7 +3,12 @@ import json
 
 import pytest
 
-from coach.intent_router import classify_intent, route_chat
+from coach.intent_router import (
+    chat_reliability_metrics,
+    classify_intent,
+    handle_flow_callback,
+    route_chat,
+)
 from coach.interactions import (
     _scheduled_occurrence_id,
     apply_interaction,
@@ -106,7 +111,9 @@ def test_schedule_request_stages_complete_proposal_without_ai(session, monkeypat
     ]
     audit = session.query(ChatIntentAudit).one()
     assert audit.provider == "deterministic"
-    assert audit.model == "closed-catalog-v1"
+    assert audit.model == "closed-catalog-v2"
+    evidence = json.loads(audit.evidence_json)
+    assert evidence["transition"] == "idle->confirm"
 
 
 def test_date_prompt_offers_today_and_tomorrow_but_allows_typed_dates(session, monkeypatch):
@@ -115,22 +122,26 @@ def test_date_prompt_offers_today_and_tomorrow_but_allows_typed_dates(session, m
     routed = route_chat(session, "Schedule workout")
 
     assert routed.text == "Which date should I use? You can also type another date."
-    assert routed.reply_markup == {
-        "inline_keyboard": [[
-            {"text": "Today", "callback_data": "date_choice_today"},
-            {"text": "Tomorrow", "callback_data": "date_choice_tomorrow"},
-        ]],
-    }
+    buttons = [button for row in routed.reply_markup["inline_keyboard"] for button in row]
+    assert [button["text"] for button in buttons[:7]] == [
+        "Today · 19/07", "Tomorrow · 20/07", "Tue · 21/07", "Wed · 22/07",
+        "Thu · 23/07", "Fri · 24/07", "Sat · 25/07",
+    ]
+    callbacks = [button["callback_data"] for button in buttons[:7]]
+    assert all(value.startswith("flow:") and ":d:202607" in value for value in callbacks)
+    assert len({value.split(":")[1] for value in callbacks}) == 1
+    assert buttons[-1]["text"] == "Cancel"
 
 
-def test_menu_does_not_offer_explain_recommendation(session, monkeypatch):
+def test_menu_offers_every_supported_top_level_catalog_path(session, monkeypatch):
     _fixed_router(monkeypatch)
 
     routed = route_chat(session, "Help")
 
     labels = [button["text"] for row in routed.reply_markup["keyboard"] for button in row]
-    assert "Explain recommendation" not in labels
-    assert "Find a workout time" not in labels
+    assert "Explain recommendation" in labels
+    assert "Find a workout time" in labels
+    assert "Safety help" in labels
 
 
 @pytest.mark.parametrize("message", [
@@ -165,13 +176,214 @@ def test_set_another_date_uses_typed_date_then_valid_time_flow(session, monkeypa
     assert state.expires_at.year == 2099
 
     date_turn = route_chat(session, "tomorrow")
-    assert date_turn.text == "Available on Monday: 18:00, 18:15, 18:30. Which time should I use?"
+    assert date_turn.text == "Available on Monday: 18:00, 18:15, 18:30, 18:45, 19:00. Which time should I use?"
     assert session.get(ChatDialogueState, 1).missing_slot == "time"
+    assert [button["text"] for row in date_turn.reply_markup["inline_keyboard"][:-1] for button in row] == [
+        "18:00", "18:15", "18:30", "18:45", "19:00",
+    ]
 
     time_turn = route_chat(session, "18:15")
     assert "Monday at 18:15" in time_turn.text
     assert json.loads(time_turn.interactions[0].payload_json)["suggested_time"] == "18:15"
     assert session.get(ChatDialogueState, 1) is None
+
+
+@pytest.mark.parametrize(("message", "expected_time"), [
+    ("Today at 18:30", "18:30"),
+    ("today 6:30 pm", "18:30"),
+    ("2026-07-19 18:30", "18:30"),
+])
+def test_combined_date_and_time_reply_never_repeats_the_time_question(
+    session, monkeypatch, message, expected_time,
+):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+    proposal = route_chat(session, "Schedule my workout today")
+    request_different_time(session, proposal.interactions[0].interaction_id)
+
+    routed = route_chat(session, message)
+
+    assert "Please confirm" in routed.text
+    assert "Sunday at 18:30" in routed.text
+    assert len(routed.interactions) == 1
+    assert json.loads(routed.interactions[0].payload_json)["suggested_time"] == expected_time
+    assert session.get(ChatDialogueState, 1) is None
+    audit = session.query(ChatIntentAudit).order_by(ChatIntentAudit.id.desc()).first()
+    evidence = json.loads(audit.evidence_json)
+    assert evidence["starting_state"] == "date"
+    assert evidence["time_text"] is not None
+    assert evidence["ending_state"] is None
+
+
+def test_state_bound_date_and_time_buttons_complete_the_same_flow(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+
+    prompt = route_chat(session, "Schedule workout")
+    date_callback = prompt.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    time_prompt = handle_flow_callback(session, date_callback)
+    assert "Available on Sunday" in time_prompt.text
+    assert session.get(ChatDialogueState, 1).missing_slot == "time"
+
+    time_callback = next(
+        button["callback_data"]
+        for row in time_prompt.reply_markup["inline_keyboard"]
+        for button in row if button["text"] == "18:30"
+    )
+    confirmation = handle_flow_callback(session, time_callback)
+    assert "Sunday at 18:30" in confirmation.text
+    assert len(confirmation.interactions) == 1
+    assert session.get(ChatDialogueState, 1) is None
+    audit = session.query(ChatIntentAudit).order_by(ChatIntentAudit.id.desc()).first()
+    assert json.loads(audit.evidence_json)["input_method"] == "button"
+
+
+def test_stale_flow_button_preserves_current_dialogue(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    prompt = route_chat(session, "Schedule workout")
+    active = session.get(ChatDialogueState, 1)
+    original_slots = active.slots_json
+    callback = prompt.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    stale = callback.replace(callback.split(":")[1], "deadbeef")
+
+    routed = handle_flow_callback(session, stale)
+
+    assert "older flow" in routed.text
+    assert session.get(ChatDialogueState, 1).slots_json == original_slots
+    assert session.query(ChatIntentAudit).order_by(ChatIntentAudit.id.desc()).first().validation_status == "stale_button"
+
+
+def test_duplicate_date_callback_does_not_restart_or_advance_the_flow(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+    prompt = route_chat(session, "Schedule workout")
+    callback = prompt.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    handle_flow_callback(session, callback)
+    before = session.get(ChatDialogueState, 1).slots_json
+
+    duplicate = handle_flow_callback(session, callback)
+
+    assert "not valid for the current step" in duplicate.text
+    assert session.get(ChatDialogueState, 1).slots_json == before
+    assert session.get(ChatDialogueState, 1).missing_slot == "time"
+
+
+def test_past_typed_date_keeps_current_date_choices(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+    route_chat(session, "Schedule workout")
+
+    routed = route_chat(session, "2026-07-18")
+
+    assert routed.text == "That date has passed. Choose a current date."
+    assert routed.reply_markup is not None
+    assert session.get(ChatDialogueState, 1).missing_slot == "date"
+
+
+def test_combined_date_time_reschedule_goes_directly_to_confirmation(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+    planned = PlannedSession(
+        title="Day 1", target_date=date(2026, 7, 20), suggested_time="18:00",
+        duration_min=60, status="approved",
+    )
+    session.add(planned)
+    session.commit()
+    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
+
+    prompt = route_chat(session, "Change workout date")
+    assert prompt.reply_markup is not None
+    routed = route_chat(session, "today at 18:30")
+
+    assert routed.text == "Move Day 1 to Sunday at 18:30?"
+    assert routed.interactions[0].action_type == "reschedule_planned_time"
+    assert session.get(ChatDialogueState, 1) is None
+
+
+def test_explicit_catalog_command_abandons_an_unfinished_flow(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    route_chat(session, "Schedule workout")
+
+    routed = route_chat(session, "Metrics")
+
+    assert session.get(ChatDialogueState, 1) is None
+    assert "metrics" in routed.text.lower()
+    audit = session.query(ChatIntentAudit).order_by(ChatIntentAudit.id.desc()).first()
+    assert json.loads(audit.evidence_json)["abandoned_flow"] is True
+
+
+def test_unrecognized_reply_keeps_the_current_guided_flow(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+    first = route_chat(session, "Schedule workout")
+    nonce = session.get(ChatDialogueState, 1).slots_json
+
+    routed = route_chat(session, "whenever works I guess")
+
+    assert routed.text == "Which date should I use? You can also type another date."
+    assert routed.reply_markup is not None
+    assert session.get(ChatDialogueState, 1).slots_json == nonce
+    assert first.reply_markup == routed.reply_markup
+
+
+def test_back_and_cancel_controls_do_not_stage_an_operation(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    _fresh_calendar(monkeypatch)
+    prompt = route_chat(session, "Schedule workout")
+    date_callback = prompt.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    time_prompt = handle_flow_callback(session, date_callback)
+    back_callback = time_prompt.reply_markup["inline_keyboard"][-1][0]["callback_data"]
+
+    date_prompt = handle_flow_callback(session, back_callback)
+    assert "different date" in date_prompt.text
+    assert session.get(ChatDialogueState, 1).missing_slot == "date"
+    cancel_callback = date_prompt.reply_markup["inline_keyboard"][-1][-1]["callback_data"]
+    cancelled = handle_flow_callback(session, cancel_callback)
+    assert cancelled.text == "Flow cancelled. Nothing was changed."
+    assert session.get(ChatDialogueState, 1) is None
+    assert session.query(PendingInteraction).count() == 0
+
+
+def test_time_buttons_paginate_when_many_slots_are_available(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _add_program(session, key="total_package_3")
+    session.add(Goal(id=1, custom_input="No workouts before 06:00. No workouts after 22:00."))
+    session.commit()
+    _fresh_calendar(monkeypatch)
+    proposal = route_chat(session, "Schedule my workout today")
+    request_different_time(session, proposal.interactions[0].interaction_id)
+
+    routed = route_chat(session, "tomorrow")
+
+    controls = [button["text"] for button in routed.reply_markup["inline_keyboard"][-1]]
+    assert "Later" in controls
+    later = next(
+        button["callback_data"] for button in routed.reply_markup["inline_keyboard"][-1]
+        if button["text"] == "Later"
+    )
+    page_two = handle_flow_callback(session, later)
+    assert "Earlier" in [button["text"] for button in page_two.reply_markup["inline_keyboard"][-1]]
+
+
+def test_reliability_metrics_include_unknown_stale_and_completion_counts(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    route_chat(session, "nonsense that is unsupported")
+    prompt = route_chat(session, "Schedule workout")
+    callback = prompt.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    handle_flow_callback(session, callback.replace(callback.split(":")[1], "deadbeef"))
+
+    metrics = chat_reliability_metrics(session)
+
+    assert metrics["turns"] == 3
+    assert metrics["unknown_turns"] == 1
+    assert metrics["stale_button_turns"] == 1
 
 
 def test_context_rejects_a_time_that_was_not_offered(session, monkeypatch):
@@ -182,10 +394,11 @@ def test_context_rejects_a_time_that_was_not_offered(session, monkeypatch):
     request_different_time(session, proposal.interactions[0].interaction_id)
     route_chat(session, "tomorrow")
 
-    invalid = route_chat(session, "19:00")
+    invalid = route_chat(session, "19:15")
 
-    assert invalid.text == "Choose one of these valid times: 18:00, 18:15, 18:30."
+    assert invalid.text == "That time is unavailable. Choose one of these valid times: 18:00, 18:15, 18:30, 18:45, 19:00."
     assert invalid.interactions == []
+    assert invalid.reply_markup is not None
 
 
 def test_cancel_request_has_keep_and_cancel_buttons(session, monkeypatch):
@@ -250,8 +463,8 @@ def test_multiple_planned_workouts_require_explicit_cancellation_choice(session,
 
     assert len(routed.interactions) == 2
     assert [[button["text"] for button in row] for row in markup["inline_keyboard"]] == [
-        ["Keep Day 1", "Cancel Day 1"],
-        ["Keep Day 2", "Cancel Day 2"],
+        ["Keep Day 1 · Sun 19/07 18:00", "Cancel Day 1 · Sun 19/07 18:00"],
+        ["Keep Day 2 · Mon 20/07 19:00", "Cancel Day 2 · Mon 20/07 19:00"],
     ]
 
 
