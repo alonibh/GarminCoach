@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-21 - AthleteData-Informed Coach Guardrails
+
+- Added on-demand rolling program-state and recorded lift-progression views;
+  target weights remain athlete-approved and never change automatically.
+- Added an informational short-session view based on configured primary
+  movement patterns without replacing or scheduling the approved full workout.
+- Confirmed safety reports now block workout timing, scheduling, and
+  rescheduling until the athlete explicitly confirms closing the report.
+
 ## 2026-07-20 - Button-First Telegram Scheduling
 
 - Fixed guided replies such as "Today at 18:30" so date and time are consumed

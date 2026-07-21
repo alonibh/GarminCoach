@@ -115,6 +115,10 @@ def stage_decision_actions(
         action for action in result.permitted_actions
         if action_types is None or action["type"] in action_types
     ]
+    if any(
+        row.active for row in session.query(AthleteSafetyReport).filter_by(active=True).all()
+    ):
+        selected = [action for action in selected if action["type"] != "schedule_original_session"]
     if not selected:
         return staged
     versions = (program_version(session), sync_version(session), calendar_version(session))
@@ -162,6 +166,7 @@ def button_label(action_type: str) -> str:
     return {
         "schedule_original_session": "Approve and schedule",
         "confirm_safety_report": "Record report",
+        "clear_safety_report": "Resume planning",
         "keep_planned_session": "Keep workout",
         "keep_calendar_time": "Keep workout",
         "request_reschedule": "Set another date",
@@ -412,6 +417,7 @@ def _interaction_intent(action_type: str) -> str:
         "cancel_planned_session": "cancel_workout",
         "start_sync": "request_sync",
         "confirm_safety_report": "report_safety_issue",
+        "clear_safety_report": "clear_safety_report",
     }.get(action_type, "unknown")
 
 
@@ -428,6 +434,8 @@ def reject_interaction(session: Session, interaction_id: str) -> str:
         text = "Workout kept unchanged."
     elif row.action_type == "confirm_safety_report":
         text = "Safety report not recorded."
+    elif row.action_type == "clear_safety_report":
+        text = "Safety report remains active."
     else:
         text = "Action dismissed. Nothing was changed."
     session.add(ChatIntentAudit(
@@ -547,6 +555,17 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
         row.status = "applied"
         row.applied_at = now
         return "applied", "Safety report confirmed."
+
+    if row.action_type == "clear_safety_report":
+        report = session.get(AthleteSafetyReport, row.target_id)
+        if not report or not report.active:
+            row.status = "superseded"
+            row.failure_reason = "safety_report_not_active"
+            return "stale", "The safety report is no longer active."
+        report.active = False
+        row.status = "applied"
+        row.applied_at = now
+        return "applied", "Safety report closed. Workout planning can resume."
 
     if row.action_type == "start_sync":
         from sync import sync_runner

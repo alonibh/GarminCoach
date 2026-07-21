@@ -27,6 +27,7 @@ from db import (
     get_session,
 )
 from sync.garmin_client import client
+from time_utils import get_local_tz
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,19 @@ def _workout_id(payload: Any) -> Optional[int]:
         if found is not None:
             return found
     return None
+
+
+def _parse_sleep_dt(value: Any, *, is_gmt: bool = False) -> Optional[datetime]:
+    """Parse a Garmin sleep timestamp into the athlete's local wall-clock time.
+
+    Sleep timestamps are stored as naive local datetimes because the rest of the
+    application displays them as wall-clock values. Garmin's GMT fields must
+    therefore be converted before persisting them.
+    """
+    parsed = _parse_dt(value)
+    if parsed is None or not is_gmt:
+        return parsed
+    return parsed.replace(tzinfo=timezone.utc).astimezone(get_local_tz()).replace(tzinfo=None)
 
 
 def _upsert_activity(session, raw: dict) -> Optional[int]:
@@ -441,18 +455,18 @@ def _sync_sleep(session, day: date) -> bool:
     dto = _g(data, "dailySleepDTO", default={}) or {}
     row = session.get(Sleep, day) or Sleep(day=day)
     row.sleep_start_time = (
-        _parse_dt(dto.get("sleepStartTimestampGMT"))
-        or _parse_dt(dto.get("sleepStartTimestampLocal"))
-        or _parse_dt(dto.get("sleepStartTimestamp"))
-        or _parse_dt(dto.get("startTimeGMT"))
-        or _parse_dt(dto.get("startTimeLocal"))
+        _parse_sleep_dt(dto.get("sleepStartTimestampLocal"))
+        or _parse_sleep_dt(dto.get("startTimeLocal"))
+        or _parse_sleep_dt(dto.get("sleepStartTimestamp"))
+        or _parse_sleep_dt(dto.get("sleepStartTimestampGMT"), is_gmt=True)
+        or _parse_sleep_dt(dto.get("startTimeGMT"), is_gmt=True)
     )
     row.sleep_end_time = (
-        _parse_dt(dto.get("sleepEndTimestampGMT"))
-        or _parse_dt(dto.get("sleepEndTimestampLocal"))
-        or _parse_dt(dto.get("sleepEndTimestamp"))
-        or _parse_dt(dto.get("endTimeGMT"))
-        or _parse_dt(dto.get("endTimeLocal"))
+        _parse_sleep_dt(dto.get("sleepEndTimestampLocal"))
+        or _parse_sleep_dt(dto.get("endTimeLocal"))
+        or _parse_sleep_dt(dto.get("sleepEndTimestamp"))
+        or _parse_sleep_dt(dto.get("sleepEndTimestampGMT"), is_gmt=True)
+        or _parse_sleep_dt(dto.get("endTimeGMT"), is_gmt=True)
     )
     row.total_s = dto.get("sleepTimeSeconds")
     row.deep_s = dto.get("deepSleepSeconds")

@@ -374,6 +374,18 @@ restated and require an inline confirmation before being persisted or used in a
 future recommendation. Confirmed safety symptoms can block an action through a
 separate safety policy; they are not converted into biometric scores.
 
+An active confirmed safety report blocks workout-time suggestions and schedule
+or reschedule proposals. The athlete may explicitly close the report through a
+separate confirmation, which restores planning but never represents medical
+clearance.
+
+Informational Telegram queries may show the rolling plan state (last completed,
+next session, earliest recommended date, and a current scheduled session),
+recorded lift evidence against the next session's configured targets, or an
+informational 30-minute abbreviated session. Lift history never changes target
+weights automatically. An abbreviated session is never scheduled or pushed to
+the watch without a separate athlete-approved workflow.
+
 ## 9. Sync architecture
 
 The current monolithic sync must become a priority-aware orchestration while

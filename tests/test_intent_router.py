@@ -18,6 +18,7 @@ from coach.interactions import (
 )
 from db import (
     Activity,
+    AthleteSafetyReport,
     ChatDialogueState,
     ChatIntentAudit,
     DailyHealth,
@@ -143,6 +144,47 @@ def test_menu_offers_every_supported_top_level_catalog_path(session, monkeypatch
     assert "Find a workout time" in labels
     assert "Safety help" not in labels
     assert "Help" not in labels
+
+
+@pytest.mark.parametrize(("message", "expected"), [
+    ("Show my lift progress", "get_progress"),
+    ("I only have 30 minutes for a workout", "get_shortened_workout"),
+    ("I am ready to resume training", "clear_safety_report"),
+])
+def test_progress_shortened_and_safety_resume_are_closed_catalog_intents(message, expected):
+    assert classify_intent(message).intent == expected
+
+
+def test_program_status_includes_sequence_and_earliest_date(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _add_program(session, key="total_package_3")
+    session.commit()
+
+    routed = route_chat(session, "Program status")
+
+    assert "Active program:" in routed.text
+    assert "Next workout:" in routed.text
+    assert "Earliest recommended:" in routed.text
+
+
+def test_active_safety_report_blocks_workout_timing_until_closed(session, monkeypatch):
+    _fixed_router(monkeypatch)
+    _program_and_constraints(session)
+    session.add(AthleteSafetyReport(
+        report_type="pain", report_text="Knee pain", confirmed_at=datetime(2026, 7, 19, 7, 30), active=True,
+    ))
+    session.commit()
+
+    blocked = route_chat(session, "Find a workout time")
+    assert "still active" in blocked.text
+    assert blocked.interactions == []
+
+    close = route_chat(session, "I am ready to resume training")
+    assert "Close the active safety report" in close.text
+    assert close.interactions[0].action_type == "clear_safety_report"
+    status, _ = apply_interaction(session, close.interactions[0].interaction_id)
+    assert status == "applied"
+    assert session.query(AthleteSafetyReport).one().active is False
 
 
 @pytest.mark.parametrize("message", [

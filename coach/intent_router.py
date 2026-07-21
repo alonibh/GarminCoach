@@ -19,11 +19,13 @@ from sqlalchemy.orm import Session
 
 from db import (
     Activity,
+    AthleteSafetyReport,
     ChatDialogueState,
     ChatIntentAudit,
     DailyHealth,
     DailyMetrics,
     DecisionRecord,
+    ExerciseSet,
     PendingInteraction,
     PlannedSession,
     ProgramSession,
@@ -31,7 +33,7 @@ from db import (
     Sleep,
     SyncState,
 )
-from time_utils import format_chat_datetime, get_local_now
+from time_utils import format_chat_date, format_chat_datetime, get_local_now
 
 
 IntentName = Literal[
@@ -39,6 +41,7 @@ IntentName = Literal[
     "schedule_workout", "reschedule_workout", "cancel_workout",
     "report_safety_issue", "request_sync", "get_sync_status", "get_program",
     "get_calendar", "get_metrics", "get_activity_history", "explain_decision",
+    "get_progress", "get_shortened_workout", "clear_safety_report",
     "help", "multiple_intents", "unknown",
 ]
 
@@ -139,6 +142,9 @@ def _explicit_classification(user_text: str) -> IntentClassification:
     if first_person and symptom:
         return IntentClassification(intent="report_safety_issue", topic=symptom.group(1))
 
+    if re.search(r"\b(?:resume training|ready to resume|clear (?:my )?(?:pain|safety|symptom) report)\b", text):
+        return IntentClassification(intent="clear_safety_report")
+
     if not negated_mutation and _CANCEL_VERB.search(text):
         if workout_text or date_text or re.search(r"\bbooking\b", text):
             return IntentClassification(
@@ -190,6 +196,12 @@ def _explicit_classification(user_text: str) -> IntentClassification:
         return IntentClassification(intent="get_workout_details", workout_text=workout_text)
     if re.fullmatch(r"(?:what is|what's)?\s*(?:my\s+)?next\s+(?:workout|session)\??", text):
         return IntentClassification(intent="get_workout_details", workout_text="next workout")
+
+    if re.search(r"\b(?:short(?:er)? workout|short(?:er)? session|only have \d+|quick workout)\b", text):
+        return IntentClassification(intent="get_shortened_workout")
+
+    if re.search(r"\b(?:progress|progressing|progression|working weights?|lift history)\b", text):
+        return IntentClassification(intent="get_progress")
 
     topic = _metric_topic(text)
     if topic and re.search(r"\b(what|show|tell|how|mean|status|my|today|latest)\b", text):
@@ -693,6 +705,134 @@ def _workout_details(session: Session) -> str:
     return "\n".join(lines)
 
 
+def _program_state_response(session: Session) -> str:
+    """Return the small set of plan facts an athlete needs to orient themselves."""
+    from coach.onboarding import active_program
+    from coach.program_state import program_state_facts
+
+    program = active_program(session)
+    if not program:
+        return "There is no active approved training program."
+    state = program_state_facts(session, program)
+    if not state:
+        return f"Active program: {program.name}. Its current sequence state is unavailable."
+    lines = [f"Active program: {program.name}."]
+    if state.get("last_completed_at"):
+        lines.append(f"Last completed: {state['last_completed_at'][:10]}.")
+    lines.append(f"Next workout: {state.get('next_session_name') or 'unavailable'}.")
+    earliest = state.get("earliest_recommended_date")
+    if earliest:
+        lines.append(f"Earliest recommended: {format_chat_date(earliest) or earliest}.")
+    planned = (
+        session.query(PlannedSession)
+        .filter(PlannedSession.status.notin_(("completed", "cancelled")))
+        .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
+        .first()
+    )
+    if planned:
+        lines.append(f"Scheduled: {planned.title} — {planned.target_date:%A} at {planned.suggested_time}.")
+    return "\n".join(lines)
+
+
+def _progress_response(session: Session) -> str:
+    """Show recorded lift evidence without deriving or applying a weight change."""
+    from coach.onboarding import active_program
+    from coach.program_state import program_state_facts
+
+    program = active_program(session)
+    state = program_state_facts(session, program) if program else None
+    session_id = state.get("next_session_id") if state else None
+    next_session = session.get(ProgramSession, session_id) if session_id else None
+    if not next_session:
+        return "Progression is unavailable because there is no active next program session."
+    exercises = (
+        session.query(SessionExercise)
+        .filter_by(program_session_id=next_session.id)
+        .order_by(SessionExercise.order_index, SessionExercise.id)
+        .all()
+    )
+    if not exercises:
+        return f"{next_session.name} has no configured exercises to compare."
+
+    lines = [f"Progression for {next_session.name} (recorded sets only):"]
+    recorded = 0
+    for exercise in exercises[:5]:
+        target = ""
+        if exercise.sets and exercise.reps:
+            target = f"target {exercise.sets}×{exercise.reps}"
+        if exercise.weight_kg is not None:
+            target = f"{target} at {exercise.weight_kg:g} kg".strip()
+        latest = (
+            session.query(ExerciseSet, Activity)
+            .join(Activity, ExerciseSet.activity_id == Activity.id)
+            .filter(ExerciseSet.set_type == "ACTIVE")
+            .filter(ExerciseSet.exercise_name == exercise.exercise_name)
+            .order_by(Activity.start_time.desc(), ExerciseSet.id.desc())
+            .first()
+        )
+        if latest:
+            set_row, activity = latest
+            actual = "latest synced set"
+            if set_row.reps is not None:
+                actual += f" {set_row.reps} reps"
+            if set_row.weight_kg is not None:
+                actual += f" at {set_row.weight_kg:g} kg"
+            when = activity.start_time.date().isoformat() if activity.start_time else "an unknown date"
+            lines.append(f"• {exercise.exercise_name}: {target or 'target not configured'}; {actual} ({when}).")
+            recorded += 1
+        else:
+            lines.append(f"• {exercise.exercise_name}: {target or 'target not configured'}; no synced set yet.")
+    if not recorded:
+        lines.append("There is not enough synced strength history to assess progression yet.")
+    lines.append("No weight was changed; progression remains athlete-approved.")
+    return "\n".join(lines)
+
+
+def _shortened_workout_response(session: Session) -> str:
+    """Offer a conservative, non-schedulable short variant from configured compounds."""
+    from coach.onboarding import active_program
+    from coach.program_state import program_state_facts
+
+    program = active_program(session)
+    state = program_state_facts(session, program) if program else None
+    item = session.get(ProgramSession, state.get("next_session_id")) if state else None
+    if not item:
+        return "A shortened workout is unavailable because there is no active next program session."
+    exercises = (
+        session.query(SessionExercise)
+        .filter_by(program_session_id=item.id)
+        .order_by(SessionExercise.order_index, SessionExercise.id)
+        .all()
+    )
+    primary_patterns = {"knee_dominant", "hip_hinge", "horizontal_push", "vertical_push", "horizontal_pull", "vertical_pull"}
+    selected, seen = [], set()
+    for exercise in exercises:
+        if exercise.movement_pattern in primary_patterns and exercise.movement_pattern not in seen:
+            selected.append(exercise)
+            seen.add(exercise.movement_pattern)
+        if len(selected) == 3:
+            break
+    if not selected:
+        return f"No source-reviewed shortened version is defined for {item.name}; keep or reschedule the full workout."
+    rendered = "; ".join(
+        " ".join(part for part in (exercise.exercise_name, f"{exercise.sets}×{exercise.reps}" if exercise.sets and exercise.reps else "") if part)
+        for exercise in selected
+    )
+    return (
+        f"Short version of {item.name} (about 30 min): {rendered}. "
+        "These are the first configured primary movement patterns. This is informational only; the approved full workout is unchanged."
+    )
+
+
+def _active_safety_report(session: Session) -> AthleteSafetyReport | None:
+    return (
+        session.query(AthleteSafetyReport)
+        .filter_by(active=True)
+        .order_by(AthleteSafetyReport.confirmed_at.desc(), AthleteSafetyReport.id.desc())
+        .first()
+    )
+
+
 def _calendar_response(session: Session, now: datetime) -> str:
     from coach.calendar import get_upcoming_schedule_result
     planned = (
@@ -807,6 +947,28 @@ def _route_deterministic(
     if dialogue and result.intent != dialogue.intent and result.intent != "unknown":
         _clear_dialogue(session)
         slots = {key: value for key, value in slots.items() if key not in {"planned_session_id", "target_date", "available_times"}}
+
+    if result.intent in {"schedule_workout", "reschedule_workout", "find_workout_time"}:
+        report = _active_safety_report(session)
+        if report:
+            return RoutedTurn(
+                "A confirmed safety report is still active, so no workout will be scheduled or proposed. "
+                "When you are ready to resume, say ‘ready to resume training’ to confirm closing it.",
+                [],
+            )
+
+    if result.intent == "clear_safety_report":
+        report = _active_safety_report(session)
+        if not report:
+            return RoutedTurn("There is no active safety report to close.", [])
+        row = _stage_simple_action(
+            session, action_type="clear_safety_report", target_type="safety_report",
+            target_id=report.id, payload={"safety_report_id": report.id}, now=now,
+        )
+        return RoutedTurn(
+            "Close the active safety report and resume normal workout planning? This does not provide medical clearance.",
+            [row],
+        )
 
     if result.intent == "schedule_workout":
         from coach.interactions import _stage_explicit_schedule
@@ -1064,19 +1226,14 @@ def _route_deterministic(
         return RoutedTurn(f"{state}\n{_last_sync_text(session)}", [])
 
     if result.intent == "get_program":
-        from coach.onboarding import active_program
-        from coach.program_state import program_state_facts
-        program = active_program(session)
-        if not program:
-            return RoutedTurn("There is no active approved training program.", [])
-        state = program_state_facts(session, program)
-        return RoutedTurn(
-            f"Active program: {program.name}. Next workout: {(state or {}).get('next_session_name') or 'unavailable'}.",
-            [],
-        )
+        return RoutedTurn(_program_state_response(session), [])
 
     if result.intent == "get_workout_details":
         return RoutedTurn(_workout_details(session), [])
+    if result.intent == "get_progress":
+        return RoutedTurn(_progress_response(session), [])
+    if result.intent == "get_shortened_workout":
+        return RoutedTurn(_shortened_workout_response(session), [])
     if result.intent == "get_calendar":
         return RoutedTurn(_calendar_response(session, now), [])
     if result.intent == "get_metrics":

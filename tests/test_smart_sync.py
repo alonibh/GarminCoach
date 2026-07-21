@@ -58,8 +58,8 @@ def test_sync_sleep_accepts_numeric_sleep_timestamps(session, monkeypatch):
     session.commit()
 
     row = session.get(Sleep, day)
-    assert row.sleep_start_time == datetime(2026, 7, 3, 21, 30)
-    assert row.sleep_end_time == datetime(2026, 7, 4, 4, 30)
+    assert row.sleep_start_time == datetime(2026, 7, 4, 0, 30)
+    assert row.sleep_end_time == datetime(2026, 7, 4, 7, 30)
     assert row.total_s == 7 * 3600
     assert row.score == 82
 
