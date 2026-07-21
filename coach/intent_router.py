@@ -1037,7 +1037,7 @@ def _route_deterministic(
             session, target=now.date(), evaluated_at=now,
             allow_incomplete=bool(morning and morning.answer_anyway),
         )
-        text, _markup, ids = render_morning(session, decision)
+        text, _markup, ids = render_morning(session, decision, plan_only=True)
         rows = [session.get(PendingInteraction, item) for item in ids]
         return RoutedTurn(text or "Today's decision is waiting for required data.", [row for row in rows if row])
 

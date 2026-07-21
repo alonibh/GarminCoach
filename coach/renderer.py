@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from coach.decision_engine import DecisionResult
 from coach.interactions import reply_markup, stage_decision_actions
 from db import Sleep
+from time_utils import format_chat_date
 
 
 def _clock(value) -> str | None:
@@ -34,7 +35,9 @@ def _metric_line(session: Session, result: DecisionResult) -> str:
     return "; ".join(parts) + ("." if parts else "")
 
 
-def render_morning(session: Session, result: DecisionResult) -> tuple[str | None, dict | None, list[str]]:
+def render_morning(
+    session: Session, result: DecisionResult, *, plan_only: bool = False,
+) -> tuple[str | None, dict | None, list[str]]:
     if result.decision_type in {"WAITING_FOR_DATA", "SYNC_REQUIRED"}:
         return None, None, []
 
@@ -53,14 +56,15 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         and result.decision_type not in {"ADVISE_SKIP_SESSION"}
         and not result.calendar_conflict
     )
-    metrics = "" if recommends_workout else _metric_line(session, result)
+    metrics = "" if plan_only or recommends_workout else _metric_line(session, result)
     if result.workout_outcome == "PROGRAM_REST_DAY":
+        earliest = format_chat_date(result.earliest_eligible_date) or result.earliest_eligible_date
         body = (
             f"Program rest day. {result.next_program_session_name} is next; "
-            f"earliest {result.earliest_eligible_date}."
+            f"earliest {earliest}."
         )
         recovery = result.optional_recovery_activity
-        if recovery:
+        if recovery and not plan_only:
             low, high = recovery["duration_min"]
             body += f" Optional: {low}-{high} min easy walking at conversational effort."
     else:
@@ -81,13 +85,13 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         else:
             body = "No workout action is available today."
 
-    if result.calendar_conflict:
+    if result.calendar_conflict and not plan_only:
         conflict = result.calendar_conflict
         body += f" Calendar conflict: {conflict.get('title', 'another event')} at {conflict.get('start', '')[-5:]}."
-    elif "CALENDAR_ACCESS_ERROR" in result.reason_codes:
+    elif "CALENDAR_ACCESS_ERROR" in result.reason_codes and not plan_only:
         body += " Calendar could not be checked."
 
-    if result.best_effort and not recommends_workout:
+    if result.best_effort and not recommends_workout and not plan_only:
         omitted = ", ".join(
             item["signal"].replace("_", " ")
             for item in result.missing_observations if item["critical"]
@@ -97,7 +101,7 @@ def render_morning(session: Session, result: DecisionResult) -> tuple[str | None
         item["signal"].replace("_", " ")
         for item in result.missing_observations if not item["critical"]
     ]
-    if noncritical and not recommends_workout:
+    if noncritical and not recommends_workout and not plan_only:
         body += f" Missing non-critical data: {', '.join(noncritical)}."
     text = "\n".join(part for part in (metrics, body) if part)
     return text, reply_markup(interactions), [item.interaction_id for item in interactions]

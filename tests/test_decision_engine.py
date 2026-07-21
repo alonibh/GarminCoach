@@ -104,6 +104,26 @@ def test_program_rest_day_precedes_prime_readiness(session):
     assert result.permitted_actions == []
 
 
+def test_plan_only_render_omits_sleep_and_optional_recovery_details(session):
+    program, source_sessions = _add_program(session)
+    _fresh_sleep(session)
+    _fresh_readiness(session, 100)
+    cursor = initialize_program_cursor(session, program, activated_at=datetime(2026, 7, 1))
+    cursor.last_completed_program_session_id = source_sessions[0].id
+    cursor.last_completed_at = datetime(2026, 7, 5, 9)
+    cursor.next_program_session_id = source_sessions[1].id
+    session.commit()
+
+    result = evaluate_morning_decision(
+        session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
+    )
+    text, _markup, _ids = render_morning(session, result, plan_only=True)
+
+    assert text == "Program rest day. Full Body 2 is next; earliest 07/07/2026."
+    assert "sleep" not in text.lower()
+    assert "Optional" not in text
+
+
 def test_poor_readiness_with_calendar_conflict_offers_keep_cancel_and_new_date(session, monkeypatch):
     _add_program(session)
     _fresh_sleep(session)
