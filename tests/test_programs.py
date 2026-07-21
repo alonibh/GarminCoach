@@ -2,10 +2,13 @@ from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommen
 from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
 
 
-def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
+def test_catalog_contains_twenty_five_reviewed_routines_from_two_to_six_days():
     assert len(GARMIN_EXERCISES) > 1800
-    assert len(PROGRAMS) == 10
+    assert len(PROGRAMS) == 25
     assert {len(program["sessions"]) for program in PROGRAMS.values()} == {2, 3, 4, 5, 6}
+    assert {days: sum(len(program["sessions"]) == days for program in PROGRAMS.values()) for days in range(2, 7)} == {
+        2: 2, 3: 6, 4: 9, 5: 3, 6: 5,
+    }
     for program in PROGRAMS.values():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
         assert all(count >= 2 for count in program["region_exposures"].values())
@@ -45,6 +48,21 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "muscle_strength_5": "Intermediate",
         "ppl_6": "Beginner",
         "hundred_rep_full_body_2": "Intermediate",
+        "planet_fitness_full_body_3": "Beginner",
+        "long_cycle_full_body_3": "Beginner",
+        "whole_body_toning_3": "Intermediate",
+        "planet_fitness_upper_lower_4": "Beginner",
+        "optimized_volume_4": "Beginner",
+        "phul_4": "Intermediate",
+        "muscle_rebound_4": "Intermediate",
+        "rp21_4": "Intermediate",
+        "advanced_upper_lower_4": "Expert",
+        "maul_5": "Beginner",
+        "body_fat_demolition_5": "Intermediate",
+        "powerbuilding_ppl_6": "Intermediate",
+        "low_volume_high_intensity_6": "Intermediate",
+        "built_different_ppl_6": "Expert",
+        "muscle_mania_6": "Expert",
     }
 
 

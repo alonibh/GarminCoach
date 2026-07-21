@@ -1,10 +1,12 @@
 # Routine source audit
 
-Audited 2026-07-17 against the linked Muscle & Strength source page for each
+Audited through 2026-07-22 against the linked Muscle & Strength source page for each
 catalog routine. `Same` means the app presents the complete listed strength
 movement sequence from the source, with normalised singular/plural spellings.
 Rep/set ranges are intentionally represented as one starting prescription in
-the app; they are not a verbatim copy of every source range.
+the app; they are not a verbatim copy of every source range. The 2026-07-22
+expansion retains each source's defining compounds and split while recording
+any reduced isolation work in `ProgramPolicy.omitted_source_components`.
 
 | App routine | Source training level | Exercise comparison |
 | --- | --- | --- |
@@ -18,6 +20,31 @@ the app; they are not a verbatim copy of every source range.
 | Muscle & Strength Building Split (5 days) | Intermediate | Same main-plan movements — Upper Strength: Weighted Wide Grip Pull Ups, Bent Over Barbell Row, Narrow Grip T-Bar Row, Standing Overhead Barbell Press, Incline Dumbbell Bench Press, Weighted Dips, EZ Bar Skullcrusher, EZ Bar Bicep Curls. Lower Strength: Squats, Hack Squats, Deadlifts, Lying Leg Curls, Standing Calf Raise, Seated Calf Raise. Back/Shoulders: Wide Grip Pull Down, Narrow Grip Pull Down, Chest Supported Machine Row, Narrow Grip Low Pulley Cable Row, Straight Arm Rope Pull Down, Lower Back Hyperextensions, Dumbbell Shoulder Press, Standing Dumbbell Side Lateral Raise, Standing EZ Bar Front Raise, Dumbbell Rear Delt Lateral Raise, Cable EZ Bar Upright Row, Rope Face Pull. Chest/Arms: Incline Barbell Bench Press, Flat Machine Chest Press, Incline Dumbbell Fly, Cable Crossover, Narrow Grip Bench Press, Seated Overhead EZ Bar Tricep Extension, Single Arm Cable Press Down, EZ Bar Preacher Curl, Standing Alternating Dumbbell Hammer Curl, High Pulley Single Arm Bicep Curl. Legs: Seated Hamstring Curl, Leg Extension, Front Squat, Leg Press, Barbell Walking Lunge, Abductor Machine, Adductor Machine, Glute Kick Backs, Donkey Calf Raise, Seated Calf Raise, Single Leg Calf Press. The source also supplies a separate optional 3×/week ab workout; it is not in the app's five gym sessions. |
 | Push/Pull/Legs Planet Fitness (6 days) | Beginner | Same — Push A: Dumbbell Bench Press, Incline Smith Machine Bench Press, Dips, Seated Arnold Press, Lateral Raise, Cable Overhead Tricep Extension. Pull A: Dumbbell Row, Seated Cable Row, Pull Up, Inverted Row, Dumbbell Curl. Legs A: Leg Press, Smith Machine Front Squat, Dumbbell Stiff Leg Deadlift, Lying Leg Curl, Bodyweight Hip Thrust, Standing Calf Raise. Push B: Standing Dumbbell Press, Seated Lateral Raise, Lateral Raise Machine, Incline Dumbbell Bench Press, Push Ups, Lying Dumbbell Tricep Extensions. Pull B: Lat Pull Down, Cable Face Pull, Smith Machine Row, Straight Arm Lat Pull Down, Cable Curl. Legs B: Dumbbell Rear Lunge, Goblet Squat, Seated Leg Curl, Dumbbell Deadlift, Glute Hyperextension, Leg Press Calf Press. The app calls the final movement `Leg Press Calf Raise`; it is the same source movement. |
 | 100-Rep Full Body Shocker (2 days) | Intermediate | Same movement order — Day 1: Leg Press, Lat Pull Down, Incline Bench Press, Barbell Shrugs, Dumbbell Lateral Raise, Hammer Curl, Cable Tricep Extension, Leg Press Calf Raise. Day 2: Rack Deadlift, Cable Fly, Seated Cable Row, Seated Shoulder Press, Dumbbell Pullover, Reverse Barbell Curl, Cable Overhead Tricep Extension, Weighted Crunch. Each source target is represented as one 100-rep set; the source countdown pause protocol is retained in the exercise notes. |
+
+## 2026-07-22 catalog expansion
+
+| App routine | Source level | Catalog representation |
+| --- | --- | --- |
+| Planet Fitness Full Body (3 days) | Beginner | Three complete machine-and-dumbbell lower, pull, and press exposures. |
+| Long Cycle Full Body (3 days) | Beginner | Three alternating squat/deadlift, press, and row/pull-up sessions; isolation work reduced. |
+| Whole Body Toning (3 days) | Intermediate | Three short high-repetition series with Garmin-supported movement aliases. |
+| Planet Fitness Upper/Lower (4 days) | Beginner | Two machine-and-dumbbell upper/lower pairs; isolation work reduced. |
+| Optimized Volume (4 days) | Beginner | Defining upper/lower compounds and source starting rep ranges retained. |
+| PHUL (4 days) | Intermediate | Upper/lower power and hypertrophy days retained; arm and calf isolation reduced. |
+| Muscle Rebound (4 days) | Intermediate | Pull, push, legs, and full-body structure retained; supersets become ordered straight sets. |
+| RP-21 Rest-Pause (4 days) | Intermediate | The 7x3 anchor and 6x5 accessory method retained; optional conditioning omitted. |
+| Advanced Upper/Lower Mass (4 days) | Advanced (Expert badge) | Two high-volume upper and lower exposures retained. |
+| MAUL (5 days) | Beginner | Mechanical upper/lower, full upper, shoulders/arms, and full lower structure retained. |
+| Body Fat Demolition (5 days) | Intermediate | Cardio-free upper/lower/upper/lower/full-body resistance schedule retained. |
+| Powerbuilding PPL (6 days) | Intermediate | PPL A/B anchors and rep-goal starting targets retained; meal plan excluded. |
+| Low-Volume High-Intensity (6 days) | Intermediate | Six source focuses and the two-working-set method retained. |
+| Built Different PPL (6 days) | Advanced (Expert badge) | Both PPL rotations retained; optional morning LISS omitted. |
+| Muscle Mania Upper/Lower (6 days) | Advanced (Expert badge) | Three distinct upper/lower rotations retained; isolation work reduced. |
+
+The catalog now contains 25 templates: 2 two-day, 6 three-day, 9 four-day,
+3 five-day, and 5 six-day routines. Every template passes the executable gate
+of at least two weekly lower-body, press, and back-pull exercise exposures.
+Optional cardio guidance never becomes a tracked session.
 
 ## Between-set rest audit
 
@@ -58,6 +85,21 @@ left unchanged.
 - [5-Day Muscle & Strength](https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split)
 - [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
 - [100-Rep Full Body Shocker](https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout)
+- [Planet Fitness Full Body](https://www.muscleandstrength.com/workouts/3-day-full-body-planet-fitness-workout)
+- [Long Cycle Full Body](https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout)
+- [Whole Body Toning](https://www.muscleandstrength.com/workouts/3-day-whole-body-toning-workout.html)
+- [Planet Fitness Upper/Lower](https://www.muscleandstrength.com/workouts/4-day-upper-lower-planet-fitness-workout)
+- [Optimized Volume](https://www.muscleandstrength.com/workouts/ovw-workout)
+- [PHUL](https://www.muscleandstrength.com/workouts/phul-workout)
+- [Muscle Rebound](https://www.muscleandstrength.com/workouts/muscle-rebound-workout)
+- [RP-21](https://www.muscleandstrength.com/workouts/4-day-rp21-rest-pause-workout-system)
+- [Advanced Upper/Lower Mass](https://www.muscleandstrength.com/workouts/4-day-advanced-upper-lower-workout-program-to-build-mass)
+- [MAUL](https://www.muscleandstrength.com/workouts/maul-workout)
+- [Body Fat Demolition](https://www.muscleandstrength.com/workouts/8-week-body-fat-demolition-workout)
+- [Powerbuilding PPL](https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan)
+- [Low-Volume High-Intensity](https://www.muscleandstrength.com/workouts/6-day-low-volume-high-intensity-workout-split)
+- [Built Different PPL](https://www.muscleandstrength.com/workouts/built-different-ppl-workout)
+- [Muscle Mania](https://www.muscleandstrength.com/workouts/muscle-mania-10-week-muscle-growth-workout)
 
 ## Operating-rule audit
 
