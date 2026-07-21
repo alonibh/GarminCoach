@@ -9,7 +9,7 @@ from coach.exercises import CATALOG_VERSION, exercise_key, exercise_metadata
 
 ACSM_SOURCE_URL = "https://acsm.org/resistance-training-guidelines-update-2026/"
 ACSM_ATTRIBUTION = "Muscle & Strength routine reviewed against ACSM 2026 resistance-training guidance."
-ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+source-rest-2026-07-18"
+ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+source-rest-2026-07-22"
 
 # These labels describe the routine's demands—not an absolute judgment of the
 # athlete. They are assigned during catalog review from training age, weekly
@@ -232,15 +232,15 @@ def _program(name: str, source: str, level: str, sessions: list[dict], review: s
         for pattern in seen:
             exposures[pattern] = exposures.get(pattern, 0) + 1
     def exposes(session: dict, region: str) -> bool:
-        focus = session["focus_tags"][0]
-        focus_regions = {
-            "full body": {"lower", "push", "pull"}, "upper body": {"push", "pull"},
-            "lower body": {"lower"}, "push": {"push"}, "pull": {"pull"},
-        }
-        if region in focus_regions.get(focus, set()):
-            return True
         patterns = {exercise["movement_pattern"] for exercise in session["exercises"]}
-        relevant = {"lower": {"knee_dominant", "hip_hinge"}, "push": {"horizontal_push", "vertical_push", "elbow_extension"}, "pull": {"horizontal_pull", "vertical_pull", "elbow_flexion"}}
+        # ACSM's major-muscle-group frequency guidance must be demonstrated by
+        # the exercises themselves. A focus label or arm isolation must not let
+        # an otherwise incomplete day pass the catalog gate.
+        relevant = {
+            "lower": {"knee_dominant", "hip_hinge"},
+            "push": {"horizontal_push", "vertical_push"},
+            "pull": {"horizontal_pull", "vertical_pull"},
+        }
         return bool(patterns & relevant[region])
     regions = {region: sum(exposes(session, region) for session in sessions) for region in ("lower", "push", "pull")}
     if any(count < 2 for count in regions.values()):
@@ -523,6 +523,34 @@ PROGRAMS: dict[str, dict[str, Any]] = {
             ]),
         ],
         "Push, pull, and legs are each trained twice; high-frequency option for established trainees only.",
+    ),
+    "hundred_rep_full_body_2": _program(
+        "100-Rep Full Body Shocker · 2 days",
+        "https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout",
+        "six_to_twenty_four_months",
+        [
+            _session("100-Rep Full Body 1", "full body", [
+                _exercise("Leg Press", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Lat Pull Down", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Incline Bench Press", 1, 100, rest=180, notes="Use a machine or safely supported variation; pause within the set using the source countdown protocol."),
+                _exercise("Barbell Shrugs", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Dumbbell Lateral Raise", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Hammer Curl", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Cable Tricep Extensions", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Leg Press Calf Raise", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+            ], 90),
+            _session("100-Rep Full Body 2", "full body", [
+                _exercise("Rack Deadlifts", 1, 100, rest=180, notes="Use straps; pause within the set using the source countdown protocol."),
+                _exercise("Cable Fly", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Seated Cable Row", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Seated Shoulder Press", 1, 100, rest=180, notes="Use a machine or safely supported variation; pause within the set using the source countdown protocol."),
+                _exercise("Dumbbell Pullover", 1, 100, movement="vertical_pull", rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Reverse Barbell Curl", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Cable Overhead Tricep Extension", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
+                _exercise("Weighted Crunch", 1, 100, rest=180, notes="Pause within the set using the source countdown protocol."),
+            ], 90),
+        ],
+        "Intermediate four-week specialty block; every major region is trained on both days with one 100-rep target per exercise.",
     ),
 }
 

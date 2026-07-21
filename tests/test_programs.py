@@ -2,9 +2,9 @@ from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommen
 from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
 
 
-def test_catalog_contains_nine_reviewed_routines_from_two_to_six_days():
+def test_catalog_contains_ten_reviewed_routines_from_two_to_six_days():
     assert len(GARMIN_EXERCISES) > 1800
-    assert len(PROGRAMS) == 9
+    assert len(PROGRAMS) == 10
     assert {len(program["sessions"]) for program in PROGRAMS.values()} == {2, 3, 4, 5, 6}
     for program in PROGRAMS.values():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
@@ -44,6 +44,7 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "split_full_4": "Expert",
         "muscle_strength_5": "Intermediate",
         "ppl_6": "Beginner",
+        "hundred_rep_full_body_2": "Intermediate",
     }
 
 
@@ -144,7 +145,7 @@ def _rests(program_key, session_name):
     return {exercise["exercise_name"]: exercise["rest_seconds"] for exercise in routine["exercises"]}
 
 
-def test_all_nine_templates_use_their_source_reviewed_between_set_rest_rules():
+def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
     assert {
         exercise["rest_seconds"]
         for routine in PROGRAMS["full_body_2"]["sessions"]
@@ -214,6 +215,40 @@ def test_all_nine_templates_use_their_source_reviewed_between_set_rest_rules():
         for routine in PROGRAMS["ppl_6"]["sessions"]
         for exercise in routine["exercises"]
     } == {45}
+    assert {
+        exercise["rest_seconds"]
+        for routine in PROGRAMS["hundred_rep_full_body_2"]["sessions"]
+        for exercise in routine["exercises"]
+    } == {180}
+
+
+def test_major_region_gate_ignores_focus_labels_and_arm_isolation():
+    from coach.programs import _program
+
+    try:
+        _program("Incomplete", "https://www.muscleandstrength.com/workouts/example", "new", [
+            _session("A", "full body", [
+                _exercise("Squat", 3, 8), _exercise("Bench Press", 3, 8), _exercise("Barbell Curl", 3, 8),
+            ]),
+            _session("B", "full body", [
+                _exercise("Deadlift", 3, 8), _exercise("Military Press", 3, 8), _exercise("Hammer Curl", 3, 8),
+            ]),
+        ], "Deliberately incomplete")
+    except ValueError as exc:
+        assert "does not provide two weekly" in str(exc)
+    else:
+        raise AssertionError("Arm isolation must not satisfy the major-region pull gate")
+
+
+def test_hundred_rep_specialty_program_trains_each_major_region_twice():
+    program = PROGRAMS["hundred_rep_full_body_2"]
+    assert program["experience"] == "six_to_twenty_four_months"
+    assert program["region_exposures"] == {"lower": 2, "push": 2, "pull": 2}
+    assert all(
+        exercise["sets"] == 1 and exercise["reps"] == 100
+        for session in program["sessions"]
+        for exercise in session["exercises"]
+    )
 
 
 def test_every_curated_exercise_has_a_primary_muscle_group():

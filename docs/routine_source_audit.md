@@ -17,6 +17,7 @@ the app; they are not a verbatim copy of every source range.
 | Three-Way Split + Full Body (4 days) | Advanced (shown as Expert) | Same — Back/Biceps: Chin Up, T-bar Machine Row, Close Grip Pull Down, One Arm Dumbbell Row, Barbell Curl, Hammer Curl. Legs: Seated Leg Curl, Barbell Squat, Trap Bar Deadlift, Dumbbell Stiff Legged Deadlift, Leg Extension, Seated Calf Raise, Standing Machine Calf Raise. Chest/Shoulders/Triceps: Standing Military Press, Side Lateral Raise, Face Pull, Incline Bench Press, Dumbbell Bench Press, Incline Skullcrusher, Tricep Pushdown. Full Body: Deadlift, Front Squat, Barbell Hip Thrust, Dips, Inverted Row, Push Ups. |
 | Muscle & Strength Building Split (5 days) | Intermediate | Same main-plan movements — Upper Strength: Weighted Wide Grip Pull Ups, Bent Over Barbell Row, Narrow Grip T-Bar Row, Standing Overhead Barbell Press, Incline Dumbbell Bench Press, Weighted Dips, EZ Bar Skullcrusher, EZ Bar Bicep Curls. Lower Strength: Squats, Hack Squats, Deadlifts, Lying Leg Curls, Standing Calf Raise, Seated Calf Raise. Back/Shoulders: Wide Grip Pull Down, Narrow Grip Pull Down, Chest Supported Machine Row, Narrow Grip Low Pulley Cable Row, Straight Arm Rope Pull Down, Lower Back Hyperextensions, Dumbbell Shoulder Press, Standing Dumbbell Side Lateral Raise, Standing EZ Bar Front Raise, Dumbbell Rear Delt Lateral Raise, Cable EZ Bar Upright Row, Rope Face Pull. Chest/Arms: Incline Barbell Bench Press, Flat Machine Chest Press, Incline Dumbbell Fly, Cable Crossover, Narrow Grip Bench Press, Seated Overhead EZ Bar Tricep Extension, Single Arm Cable Press Down, EZ Bar Preacher Curl, Standing Alternating Dumbbell Hammer Curl, High Pulley Single Arm Bicep Curl. Legs: Seated Hamstring Curl, Leg Extension, Front Squat, Leg Press, Barbell Walking Lunge, Abductor Machine, Adductor Machine, Glute Kick Backs, Donkey Calf Raise, Seated Calf Raise, Single Leg Calf Press. The source also supplies a separate optional 3×/week ab workout; it is not in the app's five gym sessions. |
 | Push/Pull/Legs Planet Fitness (6 days) | Beginner | Same — Push A: Dumbbell Bench Press, Incline Smith Machine Bench Press, Dips, Seated Arnold Press, Lateral Raise, Cable Overhead Tricep Extension. Pull A: Dumbbell Row, Seated Cable Row, Pull Up, Inverted Row, Dumbbell Curl. Legs A: Leg Press, Smith Machine Front Squat, Dumbbell Stiff Leg Deadlift, Lying Leg Curl, Bodyweight Hip Thrust, Standing Calf Raise. Push B: Standing Dumbbell Press, Seated Lateral Raise, Lateral Raise Machine, Incline Dumbbell Bench Press, Push Ups, Lying Dumbbell Tricep Extensions. Pull B: Lat Pull Down, Cable Face Pull, Smith Machine Row, Straight Arm Lat Pull Down, Cable Curl. Legs B: Dumbbell Rear Lunge, Goblet Squat, Seated Leg Curl, Dumbbell Deadlift, Glute Hyperextension, Leg Press Calf Press. The app calls the final movement `Leg Press Calf Raise`; it is the same source movement. |
+| 100-Rep Full Body Shocker (2 days) | Intermediate | Same movement order — Day 1: Leg Press, Lat Pull Down, Incline Bench Press, Barbell Shrugs, Dumbbell Lateral Raise, Hammer Curl, Cable Tricep Extension, Leg Press Calf Raise. Day 2: Rack Deadlift, Cable Fly, Seated Cable Row, Seated Shoulder Press, Dumbbell Pullover, Reverse Barbell Curl, Cable Overhead Tricep Extension, Weighted Crunch. Each source target is represented as one 100-rep set; the source countdown pause protocol is retained in the exercise notes. |
 
 ## Between-set rest audit
 
@@ -38,6 +39,7 @@ single value or stated "sweet spot" takes precedence over that convention.
 | `split_full_4` | 45 seconds between every set and exercise. | 45 seconds throughout. |
 | `muscle_strength_5` | Strength phase 2-3 minutes; size phase 60-90 seconds. Superset partners have no intervening rest, followed by the prescribed rest. | 180 seconds in both strength sessions and 90 in all three size sessions. The app currently represents the listed exercises as straight sets, so this change does not claim to reproduce the source's supersets. |
 | `ppl_6` | 30-90 seconds, with a stated sweet spot of 45 seconds between sets and 90 seconds between exercises. | 45 seconds between sets. The per-exercise template field does not separately encode the 90-second transition recommendation. |
+| `hundred_rep_full_body_2` | One 100-rep target per exercise, pausing within the target according to the source countdown protocol; the worked example uses 3 minutes between exercises. | One 100-rep set with a 180-second exercise timer and the intra-set protocol in the editable notes. |
 
 Existing source-derived program rows are migrated once only when their program
 key, session name, exercise name, and rest value all still match the previous
@@ -55,6 +57,7 @@ left unchanged.
 - [Three-Way Split + Full Body](https://www.muscleandstrength.com/workouts/4-day-workout-to-build-muscle)
 - [5-Day Muscle & Strength](https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split)
 - [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
+- [100-Rep Full Body Shocker](https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout)
 
 ## Operating-rule audit
 
@@ -79,6 +82,7 @@ resets at a week boundary and missed sessions are not debt.
 | `split_full_4` | Back/Biceps -> Legs -> Chest/Shoulders/Triceps -> Full Body | 0, 0, 1, 2 | No explicit recovery activity found in the source program | Keep. Preserve the three-day split block, rest slot, then full-body session. |
 | `muscle_strength_5` | Upper Strength -> Lower Strength -> Back/Shoulders Size -> Chest/Arms Size -> Legs Size | 0, 1, 0, 0, 1 | Cardio should be minimal and low intensity if added; it is not prescribed as a recovery session | Keep. Do not proactively present cardio as a recovery intervention from this source alone. |
 | `ppl_6` | Push A -> Pull A -> Legs A -> Push B -> Pull B -> Legs B | 0, 0, 0, 0, 0, 1 | Low-intensity cardio may be added based on goals; HIIT should be limited | Keep. Do not turn optional goal-dependent cardio into a default recovery prescription. |
+| `hundred_rep_full_body_2` | Full Body 1 -> Full Body 2 | 2, 2 | No recovery activity prescribed in the main program | Keep as an intermediate four-week specialty block. Two complete non-strength days after either session conservatively distribute the source's two very-high-repetition weekly sessions. |
 
 ### Source findings supporting the rolling rules
 
@@ -107,6 +111,10 @@ resets at a week boundary and missed sessions are not debt.
 - [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
   presents the six sessions as one Push/Pull/Legs A/B cycle followed by an off
   day.
+- [100-Rep Full Body Shocker](https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout)
+  prescribes two full-body sessions per week for four weeks and emphasizes the
+  unusually high fatigue and soreness of the method. The catalog therefore
+  requires two complete non-strength days after either session.
 
 ## Recovery-activity evidence gate
 

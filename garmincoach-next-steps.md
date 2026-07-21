@@ -14,7 +14,7 @@ Use these documents as the current sources of truth:
 - [`docs/coach_product_architecture.md`](docs/coach_product_architecture.md) for
   goals, authority boundaries, timing, missing-data handling, and acceptance
   gates.
-- [`docs/routine_source_audit.md`](docs/routine_source_audit.md) for the nine
+- [`docs/routine_source_audit.md`](docs/routine_source_audit.md) for the ten
   selected programs, rolling rest rules, recovery guidance, and rest timers.
 - [`docs/METRICS.md`](docs/METRICS.md) for formulas and limits on metric use.
 - [`ROADMAP.md`](ROADMAP.md) for active priorities and deferred scope.
@@ -25,7 +25,7 @@ Use these documents as the current sources of truth:
    and briefing-priority paths.
 2. Freshness and device capability are persisted per signal. Missing data is
    not silently converted into unsupported capability or a favorable result.
-3. Nine source-reviewed strength routines compile into structured Garmin
+3. Ten source-reviewed strength routines compile into structured Garmin
    workouts with warm-ups, sets, reps/duration, weights when known, and audited
    rest timers.
 4. A rolling program cursor reconciles completed Garmin activities without
@@ -51,7 +51,7 @@ The next work is operational verification, not another design phase:
 2. Confirm sleep, HRV, resting heart rate, and other available observations
    receive correct freshness states while Training Readiness remains explicitly
    unsupported.
-3. Activate one of the nine routines, schedule its next eligible session by
+3. Activate one of the ten routines, schedule its next eligible session by
    Telegram confirmation, and verify the Garmin workout arrives on the watch.
 4. Complete the workout on the watch, sync it, and confirm exactly one program
    cursor advancement with provenance retained.

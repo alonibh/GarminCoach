@@ -80,9 +80,9 @@ def _activity(session, activity_id, when, *, workout_id=None, exercise_name=None
     return activity
 
 
-def test_all_nine_curated_program_policies_match_catalog():
+def test_all_ten_curated_program_policies_match_catalog():
     validate_program_policies(PROGRAMS)
-    assert len(PROGRAM_POLICIES) == 9
+    assert len(PROGRAM_POLICIES) == 10
 
 
 def test_activity_sync_captures_provenance_once(session, monkeypatch):

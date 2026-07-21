@@ -467,7 +467,7 @@ devices. ACWR stays available only to the UI.
 | `metrics/engine.py` | Computes scale-consistent TRIMP, EWMA ACWR, sleep debt, and descriptive strength metrics; custom readiness is `NULL` | ACWR has UI authority only |
 | `coach/snapshot.py` and `coach/decision_engine.py` | Build typed facts with Garmin readiness, provenance, program state, calendar state, and persisted rule results | A missing supported-device readiness value is omitted, never imputed |
 | `coach/renderer.py` and `coach/interactions.py` | Render typed outcomes, stage exact actions, and revalidate every confirmation | Optional LLM free-text answers remain informational only |
-| `coach/programs.py` and `coach/program_policy.py` | Nine source-audited templates include sequence, recovery intervals, exclusions, warm-ups, and rest timers | Source duration, deload, and progression rules are metadata only |
+| `coach/programs.py` and `coach/program_policy.py` | Ten source-audited templates include sequence, recovery intervals, exclusions, warm-ups, and rest timers | Source duration, deload, and progression rules are metadata only |
 | `coach/program_state.py` | Reconciles generated-workout provenance or guarded unique fingerprints and advances a rolling cursor | Ambiguous or unrelated activities deliberately do not advance the program |
 | `coach/garmin_compiler.py` | Compiles structured strength steps with sets, reps/duration, weight, warm-up, and rest | Superset groups and a separate between-exercise transition timer are not represented |
 | `notify/outbox.py` and `notify/weekly.py` | Persist notifications, apply quiet hours and revalidation, and generate a deterministic Saturday summary | Delivery still requires a configured Telegram bot/webhook |

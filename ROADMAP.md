@@ -1,6 +1,6 @@
 # GarminCoach Roadmap
 
-Updated 2026-07-18. This roadmap follows the current product contract: concise
+Updated 2026-07-22. This roadmap follows the current product contract: concise
 data-grounded coaching, deterministic authority for consequential decisions,
 no metric-driven workout rewriting, and explicit user confirmation.
 
@@ -20,7 +20,7 @@ no metric-driven workout rewriting, and explicit user confirmation.
 
 ### Program engine
 
-- [x] Nine source-reviewed strength templates from two through six sessions.
+- [x] Ten source-reviewed strength templates from two through six sessions.
 - [x] Rolling sequence and recovery intervals without forcing weekday names.
 - [x] Source-reviewed between-set rest timers and deterministic warm-up steps.
 - [x] Reviewable program proposal, explicit activation, and editable sessions.

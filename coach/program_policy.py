@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 
-POLICY_VERSION = "2026-07-18.1"
+POLICY_VERSION = "2026-07-22.1"
 RECOVERY_EVIDENCE_URL = "https://pubmed.ncbi.nlm.nih.gov/29755363/"
 
 
@@ -112,6 +112,15 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         "https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout",
         ("Push A", "Pull A", "Legs A", "Push B", "Pull B", "Legs B"),
         (0, 0, 0, 0, 0, 1), (0, 0, 0, 0, 0, 1),
+    ),
+    "hundred_rep_full_body_2": ProgramPolicy(
+        "hundred_rep_full_body_2",
+        "https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout",
+        ("100-Rep Full Body 1", "100-Rep Full Body 2"),
+        (2, 2), (2, 2),
+        source_duration_weeks=4,
+        source_reviewed_at="2026-07-22",
+        omitted_source_components=("Optional lagging-muscle-group version",),
     ),
 }
 

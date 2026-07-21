@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-22 - Two-Day Specialty Routine
+
+- Added the source-audited intermediate 100-Rep Full Body Shocker as a
+  four-week, two-session specialty routine with Garmin-compatible exercise
+  mappings and its intra-set pause protocol preserved in exercise notes.
+- Tightened catalog eligibility so focus labels and arm isolation cannot stand
+  in for twice-weekly lower-body, pressing, and back-pulling exposures.
+
 ## 2026-07-21 - AthleteData-Informed Coach Guardrails
 
 - Added on-demand rolling program-state and recorded lift-progression views;

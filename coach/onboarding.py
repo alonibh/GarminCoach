@@ -292,7 +292,7 @@ def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | N
 
 
 def recommend_plan_from_history(session: Session, activities: list[Activity]) -> dict[str, str]:
-    """Rank the nine-routine catalog from exercise-backed recent history."""
+    """Rank the curated routine catalog from exercise-backed recent history."""
     strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
     if len(strength) < 3:
         return {"key": "full_body_2", "reason": "No reliable gym pattern found yet; start with the two-day A/B full-body routine."}

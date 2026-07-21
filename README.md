@@ -77,7 +77,7 @@ The complete authority model and decision order are documented in
 
 ### Strength programs and Garmin workouts
 
-- Nine selectable Muscle & Strength routines covering two through six training
+- Ten selectable Muscle & Strength routines covering two through six training
   days per cycle.
 - Source-reviewed exercise order, rolling session sequence, required recovery
   intervals, optional recovery guidance, exclusions, and between-set timers.
@@ -94,7 +94,7 @@ The complete authority model and decision order are documented in
 - Source templates can be edited, but metric-driven decisions never rewrite
   them. Customized rest timers are preserved by catalog migrations.
 
-The complete nine-routine audit is in
+The complete ten-routine audit is in
 [`docs/routine_source_audit.md`](docs/routine_source_audit.md).
 
 ### Deterministic Telegram coach
@@ -238,7 +238,7 @@ See [`.env.example`](.env.example) for all supported settings.
 ## Documentation
 
 - [`docs/coach_product_architecture.md`](docs/coach_product_architecture.md) — product contract, authority boundaries, decisions, sync, and notifications
-- [`docs/routine_source_audit.md`](docs/routine_source_audit.md) — all nine routine sources, scheduling rules, recovery guidance, and rest timers
+- [`docs/routine_source_audit.md`](docs/routine_source_audit.md) — all ten routine sources, scheduling rules, recovery guidance, and rest timers
 - [`docs/METRICS.md`](docs/METRICS.md) — implemented formulas, evidence status, and product authority
 - [`ROADMAP.md`](ROADMAP.md) — completed milestones, active priorities, and deferred scope
 - [`CHANGELOG.md`](CHANGELOG.md) — chronological implementation history
