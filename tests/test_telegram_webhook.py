@@ -116,7 +116,7 @@ def test_standard_response_refreshes_the_current_persistent_menu(monkeypatch):
 
     assert response.status_code == 200
     labels = [button["text"] for row in sent[0][1]["keyboard"] for button in row]
-    assert "Explain recommendation" in labels
+    assert "Explain recommendation" not in labels
     assert "Find a workout time" in labels
 
 

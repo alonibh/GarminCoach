@@ -388,7 +388,7 @@ def _menu_markup() -> dict:
             [{"text": "Today's recommendation"}, {"text": "Next workout"}],
             [{"text": "Find a workout time"}, {"text": "Schedule workout"}],
             [{"text": "Change workout date"}, {"text": "Cancel workout"}],
-            [{"text": "My calendar"}, {"text": "Explain recommendation"}],
+            [{"text": "My calendar"}],
             [{"text": "Metrics"}, {"text": "Recent activities"}],
             [{"text": "Program status"}, {"text": "Sync status"}],
             [{"text": "Start Garmin sync"}, {"text": "Safety help"}],

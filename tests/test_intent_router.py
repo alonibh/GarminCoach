@@ -139,7 +139,7 @@ def test_menu_offers_every_supported_top_level_catalog_path(session, monkeypatch
     routed = route_chat(session, "Help")
 
     labels = [button["text"] for row in routed.reply_markup["keyboard"] for button in row]
-    assert "Explain recommendation" in labels
+    assert "Explain recommendation" not in labels
     assert "Find a workout time" in labels
     assert "Safety help" in labels
 
