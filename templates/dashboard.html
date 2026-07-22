@@ -36,26 +36,23 @@
       {% if device_last_upload %} | Watch synced <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}
     </span>
   </div>
-  <div class="dashboard-actions" style="flex-wrap: wrap;">
+  <div id="dashboard-actions" class="dashboard-actions" style="flex-wrap: wrap;">
     {% if needs_login %}
     <a href="/login" class="btn small" style="white-space: nowrap; flex: 1 1 auto;">Connect Garmin</a>
     {% else %}
-    {% if sync_running %}
-      <form method="post" action="/sync/reset" style="margin:0; display: flex; flex: 1 1 auto;">
+      <form id="sync-reset-form" method="post" action="/sync/reset" style="margin:0; display: flex; flex: 1 1 auto;"{% if not sync_running %} hidden{% endif %}>
         <button class="btn small" style="background:#444; color: #fff; width: 100%; white-space: nowrap;" title="Force reset if sync is stuck">Reset</button>
       </form>
-      <button class="btn small" disabled style="white-space: nowrap; flex: 1 1 auto;">Syncing...</button>
-    {% else %}
-      <form method="post" action="/sync" style="margin:0; display: flex; flex: 1 1 auto;">
+      <button id="sync-running-indicator" class="btn small" disabled style="white-space: nowrap; flex: 1 1 auto;"{% if not sync_running %} hidden{% endif %}>Syncing...</button>
+      <form id="sync-form" method="post" action="/sync" style="margin:0; display: flex; flex: 1 1 auto;"{% if sync_running %} hidden{% endif %}>
         <button class="btn small" style="width: 100%; white-space: nowrap;">Sync now</button>
       </form>
-    {% endif %}
     {% endif %}
   </div>
 </div>
 
 {% if sync_summary %}
-<div class="notice muted">
+<div id="sync-summary" class="notice muted">
   {% if sync_summary.skipped %}
   Sync skipped{% if sync_summary.reason %}: {{ sync_summary.reason }}{% else %}.{% endif %}
   {% else %}
@@ -257,6 +254,8 @@ function fmtDay(iso) {
 
 if (window.ChartDataLabels) Chart.register(ChartDataLabels);
 
+const dashboardCharts = {};
+
 function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal = null) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -304,7 +303,7 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
     });
   }
 
-  new Chart(el, {
+  const chart = new Chart(el, {
     type: 'line',
     data: {
       labels: labels.map(fmtDay),
@@ -318,7 +317,14 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
       layout: { padding: { top: 18, right: 6, left: 2 } }, // room for top labels
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { title: (items) => labels[items[0].dataIndex] } },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const item = items[0];
+              return item?.chart?.$rawLabels?.[item.dataIndex] || '';
+            }
+          }
+        },
         datalabels: {
           // A value on every data point.
           display: (ctx) => {
@@ -352,6 +358,8 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
       }
     }
   });
+  chart.$rawLabels = labels;
+  dashboardCharts[id] = chart;
 }
 
 const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
@@ -373,7 +381,7 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   gradBMR.addColorStop(0, '#58a6ff');
   gradBMR.addColorStop(1, '#1f6feb');
 
-  new Chart(ctx, {
+  const chart = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: labels.map(fmtDay),
@@ -442,6 +450,8 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
       }
     }
   });
+  chart.$rawLabels = labels;
+  dashboardCharts[canvasId] = chart;
 }
 
 lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1, 7, 9);
@@ -449,6 +459,53 @@ lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '
 lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0, 45, 65);
 lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps, healthk.map(d => d.step_goal), null);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
+
+function updateLineChart(id, labels, data, minVal = null, maxVal = null) {
+  const chart = dashboardCharts[id];
+  if (!chart) return;
+  chart.$rawLabels = labels;
+  chart.data.labels = labels.map(fmtDay);
+  chart.data.datasets[0].data = data;
+  if (chart.data.datasets[1]) {
+    chart.data.datasets[1].data = Array.isArray(minVal) ? minVal : Array(labels.length).fill(minVal);
+  }
+  if (chart.data.datasets[2]) {
+    chart.data.datasets[2].data = Array.isArray(maxVal) ? maxVal : Array(labels.length).fill(maxVal);
+  }
+  chart.update('none');
+}
+
+function updateDashboardCharts(data) {
+  const refreshedSleep = lastWeek(data.sleep_series || []);
+  const refreshedHealth = lastWeek(data.health_series || []);
+
+  updateLineChart('sleepChart', refreshedSleep.map(d => d.day), refreshedSleep.map(d => d.hours), 7, 9);
+  updateLineChart(
+    'hrvChart',
+    refreshedHealth.map(d => d.day),
+    refreshedHealth.map(d => d.hrv),
+    refreshedHealth.map(d => d.hrv_baseline_low),
+    refreshedHealth.map(d => d.hrv_baseline_high),
+  );
+  updateLineChart('rhrChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.rhr), 45, 65);
+  updateLineChart(
+    'stepsChart',
+    refreshedHealth.map(d => d.day),
+    refreshedHealth.map(d => d.steps),
+    refreshedHealth.map(d => d.step_goal),
+    null,
+  );
+
+  const calories = dashboardCharts.caloriesChart;
+  if (calories) {
+    const labels = refreshedHealth.map(d => d.day);
+    calories.$rawLabels = labels;
+    calories.data.labels = labels.map(fmtDay);
+    calories.data.datasets[0].data = refreshedHealth.map(d => d.bmr_kcal);
+    calories.data.datasets[1].data = refreshedHealth.map(d => d.active_kcal);
+    calories.update('none');
+  }
+}
 
 // Per-chart collapse, remembered across reloads via localStorage.
 function applyCollapse(card, collapsed) {
@@ -467,55 +524,177 @@ document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]
   });
 });
 
-// Auto-poll sync status while a sync is running, then reload the page
-// so the user sees the results without a manual refresh.
-(function() {
-  let syncing = {{ sync_running|tojson }};
-  if (!syncing) return;
-  const POLL_MS = 3000;
-  const MAX_POLLS = 200;  // safety cap: stop after ~10 min
-  let polls = 0;
-  const timer = setInterval(async () => {
-    polls++;
-    if (polls >= MAX_POLLS) { clearInterval(timer); return; }
-    try {
-      const res = await fetch('/sync/status');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data.running) {
-        clearInterval(timer);
-        location.reload();
-      }
-    } catch (_) { /* network hiccup - try again next tick */ }
-  }, POLL_MS);
-})();
-// Format absolute timestamps into user's local timezone dynamically
-(function() {
-  document.querySelectorAll('.time-ago').forEach(el => {
-    const isoStr = el.getAttribute('data-iso');
-    if (!isoStr) return;
-    const d = new Date(isoStr);
-    if (isNaN(d)) return;
-    const now = new Date();
-    const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
+const POLL_MS = 3000;
+const MAX_POLLS = 200;  // safety cap: stop after ~10 min
+let syncTimer = null;
+let syncPolls = 0;
+
+function setSyncControls(running) {
+  const syncForm = document.getElementById('sync-form');
+  const resetForm = document.getElementById('sync-reset-form');
+  const indicator = document.getElementById('sync-running-indicator');
+  if (syncForm) syncForm.hidden = running;
+  if (resetForm) resetForm.hidden = !running;
+  if (indicator) indicator.hidden = !running;
+}
+
+function formatTimeAgo(el) {
+  const isoStr = el.getAttribute('data-iso');
+  if (!isoStr) return;
+  const d = new Date(isoStr);
+  if (isNaN(d)) return;
+  const now = new Date();
+  const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
+  if (d.toDateString() === now.toDateString()) {
+    el.textContent = 'Today at ' + timeStr;
+  } else {
+    now.setDate(now.getDate() - 1);
     if (d.toDateString() === now.toDateString()) {
-      el.textContent = "Today at " + timeStr;
+      el.textContent = 'Yesterday at ' + timeStr;
     } else {
-      now.setDate(now.getDate() - 1);
-      if (d.toDateString() === now.toDateString()) {
-        el.textContent = "Yesterday at " + timeStr;
-      } else {
-        el.textContent = d.toLocaleDateString([], {month:'short', day:'numeric'}) + " at " + timeStr;
-      }
+      el.textContent = d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' at ' + timeStr;
     }
-  });
-  document.querySelectorAll('.local-time-only').forEach(el => {
-    const isoStr = el.getAttribute('data-iso');
-    if (!isoStr) return;
-    const d = new Date(isoStr);
-    if (isNaN(d)) return;
-    el.textContent = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
-  });
-})();
+  }
+}
+
+function renderSyncStatus(data) {
+  const status = document.getElementById('sync-status');
+  if (!status) return;
+  status.replaceChildren();
+  if (data.last_sync_at) {
+    status.append('Fetched ');
+    const fetched = document.createElement('span');
+    fetched.className = 'time-ago';
+    fetched.dataset.iso = data.last_sync_at;
+    status.append(fetched);
+    formatTimeAgo(fetched);
+  } else {
+    status.append('Never synced');
+  }
+  if (data.device_last_upload) {
+    status.append(' | Watch synced ');
+    const uploaded = document.createElement('span');
+    uploaded.className = 'time-ago';
+    uploaded.dataset.iso = data.device_last_upload;
+    status.append(uploaded);
+    formatTimeAgo(uploaded);
+  }
+}
+
+function renderSyncSummary(summary) {
+  let notice = document.getElementById('sync-summary');
+  if (!summary) {
+    if (notice) notice.hidden = true;
+    return;
+  }
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'sync-summary';
+    notice.className = 'notice muted';
+    document.querySelector('.dashboard-toolbar')?.after(notice);
+  }
+  notice.hidden = false;
+  notice.replaceChildren();
+  if (summary.skipped) {
+    notice.append('Sync skipped' + (summary.reason ? ': ' + summary.reason : '.'));
+  } else {
+    notice.append(`Synced ${summary.activities || 0} activities, ${summary.days || 0} days.`);
+  }
+  const errors = summary.errors || [];
+  if (errors.length) {
+    const details = document.createElement('details');
+    details.style.display = 'inline';
+    const heading = document.createElement('summary');
+    heading.textContent = `${errors.length} warnings`;
+    const list = document.createElement('ul');
+    errors.slice(0, 10).forEach(error => {
+      const item = document.createElement('li');
+      item.textContent = error;
+      list.append(item);
+    });
+    details.append(heading, list);
+    notice.append(' ', details);
+  }
+}
+
+function scheduleSyncPoll(delay = POLL_MS) {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(pollSyncStatus, delay);
+}
+
+async function pollSyncStatus() {
+  syncPolls++;
+  if (syncPolls >= MAX_POLLS) return;
+  try {
+    const response = await fetch('/sync/status', {headers: {'Accept': 'application/json'}});
+    if (!response.ok) throw new Error('Sync status request failed');
+    const data = await response.json();
+    if (data.running) {
+      setSyncControls(true);
+      scheduleSyncPoll();
+      return;
+    }
+    syncTimer = null;
+    setSyncControls(false);
+    renderSyncStatus(data);
+    renderSyncSummary(data.summary);
+    updateDashboardCharts(data);
+  } catch (_) {
+    scheduleSyncPoll();
+  }
+}
+
+document.getElementById('sync-form')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setSyncControls(true);
+  renderSyncSummary(null);
+  syncPolls = 0;
+  try {
+    const response = await fetch('/sync', {
+      method: 'POST',
+      headers: {'Accept': 'application/json'},
+    });
+    if (response.status === 401) {
+      window.location.assign('/login');
+      return;
+    }
+    if (!response.ok) throw new Error('Sync request failed');
+    scheduleSyncPoll(0);
+  } catch (_) {
+    setSyncControls(false);
+    renderSyncSummary({skipped: true, reason: 'Could not start sync. Try again.'});
+  }
+});
+
+document.getElementById('sync-reset-form')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = null;
+  try {
+    const response = await fetch('/sync/reset', {
+      method: 'POST',
+      headers: {'Accept': 'application/json'},
+    });
+    if (!response.ok) throw new Error('Sync reset failed');
+    syncPolls = 0;
+    scheduleSyncPoll(0);
+  } catch (_) {
+    renderSyncSummary({skipped: true, reason: 'Could not reset sync. Try again.'});
+  }
+});
+
+// Format absolute timestamps into the user's local timezone dynamically.
+document.querySelectorAll('.time-ago').forEach(formatTimeAgo);
+document.querySelectorAll('.local-time-only').forEach(el => {
+  const isoStr = el.getAttribute('data-iso');
+  if (!isoStr) return;
+  const d = new Date(isoStr);
+  if (isNaN(d)) return;
+  el.textContent = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
+});
+
+if ({{ sync_running|tojson }}) {
+  scheduleSyncPoll(0);
+}
 </script>
 {% endblock %}

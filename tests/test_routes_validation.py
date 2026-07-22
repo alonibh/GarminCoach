@@ -117,6 +117,64 @@ def test_manual_sync_forces_recent_fetch(client, monkeypatch):
     assert captured == {"full": False, "force": True}
 
 
+def test_manual_sync_json_response_stays_on_dashboard(client, monkeypatch):
+    c, _ = client
+    import app as app_module
+
+    captured = {}
+    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
+    monkeypatch.setattr(
+        app_module.sync_runner,
+        "try_start_sync",
+        lambda full, force=False: captured.update({"full": full, "force": force}) or True,
+    )
+    monkeypatch.setattr(app_module.sync_runner, "is_running", lambda: True)
+
+    resp = c.post("/sync", headers={"Accept": "application/json"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"started": True, "running": True}
+    assert captured == {"full": False, "force": True}
+
+
+def test_sync_status_returns_fresh_chart_data_when_idle(client, monkeypatch):
+    c, _ = client
+    import app as app_module
+
+    monkeypatch.setattr(app_module.sync_runner, "is_running", lambda: False)
+    monkeypatch.setattr(
+        app_module,
+        "_dashboard_chart_data",
+        lambda session: {
+            "health_series": [{"day": "2026-07-22", "steps": 1234}],
+            "sleep_series": [{"day": "2026-07-22", "hours": 7.5}],
+        },
+    )
+
+    resp = c.get("/sync/status")
+
+    assert resp.status_code == 200
+    assert resp.json()["running"] is False
+    assert resp.json()["health_series"][0]["steps"] == 1234
+    assert resp.json()["sleep_series"][0]["hours"] == 7.5
+
+
+def test_dashboard_sync_updates_charts_without_page_reload(client):
+    c, db_module = client
+    from db import AthleteProfile
+
+    with db_module.get_session() as s:
+        s.add(AthleteProfile(id=1, onboarding_complete=True))
+
+    response = c.get("/")
+
+    assert response.status_code == 200
+    assert "location.reload()" not in response.text
+    assert "fetch('/sync'" in response.text
+    assert "chart.update('none')" in response.text
+    assert 'id="sync-form"' in response.text
+
+
 def test_onboarding_renders_history_defaults(client):
     c, db_module = client
     from datetime import datetime

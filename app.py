@@ -810,6 +810,28 @@ def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[d
     return out
 
 
+def _dashboard_chart_data(session) -> dict:
+    """Return the dashboard series used by the in-page chart refresh."""
+    since = date.today() - timedelta(days=90)
+    health = (
+        session.query(DailyHealth)
+        .filter(DailyHealth.day >= since)
+        .order_by(DailyHealth.day.asc())
+        .all()
+    )
+    sleep = (
+        session.query(Sleep)
+        .filter(Sleep.day >= since)
+        .order_by(Sleep.day.asc())
+        .all()
+    )
+    overnight_ready = _overnight_metrics_ready(session)
+    return {
+        "health_series": _dashboard_health_series(health, overnight_ready),
+        "sleep_series": _dashboard_sleep_series(sleep, overnight_ready),
+    }
+
+
 # --- routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -832,16 +854,7 @@ def dashboard(request: Request):
             .order_by(Activity.start_time.desc())
             .all()
         )
-        health = (
-            s.query(DailyHealth)
-            .filter(DailyHealth.day >= since)
-            .order_by(DailyHealth.day.asc())
-            .all()
-        )
-        sleep = (
-            s.query(Sleep).filter(Sleep.day >= since).order_by(Sleep.day.asc()).all()
-        )
-        overnight_ready = _overnight_metrics_ready(s)
+        chart_data = _dashboard_chart_data(s)
         # Detach for template use
         activities = [
             {
@@ -856,8 +869,6 @@ def dashboard(request: Request):
             }
             for a in activities
         ]
-        health_series = _dashboard_health_series(health, overnight_ready)
-        sleep_series = _dashboard_sleep_series(sleep, overnight_ready)
 
     return templates.TemplateResponse(
         request,
@@ -865,8 +876,7 @@ def dashboard(request: Request):
         {
             "needs_login": needs_login,
             "activities": activities,
-            "health_series": health_series,
-            "sleep_series": sleep_series,
+            **chart_data,
             "fitness_tiles": _fitness_tiles(),
             "readiness_tiles": _readiness_tiles(),
             "last_sync_at": _last_sync_at(),
@@ -1188,29 +1198,41 @@ def edit_set(
 
 
 @app.post("/sync")
-def sync_now(full: bool = Form(False)):
+def sync_now(request: Request, full: bool = Form(False)):
+    wants_json = "application/json" in request.headers.get("accept", "")
     # Can't sync without an authenticated Garmin session — send to login.
     if not client.is_authenticated():
+        if wants_json:
+            return JSONResponse({"error": "Garmin authentication required"}, status_code=401)
         return RedirectResponse("/login", status_code=303)
-    sync_runner.try_start_sync(full, force=not full)
+    started = sync_runner.try_start_sync(full, force=not full)
+    if wants_json:
+        return JSONResponse({"started": started, "running": sync_runner.is_running()})
     return RedirectResponse("/", status_code=303)
 
 
 @app.get("/sync/status")
 def sync_status():
     """JSON endpoint polled by the dashboard while a sync is in progress."""
-    return JSONResponse({
-        "running": sync_runner.is_running(),
+    running = sync_runner.is_running()
+    payload = {
+        "running": running,
         "summary": sync_runner.status["summary"],
         "last_sync_at": _last_sync_at(),
         "device_last_upload": _device_last_upload(),
-    })
+    }
+    if not running:
+        with get_session() as session:
+            payload.update(_dashboard_chart_data(session))
+    return JSONResponse(payload)
 
 
 @app.post("/sync/reset")
-def sync_reset():
+def sync_reset(request: Request):
     """Escape hatch: force-clear a stuck 'syncing' state."""
     sync_runner.reset()
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"running": False})
     return RedirectResponse("/", status_code=303)
 
 
