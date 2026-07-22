@@ -79,7 +79,9 @@ def test_invitation_token_moves_from_fragment_to_http_only_ticket(monkeypatch, t
 
 def test_owner_google_callback_sets_only_hashed_server_session(monkeypatch, tmp_path):
     client, Session, engine = _test_app(monkeypatch, tmp_path)
-    monkeypatch.setattr(auth_routes, "provision_user_store", lambda _user_id: None)
+    monkeypatch.setattr(
+        auth_routes, "provision_user_store", lambda _user_id, **_kwargs: None
+    )
 
     start = client.get("/auth/google/start", follow_redirects=False)
     assert start.status_code == 303

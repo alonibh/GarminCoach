@@ -52,6 +52,25 @@ def test_each_user_gets_a_physically_isolated_database(tmp_path: Path):
         assert session.get(Goal, 1).goal == "second athlete"
 
 
+def test_owner_store_can_bootstrap_from_legacy_database(tmp_path: Path):
+    legacy_user = str(uuid4())
+    legacy_path = provision_user_store(legacy_user, tmp_path / "legacy-root")
+    with get_user_session(legacy_user, tmp_path / "legacy-root") as session:
+        session.add(Goal(id=1, goal="preserved owner history", custom_input=""))
+
+    owner_id = str(uuid4())
+    owner_path = provision_user_store(
+        owner_id,
+        tmp_path / "users",
+        seed_database=legacy_path,
+    )
+    assert owner_path != legacy_path
+    with get_user_session(owner_id, tmp_path / "users") as session:
+        assert session.get(Goal, 1).goal == "preserved owner history"
+    with get_user_session(legacy_user, tmp_path / "legacy-root") as session:
+        assert session.get(Goal, 1).goal == "preserved owner history"
+
+
 def test_control_db_contains_identity_metadata_not_athlete_tables(tmp_path: Path):
     engine = create_control_engine(tmp_path / "control.db")
     ControlBase.metadata.create_all(engine)

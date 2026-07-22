@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import sqlite3
 import threading
 from typing import Iterator
 from uuid import UUID
@@ -63,7 +64,10 @@ def _create_engine_for_path(db_path: Path) -> Engine:
 
 
 def provision_user_store(
-    user_id: str, root: Path | str = config.MULTI_USER_DATA_ROOT
+    user_id: str,
+    root: Path | str = config.MULTI_USER_DATA_ROOT,
+    *,
+    seed_database: Path | str | None = None,
 ) -> Path:
     directory = user_root(user_id, root)
     directory.mkdir(parents=True, exist_ok=True)
@@ -73,6 +77,17 @@ def provision_user_store(
         # Windows ACLs are managed by the service account; chmod is best-effort.
         pass
     db_path = directory / "athlete.db"
+    seed_path = Path(seed_database).resolve() if seed_database else None
+    if not db_path.exists() and seed_path and seed_path.exists():
+        temporary = directory / ".athlete.db.bootstrap"
+        source = sqlite3.connect(f"file:{seed_path.as_posix()}?mode=ro", uri=True)
+        destination = sqlite3.connect(temporary)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+            source.close()
+        os.replace(temporary, db_path)
     engine = _create_engine_for_path(db_path)
     try:
         Base.metadata.create_all(engine)

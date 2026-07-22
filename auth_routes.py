@@ -1,6 +1,8 @@
 """Invitation-only Google authentication routes for multi-user mode."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
@@ -126,7 +128,14 @@ def google_callback(state: str = "", code: str = "", error: str = "") -> Respons
                 claims=claims,
                 owner_email=config.OWNER_GOOGLE_EMAIL,
             )
-            provision_user_store(user.id)
+            provision_user_store(
+                user.id,
+                seed_database=(
+                    config.DB_PATH
+                    if user.role == "owner" and Path(config.DB_PATH).exists()
+                    else None
+                ),
+            )
             raw_session = create_web_session(session, user)
     except AuthenticationError:
         return _no_store(HTMLResponse(
