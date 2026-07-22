@@ -206,6 +206,12 @@ The morning briefing is the daily source of truth.
 - 11:30 local time is the latest data-wait deadline.
 - Produce at most one authoritative morning briefing per local date. A later
   material correction is a separate update linked to the original decision.
+- Before 11:30, the absence of an active approved program is treated as a
+  temporary unavailable plan state, not as an authoritative `NO_ACTION`
+  decision. Program activation resumes evaluation immediately.
+- If an older or test-generated `NO_ACTION` briefing already exists and the
+  active program later becomes available, send one clearly labelled morning
+  briefing update with the current workout/rest decision.
 
 ### Critical missing data
 

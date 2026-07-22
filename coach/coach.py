@@ -467,31 +467,46 @@ def _render_typed_decision(result) -> str | None:
     return f"{metric_line}\n{text}".strip()
 
 
-def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = False) -> None:
+def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = False) -> bool:
     """Evaluate and render the deterministic morning result; evening stays silent."""
     from time_utils import get_local_now
     if get_local_now().hour >= 17:
         logger.info("Evening workout proposals are disabled until next morning's overnight data.")
-        return
+        return False
     from coach.decision_engine import evaluate_morning_decision
     from coach.renderer import render_morning
     result = evaluate_morning_decision(session, allow_incomplete=allow_incomplete)
+    now = get_local_now()
+    # Before the final 11:30 deadline, a temporarily unavailable program is not
+    # a trustworthy "do nothing" decision. Keep waiting so program activation
+    # or restoration can produce the real daily call.
+    if (
+        result.workout_outcome == "NO_ACTION"
+        and result.active_program_id is None
+        and (now.hour, now.minute) < (11, 30)
+    ):
+        logger.info("Deferring morning briefing until an active program is available.")
+        return False
     text, reply_markup, interaction_ids = render_morning(session, result)
     if not text:
-        return
+        return False
     existing = (
         session.query(CoachMessage)
         .filter_by(role="suggestion")
         .order_by(CoachMessage.created_at.desc())
         .first()
     )
-    today = get_local_now().date()
+    today = now.date()
     if existing and existing.created_at and existing.created_at.date() == today:
-        return
+        # A previously delivered NO_ACTION brief may have captured a temporary
+        # missing-program state. Re-evaluate it through the material-update
+        # path instead of silently preserving the stale recommendation.
+        from notify.morning import enqueue_late_material_update
+        return enqueue_late_material_update(session)
     msg = CoachMessage(
         role="suggestion",
         content=text,
-        created_at=get_local_now(),
+        created_at=now,
         data_snapshot=json.dumps(result.to_dict(), sort_keys=True),
         pending_action_json=(json.dumps({"interaction_ids": interaction_ids}) if interaction_ids else None),
     )
@@ -499,20 +514,21 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
     session.commit()
     try:
         from notify.outbox import deliver_notification, enqueue_notification
-        now = get_local_now().replace(tzinfo=None)
+        now_naive = now.replace(tzinfo=None)
         queued = enqueue_notification(
             session,
             event_type="morning_briefing",
-            due_at=now,
+            due_at=now_naive,
             payload={"text": f"*Morning Briefing*\n\n{text}", "interaction_ids": interaction_ids},
             decision_id=result.decision_id,
             idempotency_key=f"briefing:{result.idempotency_key}",
         )
         session.commit()
-        deliver_notification(session, queued, now)
+        deliver_notification(session, queued, now_naive)
         session.commit()
     except Exception:
         logger.exception("Failed to queue deterministic morning briefing")
+    return True
 
 
 def handle_chat(session: Session, user_text: str) -> tuple[str, CoachMessage]:

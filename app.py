@@ -1699,6 +1699,12 @@ def approve_program(program_id: int):
         program.updated_at = program.activated_at
         from coach.program_state import initialize_program_cursor
         initialize_program_cursor(session, program, activated_at=program.activated_at)
+    # If this morning was deferred because no program was active—or an older
+    # NO_ACTION brief was already sent—activation immediately produces the
+    # authoritative recommendation or a clearly labelled correction.
+    with get_session() as session:
+        from coach.coach import generate_daily_suggestion
+        generate_daily_suggestion(session)
     return RedirectResponse(url="/program?view=active&approved=1", status_code=303)
 
 

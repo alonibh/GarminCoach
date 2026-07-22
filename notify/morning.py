@@ -91,23 +91,26 @@ def priority_sync_finished() -> None:
         row.last_priority_fetch_at = _now_naive()
         facts = morning_freshness(session)
         if reconcile_sent_brief(session, row):
-            _enqueue_late_material_update(session)
+            enqueue_late_material_update(session)
             return
         if facts["ready"] or row.answer_anyway:
             row.status = "evaluating"
-            generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
-            row.briefing_sent_at = _now_naive()
-            row.status = "complete"
+            sent = generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
+            if sent:
+                row.briefing_sent_at = _now_naive()
+                row.status = "complete"
+            else:
+                row.status = "waiting_for_program"
         else:
             row.status = "waiting"
         row.updated_at = _now_naive()
 
 
-def _enqueue_late_material_update(session) -> None:
-    """Notify only when new daytime readiness changes the same-day call to Poor."""
+def enqueue_late_material_update(session) -> bool:
+    """Send one correction when new facts materially change today's call."""
     now = get_local_now()
     if now.hour < 7 or now.hour >= 22:
-        return
+        return False
     from coach.decision_engine import evaluate_morning_decision
     day = get_local_date()
     sent_brief = (
@@ -122,32 +125,50 @@ def _enqueue_late_material_update(session) -> None:
         .first()
     )
     if not sent_brief or not sent_brief.decision_id:
-        return
+        return False
     first = session.get(DecisionRecord, sent_brief.decision_id)
     if not first:
-        return
+        return False
     original = json.loads(first.result_json)
     current = evaluate_morning_decision(session, target=day, evaluated_at=now)
-    if original.get("decision_type") == "ADVISE_SKIP_SESSION" or current.decision_type != "ADVISE_SKIP_SESSION":
-        return
+    became_poor = (
+        original.get("decision_type") != "ADVISE_SKIP_SESSION"
+        and current.decision_type == "ADVISE_SKIP_SESSION"
+    )
+    program_became_available = (
+        original.get("workout_outcome") == "NO_ACTION"
+        and current.workout_outcome in {
+            "KEEP_PLANNED_SESSION", "PROPOSE_NEXT_SESSION", "PROGRAM_REST_DAY",
+        }
+    )
+    if not (became_poor or program_became_available):
+        return False
     existing = session.query(NotificationOutbox).filter_by(
         idempotency_key=f"late-update:{current.idempotency_key}"
     ).first()
     if existing:
-        return
+        return False
     from coach.renderer import render_morning
     text, _markup, interaction_ids = render_morning(session, current)
     if not text:
-        return
+        return False
     from notify.outbox import enqueue_notification
     enqueue_notification(
         session,
         event_type="late_material_update",
         due_at=now.replace(tzinfo=None),
-        payload={"text": f"Update: {text}", "interaction_ids": interaction_ids},
+        payload={
+            "text": f"*Morning Briefing Update*\n\n{text}",
+            "interaction_ids": interaction_ids,
+        },
         decision_id=current.decision_id,
         idempotency_key=f"late-update:{current.idempotency_key}",
     )
+    return True
+
+
+# Compatibility for internal callers/tests that used the original private name.
+_enqueue_late_material_update = enqueue_late_material_update
 
 
 def morning_deadline() -> bool:
@@ -158,19 +179,25 @@ def morning_deadline() -> bool:
             return False
         facts = morning_freshness(session)
         if facts["ready"]:
-            generate_daily_suggestion(session)
-            row.briefing_sent_at = _now_naive()
-            row.status = "complete"
+            sent = generate_daily_suggestion(session)
+            if sent:
+                row.briefing_sent_at = _now_naive()
+                row.status = "complete"
+            else:
+                row.status = "waiting_for_program"
             row.updated_at = _now_naive()
-            return True
+            return sent
 
         row.answer_anyway = True
         row.status = "evaluating"
-        generate_daily_suggestion(session, allow_incomplete=True)
-        row.briefing_sent_at = _now_naive()
-        row.status = "complete"
+        sent = generate_daily_suggestion(session, allow_incomplete=True)
+        if sent:
+            row.briefing_sent_at = _now_naive()
+            row.status = "complete"
+        else:
+            row.status = "waiting_for_program"
         row.updated_at = _now_naive()
-        return True
+        return sent
 
 
 def answer_anyway(day_key: str) -> bool:
@@ -182,8 +209,11 @@ def answer_anyway(day_key: str) -> bool:
             return False
         row.answer_anyway = True
         row.status = "evaluating"
-        generate_daily_suggestion(session, allow_incomplete=True)
-        row.briefing_sent_at = _now_naive()
-        row.status = "complete"
+        sent = generate_daily_suggestion(session, allow_incomplete=True)
+        if sent:
+            row.briefing_sent_at = _now_naive()
+            row.status = "complete"
+        else:
+            row.status = "waiting_for_program"
         row.updated_at = _now_naive()
-        return True
+        return sent

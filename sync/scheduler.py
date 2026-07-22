@@ -39,8 +39,7 @@ def _maybe_send_ready_morning_brief() -> bool:
     with get_session() as session:
         if not proactive_metrics_ready(session):
             return False
-        generate_daily_suggestion(session)
-        return True
+        return generate_daily_suggestion(session)
 
 
 def _morning_watch() -> None:

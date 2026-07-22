@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-22 - Missing-Program Morning Brief Recovery
+
+- Deferred pre-11:30 morning briefs when no active program is temporarily
+  available instead of finalizing a misleading `NO_ACTION` recommendation.
+- Added one idempotent, clearly labelled update when a program becomes
+  available after an earlier `NO_ACTION` brief.
+- Re-evaluate the morning recommendation immediately after program approval.
+
 ## 2026-07-22 - Morning Brief Metrics and Menu Layout
 
 - Kept available sleep and readiness facts in positive workout morning briefs
