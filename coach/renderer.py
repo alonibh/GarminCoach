@@ -18,8 +18,6 @@ def _clock(value) -> str | None:
 
 def _metric_line(session: Session, result: DecisionResult) -> str:
     parts = []
-    if result.readiness_score is not None:
-        parts.append(f"Garmin readiness {result.readiness_score} ({result.readiness_category})")
     values = {item["signal"]: item["value"] for item in result.observations}
     duration = values.get("sleep_duration_hours")
     score = values.get("sleep_score")
@@ -32,6 +30,8 @@ def _metric_line(session: Session, result: DecisionResult) -> str:
         if isinstance(score, dict):
             sleep += f", score {score['score']} ({score['category']})"
         parts.append(sleep)
+    if result.readiness_score is not None:
+        parts.append(f"Garmin readiness {result.readiness_score} ({result.readiness_category})")
     return "; ".join(parts) + ("." if parts else "")
 
 
@@ -48,15 +48,15 @@ def render_morning(
     )
     proposed_time = json.loads(schedule.payload_json)["suggested_time"] if schedule else None
 
-    # A positive workout proposal should be immediately actionable. Keep the
-    # evidence for decisions that advise against training, where it explains
-    # why the athlete should not train today.
+    # The authoritative morning brief always keeps its available overnight
+    # facts. A positive workout decision must not reduce the message to an
+    # unsupported-looking schedule proposal.
     recommends_workout = (
         result.workout_outcome in {"KEEP_PLANNED_SESSION", "PROPOSE_NEXT_SESSION"}
         and result.decision_type not in {"ADVISE_SKIP_SESSION"}
         and not result.calendar_conflict
     )
-    metrics = "" if plan_only or recommends_workout else _metric_line(session, result)
+    metrics = "" if plan_only else _metric_line(session, result)
     if result.workout_outcome == "PROGRAM_REST_DAY":
         earliest = format_chat_date(result.earliest_eligible_date) or result.earliest_eligible_date
         body = (

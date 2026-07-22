@@ -47,7 +47,10 @@ def test_renderer_stages_only_deterministic_original_session(session, monkeypatc
 
     text, markup, ids = render_morning(session, result)
 
-    assert text == "Suggested today: Full Body 1 at 18:00."
+    assert text == (
+        "sleep 7.5h, score 82 (Good); Garmin readiness 74 (Moderate).\n"
+        "Suggested today: Full Body 1 at 18:00."
+    )
     assert len(ids) == 1
     assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
     assert markup["inline_keyboard"][0][1]["text"] == "Set another date"

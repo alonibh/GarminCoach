@@ -144,6 +144,9 @@ def test_menu_offers_every_supported_top_level_catalog_path(session, monkeypatch
     assert "Find a workout time" in labels
     assert "Safety help" not in labels
     assert "Help" not in labels
+    assert [button["text"] for button in routed.reply_markup["keyboard"][-1]] == [
+        "My calendar", "Start Garmin sync",
+    ]
 
 
 @pytest.mark.parametrize(("message", "expected"), [

@@ -72,7 +72,7 @@ def test_evening_never_creates_tomorrow_workout_before_new_sleep(session, monkey
     assert sent == []
 
 
-def test_morning_workout_proposal_is_actionable_without_positive_readiness_rationale(session, monkeypatch):
+def test_morning_workout_proposal_keeps_overnight_facts_and_actions(session, monkeypatch):
     import coach.coach as coach_module
     import metrics.freshness as freshness
 
@@ -109,7 +109,10 @@ def test_morning_workout_proposal_is_actionable_without_positive_readiness_ratio
 
     msg = session.query(CoachMessage).one()
     assert json.loads(msg.pending_action_json)["interaction_ids"]
-    assert msg.content == "Suggested today: Full Body 1 at 18:00."
+    assert msg.content == (
+        "sleep 6.2h, score 79 (Fair); Garmin readiness 75 (High).\n"
+        "Suggested today: Full Body 1 at 18:00."
+    )
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
     assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Approve and schedule"

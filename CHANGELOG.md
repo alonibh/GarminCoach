@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-22 - Morning Brief Metrics and Menu Layout
+
+- Kept available sleep and readiness facts in positive workout morning briefs
+  instead of rendering only the workout proposal.
+- Moved `My calendar` beside `Start Garmin sync` on the Telegram command menu.
+
 ## 2026-07-22 - Two-Day Specialty Routine
 
 - Added the source-audited intermediate 100-Rep Full Body Shocker as a
