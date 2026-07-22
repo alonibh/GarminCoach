@@ -173,6 +173,7 @@ def test_dashboard_sync_updates_charts_without_page_reload(client):
     assert "fetch('/sync'" in response.text
     assert "chart.update('none')" in response.text
     assert 'id="sync-form"' in response.text
+    assert ".dashboard-actions [hidden] { display: none !important; }" in response.text
 
 
 def test_onboarding_renders_history_defaults(client):
