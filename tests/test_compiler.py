@@ -80,7 +80,7 @@ def test_program_workout_has_structured_warmup_and_generic_fallback(session):
     from coach.garmin_compiler import build_program_workout
     routine = _active_session(session)
     payload = build_program_workout(session, routine.id, "18:00")
-    assert payload["workoutName"] == "🏋️ Workout A @ 18:00"
+    assert payload["workoutName"] == "Workout A @ 18:00"
     steps = payload["workoutSegments"][0]["workoutSteps"]
     assert steps[0]["stepType"]["stepTypeKey"] == "warmup"
     assert steps[0]["description"] == "Warm-up: Bench Press"
@@ -116,5 +116,6 @@ def test_program_telegram_approval_uploads_verifies_schedules_and_is_idempotent(
     assert compiler.compile_and_schedule(session, action) is True
     assert compiler.compile_and_schedule(session, action) is True
     assert len(api.uploads) == 1
+    assert api.uploads[0]["workoutName"] == "Workout A @ 18:00"
     assert api.scheduled == [(77, "2026-07-20")]
     assert session.query(PlannedSession).one().garmin_workout_id == 77

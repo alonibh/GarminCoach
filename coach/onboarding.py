@@ -10,8 +10,7 @@ from sqlalchemy.orm import Session
 
 from db import Activity, ExerciseSet, ProgramSession, TrainingProgram, Workout
 from coach.exercises import exercise_metadata
-
-_COACH_PREFIX = "\U0001f3cb\ufe0f "
+from coach.workout_identity import user_workouts_query
 
 
 COMMON_ACTIVITY_LABELS = {
@@ -386,12 +385,7 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
         .order_by(Activity.start_time.desc())
         .all()
     )
-    templates = (
-        session.query(Workout)
-        .filter(~Workout.name.startswith(_COACH_PREFIX))
-        .order_by(Workout.name.asc())
-        .all()
-    )
+    templates = user_workouts_query(session).order_by(Workout.name.asc()).all()
 
     template_rows = [
         {

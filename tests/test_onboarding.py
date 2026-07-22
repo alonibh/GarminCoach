@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from coach.onboarding import analyze_user_history
-from db import Activity, ExerciseSet, Workout
+from db import Activity, ExerciseSet, PlannedSession, SyncState, Workout
 
 
 def _activity(session, activity_id: int, activity_type: str, days_ago: int, name: str = "") -> None:
@@ -63,6 +63,26 @@ def test_strength_history_selects_strength_defaults_without_templates(session):
     assert "Strength" in analysis["defaults"]["preferred_activities"]
     assert analysis["defaults"]["plan_mode"] == "schedule_my_routine"
     assert analysis["defaults"]["selected_templates"] == []
+
+
+def test_coach_created_workouts_are_excluded_without_name_prefix(session):
+    _workout(session, 501, "User Workout")
+    _workout(session, 502, "Scheduled Workout @ 18:00")
+    _workout(session, 503, "Legacy Coach Workout")
+    session.query(Workout).filter_by(workout_id=503).one().name = "\U0001f3cb\ufe0f Legacy Coach Workout"
+    session.add(PlannedSession(
+        activity_type="strength_training",
+        title="Scheduled Workout",
+        target_date=datetime.now().date(),
+        garmin_workout_id=502,
+    ))
+    session.add(SyncState(key="last_coach_workout_id", value="504"))
+    _workout(session, 504, "Latest Scheduled Workout")
+    session.commit()
+
+    analysis = analyze_user_history(session)
+
+    assert [template["name"] for template in analysis["templates"]] == ["User Workout"]
 
 
 def test_recent_routine_uses_one_90_day_dataset_while_background_keeps_all_history(session):

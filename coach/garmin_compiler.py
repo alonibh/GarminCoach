@@ -238,7 +238,7 @@ def build_program_workout(
     nested_steps = sum(1 + len(step.get("workoutSteps", [])) for step in steps)
     if nested_steps > 50:
         raise ValueError(f"Workout has {nested_steps} steps; Garmin limit is 50")
-    name = f"{_COACH_PREFIX}{planned.name}" + (f" @ {suggested_time}" if suggested_time else "")
+    name = planned.name + (f" @ {suggested_time}" if suggested_time else "")
     sport = {"sportTypeId": 5, "sportTypeKey": "strength_training", "displayOrder": 5}
     return {"workoutName": name, "sportType": sport, "workoutSegments": [{"segmentOrder": 1, "sportType": sport, "workoutSteps": reindex_steps(steps)}]}
 
@@ -305,10 +305,6 @@ def _schedule_program_session(session: Session, meta: dict) -> bool:
                 pass
         logger.error("Failed to upload program workout: %s", exc)
         return False
-
-# Prefix used for all coach-created workouts, so we can find and delete them.
-_COACH_PREFIX = "\U0001f3cb\ufe0f "  # 🏋️ emoji prefix
-
 
 def _get_step_weight(step: dict) -> float:
     """Extract working weight from a step."""
@@ -489,15 +485,15 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
     new_steps = reindex_steps(new_steps)
 
     # Build a descriptive workout name from the base workout name.
-    # Format: "🏋️ Upper Body @ 15:30" — includes the suggested time so it
-    # shows in calendar views, and the emoji prefix lets us identify and
-    # delete previous coach-created workouts.
+    # Include the suggested time so the workout is recognizable in Garmin
+    # calendar views. Coach-created workouts are identified by stored Garmin
+    # workout IDs, not by altering the user-facing name.
     base_name = base_workout.name or "Workout"
     suggested_time = payload.get("suggested_time", "")
     if suggested_time:
-        workout_name = f"{_COACH_PREFIX}{base_name} @ {suggested_time}"
+        workout_name = f"{base_name} @ {suggested_time}"
     else:
-        workout_name = f"{_COACH_PREFIX}{base_name}"
+        workout_name = base_name
 
     # Build the final payload wrapper
     garmin_payload = {

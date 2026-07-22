@@ -405,12 +405,8 @@ def build_snapshot(session: Session) -> str:
             pass
         return names
 
-    from coach.garmin_compiler import _COACH_PREFIX
-    saved_workouts = (
-        session.query(Workout)
-        .filter(~Workout.name.startswith(_COACH_PREFIX))
-        .all()
-    )
+    from coach.workout_identity import LEGACY_COACH_WORKOUT_PREFIX, user_workouts_query
+    saved_workouts = user_workouts_query(session).all()
     if saved_workouts:
         routine_exercises = {}
         for w in saved_workouts:
@@ -486,7 +482,7 @@ def build_snapshot(session: Session) -> str:
     if scheduled_future:
         snapshot["scheduled_workouts_NOT_completed"] = [
             {
-                "name": e.get("title", "").replace(_COACH_PREFIX, "").strip(),
+                "name": e.get("title", "").removeprefix(LEGACY_COACH_WORKOUT_PREFIX).strip(),
                 "scheduled_date": e.get("date"),
                 "scheduled_time": e.get("start_time")
             }
