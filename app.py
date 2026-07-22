@@ -2477,12 +2477,17 @@ async def telegram_webhook(request: Request):
                 return {"status": "ok"}
             parts = (incoming_text or "").strip().split(maxsplit=1)
             command = parts[0].split("@", 1)[0].casefold() if parts else ""
-            if command == "/link":
-                if len(parts) != 2:
-                    send_link_message("Generate a link command from GarminCoach Account settings.", str(incoming_chat_id))
-                    return {"status": "ok"}
+            link_code = None
+            if command == "/link" and len(parts) == 2:
+                link_code = parts[1]
+            elif command == "/start" and len(parts) == 2 and parts[1].startswith("link_"):
+                link_code = parts[1].removeprefix("link_")
+            if command in {"/link", "/start"} and link_code is None:
+                send_link_message("Generate a link command from GarminCoach Account settings.", str(incoming_chat_id))
+                return {"status": "ok"}
+            if link_code is not None:
                 try:
-                    identity = consume_link_code(parts[1], str(incoming_chat_id))
+                    identity = consume_link_code(link_code, str(incoming_chat_id))
                 except ValueError as exc:
                     send_link_message(str(exc), str(incoming_chat_id))
                     return {"status": "ok"}

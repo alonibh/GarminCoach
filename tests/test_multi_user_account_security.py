@@ -91,3 +91,16 @@ def test_destructive_deletion_removes_store_identity_and_sessions(monkeypatch, t
         assert event.event_type == "account_deleted"
         assert "athlete@example.com" not in (event.subject_ref or "")
     engine.dispose()
+
+
+def test_open_telegram_uses_short_lived_deep_link(monkeypatch):
+    user_id = str(uuid4())
+    request = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=user_id)))
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    monkeypatch.setattr(config, "TELEGRAM_BOT_USERNAME", "ExampleCoachBot")
+    monkeypatch.setattr(account_routes, "issue_link_code", lambda value: "one_use_code" if value == user_id else "")
+    response = account_routes.open_telegram_link(request)
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://t.me/ExampleCoachBot?start=link_one_use_code"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["cache-control"] == "no-store"

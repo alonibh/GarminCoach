@@ -61,6 +61,7 @@ def _settings_context(
         "telegram_command": telegram_command,
         "error": error,
         "max_invited_users": config.MAX_INVITED_USERS,
+        "telegram_bot_username": config.TELEGRAM_BOT_USERNAME,
     }
 
 
@@ -107,6 +108,21 @@ def create_telegram_link(request: Request):
         "account.html",
         _settings_context(user, telegram_command=f"/link {code}"),
         headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/telegram/open")
+def open_telegram_link(request: Request):
+    if disabled := _disabled():
+        return disabled
+    user = _current_user(request)
+    if not config.TELEGRAM_BOT_USERNAME:
+        raise HTTPException(status_code=503, detail="Telegram bot is not configured")
+    code = issue_link_code(user.id)
+    return RedirectResponse(
+        f"https://t.me/{config.TELEGRAM_BOT_USERNAME}?start=link_{code}",
+        status_code=303,
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
     )
 
 

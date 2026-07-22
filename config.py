@@ -106,4 +106,7 @@ if MULTI_USER_ENABLED:
 # --- Telegram Notifications ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_USERNAME = os.getenv(
+    "TELEGRAM_BOT_USERNAME", "AlonGarminCoach_bot"
+).strip().lstrip("@")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "super-secret-telegram-string")

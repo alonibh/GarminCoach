@@ -137,7 +137,7 @@ def test_webhook_binds_resolved_tenant_before_handling_command(monkeypatch, tmp_
         headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
         json={"message": {
             "chat": {"id": 111111, "type": "private"},
-            "text": f"/link {code}",
+            "text": f"/start link_{code}",
         }},
     )
     assert linked.status_code == 200
