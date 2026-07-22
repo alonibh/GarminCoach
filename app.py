@@ -1437,7 +1437,10 @@ def get_onboarding(request: Request):
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
-                "plan_choices": PLAN_CHOICES,
+                "plan_choices": sorted(
+                    PLAN_CHOICES,
+                    key=lambda choice: analysis["plan_matches"][choice["key"]]["rank"],
+                ),
                 "garmin_connected": client.is_authenticated(),
                 "sync_running": sync_runner.is_running(),
                 "is_editing": bool(profile.onboarding_complete),
@@ -1458,6 +1461,7 @@ def onboarding_status():
         "recent_routine": analysis["recent_routine"],
         "training_background": analysis["training_background"],
         "plan_recommendation": analysis["plan_recommendation"],
+        "plan_matches": analysis["plan_matches"],
         "last_sync_at": _last_sync_at(),
     })
 

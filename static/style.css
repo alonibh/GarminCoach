@@ -449,11 +449,56 @@ p { margin: 0 0 1rem; }
 .choice-card:hover { border-color: var(--accent-strong); transform: translateY(-1px); }
 .choice-card:has(input:checked) { border-color: var(--accent); background: rgba(47, 129, 247, .11); }
 .choice-card input { width: auto; min-height: 0; margin-top: .18rem; accent-color: var(--accent); }
+.choice-card > span { flex: 1; min-width: 0; }
 .choice-card b,
 .choice-card small { display: block; }
 .choice-card small { margin-top: .2rem; color: var(--muted); font-size: .78rem; font-weight: 500; }
 .choice-card.compact { min-height: 54px; align-items: center; }
 .choice-card.is-filtered-out { display: none; }
+
+.routine-match {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr);
+  align-items: center;
+  gap: .3rem .55rem;
+  margin: .65rem 0 .45rem;
+}
+
+.routine-match-heading {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.routine-match-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(139, 148, 158, .2);
+}
+
+.routine-match-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--muted);
+  transition: width .25s ease;
+}
+
+.routine-match[data-tone="strong"] .routine-match-heading { color: var(--success); }
+.routine-match[data-tone="strong"] .routine-match-track > span { background: var(--success); }
+.routine-match[data-tone="good"] .routine-match-heading { color: var(--accent-strong); }
+.routine-match[data-tone="good"] .routine-match-track > span { background: var(--accent); }
+.routine-match[data-tone="possible"] .routine-match-heading { color: #e3b341; }
+.routine-match[data-tone="possible"] .routine-match-track > span { background: #d29922; }
+.routine-match[data-tone="poor"] .routine-match-heading { color: var(--muted); }
+
+.routine-match small {
+  grid-column: 1 / -1;
+  margin: 0;
+  line-height: 1.35;
+}
 
 .onboarding-submit {
   position: sticky;

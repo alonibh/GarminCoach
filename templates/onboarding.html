@@ -19,7 +19,21 @@
       <p class="field-hint routine-level-hint">Levels reflect the routine's weekly frequency, total volume, and exercise complexity—not a judgment of you.</p>
       <div class="choice-grid goal-grid" id="routine-choices">
         {% for plan in plan_choices %}
-        <label class="choice-card" data-plan-days="{{ plan.days }}"><input type="radio" name="plan_key" value="{{ plan.key }}" {% if d.plan_key == plan.key %}checked{% endif %} required><span><b>{{ plan.title }}<span data-suggested-label {% if analysis.plan_recommendation.key != plan.key %}hidden{% endif %}> · Suggested</span></b><span class="routine-source-details" aria-label="Original routine details">{% for label, value in plan.source_details %}<span class="routine-detail-fact{% if label == 'Training Level' %} {{ plan.experience_slug }}{% endif %}"><span>{{ {'Main Goal': 'Goal', 'Workout Type': 'Type', 'Training Level': 'Level', 'Days Per Week': 'Days', 'Time Per Workout': 'Time'}[label] }}</span>{{ value }}</span>{% endfor %}</span><small>{{ plan.days }} gym days each week · {{ plan.description }}</small><small><a href="{{ plan.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View source routine</a></small></span></label>
+        {% set match = analysis.plan_matches[plan.key] %}
+        <label class="choice-card" data-plan-key="{{ plan.key }}" data-plan-days="{{ plan.days }}">
+          <input type="radio" name="plan_key" value="{{ plan.key }}" {% if d.plan_key == plan.key %}checked{% endif %} required>
+          <span>
+            <b>{{ plan.title }}<span data-suggested-label {% if not match.is_best %}hidden{% endif %}> · Best match</span></b>
+            <span class="routine-source-details" aria-label="Original routine details">{% for label, value in plan.source_details %}<span class="routine-detail-fact{% if label == 'Training Level' %} {{ plan.experience_slug }}{% endif %}"><span>{{ {'Main Goal': 'Goal', 'Workout Type': 'Type', 'Training Level': 'Level', 'Days Per Week': 'Days', 'Time Per Workout': 'Time'}[label] }}</span>{{ value }}</span>{% endfor %}</span>
+            <span class="routine-match" data-match-box data-tone="{{ match.tone }}">
+              <span class="routine-match-heading" data-match-label>{% if match.is_best %}Best match{% else %}{{ match.label }}{% endif %}</span>
+              <span class="routine-match-track" role="meter" aria-label="Routine match" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ match.score }}"><span data-match-bar style="width: {{ match.score }}%"></span></span>
+              <small data-match-evidence>{{ match.evidence }}</small>
+            </span>
+            <small>{{ plan.days }} gym days each week · {{ plan.description }}</small>
+            <small><a href="{{ plan.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View source routine</a></small>
+          </span>
+        </label>
         {% endfor %}
       </div>
     </section>
@@ -62,12 +76,26 @@ document.querySelectorAll('input[name="plan_key"]').forEach((input) => {
     document.getElementById('sync-title').textContent = 'Garmin history is ready';
     document.getElementById('sync-copy').textContent = `We found ${data.total_activities} recent activities to learn from.`;
     document.getElementById('routine-recommendation-reason').textContent = `${data.plan_recommendation.reason} This is only a suggestion—your choice always wins.`;
+    const routineChoices = document.getElementById('routine-choices');
+    const routineCards = Array.from(routineChoices.querySelectorAll('[data-plan-key]'));
+    routineCards.forEach((card) => {
+      const match = data.plan_matches[card.dataset.planKey];
+      const matchBox = card.querySelector('[data-match-box]');
+      matchBox.dataset.tone = match.tone;
+      card.querySelector('[data-match-label]').textContent = match.is_best ? 'Best match' : match.label;
+      card.querySelector('[data-match-evidence]').textContent = match.evidence;
+      const meter = card.querySelector('[role="meter"]');
+      meter.setAttribute('aria-valuenow', match.score);
+      card.querySelector('[data-match-bar]').style.width = `${match.score}%`;
+    });
+    routineCards.sort((left, right) => data.plan_matches[left.dataset.planKey].rank - data.plan_matches[right.dataset.planKey].rank)
+      .forEach((card) => routineChoices.append(card));
     document.querySelectorAll('[data-suggested-label]').forEach((label) => { label.hidden = true; });
     const recommendedInput = Array.from(document.querySelectorAll('input[name="plan_key"]'))
       .find((input) => input.value === data.plan_recommendation.key);
     if (recommendedInput) {
       recommendedInput.closest('label').querySelector('[data-suggested-label]').hidden = false;
-      if (!isEditing && !planChoiceChanged) recommendedInput.checked = true;
+      if (!isEditing && !planChoiceChanged && !recommendedInput.disabled) recommendedInput.checked = true;
     }
     const button = document.getElementById('create-plan-btn');
     button.disabled = false;

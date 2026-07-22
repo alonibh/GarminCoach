@@ -144,6 +144,10 @@ def test_history_recommends_push_pull_legs_from_repeated_exercise_patterns(sessi
 
     assert analysis["plan_recommendation"]["key"] == "ppl_6"
     assert "exercise-backed" in analysis["plan_recommendation"]["reason"]
+    assert analysis["plan_matches"]["ppl_6"]["is_best"] is True
+    assert analysis["plan_matches"]["ppl_6"]["rank"] == 1
+    assert analysis["plan_matches"]["ppl_6"]["score"] >= 80
+    assert len(analysis["plan_matches"]) == 25
 
 
 def test_history_recommends_upper_lower_from_repeated_exercise_patterns(session):
@@ -157,12 +161,12 @@ def test_history_recommends_upper_lower_from_repeated_exercise_patterns(session)
     assert analyze_user_history(session)["plan_recommendation"]["key"] == "maul_5"
 
 
-def test_history_recommends_full_body_three_days_from_frequent_mixed_sessions(session):
+def test_history_recommends_matching_full_body_routine_from_frequent_sessions(session):
     for index in range(6):
         _strength_session(session, index + 1, 13 - index * 2, "Full Body", ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"])
     session.commit()
 
-    assert analyze_user_history(session)["plan_recommendation"]["key"] == "optimized_volume_4"
+    assert analyze_user_history(session)["plan_recommendation"]["key"] == "beginner_full_body_3"
 
 
 def test_sparse_or_name_only_history_falls_back_to_full_body_two_days(session):
@@ -173,6 +177,27 @@ def test_sparse_or_name_only_history_falls_back_to_full_body_two_days(session):
     recommendation = analyze_user_history(session)["plan_recommendation"]
     assert recommendation["key"] == "full_body_2"
     assert "No reliable split" in recommendation["reason"]
+
+
+def test_every_routine_has_an_explainable_ranked_match_score(session):
+    for index in range(6):
+        _strength_session(
+            session,
+            index + 1,
+            13 - index * 2,
+            "Full Body",
+            ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"],
+        )
+    session.commit()
+
+    analysis = analyze_user_history(session)
+    matches = analysis["plan_matches"]
+
+    assert sorted(match["rank"] for match in matches.values()) == list(range(1, 26))
+    assert all(0 <= match["score"] <= 100 for match in matches.values())
+    assert all(match["label"] in {"Strong match", "Good match", "Possible match", "Poor fit"} for match in matches.values())
+    assert all("structure" in match["evidence"] for match in matches.values())
+    assert sum(match["is_best"] for match in matches.values()) == 1
 
 
 def test_recommendation_uses_inferred_intermediate_experience(session):

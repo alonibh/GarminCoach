@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from db import Activity, ExerciseSet, ProgramSession, TrainingProgram, Workout
 from coach.exercises import exercise_metadata
+from coach.programs import PROGRAMS
 from coach.workout_identity import user_workouts_query
 
 
@@ -293,39 +294,154 @@ def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | N
     return None
 
 
-def _recommended_plan_key(weekly: int, experience: str, labels: Counter[str]) -> str:
-    """Choose a general-purpose catalog routine from frequency, level, and split."""
-    level = "new" if experience == "returning" else experience
-    has_ppl = all(labels[pattern] >= 2 for pattern in ("push", "pull", "lower"))
-    has_upper_lower = labels["upper"] >= 2 and labels["lower"] >= 2
-    has_full_body = labels["full_body"] >= 3
+def _detected_split(labels: Counter[str]) -> str | None:
+    if all(labels[pattern] >= 2 for pattern in ("push", "pull", "lower")):
+        return "push/pull/legs"
+    if labels["upper"] >= 2 and labels["lower"] >= 2:
+        return "upper/lower"
+    if labels["full_body"] >= 3:
+        return "full-body"
+    if sum(labels.values()) >= 3:
+        return "mixed"
+    return None
 
-    # Staying close to demonstrated frequency is the strongest signal of a
-    # sustainable plan. Within that frequency, prefer a routine whose demands
-    # fit the athlete's inferred training age and familiar session structure.
-    if weekly == 2:
-        # The other two-day catalog entry is a 100-rep specialty block, not a
-        # suitable default recommendation regardless of training age.
-        return "full_body_2"
-    if weekly == 3:
-        if level in {"six_to_twenty_four_months", "two_plus_years"}:
-            return "total_package_3"
-        return "ms_full_body_3" if has_full_body or has_upper_lower else "beginner_full_body_3"
-    if weekly == 4:
-        if level == "two_plus_years":
-            return "advanced_upper_lower_4" if has_upper_lower else "split_full_4"
-        if level == "six_to_twenty_four_months":
-            return "shul_4" if has_upper_lower else "phul_4"
-        return "upper_lower_4" if has_upper_lower else "optimized_volume_4"
-    if weekly == 5:
-        return "maul_5" if level == "new" else "muscle_strength_5"
-    if level == "two_plus_years":
-        return "built_different_ppl_6" if has_ppl else "muscle_mania_6"
-    if level == "six_to_twenty_four_months":
-        if has_ppl:
-            return "powerbuilding_ppl_6"
-        return "body_fat_demolition_5" if has_upper_lower else "low_volume_high_intensity_6"
-    return "ppl_6" if has_ppl else "maul_5"
+
+def _program_split(program: dict[str, Any]) -> str:
+    focuses = [session["focus_tags"][0].lower() for session in program["sessions"]]
+    if focuses and all(focus == "full body" for focus in focuses):
+        return "full-body"
+    if {"push", "pull", "lower body"}.issubset(focuses):
+        return "push/pull/legs"
+    if "upper body" in focuses and "lower body" in focuses:
+        return "upper/lower"
+    return "mixed"
+
+
+def _plan_match_scores(
+    weekly: int,
+    experience: str,
+    detected_split: str | None,
+    observed_categories: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Score every catalog routine using explainable, non-clinical fit signals."""
+    level_rank = {"new": 0, "returning": 0, "six_to_twenty_four_months": 1, "two_plus_years": 2}
+    athlete_rank = level_rank.get(experience, 0)
+    split_fit = {
+        "full-body": {"full-body": 100, "mixed": 80, "upper/lower": 65, "push/pull/legs": 45},
+        "upper/lower": {"upper/lower": 100, "mixed": 80, "push/pull/legs": 65, "full-body": 65},
+        "push/pull/legs": {"push/pull/legs": 100, "mixed": 75, "upper/lower": 65, "full-body": 45},
+        "mixed": {"mixed": 100, "full-body": 90, "upper/lower": 80, "push/pull/legs": 75},
+    }
+    frequency_fit = {0: 100, 1: 70, 2: 30, 3: 10, 4: 0}
+    raw_matches: dict[str, dict[str, Any]] = {}
+
+    for key, program in PROGRAMS.items():
+        days = len(program["sessions"])
+        day_difference = min(abs(days - weekly), 4)
+        frequency_score = frequency_fit[day_difference]
+        routine_rank = level_rank.get(program["experience"], 0)
+        level_difference = routine_rank - athlete_rank
+        if level_difference == 0:
+            experience_score, level_evidence = 100, "Level fits"
+        elif level_difference < 0:
+            experience_score = 75 if level_difference == -1 else 55
+            level_evidence = "Lighter volume"
+        else:
+            experience_score = 40 if level_difference == 1 else 10
+            level_evidence = "Stretch level"
+
+        routine_split = _program_split(program)
+        pattern_score = split_fit.get(detected_split or "", {}).get(routine_split, 60)
+        program_categories = {
+            exercise.get("garmin_category") or exercise["exercise_key"].split(":", 1)[0]
+            for program_session in program["sessions"]
+            for exercise in program_session["exercises"]
+        }
+        if observed_categories and program_categories:
+            overlap = len(observed_categories & program_categories)
+            exercise_score = round(overlap / min(len(observed_categories), len(program_categories)) * 100)
+        else:
+            exercise_score = 50
+
+        score = round(
+            frequency_score * .35
+            + pattern_score * .35
+            + experience_score * .20
+            + exercise_score * .10
+        )
+        evidence = [
+            "Frequency fits" if day_difference == 0 else f"{day_difference}-day frequency gap",
+            f"{routine_split.title()} structure",
+            level_evidence,
+        ]
+        if key == "hundred_rep_full_body_2":
+            score = max(0, score - 25)
+            evidence.append("Short specialty block")
+        raw_matches[key] = {
+            "score": score,
+            "label": "Strong match" if score >= 80 else "Good match" if score >= 65 else "Possible match" if score >= 50 else "Poor fit",
+            "tone": "strong" if score >= 80 else "good" if score >= 65 else "possible" if score >= 50 else "poor",
+            "evidence": " · ".join(evidence),
+            "is_best": False,
+        }
+
+    ranked_keys = sorted(raw_matches, key=lambda key: (-raw_matches[key]["score"], list(PROGRAMS).index(key)))
+    for rank, key in enumerate(ranked_keys, start=1):
+        raw_matches[key]["rank"] = rank
+    raw_matches[ranked_keys[0]]["is_best"] = True
+    return raw_matches
+
+
+def _rank_plans_from_history(
+    session: Session,
+    activities: list[Activity],
+    experience_level: str,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
+    weekly = min(6, max(2, round(len(strength) / _history_span_weeks(strength)))) if strength else 2
+
+    grouped: dict[int, set[str]] = defaultdict(set)
+    observed_categories: set[str] = set()
+    if strength:
+        ids = [a.id for a in strength]
+        for exercise in session.query(ExerciseSet).filter(ExerciseSet.activity_id.in_(ids)).all():
+            name = (exercise.exercise_category or exercise.exercise_name or "").upper()
+            if name:
+                grouped[exercise.activity_id].add(name)
+            if exercise.exercise_category:
+                observed_categories.add(exercise.exercise_category.upper())
+
+    labels = Counter()
+    for activity in strength:
+        movements = {pattern for name in grouped[activity.id] if (pattern := _movement_pattern(name))}
+        lower = bool(movements & {"knee_dominant", "hip_hinge"})
+        push = bool(movements & {"horizontal_push", "vertical_push", "elbow_extension"})
+        pull = bool(movements & {"horizontal_pull", "vertical_pull", "elbow_flexion"})
+        label = "full_body" if lower and push and pull else "upper" if push and pull else "lower" if lower and not (push or pull) else "push" if push and not pull else "pull" if pull and not push else None
+        if label:
+            labels[label] += 1
+
+    usable = sum(labels.values())
+    detected_split = _detected_split(labels)
+    scoring_weekly = weekly if usable >= 3 else 2
+    matches = _plan_match_scores(scoring_weekly, experience_level, detected_split, observed_categories)
+    key = next(key for key, match in matches.items() if match["is_best"])
+    if len(strength) < 3:
+        reason = "No reliable gym pattern found yet; the comparison starts conservatively with a two-day routine."
+    elif usable < 3:
+        reason = "No reliable split was found from recent exercise sets; the comparison starts conservatively with a two-day routine."
+    else:
+        experience_label = {
+            "new": "new or under 6 months",
+            "six_to_twenty_four_months": "6-24 months",
+            "two_plus_years": "more than 2 years",
+            "returning": "returning after a break",
+        }.get(experience_level, "uncertain")
+        reason = (
+            f"Best fit from about {weekly} recent gym sessions per week, {usable} exercise-backed "
+            f"{detected_split} sessions, and an inferred {experience_label} training background."
+        )
+    return {"key": key, "reason": reason, "days_per_week": len(PROGRAMS[key]["sessions"])}, matches
 
 
 def recommend_plan_from_history(
@@ -334,52 +450,8 @@ def recommend_plan_from_history(
     experience_level: str = "new",
 ) -> dict[str, Any]:
     """Rank the curated routine catalog from frequency, exercises, and experience."""
-    strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
-    if len(strength) < 3:
-        return {"key": "full_body_2", "reason": "No reliable gym pattern found yet; start with the two-day A/B full-body routine."}
-
-    ids = [a.id for a in strength]
-    grouped: dict[int, set[str]] = defaultdict(set)
-    for exercise in session.query(ExerciseSet).filter(ExerciseSet.activity_id.in_(ids)).all():
-        name = (exercise.exercise_category or exercise.exercise_name or "").upper()
-        if name:
-            grouped[exercise.activity_id].add(name)
-
-    labels = Counter()
-    for activity in strength:
-        movements = {p for name in grouped[activity.id] if (p := _movement_pattern(name))}
-        lower = bool(movements & {"knee_dominant", "hip_hinge"})
-        push = bool(movements & {"horizontal_push", "vertical_push", "elbow_extension"})
-        pull = bool(movements & {"horizontal_pull", "vertical_pull", "elbow_flexion"})
-        label = "full_body" if lower and push and pull else "upper" if push and pull else "lower" if lower and not (push or pull) else "push" if push and not pull else "pull" if pull and not push else None
-        if label:
-            labels[label] += 1
-
-    weekly = min(6, max(2, round(len(strength) / _history_span_weeks(strength))))
-    usable = sum(labels.values())
-    if usable < 3:
-        return {"key": "full_body_2", "reason": "No reliable split was found from recent exercise sets; start with the two-day A/B full-body routine.", "days_per_week": 2}
-    key = _recommended_plan_key(weekly, experience_level, labels)
-    experience_label = {
-        "new": "new or under 6 months",
-        "six_to_twenty_four_months": "6-24 months",
-        "two_plus_years": "more than 2 years",
-        "returning": "returning after a break",
-    }.get(experience_level, "uncertain")
-    detected_split = (
-        "push/pull/legs"
-        if all(labels[pattern] >= 2 for pattern in ("push", "pull", "lower"))
-        else "upper/lower"
-        if labels["upper"] >= 2 and labels["lower"] >= 2
-        else "full-body"
-        if labels["full_body"] >= 3
-        else "mixed"
-    )
-    reason = (
-        f"Best fit from about {weekly} recent gym sessions per week, {usable} exercise-backed "
-        f"{detected_split} sessions, and an inferred {experience_label} training background."
-    )
-    return {"key": key, "reason": reason, "days_per_week": int(key.rsplit("_", 1)[1])}
+    recommendation, _ = _rank_plans_from_history(session, activities, experience_level)
+    return recommendation
 
 
 def _build_defaults(
@@ -449,6 +521,11 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
     recent_completed = _usable_completed_activities(recent_activities)
     all_completed = _usable_completed_activities(all_activities)
     recent_patterns = _activity_patterns(recent_activities)
+    plan_recommendation, plan_matches = _rank_plans_from_history(
+        session,
+        recent_activities,
+        defaults["experience_level"],
+    )
     return {
         "lookback_days": lookback_days,
         "activity_patterns": recent_patterns,
@@ -469,11 +546,8 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
             "total_activities": len(all_completed),
             "experience_level": defaults["experience_level"],
         },
-        "plan_recommendation": recommend_plan_from_history(
-            session,
-            recent_activities,
-            defaults["experience_level"],
-        ),
+        "plan_recommendation": plan_recommendation,
+        "plan_matches": plan_matches,
     }
 
 

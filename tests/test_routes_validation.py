@@ -595,7 +595,7 @@ def test_selected_plan_overrides_history_recommendation(client):
                 s.add(ExerciseSet(id=9400 + index * 10 + set_index, activity_id=activity_id, set_index=set_index, exercise_category=exercise, exercise_name=exercise, reps=8, weight_kg=40))
 
     onboarding = c.get("/onboarding")
-    assert "Suggested" in onboarding.text
+    assert "Best match" in onboarding.text
 
     response = c.post("/onboarding", data={"plan_key": "full_body_2"}, follow_redirects=False)
     assert response.status_code == 303
