@@ -33,6 +33,20 @@ def _text_response(text):
     return _FakeResp(200, {"candidates": [{"content": {"parts": [{"text": text}]}}]})
 
 
+def test_provider_entry_points_fail_closed_when_llm_is_disabled(monkeypatch):
+    monkeypatch.setattr(config, "LLM_ENABLED", False)
+    monkeypatch.setattr(
+        llm.requests,
+        "post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled LLM must not make a network request")
+        ),
+    )
+
+    assert llm.generate("system", "user") == "Coach is currently disabled."
+    assert llm.generate_structured("system", "user", {"type": "object"}) == ""
+
+
 def test_generation_config_and_header_auth(monkeypatch):
     monkeypatch.setattr(config, "GEMINI_API_KEY", "secret-key", raising=False)
     cap = _capture_post(monkeypatch)

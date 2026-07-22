@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 def generate_structured(system: str, user: str, schema: dict) -> str:
     """Return schema-constrained JSON for untrusted routing decisions."""
+    if not config.LLM_ENABLED:
+        logger.info("LLM structured generation is disabled")
+        return ""
     if config.LLM_PROVIDER == "claude":
         try:
             import anthropic
@@ -80,6 +83,9 @@ def generate(system: str, user: str, history: list[dict] = None) -> str:
     """Generate a response from the configured LLM provider.
     `history` should be a list of dicts like [{"role": "user", "content": "..."}, ...]
     """
+    if not config.LLM_ENABLED:
+        logger.info("LLM generation is disabled")
+        return "Coach is currently disabled."
     history = history or []
     
     if config.LLM_PROVIDER == "claude":

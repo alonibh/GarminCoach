@@ -54,12 +54,23 @@ MORNING_WATCH_END_HOUR = int(os.getenv("MORNING_WATCH_END_HOUR", "12"))
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 DB_PATH = _expand(os.getenv("DB_PATH", "garmincoach.db"))
+MULTI_USER_ENABLED = os.getenv("MULTI_USER_ENABLED", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+MULTI_USER_DATA_ROOT = _expand(os.getenv("MULTI_USER_DATA_ROOT", "data/users"))
+CONTROL_DB_PATH = _expand(os.getenv("CONTROL_DB_PATH", "data/control.db"))
 APP_USERNAME = os.getenv("APP_USERNAME", "")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 _DEFAULT_SESSION_SECRET = "change-me-to-a-random-string"
 SESSION_SECRET = os.getenv("SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 SESSION_MAX_AGE_DAYS = int(os.getenv("SESSION_MAX_AGE_DAYS", "30"))
 DB_URL = f"sqlite:///{DB_PATH}"
+
+# LLM code remains available for future reviewed features, but production must
+# opt in explicitly. Merely configuring a provider or API key never enables it.
+LLM_ENABLED = os.getenv("LLM_ENABLED", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 # Security guard: a default signing secret makes session cookies forgeable, so
 # refuse to run with auth enabled and the placeholder secret still in place.
