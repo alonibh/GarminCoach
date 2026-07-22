@@ -492,6 +492,8 @@ p { margin: 0 0 1rem; }
 .routine-match[data-tone="good"] .routine-match-track > span { background: var(--accent); }
 .routine-match[data-tone="possible"] .routine-match-heading { color: #e3b341; }
 .routine-match[data-tone="possible"] .routine-match-track > span { background: #d29922; }
+.routine-match[data-tone="specialty"] .routine-match-heading { color: #e3b341; }
+.routine-match[data-tone="specialty"] .routine-match-track > span { background: #d29922; }
 .routine-match[data-tone="poor"] .routine-match-heading { color: var(--muted); }
 
 .routine-match small {

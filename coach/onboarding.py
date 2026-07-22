@@ -342,13 +342,11 @@ def _plan_match_scores(
         routine_rank = level_rank.get(program["experience"], 0)
         level_difference = routine_rank - athlete_rank
         if level_difference == 0:
-            experience_score, level_evidence = 100, "Level fits"
+            experience_score = 100
         elif level_difference < 0:
             experience_score = 75 if level_difference == -1 else 55
-            level_evidence = "Lighter volume"
         else:
             experience_score = 40 if level_difference == 1 else 10
-            level_evidence = "Stretch level"
 
         routine_split = _program_split(program)
         pattern_score = split_fit.get(detected_split or "", {}).get(routine_split, 60)
@@ -369,23 +367,39 @@ def _plan_match_scores(
             + experience_score * .20
             + exercise_score * .10
         )
-        evidence = [
-            "Frequency fits" if day_difference == 0 else f"{day_difference}-day frequency gap",
-            f"{routine_split.title()} structure",
-            level_evidence,
-        ]
-        if key == "hundred_rep_full_body_2":
-            score = max(0, score - 25)
-            evidence.append("Short specialty block")
+        is_specialty = key == "hundred_rep_full_body_2"
+        if is_specialty:
+            # Specialty blocks remain available by explicit choice, but they
+            # must not look like a normal ongoing recommendation.
+            score = min(score, 49)
+        label = (
+            "Specialty program"
+            if is_specialty
+            else "Strong match"
+            if score >= 80
+            else "Good match"
+            if score >= 65
+            else "Possible match"
+            if score >= 50
+            else "Poor fit"
+        )
         raw_matches[key] = {
             "score": score,
-            "label": "Strong match" if score >= 80 else "Good match" if score >= 65 else "Possible match" if score >= 50 else "Poor fit",
-            "tone": "strong" if score >= 80 else "good" if score >= 65 else "possible" if score >= 50 else "poor",
-            "evidence": " · ".join(evidence),
+            "label": label,
+            "tone": "specialty" if is_specialty else "strong" if score >= 80 else "good" if score >= 65 else "possible" if score >= 50 else "poor",
+            "evidence": "Four-week specialty program; not a default routine." if is_specialty else "",
+            "is_specialty": is_specialty,
             "is_best": False,
         }
 
-    ranked_keys = sorted(raw_matches, key=lambda key: (-raw_matches[key]["score"], list(PROGRAMS).index(key)))
+    ranked_keys = sorted(
+        raw_matches,
+        key=lambda key: (
+            raw_matches[key]["is_specialty"],
+            -raw_matches[key]["score"],
+            list(PROGRAMS).index(key),
+        ),
+    )
     for rank, key in enumerate(ranked_keys, start=1):
         raw_matches[key]["rank"] = rank
     raw_matches[ranked_keys[0]]["is_best"] = True

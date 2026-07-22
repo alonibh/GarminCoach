@@ -195,8 +195,14 @@ def test_every_routine_has_an_explainable_ranked_match_score(session):
 
     assert sorted(match["rank"] for match in matches.values()) == list(range(1, 26))
     assert all(0 <= match["score"] <= 100 for match in matches.values())
-    assert all(match["label"] in {"Strong match", "Good match", "Possible match", "Poor fit"} for match in matches.values())
-    assert all("structure" in match["evidence"] for match in matches.values())
+    assert all(match["label"] in {"Strong match", "Good match", "Possible match", "Poor fit", "Specialty program"} for match in matches.values())
+    assert all(not match["evidence"] for key, match in matches.items() if key != "hundred_rep_full_body_2")
+    specialty = matches["hundred_rep_full_body_2"]
+    assert specialty["label"] == "Specialty program"
+    assert specialty["score"] <= 49
+    assert specialty["rank"] == 25
+    assert "Four-week specialty program" in specialty["evidence"]
+    assert specialty["is_best"] is False
     assert sum(match["is_best"] for match in matches.values()) == 1
 
 

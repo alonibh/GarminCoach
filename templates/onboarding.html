@@ -28,7 +28,7 @@
             <span class="routine-match" data-match-box data-tone="{{ match.tone }}">
               <span class="routine-match-heading" data-match-label>{% if match.is_best %}Best match{% else %}{{ match.label }}{% endif %}</span>
               <span class="routine-match-track" role="meter" aria-label="Routine match" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ match.score }}"><span data-match-bar style="width: {{ match.score }}%"></span></span>
-              <small data-match-evidence>{{ match.evidence }}</small>
+              <small data-match-evidence {% if not match.evidence %}hidden{% endif %}>{{ match.evidence }}</small>
             </span>
             <small>{{ plan.days }} gym days each week · {{ plan.description }}</small>
             <small><a href="{{ plan.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View source routine</a></small>
@@ -83,7 +83,9 @@ document.querySelectorAll('input[name="plan_key"]').forEach((input) => {
       const matchBox = card.querySelector('[data-match-box]');
       matchBox.dataset.tone = match.tone;
       card.querySelector('[data-match-label]').textContent = match.is_best ? 'Best match' : match.label;
-      card.querySelector('[data-match-evidence]').textContent = match.evidence;
+      const evidence = card.querySelector('[data-match-evidence]');
+      evidence.textContent = match.evidence;
+      evidence.hidden = !match.evidence;
       const meter = card.querySelector('[role="meter"]');
       meter.setAttribute('aria-valuenow', match.score);
       card.querySelector('[data-match-bar]').style.width = `${match.score}%`;
