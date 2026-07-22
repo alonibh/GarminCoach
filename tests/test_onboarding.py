@@ -195,14 +195,9 @@ def test_every_routine_has_an_explainable_ranked_match_score(session):
 
     assert sorted(match["rank"] for match in matches.values()) == list(range(1, 26))
     assert all(0 <= match["score"] <= 100 for match in matches.values())
-    assert all(match["label"] in {"Strong match", "Good match", "Possible match", "Poor fit", "Specialty program"} for match in matches.values())
-    assert all(not match["evidence"] for key, match in matches.items() if key != "hundred_rep_full_body_2")
-    specialty = matches["hundred_rep_full_body_2"]
-    assert specialty["label"] == "Specialty program"
-    assert specialty["score"] <= 49
-    assert specialty["rank"] == 25
-    assert "Four-week specialty program" in specialty["evidence"]
-    assert specialty["is_best"] is False
+    assert all(match["label"] in {"Strong match", "Good match", "Possible match", "Poor fit"} for match in matches.values())
+    assert all(not match["evidence"] for match in matches.values())
+    assert all(match["is_specialty"] is False for match in matches.values())
     assert sum(match["is_best"] for match in matches.values()) == 1
 
 
@@ -250,5 +245,5 @@ def test_recommendation_uses_inferred_expert_level_for_upper_lower(session):
 
     recommendation = analyze_user_history(session)["plan_recommendation"]
 
-    assert recommendation["key"] == "advanced_upper_lower_4"
+    assert recommendation["key"] == "shul_4"
     assert "inferred more than 2 years training background" in recommendation["reason"]

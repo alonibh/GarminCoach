@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime
 from types import SimpleNamespace
 
-from coach.program_policy import PROGRAM_POLICIES, validate_program_policies
+from coach.program_policy import PROGRAM_POLICIES, SOURCE_TRAINING_LEVELS, validate_program_policies
 from coach.program_state import (
     initialize_program_cursor,
     program_state_facts,
@@ -83,6 +83,12 @@ def _activity(session, activity_id, when, *, workout_id=None, exercise_name=None
 def test_all_twenty_five_curated_program_policies_match_catalog():
     validate_program_policies(PROGRAMS)
     assert len(PROGRAM_POLICIES) == 25
+
+
+def test_powerbuilding_uses_published_level_and_intermediate_cadence():
+    policy = PROGRAM_POLICIES["powerbuilding_ppl_6"]
+    assert SOURCE_TRAINING_LEVELS["powerbuilding_ppl_6"] == "Intermediate"
+    assert policy.minimum_rest_days_after == (0, 0, 1, 0, 0, 1)
 
 
 def test_activity_sync_captures_provenance_once(session, monkeypatch):

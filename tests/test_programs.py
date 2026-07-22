@@ -1,5 +1,6 @@
 from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommend_program
 from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
+from coach.program_policy import REJECTED_DEFAULT_ROUTINES, SOURCE_TRAINING_LEVELS
 
 
 def test_catalog_contains_twenty_five_reviewed_routines_from_two_to_six_days():
@@ -7,7 +8,7 @@ def test_catalog_contains_twenty_five_reviewed_routines_from_two_to_six_days():
     assert len(PROGRAMS) == 25
     assert {len(program["sessions"]) for program in PROGRAMS.values()} == {2, 3, 4, 5, 6}
     assert {days: sum(len(program["sessions"]) == days for program in PROGRAMS.values()) for days in range(2, 7)} == {
-        2: 2, 3: 6, 4: 9, 5: 3, 6: 5,
+        2: 1, 3: 7, 4: 9, 5: 3, 6: 5,
     }
     for program in PROGRAMS.values():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
@@ -21,8 +22,8 @@ def test_get_ripped_adaptation_is_not_selectable():
 
 
 def test_plan_choices_include_clear_experience_badges():
-    assert {choice["experience_label"] for choice in PLAN_CHOICES} == {"Beginner", "Intermediate", "Expert"}
-    assert {choice["experience_slug"] for choice in PLAN_CHOICES} == {"beginner", "intermediate", "expert"}
+    assert {choice["experience_label"] for choice in PLAN_CHOICES} == {"Beginner", "Intermediate", "Advanced"}
+    assert {choice["experience_slug"] for choice in PLAN_CHOICES} == {"beginner", "intermediate", "advanced"}
 
 
 def test_plan_choices_include_original_routine_detail_badges():
@@ -44,26 +45,27 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "total_package_3": "Intermediate",
         "upper_lower_4": "Beginner",
         "shul_4": "Intermediate",
-        "split_full_4": "Expert",
+        "split_full_4": "Advanced",
         "muscle_strength_5": "Intermediate",
         "ppl_6": "Beginner",
-        "hundred_rep_full_body_2": "Intermediate",
+        "dumbbell_full_body_3": "Beginner",
         "planet_fitness_full_body_3": "Beginner",
         "long_cycle_full_body_3": "Beginner",
         "whole_body_toning_3": "Intermediate",
         "planet_fitness_upper_lower_4": "Beginner",
         "optimized_volume_4": "Beginner",
         "phul_4": "Intermediate",
-        "muscle_rebound_4": "Intermediate",
-        "rp21_4": "Intermediate",
-        "advanced_upper_lower_4": "Expert",
+        "dumbbell_upper_lower_4": "Beginner",
+        "barbell_no_rack_4": "Intermediate",
+        "barbell_upper_lower_4": "Beginner",
         "maul_5": "Beginner",
-        "body_fat_demolition_5": "Intermediate",
+        "dumbbell_split_5": "Intermediate",
         "powerbuilding_ppl_6": "Intermediate",
         "low_volume_high_intensity_6": "Intermediate",
-        "built_different_ppl_6": "Expert",
-        "muscle_mania_6": "Expert",
+        "built_different_ppl_6": "Advanced",
+        "muscle_mania_6": "Advanced",
     }
+    assert labels == dict(SOURCE_TRAINING_LEVELS)
 
 
 def test_source_program_is_not_trimmed_by_free_text_duration_limit():
@@ -235,9 +237,9 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
     } == {45}
     assert {
         exercise["rest_seconds"]
-        for routine in PROGRAMS["hundred_rep_full_body_2"]["sessions"]
+        for routine in PROGRAMS["dumbbell_full_body_3"]["sessions"]
         for exercise in routine["exercises"]
-    } == {180}
+    } == {60}
 
 
 def test_major_region_gate_ignores_focus_labels_and_arm_isolation():
@@ -258,15 +260,8 @@ def test_major_region_gate_ignores_focus_labels_and_arm_isolation():
         raise AssertionError("Arm isolation must not satisfy the major-region pull gate")
 
 
-def test_hundred_rep_specialty_program_trains_each_major_region_twice():
-    program = PROGRAMS["hundred_rep_full_body_2"]
-    assert program["experience"] == "six_to_twenty_four_months"
-    assert program["region_exposures"] == {"lower": 2, "push": 2, "pull": 2}
-    assert all(
-        exercise["sets"] == 1 and exercise["reps"] == 100
-        for session in program["sessions"]
-        for exercise in session["exercises"]
-    )
+def test_temporary_and_phase_specific_routines_are_not_selectable_defaults():
+    assert set(PROGRAMS).isdisjoint(REJECTED_DEFAULT_ROUTINES)
 
 
 def test_every_curated_exercise_has_a_primary_muscle_group():

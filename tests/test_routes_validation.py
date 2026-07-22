@@ -200,7 +200,7 @@ def test_onboarding_renders_history_defaults(client):
     assert 'Source details</summary>' not in resp.text
     assert 'routine-detail-fact beginner' in resp.text
     assert 'routine-detail-fact intermediate' in resp.text
-    assert 'routine-detail-fact expert' in resp.text
+    assert 'routine-detail-fact advanced' in resp.text
     assert "Recent training context · last 90 days" in resp.text
     assert "Recent activity mix · last 90 days" in resp.text
     assert "Strength focused" in resp.text

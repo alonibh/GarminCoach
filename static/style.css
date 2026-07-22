@@ -404,7 +404,7 @@ p { margin: 0 0 1rem; }
 
 .routine-experience-badge.beginner { background: rgba(63, 185, 80, .16); color: var(--success); }
 .routine-experience-badge.intermediate { background: rgba(47, 129, 247, .16); color: var(--accent-strong); }
-.routine-experience-badge.expert { background: rgba(210, 153, 34, .17); color: #e3b341; }
+.routine-experience-badge.advanced { background: rgba(210, 153, 34, .17); color: #e3b341; }
 
 .routine-source-details {
   display: flex;
@@ -431,7 +431,7 @@ p { margin: 0 0 1rem; }
 
 .routine-detail-fact.beginner { color: var(--success); }
 .routine-detail-fact.intermediate { color: var(--accent-strong); }
-.routine-detail-fact.expert { color: #e3b341; }
+.routine-detail-fact.advanced { color: #e3b341; }
 
 .choice-card {
   position: relative;

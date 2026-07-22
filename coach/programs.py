@@ -9,15 +9,14 @@ from coach.exercises import CATALOG_VERSION, exercise_key, exercise_metadata
 
 ACSM_SOURCE_URL = "https://acsm.org/resistance-training-guidelines-update-2026/"
 ACSM_ATTRIBUTION = "Muscle & Strength routine reviewed against ACSM 2026 resistance-training guidance."
-ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+source-rest-2026-07-22-25"
+ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+default-routines-2026-07-22-25"
 
-# These labels describe the routine's demands—not an absolute judgment of the
-# athlete. They are assigned during catalog review from training age, weekly
-# frequency, exercise complexity, and total volume.
+# These are direct translations of Muscle & Strength's published Training
+# Level. Never infer or relabel a routine from its exercises or frequency.
 EXPERIENCE_BADGES = {
     "new": {"label": "Beginner", "slug": "beginner"},
     "six_to_twenty_four_months": {"label": "Intermediate", "slug": "intermediate"},
-    "two_plus_years": {"label": "Expert", "slug": "expert"},
+    "two_plus_years": {"label": "Advanced", "slug": "advanced"},
     "returning": {"label": "Beginner", "slug": "beginner"},
 }
 
@@ -524,33 +523,31 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         ],
         "Push, pull, and legs are each trained twice; high-frequency option for established trainees only.",
     ),
-    "hundred_rep_full_body_2": _program(
-        "100-Rep Full Body Shocker · 2 days",
-        "https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout",
-        "six_to_twenty_four_months",
+    "dumbbell_full_body_3": _program(
+        "Dumbbell Full Body · 3 days",
+        "https://www.muscleandstrength.com/workouts/3-day-full-body-dumbbell-workout",
+        "new",
         [
-            _session("100-Rep Full Body 1", "full body", [
-                _exercise("Leg Press", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Lat Pull Down", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Incline Bench Press", 1, 100, rest=180, notes="Use a machine or safely supported variation; pause within the set using the source countdown protocol."),
-                _exercise("Barbell Shrugs", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Dumbbell Lateral Raise", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Hammer Curl", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Cable Tricep Extensions", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Leg Press Calf Raise", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-            ], 90),
-            _session("100-Rep Full Body 2", "full body", [
-                _exercise("Rack Deadlifts", 1, 100, rest=180, notes="Use straps; pause within the set using the source countdown protocol."),
-                _exercise("Cable Fly", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Seated Cable Row", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Seated Shoulder Press", 1, 100, rest=180, notes="Use a machine or safely supported variation; pause within the set using the source countdown protocol."),
-                _exercise("Dumbbell Pullover", 1, 100, movement="vertical_pull", rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Reverse Barbell Curl", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Cable Overhead Tricep Extension", 1, 100, rest=180, notes="Use 30-40% of your usual working weight; pause within the set using the source countdown protocol."),
-                _exercise("Weighted Crunch", 1, 100, rest=180, notes="Pause within the set using the source countdown protocol."),
-            ], 90),
+            _session("Full Body 1", "full body", [
+                _exercise("Dumbbell Squat", 3, 10), _exercise("Dumbbell Stiff Leg Deadlift", 3, 10),
+                _exercise("Bent Over Dumbbell Row", 3, 10, movement="horizontal_pull"), _exercise("Dumbbell Bench Press", 3, 10),
+                _exercise("Dumbbell Lateral Raise", 2, 8), _exercise("Standing Dumbbell Curl", 2, 8),
+                _exercise("Lying Dumbbell Tricep Extension", 2, 8),
+            ], 45),
+            _session("Full Body 2", "full body", [
+                _exercise("Dumbbell Lunge", 3, 10), _exercise("Dumbbell Hamstring Curl", 3, 10, movement="hip_hinge"),
+                _exercise("Dumbbell Deadlift", 3, 10), _exercise("Dumbbell Military Press", 3, 10, movement="vertical_push"),
+                _exercise("Dumbbell Fly", 2, 8, movement="horizontal_push"), _exercise("Hammer Curl", 2, 8),
+                _exercise("Seated Dumbbell Tricep Extension", 2, 8),
+            ], 45),
+            _session("Full Body 3", "full body", [
+                _exercise("Dumbbell Step Up", 3, 10), _exercise("Dumbbell Stiff Leg Deadlift", 3, 10),
+                _exercise("One Arm Dumbbell Row", 3, 10), _exercise("Reverse Grip Dumbbell Press", 3, 10, movement="horizontal_push"),
+                _exercise("Dumbbell Rear Delt Fly", 2, 8, movement="horizontal_pull"), _exercise("Zottman Curl", 2, 8),
+                _exercise("Close Grip Dumbbell Press", 2, 8, movement="horizontal_push"),
+            ], 45),
         ],
-        "Intermediate four-week specialty block; every major region is trained on both days with one 100-rep target per exercise.",
+        "Repeatable dumbbell-only full-body base with ordinary load and repetition progression.",
     ),
 }
 
@@ -620,29 +617,76 @@ PROGRAMS.update({
             _session("Lower Hypertrophy", "lower body", [_exercise("Front Squat", 4, 8), _exercise("Barbell Lunge", 4, 8), _exercise("Leg Extension", 3, 10), _exercise("Leg Curl", 3, 10)], 60),
         ], "Power and hypertrophy sessions each train the upper and lower body once.",
     ),
-    "muscle_rebound_4": _program(
-        "Muscle Rebound · 4 days", "https://www.muscleandstrength.com/workouts/muscle-rebound-workout", "six_to_twenty_four_months", [
-            _session("Pull", "pull", [_exercise("Deadlift", 4, 5), _exercise("Chin Up", 4, 10), _exercise("Machine Row", 4, 10, notes="Use a Hammer Strength row"), _exercise("Glute Ham Raise", 3, 10, movement="hip_hinge")], 75),
-            _session("Push", "push", [_exercise("Dumbbell Bench Press", 4, 5), _exercise("Military Press", 3, 5), _exercise("Push Up", 4, 12), _exercise("Tricep Dip", 3, 10, movement="vertical_push")], 75),
-            _session("Legs", "lower body", [_exercise("Back Squat", 4, 5), _exercise("Dumbbell Stiff Leg Deadlift", 4, 10), _exercise("Dumbbell Lunge", 3, 10), _exercise("Seated Leg Curl", 3, 10, notes="Perform one leg at a time")], 75),
-            _session("Full Body", "full body", [_exercise("Sumo Deadlift", 4, 5), _exercise("Pull Up", 4, 10), _exercise("Goblet Squat", 4, 12), _exercise("Incline Dumbbell Press", 3, 10)], 75),
-        ], "Pull, push, and legs lead into a second complete full-body exposure.",
+    "dumbbell_upper_lower_4": _program(
+        "Dumbbell Upper / Lower · 4 days", "https://www.muscleandstrength.com/workouts/dumbbell-only-upper-lower-workout-routine", "new", [
+            _session("Upper A", "upper body", [
+                _exercise("Bent Over Dumbbell Row", 4, 8), _exercise("Dumbbell Bench Press", 4, 8),
+                _exercise("Dumbbell Lateral Raise", 3, 8), _exercise("Dumbbell Pullover", 3, 8, movement="vertical_pull"),
+                _exercise("Dumbbell Bicep Curl", 2, 8), _exercise("Dumbbell Tricep Extension", 2, 8), _exercise("Dumbbell Shrug", 2, 12),
+            ], 60),
+            _session("Lower A", "lower body", [
+                _exercise("Goblet Squat", 4, 8), _exercise("Dumbbell Stiff Leg Deadlift", 4, 8),
+                _exercise("Dumbbell Plie Squat", 3, 8, movement="knee_dominant"), _exercise("Dumbbell Hamstring Curl", 3, 8, movement="hip_hinge"),
+                _exercise("Standing Dumbbell Calf Raise", 3, 8), _exercise("Plank", 3, None, duration=20),
+            ], 60),
+            _session("Upper B", "upper body", [
+                _exercise("One Arm Dumbbell Row", 4, 8), _exercise("Dumbbell Shoulder Press", 4, 8),
+                _exercise("Incline Dumbbell Bench Press", 3, 8), _exercise("Chest Supported Dumbbell Row", 3, 8, movement="horizontal_pull"),
+                _exercise("Dumbbell Hammer Curl", 2, 8), _exercise("Dumbbell Floor Press", 2, 8), _exercise("Seated Dumbbell Shrug", 2, 12),
+            ], 60),
+            _session("Lower B", "lower body", [
+                _exercise("Dumbbell Stiff Leg Deadlift", 4, 8), _exercise("Dumbbell Rear Lunge", 4, 8),
+                _exercise("Dumbbell Hip Thrust", 4, 8, movement="hip_hinge"), _exercise("Dumbbell Split Squat", 3, 8),
+                _exercise("Seated Dumbbell Calf Raise", 3, 8), _exercise("Plank", 3, None, duration=20),
+            ], 60),
+        ], "Repeatable dumbbell-only upper/lower base with two weekly exposures per major region.",
     ),
-    "rp21_4": _program(
-        "RP-21 Rest-Pause · 4 days", "https://www.muscleandstrength.com/workouts/4-day-rp21-rest-pause-workout-system", "six_to_twenty_four_months", [
-            _session("Lower 1", "lower body", [_exercise("Barbell Squat", 7, 3), _exercise("Barbell Hip Thrust", 6, 5), _exercise("Dumbbell Reverse Lunge", 6, 5), _exercise("Seated Calf Raise", 6, 5)], 60),
-            _session("Upper 1", "upper body", [_exercise("Dips", 7, 3, movement="vertical_push"), _exercise("Chin Up", 6, 5), _exercise("Incline Bench Press", 6, 5), _exercise("Bent Over Barbell Row", 6, 5)], 60),
-            _session("Lower 2", "lower body", [_exercise("Deadlift", 7, 3), _exercise("Dumbbell Reverse Lunge", 6, 5, notes="Perform as walking lunges"), _exercise("Glute Ham Raise", 6, 5, movement="hip_hinge"), _exercise("Standing Machine Calf Raise", 6, 5)], 60),
-            _session("Upper 2", "upper body", [_exercise("Pull Up", 7, 3), _exercise("Incline Dumbbell Bench Press", 6, 5), _exercise("One Arm Dumbbell Row", 6, 5), _exercise("Narrow Grip Bench Press", 6, 5)], 60),
-        ], "Four-week rest-pause block with two lower and two balanced upper sessions.",
+    "barbell_no_rack_4": _program(
+        "Barbell Only (No Rack) · 4 days", "https://www.muscleandstrength.com/workouts/4-day-barbell-only-workout", "six_to_twenty_four_months", [
+            _session("Upper A", "upper body", [
+                _exercise("Overhead Press", 4, 4), _exercise("Bent Over Row", 4, 4),
+                _exercise("Weighted Push Up", 4, 4, movement="horizontal_push"), _exercise("Pull Up", 4, 4),
+                _exercise("Landmine Lateral Raise", 3, 6, movement="vertical_push"), _exercise("Skullcrusher", 3, 6),
+            ], 90),
+            _session("Lower A", "lower body", [
+                _exercise("Sumo Deadlift", 4, 4), _exercise("Bulgarian Split Squat", 4, 6),
+                _exercise("Barbell Glute Bridge", 5, 8, movement="hip_hinge"), _exercise("Single Leg Good Morning", 3, 8, movement="hip_hinge", notes="Use a resistance band"),
+                _exercise("Side Plank", 3, None, duration=30), _exercise("Barbell Calf Raise", 4, 8),
+            ], 90),
+            _session("Upper B", "upper body", [
+                _exercise("Band Pull Apart", 3, 20, movement="horizontal_pull"), _exercise("Floor Press", 4, 8),
+                _exercise("Meadows Row", 4, 8, movement="horizontal_pull"), _exercise("Single Arm Landmine Press", 4, 8, movement="vertical_push"),
+                _exercise("Inverted Row", 4, 8), _exercise("Banded Tricep Extension", 3, 20),
+            ], 90),
+            _session("Lower B", "lower body", [
+                _exercise("Banded Hamstring Curl", 3, 15, movement="hip_hinge"), _exercise("Landmine Squat", 4, 8, movement="knee_dominant", notes="Use the source 1½-rep variation"),
+                _exercise("Barbell Reverse Lunge", 4, 8), _exercise("Stiff Leg Deadlift", 4, 8),
+                _exercise("Pallof Press", 2, 8), _exercise("Single Leg Calf Raise", 3, None, notes="AMRAP each side"),
+            ], 90),
+        ], "Repeatable limited-equipment upper/lower base with ordinary double progression.",
     ),
-    "advanced_upper_lower_4": _program(
-        "Advanced Upper / Lower Mass · 4 days", "https://www.muscleandstrength.com/workouts/4-day-advanced-upper-lower-workout-program-to-build-mass", "two_plus_years", [
-            _session("Upper A", "upper body", [_exercise("Bench Press", 4, 8), _exercise("Bent Over Row", 4, 8), _exercise("Military Press", 4, 10), _exercise("Wide Grip Pull Down", 4, 10), _exercise("Dips", 3, 12, movement="vertical_push")], 75),
-            _session("Lower A", "lower body", [_exercise("Squat", 4, 8), _exercise("Romanian Deadlift", 4, 8), _exercise("Leg Press", 3, 12), _exercise("Lying Leg Curl", 3, 12), _exercise("Standing Calf Raise", 3, 15)], 75),
-            _session("Upper B", "upper body", [_exercise("Incline Dumbbell Bench Press", 4, 10), _exercise("Seated Cable Row", 4, 10), _exercise("Machine Shoulder Press", 3, 12), _exercise("Pull Up", 3, 10), _exercise("Machine Chest Press", 3, 12)], 75),
-            _session("Lower B", "lower body", [_exercise("Front Squat", 4, 10), _exercise("Stiff Leg Deadlifts", 4, 10), _exercise("Hack Squat", 3, 12), _exercise("Seated Leg Curl", 3, 12), _exercise("Seated Calf Raise", 3, 15)], 75),
-        ], "High-volume upper/lower schedule with each major region trained twice.",
+    "barbell_upper_lower_4": _program(
+        "Home / Gym Barbell · 4 days", "https://www.muscleandstrength.com/workouts/home-gym-barbell-workout-routine", "new", [
+            _session("Lower A", "lower body", [
+                _exercise("Power Clean", 3, 5, movement="hip_hinge"), _exercise("Squat", 3, 6),
+                _exercise("Stiff Leg Deadlift", 3, 6), _exercise("Barbell Calf Raise", 3, 12),
+                _exercise("Barbell Ab Rollout", 3, 10),
+            ], 45),
+            _session("Upper A", "upper body", [
+                _exercise("Bench Press", 3, 6), _exercise("Yates Row", 3, 6, movement="horizontal_pull"),
+                _exercise("Push Press", 3, 5), _exercise("Seated French Press", 3, 8), _exercise("Barbell Curl", 3, 8),
+            ], 45),
+            _session("Lower B", "lower body", [
+                _exercise("Deadlift", 3, 5), _exercise("Front Squat", 3, 6),
+                _exercise("Good Morning", 3, 6, movement="hip_hinge", notes="Use a wide stance"), _exercise("Barbell Calf Raise", 3, 12),
+                _exercise("Weighted Sit Up", 3, 10, notes="Cradle a barbell in the elbows as prescribed by the source"),
+            ], 45),
+            _session("Upper B", "upper body", [
+                _exercise("Seated Overhead Press", 3, 6), _exercise("Barbell Row", 3, 6),
+                _exercise("Incline Bench Press", 3, 6), _exercise("Close Grip Bench Press", 3, 6),
+                _exercise("Reverse Grip Barbell Curl", 3, 8),
+            ], 45),
+        ], "Repeatable barbell upper/lower base whose source progression is to add weight when possible.",
     ),
     "maul_5": _program(
         "MAUL · 5 days", "https://www.muscleandstrength.com/workouts/maul-workout", "new", [
@@ -653,14 +697,34 @@ PROGRAMS.update({
             _session("Lower Full", "lower body", [_exercise("Front Squat", 4, 10), _exercise("Barbell Hip Thrust", 4, 10), _exercise("Dumbbell Lunge", 3, 12), _exercise("Lying Leg Curl", 3, 12)], 60),
         ], "Five-day adaptation split with repeated upper and lower compound exposure.",
     ),
-    "body_fat_demolition_5": _program(
-        "Body Fat Demolition · 5 days", "https://www.muscleandstrength.com/workouts/8-week-body-fat-demolition-workout", "six_to_twenty_four_months", [
-            _session("Upper A", "upper body", [_exercise("Bench Press", 4, 6), _exercise("Barbell Row", 4, 6), _exercise("Overhead Press", 3, 10), _exercise("Lat Pull Down", 3, 10)], 70),
-            _session("Lower A", "lower body", [_exercise("Squat", 4, 6), _exercise("Romanian Deadlift", 4, 8), _exercise("Walking Lunge", 3, 10), _exercise("Leg Curl", 3, 12)], 70),
-            _session("Upper B", "upper body", [_exercise("Incline Dumbbell Bench Press", 4, 10), _exercise("Seated Cable Row", 4, 10), _exercise("Dumbbell Shoulder Press", 3, 12), _exercise("Pull Up", 3, 10)], 70),
-            _session("Lower B", "lower body", [_exercise("Deadlift", 4, 5), _exercise("Leg Press", 4, 10), _exercise("Dumbbell Reverse Lunge", 3, 12), _exercise("Seated Leg Curl", 3, 12)], 70),
-            _session("Full Body", "full body", [_exercise("Front Squat", 3, 10), _exercise("Dumbbell Bench Press", 3, 10), _exercise("One Arm Dumbbell Row", 3, 10), _exercise("Barbell Hip Thrust", 3, 12)], 70),
-        ], "Cardio-free source schedule: upper/lower pairs plus a fifth full-body session.",
+    "dumbbell_split_5": _program(
+        "Dumbbell Split · 5 days", "https://www.muscleandstrength.com/workouts/5-day-dumbbell-only-workout-split", "six_to_twenty_four_months", [
+            _session("Chest, Shoulders & Triceps", "push", [
+                _exercise("Dumbbell Bench Press", 5, 8), _exercise("Incline Dumbbell Bench Press", 4, 8),
+                _exercise("Dumbbell Floor Press", 3, 8), _exercise("Standing Dumbbell Press", 4, 8),
+                _exercise("Dumbbell Lateral Raise", 3, 8), _exercise("Dumbbell Tricep Kickback", 3, 8),
+            ], 60),
+            _session("Legs & Core A", "lower body", [
+                _exercise("Goblet Squat", 4, 8), _exercise("Dumbbell Stiff Leg Deadlift", 4, 8),
+                _exercise("Dumbbell Rear Lunge", 4, 8), _exercise("Dumbbell Frog Squat", 3, 8, movement="knee_dominant"),
+                _exercise("Dumbbell Calf Raise", 4, 20), _exercise("Weighted Crunch", 3, 20), _exercise("Side Plank", 3, None, duration=20),
+            ], 60),
+            _session("Back & Biceps", "pull", [
+                _exercise("Bent Over Dumbbell Row", 4, 8), _exercise("Tripod Dumbbell Row", 4, 8, movement="horizontal_pull"),
+                _exercise("Dumbbell Pullover", 3, 8, movement="vertical_pull"), _exercise("Reverse Grip Dumbbell Row", 4, 8, movement="horizontal_pull"),
+                _exercise("Dumbbell Bicep Curl", 3, 10), _exercise("Dumbbell Hammer Curl", 3, 10),
+            ], 60),
+            _session("Legs & Core B", "lower body", [
+                _exercise("Dumbbell Squat", 4, 8), _exercise("Dumbbell Deadlift", 4, 8),
+                _exercise("Dumbbell Split Squat", 3, 8), _exercise("Dumbbell Hip Thrust", 4, 10, movement="hip_hinge"),
+                _exercise("Dumbbell Calf Raise", 4, 20), _exercise("Dumbbell Side Bend", 3, 15), _exercise("Plank", 3, None, duration=20),
+            ], 60),
+            _session("Complete Upper Body", "upper body", [
+                _exercise("One Arm Dumbbell Row", 4, 8), _exercise("Arnold Press", 4, 8),
+                _exercise("Incline Dumbbell Bench Press", 4, 8), _exercise("Chest Supported Dumbbell Row", 3, 8, movement="horizontal_pull"),
+                _exercise("Pinwheel Curl", 2, 8), _exercise("Overhead Dumbbell Tricep Extension", 3, 8), _exercise("Dumbbell Shrug", 3, 12),
+            ], 60),
+        ], "Repeatable dumbbell split with two lower and two complete upper-region exposures.",
     ),
     "powerbuilding_ppl_6": _program(
         "Powerbuilding PPL · 6 days", "https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan", "six_to_twenty_four_months", [

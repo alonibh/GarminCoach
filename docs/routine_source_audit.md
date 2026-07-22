@@ -7,6 +7,8 @@ Rep/set ranges are intentionally represented as one starting prescription in
 the app; they are not a verbatim copy of every source range. The 2026-07-22
 expansion retains each source's defining compounds and split while recording
 any reduced isolation work in `ProgramPolicy.omitted_source_components`.
+Catalog admission and rejection criteria are defined in
+[Routine catalog admission rules](routine_catalog_admission.md).
 
 | App routine | Source training level | Exercise comparison |
 | --- | --- | --- |
@@ -16,10 +18,10 @@ any reduced isolation work in `ProgramPolicy.omitted_source_components`.
 | Total Package (3 days) | Intermediate | Same — Day 1: Squat, Dumbbell Bench Press, Dumbbell Row, Seated Dumbbell Press, Lunge, Dumbbell Curl, Standing Barbell Tricep Extension, Calf Raise, Plank. Day 2: Bench Press, Machine Pec Deck, Leg Extension, Leg Curl, Pullup, Seated Lateral Raise, Dumbbell Hammer Curl, Rope Extension, Plank. Day 3: Deadlift, Incline Dumbbell Press, Lateral Raise, Pulldown, Leg Press, EZ Bar Curl, Skullcrushers, Dumbbell Shrugs, Plank. |
 | Upper/Lower Bodybuilding (4 days) | Beginner | Same primary movements — Upper A: Bench Press, Barbell Row, Seated Overhead Dumbbell Press, Pec Deck, V-Bar Lat Pull Down, Side Lateral Raise, Cable Tricep Extensions, Cable Curls. Lower A: Squat, Stiff Leg Deadlift, Standing Calf Raise, Leg Extension, Leg Curl, Seated Calf Raise, Cable Crunch, Cable Pull Through. Upper B: Incline Dumbbell Bench Press, Rack Deadlifts, Military Press, Machine Chest Press, Machine Row, Machine Shoulder Press, Dumbbell Curls, Machine Tricep Dip. Lower B: Leg Press, Dumbbell Stiff Leg Deadlift, Leg Press Calf Raise, Hack Squat, Seated Leg Curl, Seated Calf Raise, Plank, Hyperextension. The source offers Pull Ups *or* Machine Rows; the app records Machine Row. Its source-prescribed 3-second negatives are not represented as execution tempo. |
 | SHUL (4 days) | Intermediate | Same chosen movements — Lower Strength: Front Squat, Trap Bar Deadlift, Hack Squat, Glute Ham Raise, Seated Calf Raise. Upper Strength: Dumbbell Bench Press, One Arm Dumbbell Row, Overhead Press, Pull Up, Incline Bench Press, Tricep Dip, Farmer's Carry. Lower Hypertrophy: Front Squat, Dumbbell Reverse Lunge, Barbell Hip Thrust, Leg Extension, Romanian Deadlift, Standing Machine Calf Raise. Upper Hypertrophy: Incline Dumbbell Bench Press, Decline Bench Press, Lat Pull Down, Inverted Row, Face Pull, Lateral Raise, Barbell Curl, Incline Skullcrusher. The source also offers Safety Bar Squat and Goblet Squat alternatives; the app chooses Front Squat. |
-| Three-Way Split + Full Body (4 days) | Advanced (shown as Expert) | Same — Back/Biceps: Chin Up, T-bar Machine Row, Close Grip Pull Down, One Arm Dumbbell Row, Barbell Curl, Hammer Curl. Legs: Seated Leg Curl, Barbell Squat, Trap Bar Deadlift, Dumbbell Stiff Legged Deadlift, Leg Extension, Seated Calf Raise, Standing Machine Calf Raise. Chest/Shoulders/Triceps: Standing Military Press, Side Lateral Raise, Face Pull, Incline Bench Press, Dumbbell Bench Press, Incline Skullcrusher, Tricep Pushdown. Full Body: Deadlift, Front Squat, Barbell Hip Thrust, Dips, Inverted Row, Push Ups. |
+| Three-Way Split + Full Body (4 days) | Advanced | Same — Back/Biceps: Chin Up, T-bar Machine Row, Close Grip Pull Down, One Arm Dumbbell Row, Barbell Curl, Hammer Curl. Legs: Seated Leg Curl, Barbell Squat, Trap Bar Deadlift, Dumbbell Stiff Legged Deadlift, Leg Extension, Seated Calf Raise, Standing Machine Calf Raise. Chest/Shoulders/Triceps: Standing Military Press, Side Lateral Raise, Face Pull, Incline Bench Press, Dumbbell Bench Press, Incline Skullcrusher, Tricep Pushdown. Full Body: Deadlift, Front Squat, Barbell Hip Thrust, Dips, Inverted Row, Push Ups. |
 | Muscle & Strength Building Split (5 days) | Intermediate | Same main-plan movements — Upper Strength: Weighted Wide Grip Pull Ups, Bent Over Barbell Row, Narrow Grip T-Bar Row, Standing Overhead Barbell Press, Incline Dumbbell Bench Press, Weighted Dips, EZ Bar Skullcrusher, EZ Bar Bicep Curls. Lower Strength: Squats, Hack Squats, Deadlifts, Lying Leg Curls, Standing Calf Raise, Seated Calf Raise. Back/Shoulders: Wide Grip Pull Down, Narrow Grip Pull Down, Chest Supported Machine Row, Narrow Grip Low Pulley Cable Row, Straight Arm Rope Pull Down, Lower Back Hyperextensions, Dumbbell Shoulder Press, Standing Dumbbell Side Lateral Raise, Standing EZ Bar Front Raise, Dumbbell Rear Delt Lateral Raise, Cable EZ Bar Upright Row, Rope Face Pull. Chest/Arms: Incline Barbell Bench Press, Flat Machine Chest Press, Incline Dumbbell Fly, Cable Crossover, Narrow Grip Bench Press, Seated Overhead EZ Bar Tricep Extension, Single Arm Cable Press Down, EZ Bar Preacher Curl, Standing Alternating Dumbbell Hammer Curl, High Pulley Single Arm Bicep Curl. Legs: Seated Hamstring Curl, Leg Extension, Front Squat, Leg Press, Barbell Walking Lunge, Abductor Machine, Adductor Machine, Glute Kick Backs, Donkey Calf Raise, Seated Calf Raise, Single Leg Calf Press. The source also supplies a separate optional 3×/week ab workout; it is not in the app's five gym sessions. |
 | Push/Pull/Legs Planet Fitness (6 days) | Beginner | Same — Push A: Dumbbell Bench Press, Incline Smith Machine Bench Press, Dips, Seated Arnold Press, Lateral Raise, Cable Overhead Tricep Extension. Pull A: Dumbbell Row, Seated Cable Row, Pull Up, Inverted Row, Dumbbell Curl. Legs A: Leg Press, Smith Machine Front Squat, Dumbbell Stiff Leg Deadlift, Lying Leg Curl, Bodyweight Hip Thrust, Standing Calf Raise. Push B: Standing Dumbbell Press, Seated Lateral Raise, Lateral Raise Machine, Incline Dumbbell Bench Press, Push Ups, Lying Dumbbell Tricep Extensions. Pull B: Lat Pull Down, Cable Face Pull, Smith Machine Row, Straight Arm Lat Pull Down, Cable Curl. Legs B: Dumbbell Rear Lunge, Goblet Squat, Seated Leg Curl, Dumbbell Deadlift, Glute Hyperextension, Leg Press Calf Press. The app calls the final movement `Leg Press Calf Raise`; it is the same source movement. |
-| 100-Rep Full Body Shocker (2 days) | Intermediate | Same movement order — Day 1: Leg Press, Lat Pull Down, Incline Bench Press, Barbell Shrugs, Dumbbell Lateral Raise, Hammer Curl, Cable Tricep Extension, Leg Press Calf Raise. Day 2: Rack Deadlift, Cable Fly, Seated Cable Row, Seated Shoulder Press, Dumbbell Pullover, Reverse Barbell Curl, Cable Overhead Tricep Extension, Weighted Crunch. Each source target is represented as one 100-rep set; the source countdown pause protocol is retained in the exercise notes. |
+| Dumbbell Full Body (3 days) | Beginner | All three source sessions and their dumbbell-only exercise order are retained. |
 
 ## 2026-07-22 catalog expansion
 
@@ -31,17 +33,17 @@ any reduced isolation work in `ProgramPolicy.omitted_source_components`.
 | Planet Fitness Upper/Lower (4 days) | Beginner | Two machine-and-dumbbell upper/lower pairs; isolation work reduced. |
 | Optimized Volume (4 days) | Beginner | Defining upper/lower compounds and source starting rep ranges retained. |
 | PHUL (4 days) | Intermediate | Upper/lower power and hypertrophy days retained; arm and calf isolation reduced. |
-| Muscle Rebound (4 days) | Intermediate | Pull, push, legs, and full-body structure retained; supersets become ordered straight sets. |
-| RP-21 Rest-Pause (4 days) | Intermediate | The 7x3 anchor and 6x5 accessory method retained; optional conditioning omitted. |
-| Advanced Upper/Lower Mass (4 days) | Advanced (Expert badge) | Two high-volume upper and lower exposures retained. |
+| Dumbbell Upper/Lower (4 days) | Beginner | Both source upper/lower pairs and their dumbbell-only exercise order are retained. |
+| Barbell Only, No Rack (4 days) | Intermediate | Both source upper/lower pairs are retained; optional direct isolation is reduced. |
+| Home/Gym Barbell (4 days) | Beginner | Both source lower/upper pairs and ordinary add-weight progression are retained. |
 | MAUL (5 days) | Beginner | Mechanical upper/lower, full upper, shoulders/arms, and full lower structure retained. |
-| Body Fat Demolition (5 days) | Intermediate | Cardio-free upper/lower/upper/lower/full-body resistance schedule retained. |
+| Dumbbell Split (5 days) | Intermediate | The source push, lower, pull, lower, and complete-upper sequence is retained. |
 | Powerbuilding PPL (6 days) | Intermediate | PPL A/B anchors and rep-goal starting targets retained; meal plan excluded. |
 | Low-Volume High-Intensity (6 days) | Intermediate | Six source focuses and the two-working-set method retained. |
-| Built Different PPL (6 days) | Advanced (Expert badge) | Both PPL rotations retained; optional morning LISS omitted. |
-| Muscle Mania Upper/Lower (6 days) | Advanced (Expert badge) | Three distinct upper/lower rotations retained; isolation work reduced. |
+| Built Different PPL (6 days) | Advanced | Both PPL rotations retained; optional morning LISS omitted. |
+| Muscle Mania Upper/Lower (6 days) | Advanced | Three distinct upper/lower rotations retained; isolation work reduced. |
 
-The catalog now contains 25 templates: 2 two-day, 6 three-day, 9 four-day,
+The catalog now contains 25 templates: 1 two-day, 7 three-day, 9 four-day,
 3 five-day, and 5 six-day routines. Every template passes the executable gate
 of at least two weekly lower-body, press, and back-pull exercise exposures.
 Optional cardio guidance never becomes a tracked session.
@@ -66,7 +68,7 @@ single value or stated "sweet spot" takes precedence over that convention.
 | `split_full_4` | 45 seconds between every set and exercise. | 45 seconds throughout. |
 | `muscle_strength_5` | Strength phase 2-3 minutes; size phase 60-90 seconds. Superset partners have no intervening rest, followed by the prescribed rest. | 180 seconds in both strength sessions and 90 in all three size sessions. The app currently represents the listed exercises as straight sets, so this change does not claim to reproduce the source's supersets. |
 | `ppl_6` | 30-90 seconds, with a stated sweet spot of 45 seconds between sets and 90 seconds between exercises. | 45 seconds between sets. The per-exercise template field does not separately encode the 90-second transition recommendation. |
-| `hundred_rep_full_body_2` | One 100-rep target per exercise, pausing within the target according to the source countdown protocol; the worked example uses 3 minutes between exercises. | One 100-rep set with a 180-second exercise timer and the intra-set protocol in the editable notes. |
+| `dumbbell_full_body_3` | 60 seconds between sets. | 60 seconds throughout. |
 
 Existing source-derived program rows are migrated once only when their program
 key, session name, exercise name, and rest value all still match the previous
@@ -84,18 +86,18 @@ left unchanged.
 - [Three-Way Split + Full Body](https://www.muscleandstrength.com/workouts/4-day-workout-to-build-muscle)
 - [5-Day Muscle & Strength](https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split)
 - [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
-- [100-Rep Full Body Shocker](https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout)
+- [Dumbbell Full Body](https://www.muscleandstrength.com/workouts/3-day-full-body-dumbbell-workout)
 - [Planet Fitness Full Body](https://www.muscleandstrength.com/workouts/3-day-full-body-planet-fitness-workout)
 - [Long Cycle Full Body](https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout)
 - [Whole Body Toning](https://www.muscleandstrength.com/workouts/3-day-whole-body-toning-workout.html)
 - [Planet Fitness Upper/Lower](https://www.muscleandstrength.com/workouts/4-day-upper-lower-planet-fitness-workout)
 - [Optimized Volume](https://www.muscleandstrength.com/workouts/ovw-workout)
 - [PHUL](https://www.muscleandstrength.com/workouts/phul-workout)
-- [Muscle Rebound](https://www.muscleandstrength.com/workouts/muscle-rebound-workout)
-- [RP-21](https://www.muscleandstrength.com/workouts/4-day-rp21-rest-pause-workout-system)
-- [Advanced Upper/Lower Mass](https://www.muscleandstrength.com/workouts/4-day-advanced-upper-lower-workout-program-to-build-mass)
+- [Dumbbell Upper/Lower](https://www.muscleandstrength.com/workouts/dumbbell-only-upper-lower-workout-routine)
+- [Barbell Only, No Rack](https://www.muscleandstrength.com/workouts/4-day-barbell-only-workout)
+- [Home/Gym Barbell](https://www.muscleandstrength.com/workouts/home-gym-barbell-workout-routine)
 - [MAUL](https://www.muscleandstrength.com/workouts/maul-workout)
-- [Body Fat Demolition](https://www.muscleandstrength.com/workouts/8-week-body-fat-demolition-workout)
+- [Dumbbell Split](https://www.muscleandstrength.com/workouts/5-day-dumbbell-only-workout-split)
 - [Powerbuilding PPL](https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan)
 - [Low-Volume High-Intensity](https://www.muscleandstrength.com/workouts/6-day-low-volume-high-intensity-workout-split)
 - [Built Different PPL](https://www.muscleandstrength.com/workouts/built-different-ppl-workout)
@@ -124,7 +126,8 @@ resets at a week boundary and missed sessions are not debt.
 | `split_full_4` | Back/Biceps -> Legs -> Chest/Shoulders/Triceps -> Full Body | 0, 0, 1, 2 | No explicit recovery activity found in the source program | Keep. Preserve the three-day split block, rest slot, then full-body session. |
 | `muscle_strength_5` | Upper Strength -> Lower Strength -> Back/Shoulders Size -> Chest/Arms Size -> Legs Size | 0, 1, 0, 0, 1 | Cardio should be minimal and low intensity if added; it is not prescribed as a recovery session | Keep. Do not proactively present cardio as a recovery intervention from this source alone. |
 | `ppl_6` | Push A -> Pull A -> Legs A -> Push B -> Pull B -> Legs B | 0, 0, 0, 0, 0, 1 | Low-intensity cardio may be added based on goals; HIIT should be limited | Keep. Do not turn optional goal-dependent cardio into a default recovery prescription. |
-| `hundred_rep_full_body_2` | Full Body 1 -> Full Body 2 | 2, 2 | No recovery activity prescribed in the main program | Keep as an intermediate four-week specialty block. Two complete non-strength days after either session conservatively distribute the source's two very-high-repetition weekly sessions. |
+| `dumbbell_full_body_3` | Full Body 1 -> Full Body 2 -> Full Body 3 | 1, 1, 1 | Optional cardio is separate from the resistance routine | Keep the source's rest day between full-body sessions. |
+| `powerbuilding_ppl_6` | Push A -> Pull A -> Legs A -> Push B -> Pull B -> Legs B | 0, 0, 1, 0, 0, 1 | Meal plan is outside the resistance routine | Keep the published Intermediate level and translate its three-on/one-off schedule into rolling rest slots. |
 
 ### Source findings supporting the rolling rules
 
@@ -153,10 +156,8 @@ resets at a week boundary and missed sessions are not debt.
 - [Planet Fitness PPL](https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout)
   presents the six sessions as one Push/Pull/Legs A/B cycle followed by an off
   day.
-- [100-Rep Full Body Shocker](https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout)
-  prescribes two full-body sessions per week for four weeks and emphasizes the
-  unusually high fatigue and soreness of the method. The catalog therefore
-  requires two complete non-strength days after either session.
+- [Dumbbell Full Body](https://www.muscleandstrength.com/workouts/3-day-full-body-dumbbell-workout)
+  calls for three full-body sessions with a rest day between them.
 
 ## Recovery-activity evidence gate
 
@@ -203,6 +204,17 @@ Program duration and deload behavior remain metadata until separately approved.
 They must not silently stop, reset, or modify the active program.
 
 ## Removed templates
+
+The following routines were removed from selectable defaults on 2026-07-22:
+
+- `hundred_rep_full_body_2`: temporary four-week 100-rep challenge;
+- `muscle_rebound_4`: return-from-hiatus transition block;
+- `rp21_4`: defining mesocycle/deload behavior is not implemented;
+- `advanced_upper_lower_4`: the source says it is not for long-duration use;
+- `body_fat_demolition_5`: calorie-deficit fat-loss phase rather than a general default.
+
+Their replacements and full admission reasoning are recorded in
+[Routine catalog admission rules](routine_catalog_admission.md).
 
 - `upper_lower_full_3` / “Get RIPPED” was removed from the selectable catalog on
   2026-07-18. Its [source program](https://www.muscleandstrength.com/workouts/get-ripped-3-day-split)

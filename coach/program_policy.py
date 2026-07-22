@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 
-POLICY_VERSION = "2026-07-22.2"
+POLICY_VERSION = "2026-07-22.3"
 RECOVERY_EVIDENCE_URL = "https://pubmed.ncbi.nlm.nih.gov/29755363/"
 
 
@@ -113,14 +113,12 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         ("Push A", "Pull A", "Legs A", "Push B", "Pull B", "Legs B"),
         (0, 0, 0, 0, 0, 1), (0, 0, 0, 0, 0, 1),
     ),
-    "hundred_rep_full_body_2": ProgramPolicy(
-        "hundred_rep_full_body_2",
-        "https://www.muscleandstrength.com/workouts/100-reps-set-shocker-fullbody-workout",
-        ("100-Rep Full Body 1", "100-Rep Full Body 2"),
-        (2, 2), (2, 2),
-        source_duration_weeks=4,
-        source_reviewed_at="2026-07-22",
-        omitted_source_components=("Optional lagging-muscle-group version",),
+    "dumbbell_full_body_3": ProgramPolicy(
+        "dumbbell_full_body_3",
+        "https://www.muscleandstrength.com/workouts/3-day-full-body-dumbbell-workout",
+        ("Full Body 1", "Full Body 2", "Full Body 3"),
+        (1, 1, 1), (1, 1, 1),
+        source_duration_weeks=8, source_reviewed_at="2026-07-22",
     ),
     "planet_fitness_full_body_3": ProgramPolicy(
         "planet_fitness_full_body_3", "https://www.muscleandstrength.com/workouts/3-day-full-body-planet-fitness-workout",
@@ -151,20 +149,20 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         ("Upper Power", "Lower Power", "Upper Hypertrophy", "Lower Hypertrophy"), (0, 1, 0, 2), (0, 1, 0, 2),
         source_duration_weeks=12, source_reviewed_at="2026-07-22", omitted_source_components=("Non-defining arm and calf isolation accessories",),
     ),
-    "muscle_rebound_4": ProgramPolicy(
-        "muscle_rebound_4", "https://www.muscleandstrength.com/workouts/muscle-rebound-workout",
-        ("Pull", "Push", "Legs", "Full Body"), (0, 0, 1, 2), (0, 0, 1, 2), source_duration_weeks=6,
-        source_reviewed_at="2026-07-22", omitted_source_components=("Source supersets are represented as ordered straight sets", "Explosive squat-jump accessory"),
-    ),
-    "rp21_4": ProgramPolicy(
-        "rp21_4", "https://www.muscleandstrength.com/workouts/4-day-rp21-rest-pause-workout-system",
-        ("Lower 1", "Upper 1", "Lower 2", "Upper 2"), (0, 1, 0, 2), (0, 1, 0, 2), source_duration_weeks=4,
-        source_reviewed_at="2026-07-22", omitted_source_components=("Optional one or two conditioning days", "Non-defining arm accessories"),
-    ),
-    "advanced_upper_lower_4": ProgramPolicy(
-        "advanced_upper_lower_4", "https://www.muscleandstrength.com/workouts/4-day-advanced-upper-lower-workout-program-to-build-mass",
+    "dumbbell_upper_lower_4": ProgramPolicy(
+        "dumbbell_upper_lower_4", "https://www.muscleandstrength.com/workouts/dumbbell-only-upper-lower-workout-routine",
         ("Upper A", "Lower A", "Upper B", "Lower B"), (0, 1, 0, 2), (0, 1, 0, 2), source_duration_weeks=12,
-        source_reviewed_at="2026-07-22", omitted_source_components=("Non-defining isolation accessories",),
+        source_reviewed_at="2026-07-22",
+    ),
+    "barbell_no_rack_4": ProgramPolicy(
+        "barbell_no_rack_4", "https://www.muscleandstrength.com/workouts/4-day-barbell-only-workout",
+        ("Upper A", "Lower A", "Upper B", "Lower B"), (0, 1, 0, 2), (0, 1, 0, 2), source_duration_weeks=8,
+        source_reviewed_at="2026-07-22", omitted_source_components=("Optional direct biceps and hip-abduction accessories",),
+    ),
+    "barbell_upper_lower_4": ProgramPolicy(
+        "barbell_upper_lower_4", "https://www.muscleandstrength.com/workouts/home-gym-barbell-workout-routine",
+        ("Lower A", "Upper A", "Lower B", "Upper B"), (0, 1, 0, 2), (0, 1, 0, 2), source_duration_weeks=10,
+        source_reviewed_at="2026-07-22",
     ),
     "maul_5": ProgramPolicy(
         "maul_5", "https://www.muscleandstrength.com/workouts/maul-workout",
@@ -172,14 +170,14 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         (0, 0, 0, 0, 1), (0, 0, 0, 0, 1), source_duration_weeks=12, source_reviewed_at="2026-07-22",
         omitted_source_components=("Non-defining isolation accessories",),
     ),
-    "body_fat_demolition_5": ProgramPolicy(
-        "body_fat_demolition_5", "https://www.muscleandstrength.com/workouts/8-week-body-fat-demolition-workout",
-        ("Upper A", "Lower A", "Upper B", "Lower B", "Full Body"), (0, 1, 0, 0, 1), (0, 1, 0, 0, 1),
-        source_duration_weeks=8, source_reviewed_at="2026-07-22", omitted_source_components=("Optional cardio guidance", "Non-defining isolation accessories"),
+    "dumbbell_split_5": ProgramPolicy(
+        "dumbbell_split_5", "https://www.muscleandstrength.com/workouts/5-day-dumbbell-only-workout-split",
+        ("Chest, Shoulders & Triceps", "Legs & Core A", "Back & Biceps", "Legs & Core B", "Complete Upper Body"),
+        (0, 0, 0, 0, 2), (0, 0, 0, 0, 2), source_duration_weeks=12, source_reviewed_at="2026-07-22",
     ),
     "powerbuilding_ppl_6": ProgramPolicy(
         "powerbuilding_ppl_6", "https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan",
-        ("Push A", "Pull A", "Legs A", "Push B", "Pull B", "Legs B"), (0, 0, 0, 0, 0, 1), (0, 0, 0, 0, 0, 1),
+        ("Push A", "Pull A", "Legs A", "Push B", "Pull B", "Legs B"), (0, 0, 1, 0, 0, 1), (0, 0, 1, 0, 0, 1),
         source_duration_weeks=12, source_reviewed_at="2026-07-22", omitted_source_components=("Meal plan", "Non-defining isolation accessories"),
     ),
     "low_volume_high_intensity_6": ProgramPolicy(
@@ -201,15 +199,84 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
 }
 
 
+# Values are copied from each source page's Workout Summary. The catalog does
+# not independently grade a routine from its exercise selection or schedule.
+SOURCE_TRAINING_LEVELS: Mapping[str, str] = {
+    "full_body_2": "Beginner",
+    "beginner_full_body_3": "Beginner",
+    "ms_full_body_3": "Beginner",
+    "total_package_3": "Intermediate",
+    "upper_lower_4": "Beginner",
+    "shul_4": "Intermediate",
+    "split_full_4": "Advanced",
+    "muscle_strength_5": "Intermediate",
+    "ppl_6": "Beginner",
+    "dumbbell_full_body_3": "Beginner",
+    "planet_fitness_full_body_3": "Beginner",
+    "long_cycle_full_body_3": "Beginner",
+    "whole_body_toning_3": "Intermediate",
+    "planet_fitness_upper_lower_4": "Beginner",
+    "optimized_volume_4": "Beginner",
+    "phul_4": "Intermediate",
+    "dumbbell_upper_lower_4": "Beginner",
+    "barbell_no_rack_4": "Intermediate",
+    "barbell_upper_lower_4": "Beginner",
+    "maul_5": "Beginner",
+    "dumbbell_split_5": "Intermediate",
+    "powerbuilding_ppl_6": "Intermediate",
+    "low_volume_high_intensity_6": "Intermediate",
+    "built_different_ppl_6": "Advanced",
+    "muscle_mania_6": "Advanced",
+}
+
+# Every selectable routine needs an affirmative sustainable-default review.
+# Adding a policy alone is insufficient; the admission record is also required.
+DEFAULT_ROUTINE_ADMISSION: Mapping[str, str] = {
+    key: "repeatable_base_template" for key in (
+        "full_body_2", "beginner_full_body_3", "ms_full_body_3", "total_package_3",
+        "upper_lower_4", "shul_4", "split_full_4", "muscle_strength_5", "ppl_6",
+        "dumbbell_full_body_3", "planet_fitness_full_body_3", "long_cycle_full_body_3",
+        "whole_body_toning_3", "planet_fitness_upper_lower_4", "optimized_volume_4",
+        "phul_4", "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
+        "maul_5", "dumbbell_split_5", "powerbuilding_ppl_6", "low_volume_high_intensity_6",
+        "built_different_ppl_6", "muscle_mania_6",
+    )
+}
+
+REJECTED_DEFAULT_ROUTINES: Mapping[str, str] = {
+    "hundred_rep_full_body_2": "temporary four-week 100-rep challenge",
+    "muscle_rebound_4": "return-from-hiatus transition block",
+    "rp21_4": "mandatory mesocycle and deload behavior is not implemented",
+    "advanced_upper_lower_4": "source explicitly says it is not for long-duration use",
+    "body_fat_demolition_5": "calorie-deficit fat-loss phase rather than a general default",
+}
+
+_SOURCE_LEVEL_TO_EXPERIENCE = {
+    "Beginner": "new",
+    "Intermediate": "six_to_twenty_four_months",
+    "Advanced": "two_plus_years",
+}
+
+
 def validate_program_policies(programs: Mapping[str, dict]) -> None:
     """Fail fast when a curated template and its reviewed policy diverge."""
     if set(programs) != set(PROGRAM_POLICIES):
         raise ValueError("Every curated program must have exactly one policy")
+    if set(programs) != set(DEFAULT_ROUTINE_ADMISSION):
+        raise ValueError("Every curated program must pass the sustainable-default admission review")
+    if set(programs) != set(SOURCE_TRAINING_LEVELS):
+        raise ValueError("Every curated program must record the source-published training level")
+    rejected = set(programs) & set(REJECTED_DEFAULT_ROUTINES)
+    if rejected:
+        raise ValueError(f"Temporary or phase-specific routines cannot be defaults: {sorted(rejected)}")
     for key, program in programs.items():
         policy = PROGRAM_POLICIES[key]
         names = tuple(item["name"] for item in program["sessions"])
         if names != policy.session_names or program["source_url"] != policy.source_url:
             raise ValueError(f"Program policy does not match curated template: {key}")
+        source_level = SOURCE_TRAINING_LEVELS[key]
+        if program["experience"] != _SOURCE_LEVEL_TO_EXPERIENCE[source_level]:
+            raise ValueError(f"Catalog level differs from the source-published level: {key}")
         size = len(names)
         if len(policy.minimum_rest_days_after) != size or len(policy.preferred_rest_days_after) != size:
             raise ValueError(f"Program policy rest rules have wrong length: {key}")

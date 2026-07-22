@@ -367,15 +367,8 @@ def _plan_match_scores(
             + experience_score * .20
             + exercise_score * .10
         )
-        is_specialty = key == "hundred_rep_full_body_2"
-        if is_specialty:
-            # Specialty blocks remain available by explicit choice, but they
-            # must not look like a normal ongoing recommendation.
-            score = min(score, 49)
         label = (
-            "Specialty program"
-            if is_specialty
-            else "Strong match"
+            "Strong match"
             if score >= 80
             else "Good match"
             if score >= 65
@@ -386,16 +379,15 @@ def _plan_match_scores(
         raw_matches[key] = {
             "score": score,
             "label": label,
-            "tone": "specialty" if is_specialty else "strong" if score >= 80 else "good" if score >= 65 else "possible" if score >= 50 else "poor",
-            "evidence": "Four-week specialty program; not a default routine." if is_specialty else "",
-            "is_specialty": is_specialty,
+            "tone": "strong" if score >= 80 else "good" if score >= 65 else "possible" if score >= 50 else "poor",
+            "evidence": "",
+            "is_specialty": False,
             "is_best": False,
         }
 
     ranked_keys = sorted(
         raw_matches,
         key=lambda key: (
-            raw_matches[key]["is_specialty"],
             -raw_matches[key]["score"],
             list(PROGRAMS).index(key),
         ),
