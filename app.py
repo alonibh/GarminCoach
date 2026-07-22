@@ -44,10 +44,11 @@ from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program, warmup_def
 from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata, muscle_group_for
 from metrics.engine import acwr_label
 from sync.garmin_client import client
-from sync.scheduler import start_scheduler
+from sync.scheduler import start_multi_user_scheduler, start_scheduler
 from time_utils import get_local_date
 from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
 from auth_routes import router as auth_router
+from account_routes import router as account_router
 from setup_routes import CONSENT_VERSION, router as setup_router
 from auth_service import resolve_web_session
 from control_db import get_control_session, init_control_db
@@ -56,6 +57,7 @@ from tenant_context import TenantIdentity, tenant_scope
 app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
 app.include_router(auth_router)
+app.include_router(account_router)
 app.include_router(setup_router)
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
 
@@ -318,8 +320,7 @@ from sync import sync_runner  # noqa: E402
 def _startup() -> None:
     if config.MULTI_USER_ENABLED:
         init_control_db()
-        # Garmin clients and scheduled work are intentionally not started until
-        # those paths carry an explicit tenant identity.
+        start_multi_user_scheduler()
         return
     init_db()
     # Try to resume a cached Garmin session silently; don't block startup.
@@ -2379,8 +2380,9 @@ def coach_calendar_feed():
     from fastapi.responses import Response
     from icalendar import Calendar, Event
 
-    tz_name = os.getenv("USER_TIMEZONE", "Asia/Jerusalem")
-    local_tz = pytz.timezone(tz_name)
+    from time_utils import get_local_tz
+    local_tz = get_local_tz()
+    tz_name = getattr(local_tz, "zone", str(local_tz))
 
     cal = Calendar()
     cal.add('prodid', '-//GarminCoach//AI Workout//EN')

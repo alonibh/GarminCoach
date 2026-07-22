@@ -82,6 +82,12 @@ class GarminClientRegistry:
             garmin_tokens=token_json,
         )
 
+    def evict(self, user_id: str) -> None:
+        canonical = canonical_user_id(user_id)
+        with self._guard:
+            self._clients.pop(canonical, None)
+            self._locks.pop(canonical, None)
+
 
 _registry: GarminClientRegistry | None = None
 

@@ -111,6 +111,8 @@ def connect_garmin(
         else:
             _activate_connected_user(session, user)
     if result == "connected":
+        from sync.scheduler import refresh_user_jobs
+        refresh_user_jobs(user_id)
         sync_runner.try_start_sync(full=True)
         return RedirectResponse("/", status_code=303)
     return _redirect()
@@ -134,5 +136,7 @@ def complete_garmin_mfa(request: Request, mfa_code: str = Form("")) -> Response:
     with get_control_session() as session:
         user = session.get(User, user_id)
         _activate_connected_user(session, user)
+    from sync.scheduler import refresh_user_jobs
+    refresh_user_jobs(user_id)
     sync_runner.try_start_sync(full=True)
     return RedirectResponse("/", status_code=303)

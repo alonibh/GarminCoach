@@ -5,11 +5,68 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import config
+from control_db import User, get_control_session
 from sync import sync_runner
 from sync.garmin_client import client
 from db import get_session
+from tenant_context import TenantIdentity, tenant_scope
 
 _scheduler: BackgroundScheduler | None = None
+
+
+def _run_for_user(user_id: str) -> None:
+    with get_control_session() as session:
+        user = session.get(User, user_id)
+        if user is None or user.status != "active" or not user.garmin_connected:
+            return
+        identity = TenantIdentity(user.id, role=user.role, timezone=user.timezone)
+    with tenant_scope(identity):
+        try:
+            authenticated = client.is_authenticated()
+        except Exception:
+            return
+        if not authenticated:
+            return
+        sync_runner.try_start_sync(full=False)
+
+
+def refresh_user_jobs(user_id: str) -> None:
+    """Replace one athlete's jobs; safe to call after onboarding or deletion."""
+    if _scheduler is None or not config.MULTI_USER_ENABLED:
+        return
+    prefix = f"user_{user_id}_"
+    for job in _scheduler.get_jobs():
+        if job.id.startswith(prefix):
+            _scheduler.remove_job(job.id)
+    with get_control_session() as session:
+        user = session.get(User, user_id)
+        if user is None or user.status != "active" or not user.timezone:
+            return
+        timezone = user.timezone
+    for index, time_string in enumerate(config.AUTO_SYNC_TIMES):
+        try:
+            hour, minute = (int(part) for part in time_string.split(":"))
+        except (TypeError, ValueError):
+            continue
+        _scheduler.add_job(
+            _run_for_user,
+            CronTrigger(hour=hour, minute=minute, timezone=timezone),
+            kwargs={"user_id": user_id},
+            id=f"{prefix}sync_{index}",
+            replace_existing=True,
+        )
+
+
+def start_multi_user_scheduler() -> BackgroundScheduler:
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = BackgroundScheduler(daemon=True, timezone="UTC")
+        _scheduler.start()
+    with get_control_session() as session:
+        user_ids = [row.id for row in session.query(User).filter(User.status == "active")]
+    for user_id in user_ids:
+        refresh_user_jobs(user_id)
+    return _scheduler
 
 
 def _scheduled_sync() -> None:

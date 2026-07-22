@@ -1,7 +1,8 @@
 import logging
-import os
 import hashlib
 import json
+import urllib.request
+from urllib.parse import urlsplit
 from datetime import date, datetime, timedelta
 import pytz
 
@@ -14,21 +15,66 @@ import config
 
 logger = logging.getLogger(__name__)
 
+
+def validate_ics_url(url: str) -> str:
+    """Allow only HTTPS calendar feeds hosted by Google or Apple."""
+    parsed = urlsplit((url or "").strip())
+    host = (parsed.hostname or "").casefold()
+    allowed = host == "calendar.google.com" or host.endswith(".icloud.com")
+    if (
+        parsed.scheme != "https"
+        or not allowed
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+        or not parsed.path
+    ):
+        raise ValueError("Use a private HTTPS Google Calendar or iCloud ICS URL")
+    return parsed.geturl()
+
+
+class _SafeCalendarRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_ics_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_calendar(url: str) -> bytes:
+    safe_url = validate_ics_url(url)
+    opener = urllib.request.build_opener(_SafeCalendarRedirect())
+    request = urllib.request.Request(safe_url, headers={"User-Agent": "GarminCoach/1"})
+    with opener.open(request, timeout=10) as response:
+        content_type = response.headers.get("Content-Type", "").casefold()
+        if "text/calendar" not in content_type and "application/octet-stream" not in content_type:
+            raise ValueError("Calendar server returned an unexpected content type")
+        payload = response.read(2 * 1024 * 1024 + 1)
+    if len(payload) > 2 * 1024 * 1024:
+        raise ValueError("Calendar feed is too large")
+    return payload
+
+
+def _configured_calendar_urls() -> list[str]:
+    if not config.MULTI_USER_ENABLED:
+        return [url.strip() for url in config.ICS_CALENDAR_URL.split(",") if url.strip()]
+    from secret_vault import UserSecretVault
+    from tenant_context import require_tenant
+    value = UserSecretVault().read(require_tenant().user_id).get("calendar_ics_url", "")
+    return [value] if value else []
+
 def get_upcoming_schedule_result(days=3) -> dict:
     """Fetch events while preserving unconfigured/error states."""
-    if not config.ICS_CALENDAR_URL or events is None:
+    urls = _configured_calendar_urls()
+    if not urls or events is None:
         return {"events": [], "state": "unconfigured", "error": None}
         
     schedule = []
     
     # Use the user's configured timezone so event times match their wall clock.
     try:
-        local_tz = pytz.timezone(os.getenv("USER_TIMEZONE", "Asia/Jerusalem"))
+        from time_utils import get_local_tz
+        local_tz = get_local_tz()
     except Exception:
         local_tz = pytz.utc
-    
-    # Split by comma to support multiple calendars
-    urls = [url.strip() for url in config.ICS_CALENDAR_URL.split(',')]
     
     try:
         # Fetch events from now until the end of the next few days
@@ -39,8 +85,10 @@ def get_upcoming_schedule_result(days=3) -> dict:
             if not url: continue
             
             # icalevents.events handles the timezone and RRULE expansion
+            calendar_source = _download_calendar(url) if config.MULTI_USER_ENABLED else None
             cal_events = events(
-                url=url,
+                url=None if calendar_source is not None else url,
+                string_content=calendar_source,
                 start=start_time,
                 end=end_time
             )

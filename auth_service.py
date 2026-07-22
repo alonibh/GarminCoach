@@ -75,7 +75,16 @@ def issue_invitation(
     if session.query(User).filter(User.email == normalized).first():
         raise ValueError("That email already has an account")
     current = now or utcnow()
-    for old in session.query(Invitation).filter(Invitation.email == normalized).all():
+    existing_live = session.query(Invitation).filter(Invitation.email == normalized).all()
+    replacing = any(_is_live_invitation(item, current) for item in existing_live)
+    occupied = session.query(User).filter(User.role != "owner").count()
+    live_invites = sum(
+        1 for item in session.query(Invitation).all()
+        if _is_live_invitation(item, current)
+    )
+    if not replacing and occupied + live_invites >= config.MAX_INVITED_USERS:
+        raise ValueError("The invitation limit has been reached")
+    for old in existing_live:
         if _is_live_invitation(old, current):
             old.revoked_at = current
     raw_token = _secret()

@@ -69,6 +69,7 @@ APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 _DEFAULT_SESSION_SECRET = "change-me-to-a-random-string"
 SESSION_SECRET = os.getenv("SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 SESSION_MAX_AGE_DAYS = int(os.getenv("SESSION_MAX_AGE_DAYS", "30"))
+MAX_INVITED_USERS = int(os.getenv("MAX_INVITED_USERS", "5"))
 DB_URL = f"sqlite:///{DB_PATH}"
 
 # LLM code remains available for future reviewed features, but production must
