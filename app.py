@@ -1457,6 +1457,7 @@ def onboarding_status():
         "activity_patterns": analysis["activity_patterns"],
         "recent_routine": analysis["recent_routine"],
         "training_background": analysis["training_background"],
+        "plan_recommendation": analysis["plan_recommendation"],
         "last_sync_at": _last_sync_at(),
     })
 

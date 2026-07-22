@@ -154,7 +154,7 @@ def test_history_recommends_upper_lower_from_repeated_exercise_patterns(session)
         _strength_session(session, index + 1, 20 - index, name, exercises)
     session.commit()
 
-    assert analyze_user_history(session)["plan_recommendation"]["key"] in {"upper_lower_4", "muscle_strength_5"}
+    assert analyze_user_history(session)["plan_recommendation"]["key"] == "maul_5"
 
 
 def test_history_recommends_full_body_three_days_from_frequent_mixed_sessions(session):
@@ -162,7 +162,7 @@ def test_history_recommends_full_body_three_days_from_frequent_mixed_sessions(se
         _strength_session(session, index + 1, 13 - index * 2, "Full Body", ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"])
     session.commit()
 
-    assert analyze_user_history(session)["plan_recommendation"]["key"] in {"ms_full_body_3", "split_full_4"}
+    assert analyze_user_history(session)["plan_recommendation"]["key"] == "optimized_volume_4"
 
 
 def test_sparse_or_name_only_history_falls_back_to_full_body_two_days(session):
@@ -173,3 +173,51 @@ def test_sparse_or_name_only_history_falls_back_to_full_body_two_days(session):
     recommendation = analyze_user_history(session)["plan_recommendation"]
     assert recommendation["key"] == "full_body_2"
     assert "No reliable split" in recommendation["reason"]
+
+
+def test_recommendation_uses_inferred_intermediate_experience(session):
+    for index in range(20):
+        _strength_session(
+            session,
+            index + 1,
+            100 + index,
+            "Full Body",
+            ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"],
+        )
+    recent_days = [14, 11, 8, 5, 2, 0]
+    for index, days_ago in enumerate(recent_days):
+        _strength_session(
+            session,
+            100 + index,
+            days_ago,
+            "Full Body",
+            ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"],
+        )
+    session.commit()
+
+    recommendation = analyze_user_history(session)["plan_recommendation"]
+
+    assert recommendation["key"] == "total_package_3"
+    assert "inferred 6-24 months training background" in recommendation["reason"]
+
+
+def test_recommendation_uses_inferred_expert_level_for_upper_lower(session):
+    for index in range(80):
+        _strength_session(
+            session,
+            index + 1,
+            100 + index,
+            "Full Body",
+            ["SQUAT", "BENCH_PRESS", "BENT_OVER_ROW"],
+        )
+    for index, (name, exercises) in enumerate([
+        ("Upper", ["BENCH_PRESS", "BENT_OVER_ROW", "OVERHEAD_PRESS"]),
+        ("Lower", ["SQUAT", "LUNGE", "LEG_CURL"]),
+    ] * 4):
+        _strength_session(session, 200 + index, 13 - index * 2, name, exercises)
+    session.commit()
+
+    recommendation = analyze_user_history(session)["plan_recommendation"]
+
+    assert recommendation["key"] == "advanced_upper_lower_4"
+    assert "inferred more than 2 years training background" in recommendation["reason"]

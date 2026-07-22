@@ -14,12 +14,12 @@
   <div class="grid onboarding-findings"><div class="card"><span class="card-kicker">⌚ Recent training context · last 90 days</span><h3 id="classification-label">{{ classification.label }}</h3><p class="muted" id="classification-reason">{{ classification.reason }}</p><div class="activity-count"><strong id="activity-count">{{ analysis.total_activities }}</strong><span>completed activities</span></div><p class="field-hint" id="training-background">Training background: {{ experience_labels.get(analysis.training_background.experience_level, 'Not enough history yet') }}</p></div><div class="card"><span class="card-kicker">↗ Recent activity mix · last 90 days</span><div class="history-bars" id="activity-patterns">{% for row in analysis.activity_patterns %}<div class="history-bar-row"><div class="history-bar-label"><span>{{ row.label }}</span><small>{{ row.sessions }} sessions</small></div><div class="history-bar-track"><span style="width: {{ (row.sessions / (analysis.activity_patterns | sum(attribute='sessions')) * 100) if analysis.activity_patterns else 0 }}%"></span></div></div>{% else %}<p class="muted">Activity patterns will appear as the sync completes.</p>{% endfor %}</div></div></div>
   <form method="post" action="/onboarding" class="form-section onboarding-form">
     <section class="card section-card">
-      <div class="section-heading"><span class="section-emoji" aria-hidden="true">🏋️</span><div><h2>Which routine can you consistently complete?</h2><p>{{ analysis.plan_recommendation.reason }} This is only a suggestion—your choice always wins.</p></div></div>
+      <div class="section-heading"><span class="section-emoji" aria-hidden="true">🏋️</span><div><h2>Which routine can you consistently complete?</h2><p id="routine-recommendation-reason">{{ analysis.plan_recommendation.reason }} This is only a suggestion—your choice always wins.</p></div></div>
       <fieldset class="routine-days-filter"><legend>How many days a week do you plan to work out?</legend><div role="group" aria-label="Filter routines by weekly workout days"><button class="filter-chip is-selected" type="button" data-days-filter="all" aria-pressed="true">All</button>{% for days in range(2, 7) %}<button class="filter-chip" type="button" data-days-filter="{{ days }}" aria-pressed="false">{{ days }} days</button>{% endfor %}</div></fieldset>
       <p class="field-hint routine-level-hint">Levels reflect the routine's weekly frequency, total volume, and exercise complexity—not a judgment of you.</p>
       <div class="choice-grid goal-grid" id="routine-choices">
         {% for plan in plan_choices %}
-        <label class="choice-card" data-plan-days="{{ plan.days }}"><input type="radio" name="plan_key" value="{{ plan.key }}" {% if d.plan_key == plan.key %}checked{% endif %} required><span><b>{{ plan.title }}{% if analysis.plan_recommendation.key == plan.key %} · Suggested{% endif %}</b><span class="routine-source-details" aria-label="Original routine details">{% for label, value in plan.source_details %}<span class="routine-detail-fact{% if label == 'Training Level' %} {{ plan.experience_slug }}{% endif %}"><span>{{ {'Main Goal': 'Goal', 'Workout Type': 'Type', 'Training Level': 'Level', 'Days Per Week': 'Days', 'Time Per Workout': 'Time'}[label] }}</span>{{ value }}</span>{% endfor %}</span><small>{{ plan.days }} gym days each week · {{ plan.description }}</small><small><a href="{{ plan.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View source routine</a></small></span></label>
+        <label class="choice-card" data-plan-days="{{ plan.days }}"><input type="radio" name="plan_key" value="{{ plan.key }}" {% if d.plan_key == plan.key %}checked{% endif %} required><span><b>{{ plan.title }}<span data-suggested-label {% if analysis.plan_recommendation.key != plan.key %}hidden{% endif %}> · Suggested</span></b><span class="routine-source-details" aria-label="Original routine details">{% for label, value in plan.source_details %}<span class="routine-detail-fact{% if label == 'Training Level' %} {{ plan.experience_slug }}{% endif %}"><span>{{ {'Main Goal': 'Goal', 'Workout Type': 'Type', 'Training Level': 'Level', 'Days Per Week': 'Days', 'Time Per Workout': 'Time'}[label] }}</span>{{ value }}</span>{% endfor %}</span><small>{{ plan.days }} gym days each week · {{ plan.description }}</small><small><a href="{{ plan.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View source routine</a></small></span></label>
         {% endfor %}
       </div>
     </section>
@@ -28,6 +28,53 @@
   </form>
   {% endif %}
 </div>
-{% if garmin_connected and sync_running %}<script>const experienceLabels={{ experience_labels | tojson }};(function pollOnboarding(){fetch('/onboarding/status').then(r=>r.json()).then(data=>{document.getElementById('activity-count').textContent=data.total_activities;document.getElementById('classification-label').textContent=data.classification.label;document.getElementById('classification-reason').textContent=data.classification.reason;document.getElementById('training-background').textContent=`Training background: ${experienceLabels[data.training_background.experience_level] || 'Not enough history yet'}`;const patterns=document.getElementById('activity-patterns'),total=data.activity_patterns.reduce((sum,row)=>sum+row.sessions,0);patterns.replaceChildren();data.activity_patterns.forEach(row=>{const wrapper=document.createElement('div');wrapper.className='history-bar-row';wrapper.innerHTML=`<div class="history-bar-label"><span></span><small></small></div><div class="history-bar-track"><span></span></div>`;wrapper.querySelector('span').textContent=row.label;wrapper.querySelector('small').textContent=`${row.sessions} sessions`;wrapper.querySelector('.history-bar-track span').style.width=`${total?row.sessions/total*100:0}%`;patterns.append(wrapper)});if(data.running){setTimeout(pollOnboarding,2000);return}document.getElementById('sync-banner').className='sync-banner is-ready';document.getElementById('sync-title').textContent='Garmin history is ready';document.getElementById('sync-copy').textContent=`We found ${data.total_activities} recent activities to learn from.`;const button=document.getElementById('create-plan-btn');button.disabled=false;button.textContent='{{ "Create revised proposal" if is_editing else "Create my gym plan" }}'}).catch(()=>setTimeout(pollOnboarding,3000))})();</script>{% endif %}
+{% if garmin_connected and sync_running %}
+<script>
+const experienceLabels = {{ experience_labels | tojson }};
+const isEditing = {{ is_editing | tojson }};
+let planChoiceChanged = false;
+document.querySelectorAll('input[name="plan_key"]').forEach((input) => {
+  input.addEventListener('change', () => { planChoiceChanged = true; });
+});
+(function pollOnboarding() {
+  fetch('/onboarding/status').then((response) => response.json()).then((data) => {
+    document.getElementById('activity-count').textContent = data.total_activities;
+    document.getElementById('classification-label').textContent = data.classification.label;
+    document.getElementById('classification-reason').textContent = data.classification.reason;
+    document.getElementById('training-background').textContent = `Training background: ${experienceLabels[data.training_background.experience_level] || 'Not enough history yet'}`;
+    const patterns = document.getElementById('activity-patterns');
+    const total = data.activity_patterns.reduce((sum, row) => sum + row.sessions, 0);
+    patterns.replaceChildren();
+    data.activity_patterns.forEach((row) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'history-bar-row';
+      wrapper.innerHTML = '<div class="history-bar-label"><span></span><small></small></div><div class="history-bar-track"><span></span></div>';
+      wrapper.querySelector('span').textContent = row.label;
+      wrapper.querySelector('small').textContent = `${row.sessions} sessions`;
+      wrapper.querySelector('.history-bar-track span').style.width = `${total ? row.sessions / total * 100 : 0}%`;
+      patterns.append(wrapper);
+    });
+    if (data.running) {
+      setTimeout(pollOnboarding, 2000);
+      return;
+    }
+    document.getElementById('sync-banner').className = 'sync-banner is-ready';
+    document.getElementById('sync-title').textContent = 'Garmin history is ready';
+    document.getElementById('sync-copy').textContent = `We found ${data.total_activities} recent activities to learn from.`;
+    document.getElementById('routine-recommendation-reason').textContent = `${data.plan_recommendation.reason} This is only a suggestion—your choice always wins.`;
+    document.querySelectorAll('[data-suggested-label]').forEach((label) => { label.hidden = true; });
+    const recommendedInput = Array.from(document.querySelectorAll('input[name="plan_key"]'))
+      .find((input) => input.value === data.plan_recommendation.key);
+    if (recommendedInput) {
+      recommendedInput.closest('label').querySelector('[data-suggested-label]').hidden = false;
+      if (!isEditing && !planChoiceChanged) recommendedInput.checked = true;
+    }
+    const button = document.getElementById('create-plan-btn');
+    button.disabled = false;
+    button.textContent = '{{ "Create revised proposal" if is_editing else "Create my gym plan" }}';
+  }).catch(() => setTimeout(pollOnboarding, 3000));
+})();
+</script>
+{% endif %}
 {% if garmin_connected %}<script src="/static/onboarding.js?v={{ asset_version() }}"></script>{% endif %}
 {% endblock %}

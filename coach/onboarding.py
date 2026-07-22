@@ -118,7 +118,10 @@ def _history_span_weeks(activities: list[Activity]) -> float:
 def _experience_level(total_sessions: int, avg_per_week: float, template_count: int) -> str:
     if total_sessions >= 80 or template_count >= 8:
         return "two_plus_years"
-    if total_sessions >= 20 or avg_per_week >= 1.5 or template_count >= 2:
+    # Frequency is evidence of training age only after there is enough history
+    # to show a recurring habit. A single busy week must not promote a new
+    # athlete into an established routine.
+    if total_sessions >= 20 or (total_sessions >= 12 and avg_per_week >= 1.5) or template_count >= 2:
         return "six_to_twenty_four_months"
     return "new"
 
@@ -290,8 +293,47 @@ def _exercise_pattern(exercises: set[str], activity_name: str | None) -> str | N
     return None
 
 
-def recommend_plan_from_history(session: Session, activities: list[Activity]) -> dict[str, str]:
-    """Rank the curated routine catalog from exercise-backed recent history."""
+def _recommended_plan_key(weekly: int, experience: str, labels: Counter[str]) -> str:
+    """Choose a general-purpose catalog routine from frequency, level, and split."""
+    level = "new" if experience == "returning" else experience
+    has_ppl = all(labels[pattern] >= 2 for pattern in ("push", "pull", "lower"))
+    has_upper_lower = labels["upper"] >= 2 and labels["lower"] >= 2
+    has_full_body = labels["full_body"] >= 3
+
+    # Staying close to demonstrated frequency is the strongest signal of a
+    # sustainable plan. Within that frequency, prefer a routine whose demands
+    # fit the athlete's inferred training age and familiar session structure.
+    if weekly == 2:
+        # The other two-day catalog entry is a 100-rep specialty block, not a
+        # suitable default recommendation regardless of training age.
+        return "full_body_2"
+    if weekly == 3:
+        if level in {"six_to_twenty_four_months", "two_plus_years"}:
+            return "total_package_3"
+        return "ms_full_body_3" if has_full_body or has_upper_lower else "beginner_full_body_3"
+    if weekly == 4:
+        if level == "two_plus_years":
+            return "advanced_upper_lower_4" if has_upper_lower else "split_full_4"
+        if level == "six_to_twenty_four_months":
+            return "shul_4" if has_upper_lower else "phul_4"
+        return "upper_lower_4" if has_upper_lower else "optimized_volume_4"
+    if weekly == 5:
+        return "maul_5" if level == "new" else "muscle_strength_5"
+    if level == "two_plus_years":
+        return "built_different_ppl_6" if has_ppl else "muscle_mania_6"
+    if level == "six_to_twenty_four_months":
+        if has_ppl:
+            return "powerbuilding_ppl_6"
+        return "body_fat_demolition_5" if has_upper_lower else "low_volume_high_intensity_6"
+    return "ppl_6" if has_ppl else "maul_5"
+
+
+def recommend_plan_from_history(
+    session: Session,
+    activities: list[Activity],
+    experience_level: str = "new",
+) -> dict[str, Any]:
+    """Rank the curated routine catalog from frequency, exercises, and experience."""
     strength = [a for a in _usable_completed_activities(activities) if activity_family(a.activity_type) == "Strength"]
     if len(strength) < 3:
         return {"key": "full_body_2", "reason": "No reliable gym pattern found yet; start with the two-day A/B full-body routine."}
@@ -314,26 +356,30 @@ def recommend_plan_from_history(session: Session, activities: list[Activity]) ->
             labels[label] += 1
 
     weekly = min(6, max(2, round(len(strength) / _history_span_weeks(strength))))
-    if weekly == 2:
-        key = "full_body_2"
-    elif weekly == 3:
-        key = "ms_full_body_3" if labels["full_body"] >= 4 or (labels["upper"] and labels["lower"]) else "beginner_full_body_3"
-    elif weekly == 4:
-        key = "upper_lower_4" if labels["upper"] >= 2 and labels["lower"] >= 2 else "split_full_4"
-    elif weekly == 5:
-        key = "muscle_strength_5"
-    else:
-        key = "ppl_6" if all(labels[p] >= 2 for p in ("push", "pull", "lower")) else "muscle_strength_5"
     usable = sum(labels.values())
     if usable < 3:
         return {"key": "full_body_2", "reason": "No reliable split was found from recent exercise sets; start with the two-day A/B full-body routine.", "days_per_week": 2}
-    reason = (
-        f"Suggested from about {weekly} recent gym sessions per week and {usable} exercise-backed sessions."
-        if usable >= 3 else
-        f"Recent frequency suggests {weekly} gym days, but no reliable split was found from the exercises."
+    key = _recommended_plan_key(weekly, experience_level, labels)
+    experience_label = {
+        "new": "new or under 6 months",
+        "six_to_twenty_four_months": "6-24 months",
+        "two_plus_years": "more than 2 years",
+        "returning": "returning after a break",
+    }.get(experience_level, "uncertain")
+    detected_split = (
+        "push/pull/legs"
+        if all(labels[pattern] >= 2 for pattern in ("push", "pull", "lower"))
+        else "upper/lower"
+        if labels["upper"] >= 2 and labels["lower"] >= 2
+        else "full-body"
+        if labels["full_body"] >= 3
+        else "mixed"
     )
-    recommended_days = {"full_body_2": 2, "beginner_full_body_3": 3, "ms_full_body_3": 3, "upper_lower_4": 4, "split_full_4": 4, "muscle_strength_5": 5, "ppl_6": 6}[key]
-    return {"key": key, "reason": reason, "days_per_week": recommended_days}
+    reason = (
+        f"Best fit from about {weekly} recent gym sessions per week, {usable} exercise-backed "
+        f"{detected_split} sessions, and an inferred {experience_label} training background."
+    )
+    return {"key": key, "reason": reason, "days_per_week": int(key.rsplit("_", 1)[1])}
 
 
 def _build_defaults(
@@ -423,7 +469,11 @@ def analyze_user_history(session: Session, lookback_days: int = 90) -> dict[str,
             "total_activities": len(all_completed),
             "experience_level": defaults["experience_level"],
         },
-        "plan_recommendation": recommend_plan_from_history(session, recent_activities),
+        "plan_recommendation": recommend_plan_from_history(
+            session,
+            recent_activities,
+            defaults["experience_level"],
+        ),
     }
 
 
