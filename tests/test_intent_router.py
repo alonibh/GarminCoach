@@ -637,12 +637,24 @@ def test_recent_activities_hides_legacy_schedule_placeholders_and_formats_dateti
     session.add_all([
         Activity(id=1, name="Cardio", activity_type="cardio", start_time=datetime(2026, 7, 17, 8, 30)),
         Activity(id=2, name="🏋 Chest & Biceps @ 18:00", activity_type="strength_training", start_time=datetime(2026, 7, 18, 18)),
+        Activity(
+            id=3,
+            name="🏋️ Full Body 1 @ 18:30",
+            activity_type="strength_training",
+            start_time=datetime(2026, 7, 20, 19, 43),
+            source_workout_id=1637820025,
+            provenance_checked=True,
+        ),
     ])
     session.commit()
 
     routed = route_chat(session, "Recent activities")
 
-    assert routed.text == "Recent activities:\n• Cardio — 17/07/2026 08:30"
+    assert routed.text == (
+        "Recent activities:\n"
+        "• 🏋️ Full Body 1 @ 18:30 — 20/07/2026 19:43\n"
+        "• Cardio — 17/07/2026 08:30"
+    )
     assert "Chest & Biceps" not in routed.text
 
 

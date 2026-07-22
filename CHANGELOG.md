@@ -5,6 +5,8 @@
 - Kept available sleep and readiness facts in positive workout morning briefs
   instead of rendering only the workout proposal.
 - Moved `My calendar` beside `Start Garmin sync` on the Telegram command menu.
+- Kept completed Garmin workouts with coach-prefixed names visible in Telegram's
+  recent-activity history while still hiding legacy schedule placeholders.
 
 ## 2026-07-22 - Two-Day Specialty Routine
 

@@ -863,9 +863,16 @@ def _calendar_response(session: Session, now: datetime) -> str:
 def _activity_response(session: Session) -> str:
     rows = session.query(Activity).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(10).all()
     # Older local versions stored proposed gym sessions as activities with this
-    # marker. They were not completed Garmin activities and should not appear
-    # in the athlete's history.
-    rows = [row for row in rows if not (row.name or "").startswith("🏋")][:5]
+    # marker. Completed Garmin workouts can now use the same prefix, so only
+    # suppress unverified rows that have no Garmin workout provenance.
+    rows = [
+        row for row in rows
+        if not (
+            (row.name or "").startswith("🏋")
+            and not row.provenance_checked
+            and row.source_workout_id is None
+        )
+    ][:5]
     if not rows:
         return "No synced activities are available."
     return "Recent activities:\n" + "\n".join(
