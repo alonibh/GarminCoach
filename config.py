@@ -59,6 +59,10 @@ MULTI_USER_ENABLED = os.getenv("MULTI_USER_ENABLED", "false").strip().lower() in
 }
 MULTI_USER_DATA_ROOT = _expand(os.getenv("MULTI_USER_DATA_ROOT", "data/users"))
 CONTROL_DB_PATH = _expand(os.getenv("CONTROL_DB_PATH", "data/control.db"))
+OWNER_GOOGLE_EMAIL = os.getenv("OWNER_GOOGLE_EMAIL", "").strip()
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
 APP_USERNAME = os.getenv("APP_USERNAME", "")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 _DEFAULT_SESSION_SECRET = "change-me-to-a-random-string"
@@ -81,6 +85,20 @@ if APP_USERNAME.strip() and SESSION_SECRET.strip() == _DEFAULT_SESSION_SECRET:
         '  python -c "import secrets; print(secrets.token_hex(32))"\n'
         "and set it in .env, or leave APP_USERNAME blank to disable auth."
     )
+
+if MULTI_USER_ENABLED:
+    missing = [
+        name for name, value in (
+            ("OWNER_GOOGLE_EMAIL", OWNER_GOOGLE_EMAIL),
+            ("GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID),
+            ("GOOGLE_CLIENT_SECRET", GOOGLE_CLIENT_SECRET),
+            ("GOOGLE_REDIRECT_URI", GOOGLE_REDIRECT_URI),
+        ) if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "Multi-user mode requires: " + ", ".join(missing)
+        )
 
 # --- Telegram Notifications ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")

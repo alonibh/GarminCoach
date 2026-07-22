@@ -950,6 +950,14 @@ def _migrate_add_columns() -> None:
 
 @contextmanager
 def get_session() -> Iterator:
+    if config.MULTI_USER_ENABLED:
+        # Imported lazily to avoid a module cycle: tenant_store uses this
+        # module's athlete schema when provisioning a physical user database.
+        from tenant_store import get_current_user_session
+
+        with get_current_user_session() as session:
+            yield session
+        return
     session = SessionLocal()
     try:
         yield session

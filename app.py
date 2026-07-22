@@ -45,9 +45,15 @@ from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import start_scheduler
 from time_utils import get_local_date
+from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
+from auth_routes import router as auth_router
+from auth_service import resolve_web_session
+from control_db import get_control_session, init_control_db
+from tenant_context import TenantIdentity, tenant_scope
 
 app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
+app.include_router(auth_router)
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
 
 import re
@@ -200,6 +206,25 @@ def _verify_session(token: str) -> str | None:
 
 class CookieAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if config.MULTI_USER_ENABLED:
+            path = request.url.path
+            public = ("/static", "/auth", "/invite", "/favicon", "/telegram/webhook")
+            if path.startswith(public):
+                return await call_next(request)
+            raw_session = request.cookies.get(MULTI_USER_SESSION_COOKIE, "")
+            with get_control_session() as control_session:
+                user = resolve_web_session(control_session, raw_session)
+                if user is None:
+                    return RedirectResponse("/auth/login", status_code=303)
+                request.state.user = user
+                tenant = TenantIdentity(user.id, role=user.role)
+                with tenant_scope(tenant):
+                    onboarding_get = path == "/onboarding" and request.method == "GET"
+                    if user.status != "active" and not onboarding_get:
+                        return RedirectResponse("/onboarding", status_code=303)
+                    response = await call_next(request)
+                    response.headers.setdefault("Cache-Control", "no-store")
+                    return response
         # If no APP_USERNAME is set, auth is disabled — let everything through.
         if not (config.APP_USERNAME or "").strip():
             return await call_next(request)
@@ -284,6 +309,11 @@ from sync import sync_runner  # noqa: E402
 
 @app.on_event("startup")
 def _startup() -> None:
+    if config.MULTI_USER_ENABLED:
+        init_control_db()
+        # Garmin clients and scheduled work are intentionally not started until
+        # those paths carry an explicit tenant identity.
+        return
     init_db()
     # Try to resume a cached Garmin session silently; don't block startup.
     try:
@@ -1442,6 +1472,22 @@ def _onboarding_form_defaults(
 @app.get("/onboarding", response_class=HTMLResponse)
 def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
+    if config.MULTI_USER_ENABLED:
+        from html import escape
+
+        user = request.state.user
+        return HTMLResponse(
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Set up GarminCoach</title></head><body><main>"
+            "<h1>Set up GarminCoach</h1>"
+            f"<p>Signed in as {escape(user.email)}.</p>"
+            "<p>Your private athlete store is ready. Garmin connection and timezone "
+            "setup are the next implementation step.</p>"
+            "<form method='post' action='/auth/logout'><button>Sign out</button></form>"
+            "</main></body></html>",
+            headers={"Cache-Control": "no-store"},
+        )
     with get_session() as session:
         profile = session.get(AthleteProfile, 1) or AthleteProfile(id=1)
         goal = session.get(Goal, 1) or Goal(id=1, goal="", custom_input="")
@@ -2375,6 +2421,8 @@ def coach_calendar_feed():
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Handle incoming messages from Telegram."""
+    if config.MULTI_USER_ENABLED:
+        raise HTTPException(status_code=503, detail="Telegram linking is not enabled yet")
     
     # 0. Size Limit
     content_length = request.headers.get('content-length')

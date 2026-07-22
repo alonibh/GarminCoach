@@ -88,6 +88,36 @@ class WebSession(ControlBase):
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class EnrollmentTicket(ControlBase):
+    """Short-lived bridge from a URL-fragment invitation to the OIDC flow."""
+
+    __tablename__ = "enrollment_tickets"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    invitation_id: Mapped[str] = mapped_column(
+        ForeignKey("invitations.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class OAuthAttempt(ControlBase):
+    """One-use server-side OIDC state, nonce, and PKCE verifier."""
+
+    __tablename__ = "oauth_attempts"
+
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    invitation_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("invitations.id", ondelete="CASCADE"), index=True
+    )
+    nonce: Mapped[str] = mapped_column(String(128))
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class IntegrationRoute(ControlBase):
     __tablename__ = "integration_routes"
 
