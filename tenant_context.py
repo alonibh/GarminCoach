@@ -53,3 +53,12 @@ def tenant_scope(tenant: TenantIdentity) -> Iterator[TenantIdentity]:
         yield tenant
     finally:
         _current_tenant.reset(token)
+
+
+def bind_tenant(tenant: TenantIdentity) -> Token:
+    """Bind a tenant when adapting callback-style frameworks without a context manager."""
+    return _current_tenant.set(tenant)
+
+
+def reset_tenant(token: Token) -> None:
+    _current_tenant.reset(token)

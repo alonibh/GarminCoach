@@ -52,7 +52,7 @@ from account_routes import router as account_router
 from setup_routes import CONSENT_VERSION, router as setup_router
 from auth_service import resolve_web_session
 from control_db import get_control_session, init_control_db
-from tenant_context import TenantIdentity, tenant_scope
+from tenant_context import TenantIdentity, bind_tenant, reset_tenant, tenant_scope
 
 app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
@@ -2446,9 +2446,6 @@ def coach_calendar_feed():
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Handle incoming messages from Telegram."""
-    if config.MULTI_USER_ENABLED:
-        raise HTTPException(status_code=503, detail="Telegram linking is not enabled yet")
-    
     # 0. Size Limit
     content_length = request.headers.get('content-length')
     if content_length and int(content_length) > 2 * 1024 * 1024:
@@ -2459,8 +2456,55 @@ async def telegram_webhook(request: Request):
     if secret != config.TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
         
+    data = {}
+    tenant_token = None
+    authorized_chat_id = config.TELEGRAM_CHAT_ID
     try:
         data = await request.json()
+        callback = data.get("callback_query") or {}
+        message = data.get("message") or callback.get("message") or {}
+        chat = message.get("chat") or {}
+        incoming_chat_id = chat.get("id")
+        incoming_chat_type = chat.get("type")
+        incoming_text = message.get("text") if not callback else None
+
+        if config.MULTI_USER_ENABLED:
+            from notify.telegram import send_link_message
+            from sync.scheduler import refresh_user_jobs
+            from telegram_link import consume_link_code, resolve_chat_tenant, unlink_user
+
+            if incoming_chat_type != "private" or incoming_chat_id is None:
+                return {"status": "ok"}
+            parts = (incoming_text or "").strip().split(maxsplit=1)
+            command = parts[0].split("@", 1)[0].casefold() if parts else ""
+            if command == "/link":
+                if len(parts) != 2:
+                    send_link_message("Generate a link command from GarminCoach Account settings.", str(incoming_chat_id))
+                    return {"status": "ok"}
+                try:
+                    identity = consume_link_code(parts[1], str(incoming_chat_id))
+                except ValueError as exc:
+                    send_link_message(str(exc), str(incoming_chat_id))
+                    return {"status": "ok"}
+                refresh_user_jobs(identity.user_id)
+                send_link_message("Telegram is linked to your GarminCoach account.", str(incoming_chat_id))
+                return {"status": "ok"}
+
+            identity = resolve_chat_tenant(str(incoming_chat_id))
+            if identity is None:
+                if incoming_text:
+                    send_link_message("This chat is not linked. Generate a link command in GarminCoach Account settings.", str(incoming_chat_id))
+                return {"status": "ok"}
+            authorized_chat_id = str(incoming_chat_id)
+            tenant_token = bind_tenant(identity)
+            if command == "/unlink":
+                unlink_user(identity.user_id)
+                refresh_user_jobs(identity.user_id)
+                reset_tenant(tenant_token)
+                tenant_token = None
+                send_link_message("Telegram was unlinked from GarminCoach.", str(incoming_chat_id))
+                return {"status": "ok"}
+
         # If it's a callback query from an inline button
         if "callback_query" in data:
             callback = data["callback_query"]
@@ -2473,7 +2517,7 @@ async def telegram_webhook(request: Request):
             from notify import telegram
             telegram.answer_callback_query(callback_id)
             
-            if str(chat_id) == config.TELEGRAM_CHAT_ID and chat_type == "private":
+            if str(chat_id) == authorized_chat_id and chat_type == "private":
                 if callback_data.startswith("flow:"):
                     from coach.intent_router import handle_flow_callback
                     with get_session() as db:
@@ -2598,7 +2642,7 @@ async def telegram_webhook(request: Request):
         text = message.get("text")
         
         # We only care about text messages from the authorized chat
-        if text and str(chat_id) == config.TELEGRAM_CHAT_ID and chat_type == "private":
+        if text and str(chat_id) == authorized_chat_id and chat_type == "private":
             from coach.coach import handle_chat
             from notify import telegram
             
@@ -2641,10 +2685,16 @@ async def telegram_webhook(request: Request):
         try:
             from notify import telegram
             chat_id = (data.get("message") or {}).get("chat", {}).get("id")
-            if chat_id and str(chat_id) == config.TELEGRAM_CHAT_ID:
-                telegram.send_message(f"*Coach error:*\nAn error occurred while processing your request:\n`{str(e)}`\n\nNo operation was applied. Please try again later.", chat_id=str(chat_id))
+            if chat_id and str(chat_id) == authorized_chat_id:
+                detail = "An error occurred while processing your request. No operation was applied. Please try again later."
+                if not config.MULTI_USER_ENABLED:
+                    detail = f"An error occurred while processing your request:\n`{str(e)}`\n\nNo operation was applied. Please try again later."
+                telegram.send_message(f"*Coach error:*\n{detail}", chat_id=str(chat_id))
         except Exception:
             pass
+    finally:
+        if tenant_token is not None:
+            reset_tenant(tenant_token)
         
     return {"status": "ok"}
 

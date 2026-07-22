@@ -135,6 +135,18 @@ class IntegrationRoute(ControlBase):
     )
 
 
+class TelegramLinkTicket(ControlBase):
+    __tablename__ = "telegram_link_tickets"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class AuditEvent(ControlBase):
     __tablename__ = "audit_events"
 

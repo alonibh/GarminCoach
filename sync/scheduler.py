@@ -30,6 +30,26 @@ def _run_for_user(user_id: str) -> None:
         sync_runner.try_start_sync(full=False)
 
 
+def _run_user_notification_job(user_id: str, job: str) -> None:
+    with get_control_session() as session:
+        user = session.get(User, user_id)
+        if user is None or user.status != "active" or not user.telegram_linked:
+            return
+        identity = TenantIdentity(user.id, role=user.role, timezone=user.timezone)
+    with tenant_scope(identity):
+        if job == "morning_watch":
+            _morning_watch()
+        elif job == "morning_deadline":
+            from notify.morning import morning_deadline
+            morning_deadline()
+        elif job == "weekly_summary":
+            from notify.weekly import send_weekly_summary
+            send_weekly_summary()
+        elif job == "notification_outbox":
+            from notify.outbox import process_due_notifications
+            process_due_notifications()
+
+
 def refresh_user_jobs(user_id: str) -> None:
     """Replace one athlete's jobs; safe to call after onboarding or deletion."""
     if _scheduler is None or not config.MULTI_USER_ENABLED:
@@ -53,6 +73,32 @@ def refresh_user_jobs(user_id: str) -> None:
             CronTrigger(hour=hour, minute=minute, timezone=timezone),
             kwargs={"user_id": user_id},
             id=f"{prefix}sync_{index}",
+            replace_existing=True,
+        )
+    with get_control_session() as session:
+        refreshed_user = session.get(User, user_id)
+        linked = bool(refreshed_user and refreshed_user.telegram_linked)
+    if not linked:
+        return
+    notification_jobs = (
+        (
+            "morning_watch",
+            CronTrigger(
+                hour=f"{config.MORNING_WATCH_START_HOUR}-{config.MORNING_WATCH_END_HOUR}",
+                minute=f"*/{config.MORNING_WATCH_INTERVAL_MINUTES}",
+                timezone=timezone,
+            ),
+        ),
+        ("morning_deadline", CronTrigger(hour=11, minute=30, timezone=timezone)),
+        ("weekly_summary", CronTrigger(day_of_week="sat", hour=20, minute=0, timezone=timezone)),
+        ("notification_outbox", CronTrigger(minute="*", second=15, timezone=timezone)),
+    )
+    for name, trigger in notification_jobs:
+        _scheduler.add_job(
+            _run_user_notification_job,
+            trigger,
+            kwargs={"user_id": user_id, "job": name},
+            id=f"{prefix}{name}",
             replace_existing=True,
         )
 

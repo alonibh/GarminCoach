@@ -17,6 +17,7 @@ from control_db import AuditEvent, Invitation, User, get_control_session, utcnow
 from secret_vault import UserSecretVault
 from sync.garmin_registry import get_garmin_registry
 from sync.scheduler import refresh_user_jobs
+from telegram_link import issue_link_code, unlink_user
 from tenant_store import dispose_user_engine, user_root
 
 
@@ -37,7 +38,13 @@ def _current_user(request: Request) -> User:
     return user
 
 
-def _settings_context(user: User, *, invitation_link: str | None = None, error: str | None = None):
+def _settings_context(
+    user: User,
+    *,
+    invitation_link: str | None = None,
+    telegram_command: str | None = None,
+    error: str | None = None,
+):
     with get_control_session() as session:
         users = session.query(User).order_by(User.created_at).all() if user.role == "owner" else []
         invitations = (
@@ -51,6 +58,7 @@ def _settings_context(user: User, *, invitation_link: str | None = None, error: 
         "invitations": invitations,
         "calendar_url": calendar_url,
         "invitation_link": invitation_link,
+        "telegram_command": telegram_command,
         "error": error,
         "max_invited_users": config.MAX_INVITED_USERS,
     }
@@ -85,6 +93,30 @@ def save_calendar(request: Request, calendar_url: str = Form("")):
         stored = session.get(User, user.id)
         stored.inbound_calendar_linked = bool(value)
         stored.updated_at = utcnow()
+    return RedirectResponse("/account", status_code=303)
+
+
+@router.post("/telegram/link", response_class=HTMLResponse)
+def create_telegram_link(request: Request):
+    if disabled := _disabled():
+        return disabled
+    user = _current_user(request)
+    code = issue_link_code(user.id)
+    return templates.TemplateResponse(
+        request,
+        "account.html",
+        _settings_context(user, telegram_command=f"/link {code}"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/telegram/unlink")
+def unlink_telegram(request: Request):
+    if disabled := _disabled():
+        return disabled
+    user = _current_user(request)
+    unlink_user(user.id)
+    refresh_user_jobs(user.id)
     return RedirectResponse("/account", status_code=303)
 
 

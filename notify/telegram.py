@@ -9,6 +9,19 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 
 logger = logging.getLogger(__name__)
 
+
+def _tenant_chat_id(requested: str | None = None) -> str | None:
+    if not config.MULTI_USER_ENABLED:
+        return requested or config.TELEGRAM_CHAT_ID
+    try:
+        from telegram_link import chat_id_for_current_tenant
+        expected = chat_id_for_current_tenant()
+    except RuntimeError:
+        return None
+    if requested is not None and str(requested) != expected:
+        return None
+    return expected
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -24,10 +37,9 @@ def _make_request(url: str, payload: dict) -> bool:
 def send_message(text: str, chat_id: str | None = None, reply_markup: dict | None = None) -> bool:
     """Send a markdown-formatted message to the Telegram chat."""
     bot_token = config.TELEGRAM_BOT_TOKEN
-    target_chat_id = chat_id or config.TELEGRAM_CHAT_ID
+    target_chat_id = _tenant_chat_id(chat_id)
     if not bot_token or not target_chat_id:
         return False
-        
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": target_chat_id, "text": text, "parse_mode": "Markdown"}
     if reply_markup:
@@ -37,6 +49,17 @@ def send_message(text: str, chat_id: str | None = None, reply_markup: dict | Non
         return _make_request(url, payload)
     except urllib.error.URLError as e:
         logger.error(f"Failed to send Telegram message: {e}")
+        return False
+
+
+def send_link_message(text: str, chat_id: str) -> bool:
+    """Send only a non-sensitive linking result before tenant context exists."""
+    if not config.MULTI_USER_ENABLED or not config.TELEGRAM_BOT_TOKEN or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        return _make_request(url, {"chat_id": str(chat_id), "text": text})
+    except urllib.error.URLError:
         return False
 
 def answer_callback_query(callback_query_id: str, text: str | None = None) -> bool:
@@ -56,10 +79,11 @@ def answer_callback_query(callback_query_id: str, text: str | None = None) -> bo
 def edit_message_text(text: str, chat_id: str, message_id: int, reply_markup: dict | None = None) -> bool:
     """Edit an existing message, e.g. to remove inline buttons after an action."""
     bot_token = config.TELEGRAM_BOT_TOKEN
-    if not bot_token: return False
+    target_chat_id = _tenant_chat_id(chat_id)
+    if not bot_token or not target_chat_id: return False
     
     url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
-    payload = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": target_chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
         
@@ -72,10 +96,11 @@ def edit_message_text(text: str, chat_id: str, message_id: int, reply_markup: di
 def send_chat_action(chat_id: str, action: str = "typing") -> bool:
     """Send a chat action (like 'typing') to indicate activity."""
     bot_token = config.TELEGRAM_BOT_TOKEN
-    if not bot_token: return False
+    target_chat_id = _tenant_chat_id(chat_id)
+    if not bot_token or not target_chat_id: return False
     
     url = f"https://api.telegram.org/bot{bot_token}/sendChatAction"
-    payload = {"chat_id": chat_id, "action": action}
+    payload = {"chat_id": target_chat_id, "action": action}
     
     try:
         return _make_request(url, payload)
