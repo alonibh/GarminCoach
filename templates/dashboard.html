@@ -1,56 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-
-{% if needs_login %}
-<div class="card warn">
-  <strong>Not connected to Garmin.</strong>
-  <a href="/login" class="btn">Connect your Garmin account</a>
-</div>
-{% endif %}
-
-<style>
-  .dashboard-toolbar {
-    display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem; margin-bottom: 1.5rem;
-  }
-  .dashboard-actions {
-    display: flex; align-items: stretch; gap: 0.5rem; width: 100%;
-  }
-  .dashboard-actions > * {
-    flex: 1; text-align: center;
-  }
-  .dashboard-actions .btn {
-    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
-  }
-  .dashboard-actions [hidden] { display: none !important; }
-  @media (min-width: 768px) {
-    .dashboard-toolbar { flex-direction: row; justify-content: space-between; align-items: center; }
-    .dashboard-actions { width: auto; }
-    .dashboard-actions > * { flex: none; }
-    .dashboard-actions .btn { width: auto; }
-  }
-</style>
-
-<div class="dashboard-toolbar compact">
-  <div class="muted" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.85rem;">
-    <span id="sync-status">
-      {% if last_sync_at %}Fetched <span class="time-ago" data-iso="{{ last_sync_at }}"></span>{% else %}Never synced{% endif %}
-      {% if device_last_upload %} | Watch synced <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}
-    </span>
+{% from "icons.html" import icon %}
+<div class="dashboard-page">
+<header class="page-heading today-heading">
+  <div><span class="eyebrow">Performance overview</span><div class="today-title"><h1>Today</h1><span class="today-date">{{ today_label|default('', true) }}</span></div></div>
+  <div class="sync-cluster">
+    <div class="sync-freshness"><span class="sync-dot" aria-hidden="true"></span><span id="sync-status">{% if last_sync_at %}Data fetched <span class="time-ago" data-iso="{{ last_sync_at }}"></span>{% else %}Not synced yet{% endif %}{% if device_last_upload %} · Watch <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}</span></div>
+    <div id="dashboard-actions" class="dashboard-actions">
+      {% if needs_login %}<a href="/login" class="btn small">Connect Garmin</a>{% else %}
+      <form id="sync-reset-form" method="post" action="/sync/reset"{% if not sync_running %} hidden{% endif %}><button class="btn-secondary small" title="Force reset if sync is stuck">Reset</button></form>
+      <button id="sync-running-indicator" class="btn small" disabled{% if not sync_running %} hidden{% endif %}>Syncing…</button>
+      <form id="sync-form" method="post" action="/sync"{% if sync_running %} hidden{% endif %}><button class="btn small">{{ icon('sync') }} Sync now</button></form>
+      {% endif %}
+    </div>
   </div>
-  <div id="dashboard-actions" class="dashboard-actions" style="flex-wrap: wrap;">
-    {% if needs_login %}
-    <a href="/login" class="btn small" style="white-space: nowrap; flex: 1 1 auto;">Connect Garmin</a>
-    {% else %}
-      <form id="sync-reset-form" method="post" action="/sync/reset" style="margin:0; display: flex; flex: 1 1 auto;"{% if not sync_running %} hidden{% endif %}>
-        <button class="btn small" style="background:#444; color: #fff; width: 100%; white-space: nowrap;" title="Force reset if sync is stuck">Reset</button>
-      </form>
-      <button id="sync-running-indicator" class="btn small" disabled style="white-space: nowrap; flex: 1 1 auto;"{% if not sync_running %} hidden{% endif %}>Syncing...</button>
-      <form id="sync-form" method="post" action="/sync" style="margin:0; display: flex; flex: 1 1 auto;"{% if sync_running %} hidden{% endif %}>
-        <button class="btn small" style="width: 100%; white-space: nowrap;">Sync now</button>
-      </form>
-    {% endif %}
-  </div>
-</div>
+</header>
 
 {% if sync_summary %}
 <div id="sync-summary" class="notice muted">
@@ -127,17 +91,38 @@
   {% endif %}
 {% endmacro %}
 
-{% if fitness_tiles or readiness_tiles %}
-<div class="tile-row">
-  {% for t in fitness_tiles %}
-    {{ render_tile(t) }}
-  {% endfor %}
-
-  {% for t in readiness_tiles %}
-    {{ render_tile(t) }}
-  {% endfor %}
-</div>
+{% if hero_metrics is defined %}
+<section class="hero-metrics" aria-label="Today's headline metrics">
+  {% if hero_metrics.readiness.signals %}
+  <article class="hero-metric hero-recovery-signals">
+    <div class="hero-metric-label">{{ icon('heart') }} Recovery signals <span class="info" tabindex="0" data-tip="{{ hero_metrics.readiness.hint }}">i</span></div>
+    <div class="recovery-signal-list">{% for row in hero_metrics.readiness.signals %}<div class="recovery-signal-row"><span>{{ row.label }}</span><div class="recovery-signal-detail"><span class="recovery-signal-indicator {{ row.tone }}"><span class="recovery-signal-dot" aria-hidden="true"></span>{{ row.indicator }}</span><strong>{{ row.value }}</strong></div></div>{% endfor %}</div>
+  </article>
+  {% else %}
+  <article class="hero-metric readiness {{ hero_metrics.readiness.tone }}">
+    <div class="metric-ring" style="--ring-pct:{{ hero_metrics.readiness.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.readiness.value if hero_metrics.readiness.value is not none else '—' }}</span><span class="metric-ring-unit">score</span></div></div>
+    <div class="hero-metric-label">{{ icon('heart') }} Readiness</div><div class="hero-metric-detail">{{ hero_metrics.readiness.detail }}</div>
+  </article>
+  {% endif %}
+  <article class="hero-metric sleep">
+    <div class="metric-ring" style="--ring-pct:{{ hero_metrics.sleep.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.sleep.value if hero_metrics.sleep.value is not none else '—' }}</span><span class="metric-ring-unit">{{ hero_metrics.sleep.unit }}</span></div></div>
+    <div class="hero-metric-label">{{ icon('moon') }} Sleep</div><div class="hero-metric-detail">{{ hero_metrics.sleep.detail }}</div>
+  </article>
+  <article class="hero-metric load">
+    <div class="metric-ring" style="--ring-pct:{{ hero_metrics.load.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.load.value if hero_metrics.load.value is not none else '—' }}</span><span class="metric-ring-unit">ACWR</span></div></div>
+    <div class="hero-metric-label">{{ icon('bolt') }} Load ratio</div><div class="hero-metric-detail">{{ hero_metrics.load.detail }}</div>
+  </article>
+</section>
 {% endif %}
+
+{% if fitness_tiles or (hero_metrics is not defined and readiness_tiles) %}
+<section aria-labelledby="body-metrics-title"><div class="metric-section-heading"><div><span class="eyebrow">Garmin insights</span><h2 id="body-metrics-title">Body metrics</h2></div></div><div class="secondary-metrics">
+  {% for t in fitness_tiles %}{{ render_tile(t) }}{% endfor %}
+  {% if hero_metrics is not defined %}{% for t in readiness_tiles %}{{ render_tile(t) }}{% endfor %}{% endif %}
+</div></section>
+{% endif %}
+
+<section aria-labelledby="trends-title"><div class="metric-section-heading"><div><span class="eyebrow">Last seven days</span><h2 id="trends-title">Your trends</h2></div></div>
 
 <div class="chart-grid">
   <div class="card chart-card" data-chart="sleep">
@@ -161,11 +146,12 @@
     <div class="chart-wrap"><canvas id="caloriesChart"></canvas></div>
   </div>
 </div>
+</section>
 
-<div class="card">
-  <h3>Recent workouts</h3>
+<section class="card activities-card" aria-labelledby="activities-title">
+  <div class="activities-head"><div><span class="eyebrow">Training history</span><h2 id="activities-title">Recent workouts</h2></div><span class="muted">Last 90 days</span></div>
   <div class="table-scroll">
-    <table id="activities-table">
+    <table id="activities-table" class="activities-table">
       <thead><tr><th>Date</th><th>Type</th><th>Dur</th><th>Cal</th><th>Avg HR</th><th>Load</th><th></th></tr></thead>
       <tbody id="activities-body">
       {% for a in activities %}
@@ -184,7 +170,11 @@
       </tbody>
     </table>
   </div>
-  <div id="pagination-controls" style="text-align: center; margin-top: 15px;"></div>
+  <div class="activity-mobile-list">
+    {% for a in activities %}<a class="activity-card-link activity-mobile-item" href="/workout/{{ a.id }}"><span class="activity-mobile-icon">{{ icon('activity') }}</span><span class="activity-mobile-copy"><b>{{ a.name|clean_name if a.type == 'strength_training' else a.type|humanize }}</b><small>{{ a.start.strftime('%a, %b %d · %H:%M') if a.start else 'Date unavailable' }}</small></span><span class="activity-mobile-value"><b>{{ a.duration_min }}m</b><small>{% if a.load %}{{ a.load }} load{% elif a.avg_hr %}{{ a.avg_hr|round|int }} bpm{% endif %}</small></span></a>{% else %}<div class="activity-mobile-item muted">No workouts yet.</div>{% endfor %}
+  </div>
+  <div id="pagination-controls" class="text-center"></div>
+</section>
 </div>
 
 <script>
@@ -375,12 +365,12 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   
   const gradActive = ctx.createLinearGradient(0, 0, 0, 400);
-  gradActive.addColorStop(0, '#ff8a65');
-  gradActive.addColorStop(1, '#ff5252');
+  gradActive.addColorStop(0, '#56ccff');
+  gradActive.addColorStop(1, '#079df0');
   
   const gradBMR = ctx.createLinearGradient(0, 0, 0, 400);
-  gradBMR.addColorStop(0, '#58a6ff');
-  gradBMR.addColorStop(1, '#1f6feb');
+  gradBMR.addColorStop(0, '#525c66');
+  gradBMR.addColorStop(1, '#303840');
 
   const chart = new Chart(ctx, {
     type: 'bar',
@@ -455,10 +445,10 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   dashboardCharts[canvasId] = chart;
 }
 
-lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#2f81f7', round1, 7, 9);
-lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#3fb950', round0, healthk.map(d => d.hrv_baseline_low), healthk.map(d => d.hrv_baseline_high));
-lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#f0883e', round0, 45, 65);
-lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#a371f7', kSteps, healthk.map(d => d.step_goal), null);
+lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#8bc7e8', round1, 7, 9);
+lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#00e676', round0, healthk.map(d => d.hrv_baseline_low), healthk.map(d => d.hrv_baseline_high));
+lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#ffb020', round0, 45, 65);
+lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#9b6dff', kSteps, healthk.map(d => d.step_goal), null);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
 
 function updateLineChart(id, labels, data, minVal = null, maxVal = null) {
@@ -592,7 +582,7 @@ function renderSyncSummary(summary) {
     notice = document.createElement('div');
     notice.id = 'sync-summary';
     notice.className = 'notice muted';
-    document.querySelector('.dashboard-toolbar')?.after(notice);
+    document.querySelector('.today-heading')?.after(notice);
   }
   notice.hidden = false;
   notice.replaceChildren();

@@ -1,0 +1,21 @@
+{% from "icons.html" import icon %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}GarminCoach{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version() }}">
+  <link rel="stylesheet" href="/static/ui.css?v={{ asset_version() }}">
+  <meta name="theme-color" content="#0a0d10">
+</head>
+<body class="focus-shell">
+  <main class="focus-main">
+    <a href="/" class="gc-brand focus-brand" aria-label="GarminCoach home"><span class="gc-mark">GC</span><span class="gc-wordmark">Garmin<span>Coach</span></span></a>
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/ui.js?v={{ asset_version() }}" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

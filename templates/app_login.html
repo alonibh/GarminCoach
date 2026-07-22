@@ -1,0 +1,5 @@
+{% extends "focused_base.html" %}
+{% block title %}Sign in · GarminCoach{% endblock %}
+{% block content %}
+<section class="focus-card"><span class="eyebrow">Private dashboard</span><h1>Sign in to GarminCoach</h1><p class="muted focus-intro">Enter the credentials configured for this private installation.</p>{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}<form method="post" action="/app-login" class="focus-form"><input type="hidden" name="next" value="{{ next_url }}"><label class="field" for="username">Username<input type="text" id="username" name="username" autocomplete="username" required autofocus></label><label class="field" for="password">Password<input type="password" id="password" name="password" autocomplete="current-password" required></label><button class="btn" type="submit">Sign in</button></form></section>
+{% endblock %}

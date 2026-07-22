@@ -293,6 +293,8 @@ def _asset_version() -> int:
         static_dir = config.PROJECT_ROOT / "static"
         return int(max(
             os.path.getmtime(static_dir / "style.css"),
+            os.path.getmtime(static_dir / "ui.css"),
+            os.path.getmtime(static_dir / "ui.js"),
             os.path.getmtime(static_dir / "onboarding.js"),
         ))
     except OSError:
@@ -870,6 +872,65 @@ def _dashboard_chart_data(session) -> dict:
     }
 
 
+def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> dict:
+    """Build display-only headline metrics from existing Garmin observations."""
+    readiness = next(
+        (tile for tile in readiness_tiles if tile.get("key") in {"readiness", "recovery_signals"}),
+        {},
+    )
+    latest_sleep = next(
+        (row for row in reversed(sleep_series) if row.get("hours") is not None or row.get("score") is not None),
+        {},
+    )
+    sleep_score = latest_sleep.get("score")
+    sleep_hours = latest_sleep.get("hours")
+
+    with get_session() as session:
+        metrics = (
+            session.query(DailyMetrics)
+            .filter(DailyMetrics.day <= get_local_date())
+            .order_by(DailyMetrics.day.desc())
+            .first()
+        )
+        load_value = metrics.acwr if metrics else None
+        acute_load = metrics.acute_load if metrics else None
+        chronic_load = metrics.chronic_load if metrics else None
+
+    readiness_value = readiness.get("value")
+    readiness_color = readiness.get("color")
+    readiness_tone = (
+        "good" if readiness_color == "green"
+        else "caution" if readiness_color == "yellow"
+        else "poor" if readiness_color == "red"
+        else "neutral"
+    )
+    return {
+        "readiness": {
+            "value": readiness_value,
+            "progress": max(0, min(100, float(readiness_value or 0))),
+            "detail": readiness.get("age") or readiness.get("desc") or "Waiting for today's data",
+            "tone": readiness_tone,
+            "signals": readiness.get("signal_rows"),
+            "hint": readiness.get("hint"),
+        },
+        "sleep": {
+            "value": int(round(sleep_score)) if sleep_score is not None else sleep_hours,
+            "unit": "score" if sleep_score is not None else ("hours" if sleep_hours is not None else "no data"),
+            "progress": max(0, min(100, float(sleep_score or 0))),
+            "detail": f"{sleep_hours:g} hours last night" if sleep_hours is not None else "Waiting for last night's sleep",
+        },
+        "load": {
+            "value": round(load_value, 2) if load_value is not None else None,
+            "progress": max(0, min(100, float(load_value or 0) / 2.0 * 100)),
+            "detail": (
+                f"Acute {acute_load:.0f} · Chronic {chronic_load:.0f}"
+                if acute_load is not None and chronic_load is not None
+                else "Not enough load history"
+            ),
+        },
+    }
+
+
 # --- routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -908,6 +969,8 @@ def dashboard(request: Request):
             for a in activities
         ]
 
+    fitness_tiles = _fitness_tiles()
+    readiness_tiles = _readiness_tiles()
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -915,8 +978,10 @@ def dashboard(request: Request):
             "needs_login": needs_login,
             "activities": activities,
             **chart_data,
-            "fitness_tiles": _fitness_tiles(),
-            "readiness_tiles": _readiness_tiles(),
+            "fitness_tiles": fitness_tiles,
+            "readiness_tiles": readiness_tiles,
+            "hero_metrics": _dashboard_hero(readiness_tiles, chart_data["sleep_series"]),
+            "today_label": get_local_date().strftime("%A, %b %d"),
             "last_sync_at": _last_sync_at(),
             "device_last_upload": _device_last_upload(),
             "sync_running": sync_runner.is_running(),
@@ -1351,8 +1416,11 @@ def _safe_next(next: str) -> str:
 def app_login_form(request: Request, next: str = "/"):
     if config.MULTI_USER_ENABLED:
         raise HTTPException(status_code=404)
-    html = _APP_LOGIN_HTML.format(error_html="", next_url=_safe_next(next))
-    return HTMLResponse(html)
+    return templates.TemplateResponse(
+        request,
+        "app_login.html",
+        {"error": None, "next_url": _safe_next(next)},
+    )
 
 
 @app.post("/app-login", response_class=HTMLResponse)
@@ -1386,9 +1454,12 @@ def app_login_submit(
         return response
 
     # Failed login.
-    error_html = '<div class="error">Invalid username or password.</div>'
-    html = _APP_LOGIN_HTML.format(error_html=error_html, next_url=next)
-    return HTMLResponse(html, status_code=401)
+    return templates.TemplateResponse(
+        request,
+        "app_login.html",
+        {"error": "Invalid username or password.", "next_url": _safe_next(next)},
+        status_code=401,
+    )
 
 
 @app.get("/app-logout")

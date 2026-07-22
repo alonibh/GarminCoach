@@ -1,44 +1,34 @@
 {% extends "base.html" %}
-{% block title %}Calendar - GarminCoach{% endblock %}
-
+{% from "icons.html" import icon %}
+{% block title %}Calendar · GarminCoach{% endblock %}
 {% block content %}
-<div class="calendar-header">
-  <a href="/calendar?year={{ prev_y }}&month={{ prev_m }}" class="btn-secondary">Previous</a>
-  <h2>{{ month_name }} {{ year }}</h2>
-  <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary">Next</a>
-</div>
+<div class="calendar-page">
+  <header class="calendar-header page-heading">
+    <a href="/calendar?year={{ prev_y }}&month={{ prev_m }}" class="btn-secondary" aria-label="Previous month">{{ icon('back') }} Previous</a>
+    <div class="calendar-title"><span class="eyebrow">Training calendar</span><h1>{{ month_name }} {{ year }}</h1></div>
+    <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary" aria-label="Next month">Next {{ icon('chevron') }}</a>
+  </header>
 
-<div class="calendar-scroll" tabindex="0" role="region" aria-label="Monthly workout calendar">
-<div class="calendar-grid">
-  <div class="weekday-header">Mon</div>
-  <div class="weekday-header">Tue</div>
-  <div class="weekday-header">Wed</div>
-  <div class="weekday-header">Thu</div>
-  <div class="weekday-header">Fri</div>
-  <div class="weekday-header">Sat</div>
-  <div class="weekday-header">Sun</div>
-
-  {% for week in weeks %}
-    {% for day in week.days %}
-      <div class="calendar-cell {% if not day.is_current_month %}other-month{% endif %} {% if day.is_today %}today{% endif %}">
-        <div class="cell-top">
-          <span class="date-num">{{ day.date.day }}</span>
-          {% if day.readiness_color %}
-            <span class="dot dot-{{ day.readiness_color }}" title="Readiness: {{ day.readiness_score }}"></span>
-          {% endif %}
-        </div>
-        <div class="cell-activities">
-          {% for act in day.activities %}
-            <a href="/workout/{{ act.id }}" class="act-pill">
-              <span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% elif 'swim' in act.activity_type.lower() %}🏊{% elif 'soccer' in act.activity_type.lower() %}⚽{% elif 'walk' in act.activity_type.lower() %}🚶{% elif 'hik' in act.activity_type.lower() %}🥾{% else %}⚡{% endif %}</span>
-              <span class="act-dur">{{ (act.duration_s / 60)|round|int }}m</span>
-              {% if act.name %}<span class="act-name">{{ act.name|clean_name }}</span>{% endif %}
-            </a>
-          {% endfor %}
-        </div>
+  <div class="calendar-scroll" tabindex="0" role="region" aria-label="Monthly workout calendar">
+    <div class="calendar-grid">
+      {% for weekday in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<div class="weekday-header">{{ weekday }}</div>{% endfor %}
+      {% for week in weeks %}{% for day in week.days %}
+      <div class="calendar-cell{% if not day.is_current_month %} other-month{% endif %}{% if day.is_today %} today{% endif %}">
+        <div class="cell-top"><span class="date-num">{{ day.date.day }}</span>{% if day.readiness_color %}<span class="dot dot-{{ day.readiness_color }}" title="Readiness: {{ day.readiness_score }}"></span>{% endif %}</div>
+        <div class="cell-activities">{% for act in day.activities %}<a href="/workout/{{ act.id }}" class="act-pill"><span class="act-icon">{% if 'run' in act.activity_type.lower() %}🏃{% elif 'cycl' in act.activity_type.lower() %}🚴{% elif 'strength' in act.activity_type.lower() %}🏋️{% elif 'swim' in act.activity_type.lower() %}🏊{% elif 'walk' in act.activity_type.lower() %}🚶{% else %}⚡{% endif %}</span><span class="act-dur">{{ (act.duration_s / 60)|round|int }}m</span>{% if act.name %}<span class="act-name">{{ act.name|clean_name }}</span>{% endif %}</a>{% endfor %}</div>
       </div>
-    {% endfor %}
-  {% endfor %}
-</div>
+      {% endfor %}{% endfor %}
+    </div>
+  </div>
+
+  <section class="calendar-agenda" aria-label="Monthly activity agenda">
+    {% set agenda = namespace(items=0) %}
+    {% for week in weeks %}{% for day in week.days %}{% if day.is_current_month and (day.activities or day.is_today) %}{% set agenda.items = agenda.items + 1 %}
+    <article class="agenda-day"><div class="agenda-date">{{ day.date.strftime('%a') }}<b>{{ day.date.day }}</b></div><div class="agenda-events">
+      {% for act in day.activities %}<a class="agenda-event" href="/workout/{{ act.id }}"><span class="activity-mobile-icon">{{ icon('activity') }}</span><span><b>{{ act.name|clean_name if act.name else act.activity_type|humanize }}</b><small class="muted">{{ (act.duration_s / 60)|round|int }} minutes</small></span>{{ icon('chevron') }}</a>{% else %}<div class="agenda-empty">Today · no recorded activities</div>{% endfor %}
+    </div></article>
+    {% endif %}{% endfor %}{% endfor %}
+    {% if agenda.items == 0 %}<div class="card muted text-center">No activities recorded this month.</div>{% endif %}
+  </section>
 </div>
 {% endblock %}

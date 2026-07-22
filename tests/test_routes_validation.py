@@ -3,6 +3,8 @@
 Imports app with the scheduler and Garmin login stubbed out, auth disabled,
 and the DB pointed at an isolated in-memory SQLite.
 """
+from pathlib import Path
+
 import pytest
 
 
@@ -173,7 +175,8 @@ def test_dashboard_sync_updates_charts_without_page_reload(client):
     assert "fetch('/sync'" in response.text
     assert "chart.update('none')" in response.text
     assert 'id="sync-form"' in response.text
-    assert ".dashboard-actions [hidden] { display: none !important; }" in response.text
+    ui_css = (Path(__file__).resolve().parents[1] / "static" / "ui.css").read_text(encoding="utf-8")
+    assert ".dashboard-actions [hidden] { display: none !important; }" in ui_css
 
 
 def test_onboarding_renders_history_defaults(client):

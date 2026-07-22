@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
 
 import config
 from auth_service import (
@@ -22,6 +23,9 @@ from tenant_store import provision_user_store
 
 
 router = APIRouter()
+templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
+templates.env.globals["asset_version"] = lambda: 0
+templates.env.globals["multi_user_enabled"] = True
 SESSION_COOKIE = "__Host-gc_session"
 ENROLLMENT_COOKIE = "__Host-gc_enroll"
 
@@ -39,31 +43,27 @@ def _no_store(response: Response) -> Response:
     return response
 
 
+def _auth_message(request: Request, heading: str, message: str, status_code: int = 401) -> Response:
+    return _no_store(templates.TemplateResponse(
+        request,
+        "auth_message.html",
+        {"heading": heading, "message": message},
+        status_code=status_code,
+    ))
+
+
 @router.get("/auth/login", response_class=HTMLResponse)
-def multi_user_login() -> Response:
+def multi_user_login(request: Request) -> Response:
     if disabled := _disabled():
         return disabled
-    return _no_store(HTMLResponse("""
-<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in - GarminCoach</title></head><body>
-<main><h1>GarminCoach</h1><p>Sign in with your invited Google account.</p>
-<a href="/auth/google/start">Continue with Google</a></main></body></html>
-"""))
+    return _no_store(templates.TemplateResponse(request, "auth_login.html", {}))
 
 
 @router.get("/invite", response_class=HTMLResponse)
-def invitation_page() -> Response:
+def invitation_page(request: Request) -> Response:
     if disabled := _disabled():
         return disabled
-    return _no_store(HTMLResponse("""
-<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="no-referrer"><title>Accept invitation</title></head>
-<body><main><h1>Accept your GarminCoach invitation</h1>
-<p id="status">Preparing your secure sign-in…</p></main>
-<script src="/static/invitation.js" defer></script></body></html>
-"""))
+    return _no_store(templates.TemplateResponse(request, "invitation.html", {}))
 
 
 @router.post("/auth/enrollment")
@@ -101,20 +101,18 @@ def google_start(request: Request) -> Response:
                 enrollment_ticket=enrollment,
             )
     except AuthenticationError:
-        return _no_store(HTMLResponse(
-            "Invitation is invalid or expired.", status_code=401
-        ))
+        return _auth_message(request, "Invitation unavailable", "This invitation is invalid or expired.")
     response = RedirectResponse(start.authorization_url, status_code=303)
     response.delete_cookie(ENROLLMENT_COOKIE, path="/", secure=True, httponly=True)
     return _no_store(response)
 
 
 @router.get("/auth/google/callback")
-def google_callback(state: str = "", code: str = "", error: str = "") -> Response:
+def google_callback(request: Request, state: str = "", code: str = "", error: str = "") -> Response:
     if disabled := _disabled():
         return disabled
     if error or not state or not code:
-        return _no_store(HTMLResponse("Google sign-in was cancelled.", status_code=401))
+        return _auth_message(request, "Sign-in cancelled", "Google sign-in was cancelled.")
     try:
         # Burn state before the external exchange so a failed or intercepted
         # callback can never be replayed.
@@ -138,9 +136,11 @@ def google_callback(state: str = "", code: str = "", error: str = "") -> Respons
             )
             raw_session = create_web_session(session, user)
     except AuthenticationError:
-        return _no_store(HTMLResponse(
-            "This Google account is not authorized for GarminCoach.", status_code=401
-        ))
+        return _auth_message(
+            request,
+            "Account not authorized",
+            "This Google account is not authorized for GarminCoach.",
+        )
     response = RedirectResponse("/onboarding", status_code=303)
     response.set_cookie(
         SESSION_COOKIE,

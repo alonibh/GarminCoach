@@ -1,31 +1,15 @@
-{% extends "base.html" %}
-{% block title %}Connect Garmin - GarminCoach{% endblock %}
-
+{% extends "focused_base.html" %}
+{% block title %}Connect Garmin · GarminCoach{% endblock %}
 {% block content %}
-<div class="content-header">
-  <div class="header-left">
-    <span class="eyebrow">Step 1 of 3</span>
-    <h1>Connect Garmin ⌚</h1>
-    <p class="muted">We’ll use your training history to make the setup shorter and the program more personal.</p>
-  </div>
-</div>
-
-<div class="card section-card">
-  {% if error %}<div class="card warn">{{ error }}</div>{% endif %}
-  <form method="post" action="/login" class="form-section">
-    <label class="field">Email
-      <input name="email_display" value="{{ email }}" disabled>
-    </label>
-    <label class="field">Password
-      <input name="password" type="password" required autofocus>
-    </label>
-    <label class="field">2FA code <span class="muted">(if prompted)</span>
-      <input name="mfa" inputmode="numeric" autocomplete="one-time-code">
-    </label>
-    <div class="toolbar">
-      <span class="muted">Your password is used once and never stored.</span>
-      <button class="btn">Connect and start sync</button>
-    </div>
+<section class="focus-card">
+  <div class="focus-step" aria-label="Step 1 of 3"><span class="active"></span><span></span><span></span></div>
+  <span class="eyebrow">Step 1 · Secure connection</span><h1>Connect Garmin</h1><p class="muted focus-intro">Your training history personalizes the plan. Credentials are used for this connection and your password is never stored.</p>
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/login" class="focus-form">
+    <label class="field">Garmin email<input name="email_display" value="{{ email }}" disabled></label>
+    <label class="field">Password<input name="password" type="password" required autofocus autocomplete="current-password"></label>
+    <label class="field">Verification code <span class="muted">(if prompted)</span><input name="mfa" inputmode="numeric" autocomplete="one-time-code"></label>
+    <button class="btn" type="submit">Connect and start sync</button>
   </form>
-</div>
+</section>
 {% endblock %}

@@ -1,11 +1,11 @@
 {
   "name": "GarminCoach",
   "short_name": "GarminCoach",
-  "description": "Your personal fitness dashboard and AI coach",
+  "description": "Private Garmin-powered training insights and coaching",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#121212",
-  "theme_color": "#00E676",
+  "background_color": "#090c0f",
+  "theme_color": "#0a0d10",
   "icons": [
     {
       "src": "/static/icon-192.png",
