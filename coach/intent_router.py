@@ -851,6 +851,9 @@ def _calendar_response(session: Session, now: datetime) -> str:
     for event in calendar["events"][:5]:
         title = str(event.get("title") or "Untitled event")
         start = str(event.get("start") or "")
+        if event.get("all_day"):
+            lines.append(f"Calendar: {title} — all day on {format_chat_date(start)}.")
+            continue
         start_at = format_chat_datetime(start)
         if not start_at:
             title_at = format_chat_datetime(title)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 import shutil
 from urllib.parse import urlsplit
 
@@ -12,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 import config
 from auth_routes import SESSION_COOKIE
 from auth_service import issue_invitation
-from coach.calendar import validate_ics_url
+from coach.calendar import calendar_feed_record, test_calendar_url
 from control_db import AuditEvent, Invitation, User, get_control_session, utcnow
 from secret_vault import UserSecretVault
 from sync.garmin_registry import get_garmin_registry
@@ -44,6 +45,7 @@ def _settings_context(
     invitation_link: str | None = None,
     telegram_command: str | None = None,
     error: str | None = None,
+    success: str | None = None,
 ):
     with get_control_session() as session:
         users = session.query(User).order_by(User.created_at).all() if user.role == "owner" else []
@@ -51,15 +53,29 @@ def _settings_context(
             session.query(Invitation).order_by(Invitation.created_at.desc()).all()
             if user.role == "owner" else []
         )
-    calendar_url = UserSecretVault().read(user.id).get("calendar_ics_url", "")
+    vault_values = UserSecretVault().read(user.id)
+    stored_feeds = vault_values.get("calendar_feeds")
+    if not isinstance(stored_feeds, list):
+        legacy = vault_values.get("calendar_ics_url")
+        stored_feeds = [calendar_feed_record(legacy)] if legacy else []
+        if stored_feeds:
+            UserSecretVault().update(
+                user.id, calendar_feeds=stored_feeds, calendar_ics_url=None
+            )
+    calendar_feeds = [
+        {"id": item.get("id"), "provider": item.get("provider", "Calendar")}
+        for item in stored_feeds
+        if isinstance(item, dict) and item.get("id") and item.get("url")
+    ]
     return {
         "user": user,
         "users": users,
         "invitations": invitations,
-        "calendar_url": calendar_url,
+        "calendar_feeds": calendar_feeds,
         "invitation_link": invitation_link,
         "telegram_command": telegram_command,
         "error": error,
+        "success": success,
         "max_invited_users": config.MAX_INVITED_USERS,
         "telegram_bot_username": config.TELEGRAM_BOT_USERNAME,
     }
@@ -69,8 +85,22 @@ def _settings_context(
 def account_settings(request: Request):
     if disabled := _disabled():
         return disabled
+    status = request.query_params.get("calendar_status", "")
+    success = "Calendar removed successfully." if status == "removed" else None
+    if status == "added":
+        try:
+            event_count = max(0, min(999, int(request.query_params.get("events", "0"))))
+        except ValueError:
+            event_count = 0
+        success = (
+            f"Calendar connected successfully. Found {event_count} upcoming "
+            f"event{'s' if event_count != 1 else ''} in the next 30 days."
+        )
     return templates.TemplateResponse(
-        request, "account.html", _settings_context(_current_user(request)),
+        request, "account.html", _settings_context(
+            _current_user(request),
+            success=success,
+        ),
         headers={"Cache-Control": "no-store"},
     )
 
@@ -81,20 +111,77 @@ def save_calendar(request: Request, calendar_url: str = Form("")):
         return disabled
     user = _current_user(request)
     value = calendar_url.strip()
-    if value:
-        try:
-            validate_ics_url(value)
-        except ValueError as exc:
-            return templates.TemplateResponse(
-                request, "account.html", _settings_context(user, error=str(exc)),
-                status_code=400, headers={"Cache-Control": "no-store"},
-            )
-    UserSecretVault().update(user.id, calendar_ics_url=value or None)
+    if not value:
+        return templates.TemplateResponse(
+            request, "account.html", _settings_context(user, error="Enter a calendar URL."),
+            status_code=400, headers={"Cache-Control": "no-store"},
+        )
+    try:
+        normalized, event_count = test_calendar_url(value)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request, "account.html", _settings_context(user, error=str(exc)),
+            status_code=400, headers={"Cache-Control": "no-store"},
+        )
+    except Exception:
+        return templates.TemplateResponse(
+            request, "account.html",
+            _settings_context(user, error="The calendar could not be downloaded or parsed."),
+            status_code=400, headers={"Cache-Control": "no-store"},
+        )
+    vault = UserSecretVault()
+    values = vault.read(user.id)
+    feeds = values.get("calendar_feeds")
+    if not isinstance(feeds, list):
+        legacy = values.get("calendar_ics_url")
+        feeds = [calendar_feed_record(legacy)] if legacy else []
+    if any(item.get("url") == normalized for item in feeds if isinstance(item, dict)):
+        return templates.TemplateResponse(
+            request, "account.html",
+            _settings_context(user, error="That calendar is already connected."),
+            status_code=400, headers={"Cache-Control": "no-store"},
+        )
+    if len(feeds) >= 5:
+        return templates.TemplateResponse(
+            request, "account.html",
+            _settings_context(user, error="You can connect up to five calendars."),
+            status_code=400, headers={"Cache-Control": "no-store"},
+        )
+    feeds.append(calendar_feed_record(normalized))
+    vault.update(user.id, calendar_feeds=feeds, calendar_ics_url=None)
     with get_control_session() as session:
         stored = session.get(User, user.id)
-        stored.inbound_calendar_linked = bool(value)
+        stored.inbound_calendar_linked = True
         stored.updated_at = utcnow()
-    return RedirectResponse("/account", status_code=303)
+    return RedirectResponse(
+        f"/account?calendar_status=added&events={min(event_count, 999)}",
+        status_code=303,
+    )
+
+
+@router.post("/calendar/{feed_id}/delete")
+def delete_calendar(request: Request, feed_id: str):
+    if disabled := _disabled():
+        return disabled
+    user = _current_user(request)
+    if len(feed_id) != 16 or any(character not in "0123456789abcdef" for character in feed_id):
+        raise HTTPException(status_code=404)
+    vault = UserSecretVault()
+    values = vault.read(user.id)
+    feeds = values.get("calendar_feeds")
+    if not isinstance(feeds, list):
+        raise HTTPException(status_code=404)
+    remaining = [item for item in feeds if not (
+        isinstance(item, dict) and secrets.compare_digest(str(item.get("id", "")), feed_id)
+    )]
+    if len(remaining) == len(feeds):
+        raise HTTPException(status_code=404)
+    vault.update(user.id, calendar_feeds=remaining)
+    with get_control_session() as session:
+        stored = session.get(User, user.id)
+        stored.inbound_calendar_linked = bool(remaining)
+        stored.updated_at = utcnow()
+    return RedirectResponse("/account?calendar_status=removed", status_code=303)
 
 
 @router.post("/telegram/link", response_class=HTMLResponse)

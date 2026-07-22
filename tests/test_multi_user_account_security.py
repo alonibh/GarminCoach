@@ -43,6 +43,9 @@ def test_calendar_url_rejects_non_provider_or_unsafe_urls(url):
 def test_calendar_url_allows_google_and_icloud():
     assert validate_ics_url("https://calendar.google.com/calendar/ical/x/basic.ics")
     assert validate_ics_url("https://p123-caldav.icloud.com/published/2/example")
+    assert validate_ics_url("webcal://p123-caldav.icloud.com/published/2/example") == (
+        "https://p123-caldav.icloud.com/published/2/example"
+    )
 
 
 def test_invitation_limit_counts_accounts_and_pending_invites(monkeypatch, tmp_path):
@@ -104,3 +107,38 @@ def test_open_telegram_uses_short_lived_deep_link(monkeypatch):
     assert response.headers["location"] == "https://t.me/ExampleCoachBot?start=link_one_use_code"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_calendar_save_lists_and_delete_removes_encrypted_feed(monkeypatch, tmp_path):
+    engine, Session, sessions = _control_sessions(tmp_path)
+    user_id = str(uuid4())
+    with Session.begin() as session:
+        session.add(User(id=user_id, email="athlete@example.com", status="active"))
+    user = SimpleNamespace(id=user_id, role="athlete", telegram_linked=False)
+    request = SimpleNamespace(state=SimpleNamespace(user=user))
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    monkeypatch.setattr(config, "DATA_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(config, "MULTI_USER_DATA_ROOT", tmp_path / "users")
+    monkeypatch.setattr(account_routes, "get_control_session", sessions)
+    monkeypatch.setattr(
+        account_routes,
+        "test_calendar_url",
+        lambda _url: ("https://p123-caldav.icloud.com/published/2/private", 3),
+    )
+
+    response = account_routes.save_calendar(
+        request, calendar_url="webcal://p123-caldav.icloud.com/published/2/private"
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/account?calendar_status=added&events=3"
+    feeds = UserSecretVault().read(user_id)["calendar_feeds"]
+    assert len(feeds) == 1
+    assert feeds[0]["provider"] == "iCloud"
+    assert b"p123-caldav" not in UserSecretVault().path_for(user_id).read_bytes()
+
+    removed = account_routes.delete_calendar(request, feeds[0]["id"])
+    assert removed.status_code == 303
+    assert UserSecretVault().read(user_id)["calendar_feeds"] == []
+    with Session() as session:
+        assert session.get(User, user_id).inbound_calendar_linked is False
+    engine.dispose()

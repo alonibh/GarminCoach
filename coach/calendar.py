@@ -1,8 +1,9 @@
 import logging
 import hashlib
 import json
+import secrets
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from datetime import date, datetime, timedelta
 import pytz
 
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 def validate_ics_url(url: str) -> str:
     """Allow only HTTPS calendar feeds hosted by Google or Apple."""
     parsed = urlsplit((url or "").strip())
+    if parsed.scheme.casefold() == "webcal":
+        parsed = parsed._replace(scheme="https")
     host = (parsed.hostname or "").casefold()
     allowed = host == "calendar.google.com" or host.endswith(".icloud.com")
     if (
@@ -30,7 +33,7 @@ def validate_ics_url(url: str) -> str:
         or not parsed.path
     ):
         raise ValueError("Use a private HTTPS Google Calendar or iCloud ICS URL")
-    return parsed.geturl()
+    return urlunsplit(parsed)
 
 
 class _SafeCalendarRedirect(urllib.request.HTTPRedirectHandler):
@@ -58,8 +61,31 @@ def _configured_calendar_urls() -> list[str]:
         return [url.strip() for url in config.ICS_CALENDAR_URL.split(",") if url.strip()]
     from secret_vault import UserSecretVault
     from tenant_context import require_tenant
-    value = UserSecretVault().read(require_tenant().user_id).get("calendar_ics_url", "")
-    return [value] if value else []
+    values = UserSecretVault().read(require_tenant().user_id)
+    feeds = values.get("calendar_feeds")
+    if isinstance(feeds, list):
+        return [item["url"] for item in feeds if isinstance(item, dict) and item.get("url")]
+    legacy = values.get("calendar_ics_url", "")
+    return [legacy] if legacy else []
+
+
+def test_calendar_url(url: str, *, days: int = 30) -> tuple[str, int]:
+    """Normalize, fetch, and parse a feed before persisting its private URL."""
+    normalized = validate_ics_url(url)
+    payload = _download_calendar(normalized)
+    start = datetime.now(pytz.utc)
+    parsed = events(
+        string_content=payload,
+        start=start,
+        end=start + timedelta(days=days),
+    )
+    return normalized, len(parsed)
+
+
+def calendar_feed_record(url: str) -> dict[str, str]:
+    host = (urlsplit(url).hostname or "").casefold()
+    provider = "iCloud" if host.endswith(".icloud.com") else "Google Calendar"
+    return {"id": secrets.token_hex(8), "provider": provider, "url": url}
 
 def get_upcoming_schedule_result(days=3) -> dict:
     """Fetch events while preserving unconfigured/error states."""
@@ -94,23 +120,30 @@ def get_upcoming_schedule_result(days=3) -> dict:
             )
             
             for e in cal_events:
-                # Skip all-day events if they don't block time
                 if e.all_day:
+                    event_day = e.start.date() if isinstance(e.start, datetime) else e.start
+                    schedule.append({
+                        "title": e.summary,
+                        "start": event_day.isoformat(),
+                        "end": "",
+                        "all_day": True,
+                    })
                     continue
-                    
+                event_end = e.end or e.start
                 schedule.append({
                     "title": e.summary,
                     "start": e.start.astimezone(local_tz).strftime("%Y-%m-%d %H:%M"),
-                    "end": e.end.astimezone(local_tz).strftime("%H:%M")
+                    "end": event_end.astimezone(local_tz).strftime("%H:%M"),
+                    "all_day": False,
                 })
             
         # Sort chronologically across all combined calendars
         schedule.sort(key=lambda x: x["start"])
         return {"events": schedule, "state": "fresh", "error": None}
         
-    except Exception as e:
-        logger.error(f"Failed to fetch calendar: {e}")
-        return {"events": [], "state": "error", "error": type(e).__name__}
+    except Exception as exc:
+        logger.error("Calendar fetch failed: %s", type(exc).__name__)
+        return {"events": [], "state": "error", "error": type(exc).__name__}
 
 
 def get_upcoming_schedule(days=3) -> list[dict]:

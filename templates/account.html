@@ -1,9 +1,75 @@
 {% extends "base.html" %}
 {% block title %}Account · GarminCoach{% endblock %}
 {% block content %}
-<section class="card"><h1>Account</h1><p>{{ user.email }} · {{ user.role }}</p>{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}</section>
-<section class="card"><h2>Private calendar</h2><p>Add a private Google Calendar or iCloud ICS URL. It is encrypted and never shown to other users.</p><form method="post" action="/account/calendar"><label for="calendar_url">ICS URL</label><input id="calendar_url" name="calendar_url" type="url" value="{{ calendar_url }}" autocomplete="off" placeholder="https://calendar.google.com/calendar/ical/…"><button class="btn" type="submit">Save calendar</button></form></section>
-<section class="card"><h2>Telegram</h2>{% if user.telegram_linked %}<p>Your private Telegram chat is linked.</p><a class="btn" href="https://t.me/{{ telegram_bot_username }}" target="_blank" rel="noreferrer">Open Telegram chat</a><form method="post" action="/account/telegram/unlink"><button class="btn-secondary" type="submit">Unlink Telegram</button></form>{% else %}<p>Open the GarminCoach bot and press Start to link this account. The one-use link expires after ten minutes.</p><form method="post" action="/account/telegram/open"><button class="btn" type="submit">Open Telegram and link</button></form>{% if telegram_command %}<label>Fallback command to send to the bot</label><input readonly value="{{ telegram_command }}" onclick="this.select()">{% else %}<form method="post" action="/account/telegram/link"><button class="btn-secondary" type="submit">Generate fallback command</button></form>{% endif %}{% endif %}</section>
-{% if user.role == 'owner' %}<section class="card"><h2>Invitations</h2><p>Up to {{ max_invited_users }} invited athletes. The generated link is shown once.</p>{% if invitation_link %}<label>Invitation link</label><input readonly value="{{ invitation_link }}" onclick="this.select()">{% endif %}<form method="post" action="/account/invitations"><label for="invite_email">Google email</label><input id="invite_email" name="email" type="email" required><button class="btn" type="submit">Create invitation</button></form>{% for invitation in invitations %}{% if not invitation.consumed_at and not invitation.revoked_at %}<div><span>Pending: {{ invitation.email }}</span><form method="post" action="/account/invitations/{{ invitation.id }}/revoke"><button type="submit" class="btn-secondary">Revoke invitation</button></form></div>{% endif %}{% endfor %}<h3>Users</h3>{% for item in users %}<div><span>{{ item.email }} · {{ item.status }}</span>{% if item.id != user.id %}<form method="post" action="/account/users/{{ item.id }}/delete"><label>Type DELETE {{ item.email }}</label><input name="confirmation" required autocomplete="off"><button type="submit" class="btn-secondary">Permanently delete</button></form>{% endif %}</div>{% endfor %}</section>{% endif %}
-<section class="card"><h2>Danger zone</h2><p>This permanently deletes the account, Garmin tokens, calendar URL, and all locally stored athlete data. It cannot be undone.</p><form method="post" action="/account/delete"><label for="delete_confirmation">Type DELETE to approve</label><input id="delete_confirmation" name="confirmation" required autocomplete="off"><button type="submit" class="btn-secondary">Permanently delete my account</button></form></section>
+<section class="card">
+  <h1>Account</h1>
+  <p>{{ user.email }} · {{ user.role }}</p>
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+  {% if success %}<div class="success-card" role="status"><p>{{ success }}</p></div>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Private calendars</h2>
+  <p>Add private Google Calendar or iCloud ICS links. Each URL is tested, encrypted, and never shown to other users.</p>
+  <form method="post" action="/account/calendar">
+    <label for="calendar_url">ICS or webcal URL</label>
+    <input id="calendar_url" name="calendar_url" type="text" autocomplete="off" placeholder="webcal://pXX-caldav.icloud.com/published/…" required>
+    <button class="btn" type="submit">Connect calendar</button>
+  </form>
+  {% if calendar_feeds %}
+  <h3>Connected calendars</h3>
+  {% for calendar in calendar_feeds %}
+  <div>
+    <span>{{ calendar.provider }}</span>
+    <form method="post" action="/account/calendar/{{ calendar.id }}/delete">
+      <button class="btn-secondary" type="submit">Remove</button>
+    </form>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="muted">No calendars connected.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Telegram</h2>
+  {% if user.telegram_linked %}
+  <p>Your private Telegram chat is linked.</p>
+  <a class="btn" href="https://t.me/{{ telegram_bot_username }}" target="_blank" rel="noreferrer">Open Telegram chat</a>
+  <form method="post" action="/account/telegram/unlink"><button class="btn-secondary" type="submit">Unlink Telegram</button></form>
+  {% else %}
+  <p>Open the GarminCoach bot and press Start to link this account. The one-use link expires after ten minutes.</p>
+  <form method="post" action="/account/telegram/open"><button class="btn" type="submit">Open Telegram and link</button></form>
+  {% if telegram_command %}
+  <label>Fallback command to send to the bot</label><input readonly value="{{ telegram_command }}" onclick="this.select()">
+  {% else %}
+  <form method="post" action="/account/telegram/link"><button class="btn-secondary" type="submit">Generate fallback command</button></form>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if user.role == 'owner' %}
+<section class="card">
+  <h2>Invitations</h2>
+  <p>Up to {{ max_invited_users }} invited athletes. The generated link is shown once.</p>
+  {% if invitation_link %}<label>Invitation link</label><input readonly value="{{ invitation_link }}" onclick="this.select()">{% endif %}
+  <form method="post" action="/account/invitations">
+    <label for="invite_email">Google email</label><input id="invite_email" name="email" type="email" required>
+    <button class="btn" type="submit">Create invitation</button>
+  </form>
+  {% for invitation in invitations %}{% if not invitation.consumed_at and not invitation.revoked_at %}
+  <div><span>Pending: {{ invitation.email }}</span><form method="post" action="/account/invitations/{{ invitation.id }}/revoke"><button type="submit" class="btn-secondary">Revoke invitation</button></form></div>
+  {% endif %}{% endfor %}
+  <h3>Users</h3>
+  {% for item in users %}
+  <div><span>{{ item.email }} · {{ item.status }}</span>{% if item.id != user.id %}<form method="post" action="/account/users/{{ item.id }}/delete"><label>Type DELETE {{ item.email }}</label><input name="confirmation" required autocomplete="off"><button type="submit" class="btn-secondary">Permanently delete</button></form>{% endif %}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Danger zone</h2>
+  <p>This permanently deletes the account, Garmin tokens, calendar URLs, and all locally stored athlete data. It cannot be undone.</p>
+  <form method="post" action="/account/delete"><label for="delete_confirmation">Type DELETE to approve</label><input id="delete_confirmation" name="confirmation" required autocomplete="off"><button type="submit" class="btn-secondary">Permanently delete my account</button></form>
+</section>
 {% endblock %}
