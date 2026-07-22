@@ -3,6 +3,14 @@ import os
 import pytz
 
 def get_local_tz():
+    try:
+        from tenant_context import current_tenant
+
+        tenant = current_tenant()
+        if tenant and tenant.timezone:
+            return pytz.timezone(tenant.timezone)
+    except (ImportError, RuntimeError, pytz.UnknownTimeZoneError):
+        pass
     return pytz.timezone(os.getenv("USER_TIMEZONE", "Asia/Jerusalem"))
 
 def get_local_now() -> datetime:

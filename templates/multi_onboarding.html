@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Set up GarminCoach</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version() }}">
+</head>
+<body>
+  <main class="main-content" style="max-width:680px;margin:3rem auto">
+    <section class="card">
+      <div class="brand-lockup"><span class="brand-mark">GC</span><h1>Set up GarminCoach</h1></div>
+      <p class="muted">Signed in as {{ user.email }}. Complete the required steps before accessing athlete data.</p>
+      {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+      {% if user.onboarding_step == 'consent' %}
+      <h2>Privacy and data use</h2>
+      <p>GarminCoach stores health, activity, workout, and coaching data on this private server. Your Garmin password and MFA code are used only during connection and are never stored. A renewable Garmin session token is stored encrypted for background synchronization.</p>
+      <p>You can permanently delete your GarminCoach account and all locally stored athlete data. Deletion does not remove data held independently by Garmin, Google, Apple, or Telegram.</p>
+      <form method="post" action="/setup/consent">
+        <label><input type="checkbox" name="accepted" value="yes" required> I understand and accept this privacy notice.</label>
+        <button class="btn" type="submit">Accept and continue</button>
+      </form>
+      {% elif user.onboarding_step == 'timezone' %}
+      <h2>Your timezone</h2>
+      <p>This controls morning syncs, reminders, workouts, summaries, and calendar output.</p>
+      <form method="post" action="/setup/timezone">
+        <label for="timezone_name">Timezone</label>
+        <input id="timezone_name" name="timezone_name" list="timezones" autocomplete="off" required placeholder="Asia/Jerusalem">
+        <datalist id="timezones">{% for timezone in timezones %}<option value="{{ timezone }}">{% endfor %}</datalist>
+        <button class="btn" type="submit">Save timezone</button>
+      </form>
+      {% elif user.onboarding_step == 'garmin' %}
+      <h2>Connect Garmin</h2>
+      <p>Your credentials are sent directly from this server to Garmin for this login attempt and are not written to disk.</p>
+      <form method="post" action="/setup/garmin">
+        <label for="garmin_email">Garmin email</label>
+        <input id="garmin_email" name="garmin_email" type="email" autocomplete="username" required>
+        <label for="garmin_password">Garmin password</label>
+        <input id="garmin_password" name="garmin_password" type="password" autocomplete="current-password" required>
+        <button class="btn" type="submit">Connect Garmin</button>
+      </form>
+      {% elif user.onboarding_step == 'garmin_mfa' %}
+      <h2>Garmin verification code</h2>
+      <p>Enter the one-time code Garmin sent you. This temporary login state expires if the server restarts.</p>
+      <form method="post" action="/setup/garmin/mfa">
+        <label for="mfa_code">Verification code</label>
+        <input id="mfa_code" name="mfa_code" inputmode="numeric" autocomplete="one-time-code" required>
+        <button class="btn" type="submit">Verify and finish</button>
+      </form>
+      {% else %}
+      <h2>Setup complete</h2><p>Your private Garmin connection is ready.</p>
+      <a class="btn" href="/">Open dashboard</a>
+      {% endif %}
+
+      <form method="post" action="/auth/logout" style="margin-top:1rem"><button class="btn-secondary" type="submit">Sign out</button></form>
+    </section>
+  </main>
+</body>
+</html>

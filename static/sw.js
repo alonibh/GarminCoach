@@ -1,6 +1,5 @@
-const CACHE_NAME = 'garmincoach-cache-v2';
+const CACHE_NAME = 'garmincoach-cache-v3';
 const URLS_TO_CACHE = [
-  '/',
   '/static/style.css',
   '/static/manifest.json',
   '/static/icon-192.png',

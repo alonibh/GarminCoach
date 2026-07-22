@@ -5,6 +5,7 @@ import os
 import threading
 from datetime import date, datetime, timedelta
 
+import pytz
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -47,6 +48,7 @@ from sync.scheduler import start_scheduler
 from time_utils import get_local_date
 from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
 from auth_routes import router as auth_router
+from setup_routes import CONSENT_VERSION, router as setup_router
 from auth_service import resolve_web_session
 from control_db import get_control_session, init_control_db
 from tenant_context import TenantIdentity, tenant_scope
@@ -54,6 +56,7 @@ from tenant_context import TenantIdentity, tenant_scope
 app = FastAPI(title="GarminCoach")
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
 app.include_router(auth_router)
+app.include_router(setup_router)
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
 
 import re
@@ -217,10 +220,13 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
                 if user is None:
                     return RedirectResponse("/auth/login", status_code=303)
                 request.state.user = user
-                tenant = TenantIdentity(user.id, role=user.role)
+                tenant = TenantIdentity(user.id, role=user.role, timezone=user.timezone)
                 with tenant_scope(tenant):
-                    onboarding_get = path == "/onboarding" and request.method == "GET"
-                    if user.status != "active" and not onboarding_get:
+                    onboarding_allowed = (
+                        (path == "/onboarding" and request.method == "GET")
+                        or path.startswith("/setup/")
+                    )
+                    if user.status != "active" and not onboarding_allowed:
                         return RedirectResponse("/onboarding", status_code=303)
                     response = await call_next(request)
                     response.headers.setdefault("Cache-Control", "no-store")
@@ -292,6 +298,7 @@ def _asset_version() -> int:
 
 
 templates.env.globals["asset_version"] = _asset_version
+templates.env.globals["multi_user_enabled"] = config.MULTI_USER_ENABLED
 
 
 def _humanize(enum_name: str | None) -> str:
@@ -1341,6 +1348,8 @@ def _safe_next(next: str) -> str:
 
 @app.get("/app-login", response_class=HTMLResponse)
 def app_login_form(request: Request, next: str = "/"):
+    if config.MULTI_USER_ENABLED:
+        raise HTTPException(status_code=404)
     html = _APP_LOGIN_HTML.format(error_html="", next_url=_safe_next(next))
     return HTMLResponse(html)
 
@@ -1352,6 +1361,8 @@ def app_login_submit(
     password: str = Form(""),
     next: str = Form("/"),
 ):
+    if config.MULTI_USER_ENABLED:
+        raise HTTPException(status_code=404)
     env_user = (config.APP_USERNAME or "").strip()
     env_pass = (config.APP_PASSWORD or "").strip()
     if (
@@ -1381,6 +1392,8 @@ def app_login_submit(
 
 @app.get("/app-logout")
 def app_logout():
+    if config.MULTI_USER_ENABLED:
+        raise HTTPException(status_code=404)
     response = RedirectResponse("/app-login", status_code=303)
     response.delete_cookie(_COOKIE_NAME, path="/")
     return response
@@ -1388,6 +1401,8 @@ def app_logout():
 
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
+    if config.MULTI_USER_ENABLED:
+        raise HTTPException(status_code=404)
     return templates.TemplateResponse(
         request, "login.html", {"email": config.GARMIN_EMAIL, "error": None}
     )
@@ -1473,19 +1488,25 @@ def _onboarding_form_defaults(
 def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
     if config.MULTI_USER_ENABLED:
-        from html import escape
-
         user = request.state.user
-        return HTMLResponse(
-            "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>Set up GarminCoach</title></head><body><main>"
-            "<h1>Set up GarminCoach</h1>"
-            f"<p>Signed in as {escape(user.email)}.</p>"
-            "<p>Your private athlete store is ready. Garmin connection and timezone "
-            "setup are the next implementation step.</p>"
-            "<form method='post' action='/auth/logout'><button>Sign out</button></form>"
-            "</main></body></html>",
+        error_messages = {
+            "consent_required": "You must accept the privacy notice to continue.",
+            "invalid_timezone": "Choose a valid timezone from the list.",
+            "configuration_required": "Complete the privacy and timezone steps first.",
+            "garmin_rate_limited": "Garmin is rate limiting logins. Wait before trying again.",
+            "garmin_auth_failed": "Garmin could not verify those credentials.",
+            "garmin_session_expired": "The Garmin verification session expired. Sign in again.",
+            "garmin_mfa_failed": "Garmin could not verify that one-time code.",
+        }
+        return templates.TemplateResponse(
+            request,
+            "multi_onboarding.html",
+            {
+                "user": user,
+                "timezones": pytz.common_timezones,
+                "error": error_messages.get(request.query_params.get("error", "")),
+                "consent_version": CONSENT_VERSION,
+            },
             headers={"Cache-Control": "no-store"},
         )
     with get_session() as session:
@@ -1858,6 +1879,8 @@ def reset_program_session_to_template(program_id: int, session_id: int):
 @app.post("/api/program/{program_id}/sessions")
 async def add_program_session(program_id: int, request: Request):
     """Add an independent strength session to an editable program."""
+    if config.MULTI_USER_ENABLED:
+        raise HTTPException(status_code=404)
     try:
         body = await request.json()
     except Exception:

@@ -59,6 +59,7 @@ MULTI_USER_ENABLED = os.getenv("MULTI_USER_ENABLED", "false").strip().lower() in
 }
 MULTI_USER_DATA_ROOT = _expand(os.getenv("MULTI_USER_DATA_ROOT", "data/users"))
 CONTROL_DB_PATH = _expand(os.getenv("CONTROL_DB_PATH", "data/control.db"))
+DATA_ENCRYPTION_KEY = os.getenv("DATA_ENCRYPTION_KEY", "").strip()
 OWNER_GOOGLE_EMAIL = os.getenv("OWNER_GOOGLE_EMAIL", "").strip()
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
@@ -93,6 +94,7 @@ if MULTI_USER_ENABLED:
             ("GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID),
             ("GOOGLE_CLIENT_SECRET", GOOGLE_CLIENT_SECRET),
             ("GOOGLE_REDIRECT_URI", GOOGLE_REDIRECT_URI),
+            ("DATA_ENCRYPTION_KEY", DATA_ENCRYPTION_KEY),
         ) if not value
     ]
     if missing:

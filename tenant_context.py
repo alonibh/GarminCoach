@@ -17,6 +17,7 @@ from uuid import UUID
 class TenantIdentity:
     user_id: str
     role: str = "athlete"
+    timezone: str | None = None
 
     def __post_init__(self) -> None:
         try:

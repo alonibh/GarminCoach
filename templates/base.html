@@ -26,7 +26,11 @@
       <a href="/">Dashboard</a>
       <a href="/calendar">Calendar</a>
       <a href="/program">Plan</a>
+      {% if multi_user_enabled %}
+      <form method="post" action="/auth/logout" style="display:inline"><button type="submit" class="logout-link" style="background:none;border:0;font:inherit;cursor:pointer">Sign out</button></form>
+      {% else %}
       <a href="/app-logout" class="logout-link">Sign out</a>
+      {% endif %}
     </nav>
   </header>
   <div class="main-content">
