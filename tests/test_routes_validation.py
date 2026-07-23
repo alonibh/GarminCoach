@@ -713,3 +713,42 @@ def test_program_tab_shows_active_and_adjust_plan_shows_draft(client):
     assert "Review your program" in adjust_plan.text
     assert "Proposed Plan" in adjust_plan.text
 
+
+def test_completed_multi_user_onboarding_renders_questionnaire(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from app import get_onboarding
+    import config
+    from tenant_context import TenantIdentity, tenant_scope
+    import sync.garmin_client
+    from sync.garmin_registry import get_garmin_registry
+    import db
+
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    monkeypatch.setattr(sync.garmin_client.GarminClient, "is_authenticated", lambda self: True)
+    monkeypatch.setattr(get_garmin_registry(), "get", lambda uid: sync.garmin_client.GarminClient())
+    
+    request = SimpleNamespace(
+        state=SimpleNamespace(user=SimpleNamespace(id=str(uuid4()), onboarding_step="complete", status="active")),
+        query_params={},
+        url=SimpleNamespace(path="/onboarding"),
+    )
+
+    
+    with tenant_scope(TenantIdentity(request.state.user.id)):
+        with db.get_session() as s:
+            from db import AthleteProfile
+            s.add(AthleteProfile(id=1, onboarding_complete=True))
+
+        response = get_onboarding(request)
+        assert response.status_code == 200
+        assert "onboarding.html" in response.template.name
+
+
+
+
+
+
+
+
+

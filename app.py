@@ -1581,27 +1581,28 @@ def _onboarding_form_defaults(
 def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
     if config.MULTI_USER_ENABLED:
-        user = request.state.user
-        error_messages = {
-            "consent_required": "You must accept the privacy notice to continue.",
-            "invalid_timezone": "Choose a valid timezone from the list.",
-            "configuration_required": "Complete the privacy and timezone steps first.",
-            "garmin_rate_limited": "Garmin is rate limiting logins. Wait before trying again.",
-            "garmin_auth_failed": "Garmin could not verify those credentials.",
-            "garmin_session_expired": "The Garmin verification session expired. Sign in again.",
-            "garmin_mfa_failed": "Garmin could not verify that one-time code.",
-        }
-        return templates.TemplateResponse(
-            request,
-            "multi_onboarding.html",
-            {
-                "user": user,
-                "timezones": pytz.common_timezones,
-                "error": error_messages.get(request.query_params.get("error", "")),
-                "consent_version": CONSENT_VERSION,
-            },
-            headers={"Cache-Control": "no-store"},
-        )
+        user = getattr(request.state, "user", None)
+        if user and user.onboarding_step != "complete":
+            error_messages = {
+                "consent_required": "You must accept the privacy notice to continue.",
+                "invalid_timezone": "Choose a valid timezone from the list.",
+                "configuration_required": "Complete the privacy and timezone steps first.",
+                "garmin_rate_limited": "Garmin is rate limiting logins. Wait before trying again.",
+                "garmin_auth_failed": "Garmin could not verify those credentials.",
+                "garmin_session_expired": "The Garmin verification session expired. Sign in again.",
+                "garmin_mfa_failed": "Garmin could not verify that one-time code.",
+            }
+            return templates.TemplateResponse(
+                request,
+                "multi_onboarding.html",
+                {
+                    "user": user,
+                    "timezones": pytz.common_timezones,
+                    "error": error_messages.get(request.query_params.get("error", "")),
+                    "consent_version": CONSENT_VERSION,
+                },
+                headers={"Cache-Control": "no-store"},
+            )
     with get_session() as session:
         profile = session.get(AthleteProfile, 1) or AthleteProfile(id=1)
         goal = session.get(Goal, 1) or Goal(id=1, goal="", custom_input="")
