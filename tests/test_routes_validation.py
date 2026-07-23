@@ -685,3 +685,31 @@ def test_active_program_hides_legacy_non_gym_sessions(client):
     assert response.status_code == 200
     assert "Gym strength" in response.text
     assert "Activity anchors" not in response.text
+
+
+def test_program_tab_shows_active_and_adjust_plan_shows_draft(client):
+    c, db_module = client
+    from db import AthleteProfile, ProgramSession, TrainingProgram
+
+    with db_module.get_session() as s:
+        profile = AthleteProfile(id=1, onboarding_complete=True)
+        active_prog = TrainingProgram(name="Active Plan", status="active", active=True, days_per_week=2)
+        draft_prog = TrainingProgram(name="Proposed Plan", status="draft", active=False, days_per_week=3)
+        s.add_all([profile, active_prog, draft_prog])
+        s.flush()
+        s.add(ProgramSession(program_id=active_prog.id, name="Active Day 1", session_role="coach_strength"))
+        s.add(ProgramSession(program_id=draft_prog.id, name="Draft Day 1", session_role="coach_strength"))
+
+    # Plan tab (/program) should show Active Plan
+    plan_tab = c.get("/program")
+    assert plan_tab.status_code == 200
+    assert "Active Plan" in plan_tab.text
+    assert "Review your program" not in plan_tab.text
+    assert 'href="/program?view=draft"' in plan_tab.text
+
+    # Adjust plan (/program?view=draft) should show draft Review page
+    adjust_plan = c.get("/program?view=draft")
+    assert adjust_plan.status_code == 200
+    assert "Review your program" in adjust_plan.text
+    assert "Proposed Plan" in adjust_plan.text
+
