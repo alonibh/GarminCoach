@@ -490,7 +490,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "Review your program" in review.text
     assert "Save and approve program" in review.text
     assert "Save day" not in review.text
-    assert "Add additional session" in review.text
+    assert "Add additional session" not in review.text
     assert 'data-muscle-group="' in review.text
     assert "No matching same-muscle exercises" in review.text
     assert "Include warm-up set" in review.text
