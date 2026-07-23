@@ -278,9 +278,28 @@ textarea { min-height: 110px; }
 .target-chevron { right: .6rem; }
 .target-control input { border-radius: 10px !important; border: 1px solid rgba(255,255,255,.12) !important; width: 100%; text-align: center; }
 .target-unit, .warmup-target-unit { color: var(--accent-strong); font-weight: 750; font-size: .78rem; }
-.exercise-warmup { border-top: 0; padding-top: .2rem; margin-top: .25rem; transition: all .18s ease; }
+
+.warmup-target .target-control { grid-template-columns: 84px minmax(50px, 1fr) auto !important; gap: .45rem !important; }
+.warmup-target .target-control select, .warmup-target .target-control input { min-height: 38px !important; height: 38px !important; font-size: .84rem !important; }
+
+.exercise-warmup {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(230px, 2.2fr) 72px minmax(160px, 1.15fr) 112px 88px 96px;
+  align-items: center;
+  gap: .75rem;
+  border-top: 0;
+  padding-top: .2rem;
+  margin-top: .25rem;
+  transition: all .18s ease;
+}
 .exercise-warmup:has(.warmup-inputs:not(.is-hidden)) { border-top: 1px dashed rgba(255,255,255,.12); padding-top: .65rem; margin-top: .5rem; }
 .exercise-warmup label { color: var(--muted-strong); font-size: .8rem; font-weight: 650; }
+.exercise-warmup > label:first-child { grid-column: 1 / 3; margin: 0; }
+.warmup-inputs { grid-column: 3 / -1; display: grid; grid-template-columns: minmax(160px, 1.15fr) 112px 88px 96px; gap: .75rem; align-items: end; }
+.warmup-target { grid-column: 1; }
+.warmup-weight { grid-column: 2; }
+.warmup-inputs.is-hidden { display: none !important; }
 .add-ex-btn { min-height: 42px; border-radius: 12px; border: 1px dashed rgba(18,184,255,.4); background: rgba(18,184,255,.05); color: var(--accent-strong); font-weight: 750; font-size: .88rem; transition: all .18s ease; margin: 0 1.35rem 1.25rem; width: calc(100% - 2.7rem); }
 .add-ex-btn:hover { background: rgba(18,184,255,.14); border-color: var(--accent); color: #fff; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(18,184,255,.2); }
 
