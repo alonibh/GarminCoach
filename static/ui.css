@@ -81,9 +81,9 @@ textarea { min-height: 110px; }
 .info { border-color: #55606a; color: var(--muted-strong); }
 
 /* Dashboard */
-.dashboard-page { display: grid; gap: 1.6rem; }
+.dashboard-page { display: grid; gap: 1.6rem; padding-top: .5rem; }
 /* Recommendation 1: Header & Sync Status Bar Polish */
-.today-heading { align-items: center; margin-bottom: .25rem; }
+.today-heading { align-items: center; margin-top: .75rem; margin-bottom: .25rem; }
 .today-heading .eyebrow { display: inline-block; padding: .25rem .75rem; border-radius: 999px; background: linear-gradient(135deg, rgba(18,184,255,.18), rgba(7,157,240,.06)); border: 1px solid rgba(86,204,255,.35); color: var(--accent-strong); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .4rem; }
 .today-title { display: flex; align-items: baseline; gap: .85rem; }
 .today-title h1 { margin: 0; font-size: clamp(1.8rem, 3.5vw, 2.5rem); font-weight: 850; color: #fff; letter-spacing: -.03em; }
@@ -115,9 +115,12 @@ textarea { min-height: 110px; }
 .hero-metric-detail { min-height: 1.3rem; margin-top: .35rem; color: var(--muted-strong); font-size: .78rem; font-weight: 650; }
 .hero-recovery-signals { grid-column: span 1; align-content: stretch; text-align: left; }
 .hero-recovery-signals .recovery-signal-list { width: 100%; margin-top: .8rem; }
-.hero-recovery-signals .recovery-signal-row { padding: .65rem 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
+.hero-recovery-signals .recovery-signal-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .65rem 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
 .hero-recovery-signals .recovery-signal-row:last-child { border-bottom: 0; }
-.recovery-signal-indicator { padding: .2rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 750; display: inline-flex; align-items: center; gap: .35rem; }
+.hero-recovery-signals .recovery-signal-row > span { flex: 0 0 auto; white-space: nowrap; font-size: .78rem; font-weight: 750; color: var(--muted-strong); }
+.hero-recovery-signals .recovery-signal-detail { display: flex; align-items: center; justify-content: flex-end; gap: .45rem; min-width: 0; flex: 1 1 auto; }
+.hero-recovery-signals .recovery-signal-detail > strong { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recovery-signal-indicator { padding: .2rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 750; display: inline-flex; align-items: center; gap: .35rem; flex-shrink: 0; white-space: nowrap; }
 .recovery-signal-indicator.good { background: rgba(0,230,118,.12); border: 1px solid rgba(0,230,118,.3); color: #00e676; }
 .recovery-signal-indicator.caution { background: rgba(255,176,32,.12); border: 1px solid rgba(255,176,32,.3); color: #ffb020; }
 .recovery-signal-indicator.poor { background: rgba(255,89,108,.12); border: 1px solid rgba(255,89,108,.3); color: #ff596c; }
@@ -137,7 +140,7 @@ textarea { min-height: 110px; }
 .trend.down { padding: .15rem .45rem; border-radius: 999px; background: rgba(255,89,108,.12); border: 1px solid rgba(255,89,108,.3); color: #ff596c; font-size: .74rem; font-weight: 750; }
 .trend.flat { padding: .15rem .45rem; border-radius: 999px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); color: var(--muted); font-size: .74rem; font-weight: 700; }
 .secondary-metrics .recovery-signals-tile { grid-column: span 2; }
-.secondary-metrics .tile-gauge .gauge { width: 140px; }
+.secondary-metrics .tile-gauge .gauge { width: 150px !important; height: 75px !important; overflow: hidden; margin: 0 auto; }
 /* Recommendation 4: Trends Charts Modernization */
 .chart-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
 .chart-card { min-width: 0; margin: 0; padding: 1.35rem 1.45rem; border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 10px 30px rgba(0,0,0,.25); transition: all .18s ease; }
