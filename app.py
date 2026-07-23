@@ -914,9 +914,9 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
         if latest_sleep_db and latest_sleep_db.sleep_start_time and latest_sleep_db.sleep_end_time:
             st = latest_sleep_db.sleep_start_time.strftime("%H:%M")
             et = latest_sleep_db.sleep_end_time.strftime("%H:%M")
-            sleep_time_range = f"{st} – {et}"
+            sleep_time_range = f"{st} - {et}"
         else:
-            sleep_time_range = f"{start_t} – {end_t}" if start_t and end_t else None
+            sleep_time_range = f"{start_t} - {end_t}" if start_t and end_t else None
 
     readiness_value = readiness.get("value")
     readiness_color = readiness.get("color")

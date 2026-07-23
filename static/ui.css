@@ -130,7 +130,7 @@ textarea { min-height: 110px; }
 .hero-metric-label { display: flex; align-items: center; gap: .35rem; margin-top: 1rem; color: #fff; font-size: .84rem; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
 .hero-metric-label .ui-icon { width: 18px; height: 18px; color: var(--ring-color); filter: drop-shadow(0 0 6px var(--ring-color)); }
 .hero-metric-detail { min-height: 1.3rem; margin-top: .35rem; color: var(--muted-strong); font-size: .78rem; font-weight: 650; }
-.hero-metric-sub { margin-top: .25rem; color: var(--accent-strong); font-size: .82rem; font-weight: 750; letter-spacing: .02em; }
+.hero-metric-sub { margin-top: .35rem; padding: .2rem .65rem; border-radius: 999px; background: rgba(18,184,255,.1); border: 1px solid rgba(86,204,255,.3); color: var(--accent-strong); font-size: .82rem; font-weight: 750; letter-spacing: .03em; display: inline-block; }
 .hero-recovery-signals { grid-column: span 1; align-content: stretch; text-align: left; }
 .hero-recovery-signals .recovery-signal-list { width: 100%; margin-top: .8rem; }
 .hero-recovery-signals .recovery-signal-row { display: grid; grid-template-columns: 110px 145px 1fr; align-items: center; gap: .5rem; padding: .65rem 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
