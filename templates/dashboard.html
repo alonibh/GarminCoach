@@ -152,7 +152,7 @@
     </div>
     <div class="hero-metric-label">{{ icon('bolt') }} Load ratio</div>
     <div class="hero-metric-detail">{{ hero_metrics.load.detail }}</div>
-    <div class="acwr-detail-explain">Acute = last 7 days · Chronic = last 28 days avg</div>
+    <div class="acwr-detail-explain">Acute load = rolling 7-day avg training stress · Chronic = 28-day baseline. ACWR = Acute ÷ Chronic.</div>
   </article>
 </section>
 {% endif %}

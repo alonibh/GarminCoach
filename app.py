@@ -923,14 +923,12 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
             "value": round(load_value, 2) if load_value is not None else None,
             "progress": max(0, min(100, float(load_value or 0) / 2.0 * 100)),
             "detail": (
-                f"Acute {acute_load:.0f} · Chronic {chronic_load:.0f}"
+                f"Acute load: {acute_load:.0f} · Chronic avg: {chronic_load:.0f}"
                 if acute_load is not None and chronic_load is not None
                 else "Not enough load history"
             ),
         },
     }
-
-
 # --- routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
