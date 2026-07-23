@@ -118,7 +118,7 @@
     <div class="metric-ring" style="--ring-pct:{{ hero_metrics.sleep.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.sleep.value if hero_metrics.sleep.value is not none else '—' }}</span><span class="metric-ring-unit">{{ hero_metrics.sleep.unit }}</span></div></div>
     <div class="hero-metric-label">{{ icon('moon') }} Sleep</div><div class="hero-metric-detail">{{ hero_metrics.sleep.detail }}</div>
   </article>
-  <article class="hero-metric load">
+  <article class="hero-metric load" data-progress="{{ hero_metrics.load.progress }}">
     {% set acwr_val = hero_metrics.load.value|float(0.0) if hero_metrics.load.value is not none else 0.0 %}
     {% set acwr_pos = [[(acwr_val / 2.0 * 100), 94]|min, 6]|max %}
     <div class="acwr-range-card">
