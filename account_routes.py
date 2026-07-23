@@ -35,6 +35,8 @@ def _disabled() -> Response | None:
 def _current_user(request: Request) -> User:
     user = getattr(request.state, "user", None)
     if user is None:
+        if not config.MULTI_USER_ENABLED:
+            return User(id=1, email=config.APP_USERNAME or "athlete@garmincoach.local", role="owner")
         raise HTTPException(status_code=401)
     return user
 
@@ -48,20 +50,26 @@ def _settings_context(
     success: str | None = None,
 ):
     with get_control_session() as session:
-        users = session.query(User).order_by(User.created_at).all() if user.role == "owner" else []
+        users = session.query(User).order_by(User.created_at).all() if user.role == "owner" and config.MULTI_USER_ENABLED else []
         invitations = (
             session.query(Invitation).order_by(Invitation.created_at.desc()).all()
-            if user.role == "owner" else []
+            if user.role == "owner" and config.MULTI_USER_ENABLED else []
         )
-    vault_values = UserSecretVault().read(user.id)
+    try:
+        vault_values = UserSecretVault().read(user.id)
+    except Exception:
+        vault_values = {}
     stored_feeds = vault_values.get("calendar_feeds")
     if not isinstance(stored_feeds, list):
         legacy = vault_values.get("calendar_ics_url")
         stored_feeds = [calendar_feed_record(legacy)] if legacy else []
         if stored_feeds:
-            UserSecretVault().update(
-                user.id, calendar_feeds=stored_feeds, calendar_ics_url=None
-            )
+            try:
+                UserSecretVault().update(
+                    user.id, calendar_feeds=stored_feeds, calendar_ics_url=None
+                )
+            except Exception:
+                pass
     calendar_feeds = [
         {"id": item.get("id"), "provider": item.get("provider", "Calendar")}
         for item in stored_feeds
@@ -83,8 +91,6 @@ def _settings_context(
 
 @router.get("", response_class=HTMLResponse)
 def account_settings(request: Request):
-    if disabled := _disabled():
-        return disabled
     status = request.query_params.get("calendar_status", "")
     success = "Calendar removed successfully." if status == "removed" else None
     if status == "added":
