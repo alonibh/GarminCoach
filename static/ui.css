@@ -60,7 +60,7 @@ h2 { font-size: clamp(1.45rem, 2.2vw, 2rem); }
 h3 { font-size: 1rem; }
 .eyebrow, .card-kicker, .tile-label { color: var(--muted-strong); font-size: .68rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
 .muted { color: var(--muted); }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.75rem; }
+.page-heading { position: sticky; top: 0; z-index: 40; display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin: calc(-1 * clamp(1.4rem, 3vw, 3.5rem)) calc(-1 * clamp(1.4rem, 3vw, 3.5rem)) 1.75rem; padding: 1.25rem clamp(1.4rem, 3vw, 3.5rem) .85rem; background: rgba(9,12,15,.95); backdrop-filter: blur(14px); border-bottom: 1px solid rgba(255,255,255,.06); }
 .page-heading h1 { margin: .25rem 0 .4rem; }
 .page-heading p { margin: 0; }
 .page-heading-actions { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
@@ -83,7 +83,7 @@ textarea { min-height: 110px; }
 /* Dashboard */
 .dashboard-page { display: grid; gap: 1.6rem; padding-top: .75rem; }
 /* Recommendation 1: Header & Sync Status Bar Polish */
-.today-heading { position: sticky; top: 0; z-index: 40; align-items: center; margin: 0 calc(-1 * clamp(1.4rem, 3vw, 3.5rem)); padding: 1rem clamp(1.4rem, 3vw, 3.5rem) .85rem; margin-bottom: .25rem; background: rgba(9,12,15,.92); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(255,255,255,.06); }
+.today-heading { position: sticky; top: 0; z-index: 40; align-items: center; margin: calc(-1 * clamp(1.4rem, 3vw, 3.5rem)) calc(-1 * clamp(1.4rem, 3vw, 3.5rem)) .25rem; padding: 1.25rem clamp(1.4rem, 3vw, 3.5rem) .85rem; background: rgba(9,12,15,.95); backdrop-filter: blur(14px); border-bottom: 1px solid rgba(255,255,255,.06); }
 .today-heading .eyebrow { display: inline-block; padding: .25rem .75rem; border-radius: 999px; background: linear-gradient(135deg, rgba(18,184,255,.18), rgba(7,157,240,.06)); border: 1px solid rgba(86,204,255,.35); color: var(--accent-strong); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .4rem; }
 .today-title { display: flex; align-items: baseline; gap: .85rem; }
 .today-title h1 { margin: 0; font-size: clamp(1.8rem, 3.5vw, 2.5rem); font-weight: 850; color: #fff; letter-spacing: -.03em; }
@@ -545,10 +545,27 @@ textarea { min-height: 110px; }
 .settings-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; background: rgba(18,184,255,.1); border: 1px solid rgba(18,184,255,.3); color: var(--accent-strong); font-size: 1.1rem; flex-shrink: 0; }
 .settings-section-head h2 { margin: 0 0 .2rem; font-size: 1.25rem; font-weight: 850; color: #fff; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1.1rem; border-radius: 14px; background: rgba(18,24,31,.6); border: 1px solid rgba(255,255,255,.05); margin-top: .65rem; }
-.settings-actions { display: flex; flex-direction: column; align-items: flex-start; gap: .85rem; margin-top: 1rem; }
+.settings-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 1.1rem; margin-top: 1.25rem; }
 .settings-actions form { margin: 0; }
+.settings-actions > * + * { margin-top: 1rem !important; }
 .danger-zone { border-color: rgba(255,89,108,.35) !important; background: linear-gradient(145deg, rgba(255,89,108,.12), rgba(15,19,23,.95)) !important; box-shadow: 0 16px 45px rgba(0,0,0,.35), 0 0 25px rgba(255,89,108,.08) !important; }
 .danger-zone .settings-icon { background: rgba(255,89,108,.15); border-color: rgba(255,89,108,.4); color: #ff596c; font-weight: 850; }
+
+/* Premium Spacing for Invitations & Users Card */
+.settings-card-users { display: flex; flex-direction: column; gap: 1.5rem; }
+.invite-form-grid { display: flex; flex-direction: column; gap: .6rem; margin-top: .5rem; }
+.invite-form-grid .field-label { display: block; font-size: .84rem; font-weight: 750; color: #fff; margin-bottom: .5rem; }
+.invite-input-flex { display: flex; align-items: center; gap: 1rem; max-width: 580px; }
+.invite-input-flex input { flex: 1; min-width: 240px; }
+.invite-input-flex .btn { flex-shrink: 0; min-height: 46px; padding: 0 1.25rem; }
+
+.active-users-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 1rem; }
+.section-subhead { display: flex; align-items: center; gap: .75rem; }
+.section-subhead h3 { margin: 0; font-size: 1.15rem; font-weight: 850; color: #fff; }
+.badge-count { padding: .2rem .55rem; border-radius: 999px; background: rgba(18,184,255,.12); border: 1px solid rgba(18,184,255,.25); color: var(--accent-strong); font-size: .75rem; font-weight: 800; }
+.active-users-list { display: flex; flex-direction: column; gap: .75rem; }
+.delete-user-form { display: flex; align-items: center; gap: .6rem; }
+.delete-user-form input { width: 200px; min-height: 38px; padding: .35rem .65rem; font-size: .78rem; border-radius: 8px; }
 
 @media (max-width: 768px) {
   .settings-grid { grid-template-columns: 1fr; }

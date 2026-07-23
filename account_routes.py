@@ -22,9 +22,10 @@ from telegram_link import issue_link_code, unlink_user
 from tenant_store import dispose_user_engine, user_root
 
 
+import time
 router = APIRouter(prefix="/account")
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
-templates.env.globals["asset_version"] = lambda: 0
+templates.env.globals["asset_version"] = lambda: int(time.time())
 templates.env.globals["multi_user_enabled"] = True
 
 
