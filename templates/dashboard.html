@@ -116,43 +116,11 @@
   {% endif %}
   <article class="hero-metric sleep">
     <div class="metric-ring" style="--ring-pct:{{ hero_metrics.sleep.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.sleep.value if hero_metrics.sleep.value is not none else '—' }}</span><span class="metric-ring-unit">{{ hero_metrics.sleep.unit }}</span></div></div>
-    <div class="hero-metric-label">{{ icon('moon') }} Sleep</div><div class="hero-metric-detail">{{ hero_metrics.sleep.detail }}</div>
-  </article>
-  <article class="hero-metric load" data-progress="{{ hero_metrics.load.progress }}">
-    {% set acwr_val = hero_metrics.load.value|float(0.0) if hero_metrics.load.value is not none else 0.0 %}
-    {% set acwr_pos = [[(acwr_val / 2.0 * 100), 94]|min, 6]|max %}
-    <div class="acwr-range-card">
-      <div class="acwr-val-display">
-        <span class="acwr-main-num">{{ hero_metrics.load.value if hero_metrics.load.value is not none else '—' }}</span>
-        <span class="acwr-main-unit">ACWR</span>
-      </div>
-      <div class="acwr-range-track">
-        <div class="acwr-segment zone-under" title="Undertraining (<0.8)"><span>Under</span></div>
-        <div class="acwr-segment zone-optimal" title="Optimal (0.8–1.3)"><span>Optimal</span></div>
-        <div class="acwr-segment zone-over" title="Overreaching (>1.3)"><span>Over</span></div>
-        <div class="acwr-pin" style="left: {{ acwr_pos }}%;">
-          <div class="acwr-pin-dot"></div>
-        </div>
-      </div>
-      <div class="acwr-range-ticks">
-        <span>0.0</span>
-        <span>0.8</span>
-        <span>1.3</span>
-        <span>2.0+</span>
-      </div>
-      <div class="acwr-explain">
-        {% if acwr_val < 0.8 %}
-          Low training stimulus — consider increasing volume
-        {% elif acwr_val <= 1.3 %}
-          Sweet spot — training load is well balanced
-        {% else %}
-          High injury risk — consider reducing training
-        {% endif %}
-      </div>
-    </div>
-    <div class="hero-metric-label">{{ icon('bolt') }} Load ratio</div>
-    <div class="hero-metric-detail">{{ hero_metrics.load.detail }}</div>
-    <div class="acwr-detail-explain">Acute load = rolling 7-day avg training stress · Chronic = 28-day baseline. ACWR = Acute ÷ Chronic.</div>
+    <div class="hero-metric-label">{{ icon('moon') }} Sleep</div>
+    <div class="hero-metric-detail">{{ hero_metrics.sleep.detail }}</div>
+    {% if hero_metrics.sleep.time_range %}
+    <div class="hero-metric-sub">{{ hero_metrics.sleep.time_range }}</div>
+    {% endif %}
   </article>
 </section>
 {% endif %}

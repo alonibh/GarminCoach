@@ -829,7 +829,7 @@ def _dashboard_health_series(health: list[DailyHealth], overnight_ready: bool) -
                 "hrv_baseline_low": None if today_unready else h.hrv_baseline_low,
                 "hrv_baseline_high": None if today_unready else h.hrv_baseline_high,
                 "bb_low": h.body_battery_low,
-                "steps": h.steps,
+                        "steps": h.steps,
                 "step_goal": h.step_goal,
                 "total_kcal": h.total_kcal,
                 "active_kcal": h.active_kcal,
@@ -846,7 +846,15 @@ def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[d
         hours = None
         if sl.total_s and sl.total_s > 0 and (sl.day != today or overnight_ready):
             hours = round(sl.total_s / 3600, 1)
-        out.append({"day": sl.day.isoformat(), "hours": hours, "score": sl.score})
+        start_t = sl.sleep_start_time.strftime("%H:%M") if sl.sleep_start_time else None
+        end_t = sl.sleep_end_time.strftime("%H:%M") if sl.sleep_end_time else None
+        out.append({
+            "day": sl.day.isoformat(),
+            "hours": hours,
+            "score": sl.score,
+            "start_time": start_t,
+            "end_time": end_t,
+        })
     return out
 
 
@@ -884,6 +892,9 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
     )
     sleep_score = latest_sleep.get("score")
     sleep_hours = latest_sleep.get("hours")
+    start_t = latest_sleep.get("start_time")
+    end_t = latest_sleep.get("end_time")
+    sleep_time_range = f"{start_t} – {end_t}" if start_t and end_t else None
 
     with get_session() as session:
         metrics = (
@@ -918,6 +929,7 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
             "unit": "score" if sleep_score is not None else ("hours" if sleep_hours is not None else "no data"),
             "progress": max(0, min(100, float(sleep_score or 0))),
             "detail": f"{sleep_hours:g} hours last night" if sleep_hours is not None else "Waiting for last night's sleep",
+            "time_range": sleep_time_range,
         },
         "load": {
             "value": round(load_value, 2) if load_value is not None else None,
