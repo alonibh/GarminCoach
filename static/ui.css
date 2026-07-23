@@ -269,9 +269,12 @@ textarea { min-height: 110px; }
 .exercise-actions .remove-exercise { padding: .35rem .75rem; border-radius: 8px; background: rgba(255,89,108,.08); border: 1px solid rgba(255,89,108,.25); color: #ff596c; font-size: .78rem; font-weight: 700; transition: all .15s ease; }
 .exercise-actions .remove-exercise:hover { background: rgba(255,89,108,.2); border-color: #ff596c; color: #fff; }
 
-/* Recommendation 4: Target & Weight Controls & Warm-up Section */
-.target-control select { border-radius: 10px 0 0 10px; background: rgba(12,16,21,.95); border-right: 0; }
-.target-control input { border-radius: 0 10px 10px 0; }
+/* Workout Templates Actions & Target Controls Polish */
+.plan-templates-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.plan-templates-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.target-control { display: flex; align-items: center; gap: .45rem; }
+.target-control select { border-radius: 10px !important; background: rgba(12,16,21,.95); border: 1px solid rgba(255,255,255,.12) !important; padding-right: 1.8rem; }
+.target-control input { border-radius: 10px !important; border: 1px solid rgba(255,255,255,.12) !important; }
 .target-unit, .warmup-target-unit { color: var(--accent-strong); font-weight: 750; font-size: .78rem; }
 .exercise-warmup { border-top: 0; padding-top: .2rem; margin-top: .25rem; transition: all .18s ease; }
 .exercise-warmup:has(.warmup-inputs:not(.is-hidden)) { border-top: 1px dashed rgba(255,255,255,.12); padding-top: .65rem; margin-top: .5rem; }

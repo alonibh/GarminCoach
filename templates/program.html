@@ -32,7 +32,6 @@
   <button class="btn-ghost add-ex-btn" type="button" onclick="openPicker(null, {{ s.id }})">+ Add exercise</button>
 </section>
 {% endfor %}
-<section class="add-session-panel" aria-labelledby="add-session-title"><div><h3 id="add-session-title">Add additional session</h3><p class="muted">Set its Garmin-facing name, then add exercises in the new session.</p></div><div class="add-session-form"><label for="additional-session-name">Session name</label><div><input id="additional-session-name" type="text" maxlength="80" placeholder="e.g. Upper body accessories" autocomplete="off"><button id="add-session-button" class="btn-secondary" type="button" onclick="addSession({{ program.id }})">Add session</button></div><span class="add-session-status muted" id="add-session-status" role="status"></span></div></section>
 {% endif %}
 </div>
 
