@@ -174,12 +174,56 @@ textarea { min-height: 110px; }
 .session-garmin-status.is-ready { color: var(--success); }
 .picker-dialog { border: 1px solid var(--border); border-radius: 20px 20px 0 0; background: #171c21; }
 .onboarding-shell { max-width: 1160px; }
-.onboarding-steps li { border-radius: 14px; background: var(--surface-raised); }
-.onboarding-steps li.active { border-color: rgba(18,184,255,.5); background: rgba(18,184,255,.09); }
-.onboarding-steps li.active > span { border-color: var(--accent); background: var(--accent); color: #001017; }
+.onboarding-heading h1 { font-size: clamp(1.8rem, 3.5vw, 2.5rem); letter-spacing: -.03em; }
+.onboarding-steps { gap: .85rem; }
+.onboarding-steps li { transition: all .2s ease; border-radius: 16px; background: linear-gradient(145deg, rgba(21,26,31,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.07); box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+.onboarding-steps li > span { width: 34px; height: 34px; font-size: .85rem; font-weight: 800; transition: all .2s ease; }
+.onboarding-steps li.active { border-color: var(--accent); background: linear-gradient(145deg, rgba(18,184,255,.14), rgba(7,157,240,.04)); color: var(--fg); box-shadow: 0 0 20px rgba(18,184,255,.2), inset 0 0 0 1px rgba(86,204,255,.3); }
+.onboarding-steps li.active > span { border-color: var(--accent-strong); background: var(--accent); color: #001017; box-shadow: 0 0 12px rgba(18,184,255,.6); }
+.onboarding-steps li.done { border-color: rgba(0,230,118,.35); background: linear-gradient(145deg, rgba(0,230,118,.08), rgba(0,230,118,.02)); color: var(--muted-strong); }
+.onboarding-steps li.done > span { border-color: var(--success); background: rgba(0,230,118,.2); color: var(--success); box-shadow: 0 0 10px rgba(0,230,118,.3); }
 .choice-card > span { border-radius: 14px; background: #14191e; }
 .choice-card input:checked + span { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 12px 28px rgba(18,184,255,.1); }
 .onboarding-submit { border-color: rgba(18,184,255,.35); border-radius: 16px; background: rgba(14,18,22,.96); }
+
+/* Recommendation 2: Recent History & Activity Mix Cards */
+.onboarding-findings .card { border-radius: 20px; background: linear-gradient(145deg, rgba(25,31,37,.95), rgba(16,20,25,.95)); border: 1px solid rgba(255,255,255,.08); padding: 1.5rem; display: flex; flex-direction: column; justify-content: space-between; gap: .75rem; }
+.onboarding-findings .card h3 { margin: .1rem 0 .25rem; font-size: 1.35rem; }
+.onboarding-findings .card p { margin: 0; }
+.activity-count { display: inline-flex; align-items: center; gap: .75rem; align-self: flex-start; margin: .25rem 0 .15rem; padding: .45rem .9rem; border-radius: 12px; background: rgba(18,184,255,.08); border: 1px solid rgba(18,184,255,.2); }
+.activity-count strong { font-size: 2.1rem; font-weight: 850; line-height: 1; background: linear-gradient(135deg, #ffffff, var(--accent-strong)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.activity-count span { color: var(--muted-strong); font-size: .78rem; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+#training-background { margin-top: .35rem; color: var(--muted); font-size: .85rem; }
+.history-bar-track { height: 12px; border-radius: 999px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.05); box-shadow: inset 0 2px 4px rgba(0,0,0,.4); }
+.history-bar-track span { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #12b8ff, #56ccff); box-shadow: 0 0 12px rgba(18,184,255,.45); }
+.history-bar-label small { padding: .15rem .5rem; border-radius: 999px; background: rgba(255,255,255,.06); color: var(--accent-strong); font-size: .75rem; font-weight: 700; }
+
+/* Recommendation 3: Routine Filter Chips & Choice Card Grid */
+.filter-chip { transition: all .18s ease; border-radius: 999px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); color: var(--muted-strong); font-weight: 650; }
+.filter-chip:hover { border-color: rgba(18,184,255,.4); background: rgba(18,184,255,.08); color: var(--fg); }
+.filter-chip.is-selected { border-color: var(--accent); background: linear-gradient(135deg, rgba(18,184,255,.22), rgba(7,157,240,.1)); color: #fff; box-shadow: 0 0 14px rgba(18,184,255,.25), inset 0 0 0 1px rgba(86,204,255,.3); font-weight: 750; }
+
+.choice-card { transition: transform .18s ease; }
+.choice-card:hover { transform: translateY(-2px); }
+.choice-card > span { transition: all .18s ease; border-radius: 18px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: 1.25rem; }
+.choice-card input:checked + span { border-color: var(--accent); background: linear-gradient(145deg, rgba(26,35,44,.98), rgba(16,22,28,.98)); box-shadow: 0 0 0 1px var(--accent), 0 14px 32px rgba(18,184,255,.18); }
+.routine-match { padding: .45rem .75rem; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.06); margin: .6rem 0; }
+.routine-detail-fact { padding: .18rem .45rem; border-radius: 6px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.05); }
+
+/* Recommendation 4: Section Cards & Injuries / Protection Field Styling */
+.section-card { border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: clamp(1.2rem, 3vw, 1.75rem); }
+.section-emoji { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 14px; background: linear-gradient(135deg, rgba(18,184,255,.12), rgba(7,157,240,.04)); border: 1px solid rgba(86,204,255,.2); font-size: 1.35rem; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+.section-heading h2 { font-size: 1.3rem; font-weight: 750; color: #fff; }
+.section-heading p { font-size: .88rem; color: var(--muted-strong); margin-top: .2rem; }
+.onboarding-form textarea { border-radius: 14px; background: rgba(10,13,16,.9); border: 1px solid rgba(255,255,255,.12); padding: .85rem 1rem; font-size: .92rem; transition: all .18s ease; }
+.onboarding-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(18,184,255,.16), 0 8px 20px rgba(0,0,0,.3); background: rgba(14,18,22,1); }
+
+/* Recommendation 5: Floating / Elevated Sticky Submit Bar */
+.onboarding-submit { position: sticky; bottom: 1.25rem; z-index: 20; border-radius: 20px; padding: 1.1rem 1.4rem; background: linear-gradient(135deg, rgba(20,26,33,.94), rgba(12,16,21,.96)); border: 1px solid rgba(86,204,255,.32); backdrop-filter: blur(18px); box-shadow: 0 16px 40px rgba(0,0,0,.45), 0 0 24px rgba(18,184,255,.12); transition: all .2s ease; }
+.onboarding-submit b { color: #fff; font-size: 1rem; font-weight: 750; }
+.onboarding-submit p { color: var(--muted-strong); font-size: .84rem; margin-top: .2rem; }
+.onboarding-submit .btn { min-height: 48px; padding: .65rem 1.6rem; border-radius: 14px; background: linear-gradient(135deg, #12b8ff, #009ceb); border: 1px solid #56ccff; color: #001017; font-weight: 800; font-size: .95rem; box-shadow: 0 8px 24px rgba(18,184,255,.3); transition: all .18s ease; }
+.onboarding-submit .btn:hover { background: linear-gradient(135deg, #56ccff, #12b8ff); transform: translateY(-2px); box-shadow: 0 12px 28px rgba(18,184,255,.45); }
 
 /* Account and focused flows */
 .settings-page { max-width: 1080px !important; }
