@@ -14,8 +14,7 @@ def test_dashboard_has_native_metric_hero_and_responsive_activities():
     assert 'class="hero-metrics"' in dashboard
     assert "hero_metrics.readiness.signals" in dashboard
     assert "hero_metrics.sleep.progress" in dashboard
-    assert "hero_metrics.load.progress" in dashboard
-    assert "Load ratio" in dashboard
+    assert "hero_metrics.sleep.time_range" in dashboard
     assert "Strain" not in dashboard
     assert 'class="activity-mobile-list"' in dashboard
 
