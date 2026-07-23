@@ -203,20 +203,32 @@ textarea { min-height: 110px; }
 .filter-chip:hover { border-color: rgba(18,184,255,.4); background: rgba(18,184,255,.08); color: var(--fg); }
 .filter-chip.is-selected { border-color: var(--accent); background: linear-gradient(135deg, rgba(18,184,255,.22), rgba(7,157,240,.1)); color: #fff; box-shadow: 0 0 14px rgba(18,184,255,.25), inset 0 0 0 1px rgba(86,204,255,.3); font-weight: 750; }
 
-.choice-card { transition: transform .18s ease; }
-.choice-card:hover { transform: translateY(-2px); }
-.choice-card > span { transition: all .18s ease; border-radius: 18px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: 1.25rem; }
-.choice-card input:checked + span { border-color: var(--accent); background: linear-gradient(145deg, rgba(26,35,44,.98), rgba(16,22,28,.98)); box-shadow: 0 0 0 1px var(--accent), 0 14px 32px rgba(18,184,255,.18); }
+/* Single Card Selection (No Radio Checkbox, No Double Card Borders) */
+.choice-card input[type="radio"] { display: none !important; }
+.choice-card { display: block !important; border: 0 !important; background: transparent !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; }
+.choice-card > span { display: block; border-radius: 18px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: 1.25rem; transition: all .18s ease; }
+.choice-card:hover > span { border-color: rgba(18,184,255,.4); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.choice-card input:checked + span { border-color: var(--accent) !important; background: linear-gradient(145deg, rgba(26,35,44,.98), rgba(16,22,28,.98)) !important; box-shadow: 0 0 0 1px var(--accent), 0 14px 32px rgba(18,184,255,.2) !important; }
+
+/* Match Progress Bar Tracks per Tone */
 .routine-match { padding: .45rem .75rem; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.06); margin: .6rem 0; }
+.routine-match[data-tone="poor"] .routine-match-track span { background: rgba(255,255,255,.25) !important; box-shadow: none !important; }
+.routine-match[data-tone="possible"] .routine-match-track span { background: linear-gradient(90deg, #ffb020, #ffd060) !important; box-shadow: 0 0 10px rgba(255,176,32,.35) !important; }
+.routine-match[data-tone="good"] .routine-match-track span,
+.routine-match[data-tone="strong"] .routine-match-track span { background: linear-gradient(90deg, #00e676, #56ccff) !important; box-shadow: 0 0 12px rgba(0,230,118,.4) !important; }
 .routine-detail-fact { padding: .18rem .45rem; border-radius: 6px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.05); }
 
-/* Recommendation 4: Section Cards & Injuries / Protection Field Styling */
-.section-card { border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: clamp(1.2rem, 3vw, 1.75rem); }
+/* Section Cards, Form Spacing & Label Alignment */
+.onboarding-form { display: flex; flex-direction: column; gap: 1.25rem; margin-top: 1.25rem; padding-bottom: 6rem; }
+.section-card { border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: clamp(1.2rem, 3vw, 1.75rem); margin-bottom: 0 !important; }
+.section-card + .section-card { margin-top: 0 !important; }
 .section-emoji { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 14px; background: linear-gradient(135deg, rgba(18,184,255,.12), rgba(7,157,240,.04)); border: 1px solid rgba(86,204,255,.2); font-size: 1.35rem; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
 .section-heading h2 { font-size: 1.3rem; font-weight: 750; color: #fff; }
 .section-heading p { font-size: .88rem; color: var(--muted-strong); margin-top: .2rem; }
-.onboarding-form textarea { border-radius: 14px; background: rgba(10,13,16,.9); border: 1px solid rgba(255,255,255,.12); padding: .85rem 1rem; font-size: .92rem; transition: all .18s ease; }
+.section-card label.field { display: flex; flex-direction: column; gap: .4rem; width: 100%; margin-top: .75rem; color: var(--fg); font-size: .92rem; font-weight: 700; text-align: left; }
+.onboarding-form textarea { width: 100%; box-sizing: border-box; border-radius: 14px; background: rgba(10,13,16,.9); border: 1px solid rgba(255,255,255,.12); padding: .85rem 1rem; font-size: .92rem; transition: all .18s ease; margin-top: .2rem; }
 .onboarding-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(18,184,255,.16), 0 8px 20px rgba(0,0,0,.3); background: rgba(14,18,22,1); }
+.section-card .field-hint { display: block; margin-top: .4rem; color: var(--muted); font-size: .82rem; }
 
 /* Recommendation 5: Floating / Elevated Sticky Submit Bar */
 .onboarding-submit { position: sticky; bottom: 1.25rem; z-index: 20; border-radius: 20px; padding: 1.1rem 1.4rem; background: linear-gradient(135deg, rgba(20,26,33,.94), rgba(12,16,21,.96)); border: 1px solid rgba(86,204,255,.32); backdrop-filter: blur(18px); box-shadow: 0 16px 40px rgba(0,0,0,.45), 0 0 24px rgba(18,184,255,.12); transition: all .2s ease; }

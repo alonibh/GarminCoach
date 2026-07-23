@@ -367,6 +367,11 @@ def _plan_match_scores(
             + experience_score * .20
             + exercise_score * .10
         )
+        if frequency_score == 0:
+            score = round(score * 0.4)
+        elif frequency_score <= 30:
+            score = round(score * 0.65)
+
         label = (
             "Strong match"
             if score >= 80
@@ -376,6 +381,9 @@ def _plan_match_scores(
             if score >= 50
             else "Poor fit"
         )
+        if label == "Poor fit":
+            score = max(8, min(25, score))
+
         raw_matches[key] = {
             "score": score,
             "label": label,
