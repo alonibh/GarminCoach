@@ -212,24 +212,30 @@ textarea { min-height: 110px; }
 .act-pill:hover { background: linear-gradient(135deg, rgba(18,184,255,.25), rgba(7,157,240,.12)); border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(18,184,255,.25); }
 .calendar-agenda { display: none; }
 
-/* Workout */
-.workout-page { display: grid; gap: 1rem; }
-.workout-back { justify-self: start; }
-.workout-hero { position: relative; overflow: hidden; padding: clamp(1.4rem,3vw,2.3rem); background: radial-gradient(circle at 85% 0, rgba(7,157,240,.2), transparent 26rem), linear-gradient(145deg,#20262c,#12171b); }
-.workout-hero::after { content: ""; position: absolute; right: -4rem; bottom: -6rem; width: 18rem; aspect-ratio: 1; border: 24px solid rgba(139,199,232,.05); border-radius: 50%; }
-.workout-hero-head { position: relative; z-index: 1; display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
-.workout-hero h1 { margin: .25rem 0 .4rem; font-size: clamp(1.8rem,3vw,2.8rem); }
-.workout-stat-grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: .7rem; margin-top: 1.6rem; }
-.workout-stat { padding-top: .85rem; border-top: 1px solid rgba(255,255,255,.09); }
-.workout-stat b { display: block; font-size: 1.35rem; letter-spacing: -.04em; }
-.workout-stat span { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
-.workout-section { margin: 0; }
-.exercise { padding: 1rem 0; border-color: var(--border-soft); }
-.exercise-head .trend { margin-left: .4rem; }
-.set-pill { border: 1px solid #35414a; border-radius: 9px; background: #11161a; }
-.cardio-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
-.cardio-stat { border-radius: 12px; background: #12171b; }
-.hrz-track { background: #101419; }
+/* Workout Details Polish */
+.workout-page { display: grid; gap: 1.25rem; }
+.workout-hero { position: relative; overflow: hidden; padding: clamp(1.5rem,3.2vw,2.5rem); border-radius: 22px; border: 1px solid rgba(86,204,255,.25); background: radial-gradient(circle at 85% 0, rgba(18,184,255,.22), transparent 28rem), linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); box-shadow: 0 16px 45px rgba(0,0,0,.35), 0 0 25px rgba(18,184,255,.08); }
+.workout-hero-head h1 { margin: .25rem 0 .4rem; font-size: clamp(1.8rem,3.5vw,2.8rem); font-weight: 850; color: #fff; letter-spacing: -.03em; }
+.workout-hero .type-tag { padding: .35rem .85rem; border-radius: 999px; background: linear-gradient(135deg, rgba(18,184,255,.2), rgba(7,157,240,.08)); border: 1px solid rgba(86,204,255,.4); color: var(--accent-strong); font-size: .8rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.workout-stat-grid { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: .85rem; margin-top: 1.8rem; }
+.workout-stat { padding-top: 1rem; border-top: 1px solid rgba(255,255,255,.08); }
+.workout-stat b { display: block; font-size: clamp(1.3rem, 2.2vw, 1.8rem); font-weight: 850; color: #fff; letter-spacing: -.04em; line-height: 1.1; }
+.workout-stat span { color: var(--muted-strong); font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; margin-top: .2rem; display: block; }
+.workout-section { margin: 0; border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 1.5rem; }
+.exercise { padding: 1rem 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
+.exercise:last-child { border-bottom: 0; }
+.set-pill { border: 1px solid rgba(255,255,255,.1); border-radius: 999px; background: rgba(0,0,0,.3); padding: .3rem .65rem; color: #fff; font-size: .8rem; font-weight: 700; }
+.cardio-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: .9rem; }
+.cardio-stat { padding: 1rem 1.15rem; border-radius: 14px; background: rgba(18,24,31,.75); border: 1px solid rgba(255,255,255,.06); }
+.cardio-value { font-size: 1.4rem; font-weight: 850; color: #fff; margin-top: .2rem; }
+.hrz-track { height: 16px; border-radius: 999px; background: rgba(0,0,0,.4); padding: 2px; border: 1px solid rgba(255,255,255,.08); overflow: hidden; }
+.hrz-fill { height: 100%; border-radius: 999px; transition: width .4s ease; }
+.hrz-z0 { background: linear-gradient(90deg, #5a6b76, #788b99); }
+.hrz-z1 { background: linear-gradient(90deg, #12b8ff, #009ceb); box-shadow: 0 0 10px rgba(18,184,255,.4); }
+.hrz-z2 { background: linear-gradient(90deg, #00e676, #00c853); box-shadow: 0 0 10px rgba(0,230,118,.4); }
+.hrz-z3 { background: linear-gradient(90deg, #ffb020, #ffa000); box-shadow: 0 0 10px rgba(255,176,32,.4); }
+.hrz-z4 { background: linear-gradient(90deg, #ff7043, #f4511e); box-shadow: 0 0 10px rgba(255,112,67,.4); }
+.hrz-z5 { background: linear-gradient(90deg, #ff596c, #e53935); box-shadow: 0 0 10px rgba(255,89,108,.4); }
 
 /* Training Plan Polish */
 .plan-proposal-card { border-color: rgba(86,204,255,.35); border-radius: 22px; background: linear-gradient(145deg, rgba(18,184,255,.14), rgba(7,157,240,.04) 50%, rgba(15,19,23,.95)); box-shadow: 0 16px 45px rgba(0,0,0,.35), 0 0 25px rgba(18,184,255,.08); }
