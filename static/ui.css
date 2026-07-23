@@ -210,12 +210,14 @@ textarea { min-height: 110px; }
 .choice-card:hover > span { border-color: rgba(18,184,255,.4); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .choice-card input:checked + span { border-color: var(--accent) !important; background: linear-gradient(145deg, rgba(26,35,44,.98), rgba(16,22,28,.98)) !important; box-shadow: 0 0 0 1px var(--accent), 0 14px 32px rgba(18,184,255,.2) !important; }
 
-/* Match Progress Bar Tracks per Tone */
+/* Match Progress Bar Tracks & Scaled Widths per Tone */
 .routine-match { padding: .45rem .75rem; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.06); margin: .6rem 0; }
-.routine-match[data-tone="poor"] .routine-match-track span { background: rgba(255,255,255,.25) !important; box-shadow: none !important; }
-.routine-match[data-tone="possible"] .routine-match-track span { background: linear-gradient(90deg, #ffb020, #ffd060) !important; box-shadow: 0 0 10px rgba(255,176,32,.35) !important; }
-.routine-match[data-tone="good"] .routine-match-track span,
-.routine-match[data-tone="strong"] .routine-match-track span { background: linear-gradient(90deg, #00e676, #56ccff) !important; box-shadow: 0 0 12px rgba(0,230,118,.4) !important; }
+.routine-match[data-tone="best"] .routine-match-track span { width: 98% !important; background: linear-gradient(90deg, #00e676, #56ccff) !important; box-shadow: 0 0 14px rgba(0,230,118,.5) !important; }
+.routine-match[data-tone="best"] .routine-match-heading { color: var(--success) !important; font-weight: 850; }
+.routine-match[data-tone="strong"] .routine-match-track span { width: 78% !important; background: linear-gradient(90deg, #00e676, #12b8ff) !important; box-shadow: 0 0 10px rgba(0,230,118,.35) !important; }
+.routine-match[data-tone="good"] .routine-match-track span { width: 60% !important; background: linear-gradient(90deg, #12b8ff, #56ccff) !important; box-shadow: 0 0 10px rgba(18,184,255,.35) !important; }
+.routine-match[data-tone="possible"] .routine-match-track span { width: 42% !important; background: linear-gradient(90deg, #ffb020, #ffd060) !important; box-shadow: 0 0 10px rgba(255,176,32,.35) !important; }
+.routine-match[data-tone="poor"] .routine-match-track span { width: 12% !important; background: rgba(255,255,255,.25) !important; box-shadow: none !important; }
 .routine-detail-fact { padding: .18rem .45rem; border-radius: 6px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.05); }
 
 /* Section Cards, Form Spacing & Label Alignment */

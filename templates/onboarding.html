@@ -25,9 +25,9 @@
           <span>
             <b>{{ plan.title }}<span data-suggested-label {% if not match.is_best %}hidden{% endif %}> · Best match</span></b>
             <span class="routine-source-details" aria-label="Original routine details">{% for label, value in plan.source_details %}<span class="routine-detail-fact{% if label == 'Training Level' %} {{ plan.experience_slug }}{% endif %}"><span>{{ {'Main Goal': 'Goal', 'Workout Type': 'Type', 'Training Level': 'Level', 'Days Per Week': 'Days', 'Time Per Workout': 'Time'}[label] }}</span>{{ value }}</span>{% endfor %}</span>
-            <span class="routine-match" data-match-box data-tone="{{ match.tone }}">
+            <span class="routine-match" data-match-box data-tone="{% if match.is_best %}best{% else %}{{ match.tone }}{% endif %}">
               <span class="routine-match-heading" data-match-label>{% if match.is_best %}Best match{% else %}{{ match.label }}{% endif %}</span>
-              <span class="routine-match-track" role="meter" aria-label="Routine match" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ match.score }}"><span data-match-bar style="width: {{ match.score }}%"></span></span>
+              <span class="routine-match-track" role="meter" aria-label="Routine match" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ match.score }}"><span data-match-bar style="width: {% if match.is_best %}98{% elif match.tone == 'strong' %}78{% elif match.tone == 'good' %}60{% elif match.tone == 'possible' %}42{% else %}12{% endif %}%"></span></span>
               <small data-match-evidence {% if not match.evidence %}hidden{% endif %}>{{ match.evidence }}</small>
             </span>
             <small>{{ plan.days }} gym days each week · {{ plan.description }}</small>
@@ -81,14 +81,15 @@ document.querySelectorAll('input[name="plan_key"]').forEach((input) => {
     routineCards.forEach((card) => {
       const match = data.plan_matches[card.dataset.planKey];
       const matchBox = card.querySelector('[data-match-box]');
-      matchBox.dataset.tone = match.tone;
+      matchBox.dataset.tone = match.is_best ? 'best' : match.tone;
       card.querySelector('[data-match-label]').textContent = match.is_best ? 'Best match' : match.label;
       const evidence = card.querySelector('[data-match-evidence]');
       evidence.textContent = match.evidence;
       evidence.hidden = !match.evidence;
       const meter = card.querySelector('[role="meter"]');
-      meter.setAttribute('aria-valuenow', match.score);
-      card.querySelector('[data-match-bar]').style.width = `${match.score}%`;
+      const visualScore = match.is_best ? 98 : match.tone === 'strong' ? 78 : match.tone === 'good' ? 60 : match.tone === 'possible' ? 42 : 12;
+      meter.setAttribute('aria-valuenow', visualScore);
+      card.querySelector('[data-match-bar]').style.width = `${visualScore}%`;
     });
     routineCards.sort((left, right) => data.plan_matches[left.dataset.planKey].rank - data.plan_matches[right.dataset.planKey].rank)
       .forEach((card) => routineChoices.append(card));
