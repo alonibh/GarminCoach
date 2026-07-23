@@ -499,6 +499,8 @@ function updateDashboardCharts(data) {
 }
 
 // Per-chart collapse, remembered across reloads via localStorage.
+
+// Per-chart collapse, remembered across reloads via localStorage.
 function applyCollapse(card, collapsed) {
   card.classList.toggle('collapsed', collapsed);
   const btn = card.querySelector('.collapse-btn');
@@ -506,13 +508,8 @@ function applyCollapse(card, collapsed) {
 }
 document.querySelectorAll('.chart-card[data-chart], .collapsible-card[data-card]').forEach(card => {
   const key = 'chartCollapsed:' + (card.dataset.chart || card.dataset.card);
-  applyCollapse(card, localStorage.getItem(key) === '1');
-  const btn = card.querySelector('.collapse-btn');
-  if (btn) btn.addEventListener('click', () => {
-    const collapsed = !card.classList.contains('collapsed');
-    applyCollapse(card, collapsed);
-    localStorage.setItem(key, collapsed ? '1' : '0');
-  });
+  localStorage.removeItem(key);
+  applyCollapse(card, false);
 });
 
 const POLL_MS = 3000;
