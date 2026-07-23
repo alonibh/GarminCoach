@@ -894,8 +894,6 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
     sleep_hours = latest_sleep.get("hours")
     start_t = latest_sleep.get("start_time")
     end_t = latest_sleep.get("end_time")
-    sleep_time_range = f"{start_t} – {end_t}" if start_t and end_t else None
-
     with get_session() as session:
         metrics = (
             session.query(DailyMetrics)
@@ -906,6 +904,19 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
         load_value = metrics.acwr if metrics else None
         acute_load = metrics.acute_load if metrics else None
         chronic_load = metrics.chronic_load if metrics else None
+
+        latest_sleep_db = (
+            session.query(Sleep)
+            .filter(Sleep.total_s > 0)
+            .order_by(Sleep.day.desc())
+            .first()
+        )
+        if latest_sleep_db and latest_sleep_db.sleep_start_time and latest_sleep_db.sleep_end_time:
+            st = latest_sleep_db.sleep_start_time.strftime("%H:%M")
+            et = latest_sleep_db.sleep_end_time.strftime("%H:%M")
+            sleep_time_range = f"{st} – {et}"
+        else:
+            sleep_time_range = f"{start_t} – {end_t}" if start_t and end_t else None
 
     readiness_value = readiness.get("value")
     readiness_color = readiness.get("color")

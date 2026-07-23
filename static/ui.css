@@ -159,11 +159,11 @@ textarea { min-height: 110px; }
 .secondary-metrics .recovery-signals-tile { grid-column: span 2; }
 .secondary-metrics .tile-gauge .gauge { width: 150px !important; height: 75px !important; overflow: hidden; margin: 0 auto; }
 /* Recommendation 4: Trends Charts Modernization */
-.chart-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
+.chart-grid { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 1rem; }
 .chart-card { min-width: 0; margin: 0; padding: 1.35rem 1.45rem; border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 10px 30px rgba(0,0,0,.25); transition: all .18s ease; }
 .chart-card:hover { border-color: rgba(18,184,255,.32); box-shadow: 0 12px 35px rgba(0,0,0,.35), 0 0 20px rgba(18,184,255,.08); }
-.chart-card[data-chart="sleep"] { grid-column: span 1; }
-.chart-card[data-chart="calories"] { grid-column: span 2; }
+.chart-card[data-chart="sleep"], .chart-card[data-chart="hrv"] { grid-column: span 3; }
+.chart-card[data-chart="rhr"], .chart-card[data-chart="steps"], .chart-card[data-chart="calories"] { grid-column: span 2; }
 .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .chart-head h3 { margin: 0; color: #fff; font-size: 1.05rem; font-weight: 750; letter-spacing: -.015em; text-transform: none; display: flex; align-items: center; gap: .4rem; }
 .info { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(18,184,255,.35); background: rgba(18,184,255,.08); color: var(--accent-strong); font-size: .65rem; font-weight: 800; display: inline-grid; place-items: center; transition: all .15s ease; }
