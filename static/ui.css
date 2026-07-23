@@ -231,14 +231,27 @@ textarea { min-height: 110px; }
 .cardio-stat { border-radius: 12px; background: #12171b; }
 .hrz-track { background: #101419; }
 
-/* Plan and onboarding */
+/* Training Plan Polish */
+.plan-proposal-card { border-color: rgba(86,204,255,.35); border-radius: 22px; background: linear-gradient(145deg, rgba(18,184,255,.14), rgba(7,157,240,.04) 50%, rgba(15,19,23,.95)); box-shadow: 0 16px 45px rgba(0,0,0,.35), 0 0 25px rgba(18,184,255,.08); }
+.plan-proposal-card .badge { background: linear-gradient(135deg, rgba(18,184,255,.2), rgba(7,157,240,.08)); border: 1px solid rgba(86,204,255,.4); color: var(--accent-strong); font-weight: 800; }
+.plan-sessions-list { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
+.plan-session-badge { display: inline-flex; align-items: center; gap: .55rem; padding: .55rem 1rem; border: 1px solid rgba(255,255,255,.08); border-radius: 999px; background: rgba(23,28,34,.95); transition: all .18s ease; }
+.plan-session-badge:hover { border-color: rgba(18,184,255,.35); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(18,184,255,.15); }
+.plan-session-num { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #12b8ff, #009ceb); border: 1px solid #56ccff; color: #001017; font-weight: 850; font-size: .78rem; box-shadow: 0 0 10px rgba(18,184,255,.4); }
+.plan-template-card { border-radius: 20px; overflow: hidden; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+.plan-template-header { margin: 0; padding: 1.15rem 1.45rem; border-bottom: 1px solid rgba(255,255,255,.08); background: linear-gradient(90deg, rgba(18,184,255,.1), rgba(7,157,240,.02) 60%, transparent); }
+.session-garmin-status.is-ready { color: #00e676; text-shadow: 0 0 8px rgba(0,230,118,.4); font-weight: 750; }
+.exercise-row { border: 1px solid rgba(255,255,255,.06); border-radius: 14px; background: rgba(18,24,31,.6); padding: 1rem 1.15rem; transition: all .15s ease; }
+.exercise-row:hover { border-color: rgba(18,184,255,.2); background: rgba(22,29,37,.8); }
+.exercise-name { font-size: 1rem; font-weight: 850; color: #fff; }
+.exercise-replace { border-radius: 8px; padding: .25rem .6rem; background: rgba(18,184,255,.08); border: 1px solid rgba(18,184,255,.25); color: var(--accent-strong); font-weight: 750; transition: all .15s ease; }
+.exercise-replace:hover { background: rgba(18,184,255,.22); border-color: var(--accent); color: #fff; }
+.picker-dialog { border: 1px solid rgba(86,204,255,.3); border-radius: 24px 24px 0 0; background: rgba(15,19,23,.98); backdrop-filter: blur(16px); box-shadow: 0 -20px 60px rgba(0,0,0,.5); }
+.picker-result { border-radius: 12px; padding: .75rem 1rem; transition: all .15s ease; }
+.picker-result:hover { background: rgba(18,184,255,.12); border-color: rgba(18,184,255,.3); }
+
+/* Onboarding */
 .content-header { margin-bottom: 1.5rem; }
-.plan-template-card { border-radius: 18px; overflow: hidden; }
-.plan-template-header { margin: -1.35rem -1.35rem 1rem; padding: 1rem 1.35rem; border-bottom: 1px solid var(--border-soft); background: rgba(255,255,255,.018); }
-.plan-session-num { border-color: rgba(18,184,255,.35); background: rgba(18,184,255,.1); color: var(--accent-strong); }
-.exercise-row { border-color: var(--border-soft); border-radius: 12px; background: #14191e; }
-.session-garmin-status.is-ready { color: var(--success); }
-.picker-dialog { border: 1px solid var(--border); border-radius: 20px 20px 0 0; background: #171c21; }
 .onboarding-shell { max-width: 1160px; }
 .onboarding-heading h1 { font-size: clamp(1.8rem, 3.5vw, 2.5rem); letter-spacing: -.03em; }
 .onboarding-steps { gap: .85rem; }
