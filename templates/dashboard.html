@@ -354,6 +354,8 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
 }
 
 const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
+
+const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
 const round0 = (v) => Math.round(v).toString();                       // 56
 const kSteps = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k' : round0(v); // 8.4k
 
@@ -364,13 +366,13 @@ const healthk = lastWeek(health);
 function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   
-  const gradActive = ctx.createLinearGradient(0, 0, 0, 400);
+  const gradActive = ctx.createLinearGradient(0, 0, 0, 200);
   gradActive.addColorStop(0, '#56ccff');
-  gradActive.addColorStop(1, '#079df0');
+  gradActive.addColorStop(1, '#009ceb');
   
-  const gradBMR = ctx.createLinearGradient(0, 0, 0, 400);
-  gradBMR.addColorStop(0, '#525c66');
-  gradBMR.addColorStop(1, '#303840');
+  const gradBMR = ctx.createLinearGradient(0, 0, 0, 200);
+  gradBMR.addColorStop(0, '#2d3a46');
+  gradBMR.addColorStop(1, '#182026');
 
   const chart = new Chart(ctx, {
     type: 'bar',
@@ -381,16 +383,26 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
           label: 'BMR',
           data: dataBMR,
           backgroundColor: gradBMR,
-          borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 },
+          borderColor: 'rgba(255,255,255,0.06)',
+          borderWidth: 1,
+          borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 10, bottomRight: 10 },
           borderSkipped: false,
+          maxBarThickness: 36,
+          barPercentage: 0.5,
+          categoryPercentage: 0.7,
           datalabels: { display: false }
         },
         {
           label: 'Active',
           data: dataActive,
           backgroundColor: gradActive,
-          borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
+          borderColor: 'rgba(86,204,255,0.4)',
+          borderWidth: 1,
+          borderRadius: { topLeft: 10, topRight: 10, bottomLeft: 0, bottomRight: 0 },
           borderSkipped: false,
+          maxBarThickness: 36,
+          barPercentage: 0.5,
+          categoryPercentage: 0.7,
           datalabels: {
             display: (context) => {
               const bmr = context.chart.data.datasets[0].data[context.dataIndex] || 0;
@@ -399,9 +411,9 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
             },
             align: 'top',
             anchor: 'end',
-            offset: 12,
-            color: '#e6edf3',
-            font: { size: 10, weight: '600' },
+            offset: 8,
+            color: '#ffffff',
+            font: { size: 11, weight: '750' },
             formatter: (val, context) => {
               const bmr = context.chart.data.datasets[0].data[context.dataIndex] || 0;
               const active = val || 0;
@@ -415,10 +427,17 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
       events: ['mousemove', 'mouseout', 'click'],
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 15 } },
+      layout: { padding: { top: 18 } },
       plugins: {
-        legend: { display: true, position: 'bottom', labels: { color: '#8b98a5', usePointStyle: true, boxWidth: 8 } },
+        legend: { display: true, position: 'bottom', labels: { color: '#9aacbc', usePointStyle: true, boxWidth: 8, font: { weight: '650' } } },
         tooltip: {
+          backgroundColor: 'rgba(12, 16, 21, 0.95)',
+          titleColor: '#fff',
+          bodyColor: '#56ccff',
+          borderColor: 'rgba(86,204,255,0.3)',
+          borderWidth: 1,
+          cornerRadius: 10,
+          padding: 10,
           callbacks: {
             label: function(context) {
               return context.dataset.label + ': ' + Math.round(context.raw || 0) + ' kcal';
@@ -430,13 +449,13 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
         x: {
           stacked: true,
           grid: { display: false },
-          ticks: { color: '#8b98a5', maxRotation: 0 }
+          ticks: { color: '#9aacbc', font: { weight: '650' }, maxRotation: 0 }
         },
         y: {
           stacked: true,
-          border: { display: false },
-          grid: { color: '#2a333d', borderDash: [4, 4] },
-          ticks: { color: '#8b98a5', maxTicksLimit: 5 }
+          grid: { color: 'rgba(255,255,255,0.06)' },
+          ticks: { color: '#9aacbc', font: { weight: '650' }, maxTicksLimit: 4 },
+          grace: '14%'
         }
       }
     }
