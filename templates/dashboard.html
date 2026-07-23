@@ -96,7 +96,17 @@
   {% if hero_metrics.readiness.signals %}
   <article class="hero-metric hero-recovery-signals">
     <div class="hero-metric-label">{{ icon('heart') }} Recovery signals <span class="info" tabindex="0" data-tip="{{ hero_metrics.readiness.hint }}">i</span></div>
-    <div class="recovery-signal-list">{% for row in hero_metrics.readiness.signals %}<div class="recovery-signal-row"><span>{{ row.label }}</span><div class="recovery-signal-detail"><span class="recovery-signal-indicator {{ row.tone }}"><span class="recovery-signal-dot" aria-hidden="true"></span>{{ row.indicator }}</span><strong>{{ row.value }}</strong></div></div>{% endfor %}</div>
+    <div class="recovery-signal-list">
+      {% for row in hero_metrics.readiness.signals %}
+      <div class="recovery-signal-row">
+        <span class="signal-label">{{ row.label }}</span>
+        <span class="recovery-signal-indicator {{ row.tone }}">
+          <span class="recovery-signal-dot" aria-hidden="true"></span>{{ row.indicator }}
+        </span>
+        <strong class="signal-val">{{ row.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
   </article>
   {% else %}
   <article class="hero-metric readiness {{ hero_metrics.readiness.tone }}">
@@ -109,8 +119,30 @@
     <div class="hero-metric-label">{{ icon('moon') }} Sleep</div><div class="hero-metric-detail">{{ hero_metrics.sleep.detail }}</div>
   </article>
   <article class="hero-metric load">
-    <div class="metric-ring" style="--ring-pct:{{ hero_metrics.load.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.load.value if hero_metrics.load.value is not none else '—' }}</span><span class="metric-ring-unit">ACWR</span></div></div>
-    <div class="hero-metric-label">{{ icon('bolt') }} Load ratio</div><div class="hero-metric-detail">{{ hero_metrics.load.detail }}</div>
+    {% set acwr_val = hero_metrics.load.value|float(0.0) if hero_metrics.load.value is not none else 0.0 %}
+    {% set acwr_pos = [[(acwr_val / 2.0 * 100), 94]|min, 6]|max %}
+    <div class="acwr-range-card">
+      <div class="acwr-val-display">
+        <span class="acwr-main-num">{{ hero_metrics.load.value if hero_metrics.load.value is not none else '—' }}</span>
+        <span class="acwr-main-unit">ACWR</span>
+      </div>
+      <div class="acwr-range-track">
+        <div class="acwr-segment zone-under" title="Undertraining (<0.8)"><span>Under</span></div>
+        <div class="acwr-segment zone-optimal" title="Optimal (0.8–1.3)"><span>Optimal</span></div>
+        <div class="acwr-segment zone-over" title="Overreaching (>1.3)"><span>Over</span></div>
+        <div class="acwr-pin" style="left: {{ acwr_pos }}%;">
+          <div class="acwr-pin-dot"></div>
+        </div>
+      </div>
+      <div class="acwr-range-ticks">
+        <span>0.0</span>
+        <span>0.8</span>
+        <span>1.3</span>
+        <span>2.0+</span>
+      </div>
+    </div>
+    <div class="hero-metric-label">{{ icon('bolt') }} Load ratio</div>
+    <div class="hero-metric-detail">{{ hero_metrics.load.detail }}</div>
   </article>
 </section>
 {% endif %}
