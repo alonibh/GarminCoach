@@ -402,7 +402,28 @@ def _plan_match_scores(
     )
     for rank, key in enumerate(ranked_keys, start=1):
         raw_matches[key]["rank"] = rank
-    raw_matches[ranked_keys[0]]["is_best"] = True
+    
+    top_key = ranked_keys[0]
+    raw_matches[top_key]["is_best"] = True
+
+    # Visually calibrate bar scale: Best match (98%), Strong (78%), Good (60%), Possible (42%), Poor fit (12%)
+    for key, match in raw_matches.items():
+        if key == top_key:
+            match["score"] = 98
+            match["tone"] = "strong"
+        elif match["label"] == "Strong match":
+            match["score"] = 78
+            match["tone"] = "strong"
+        elif match["label"] == "Good match":
+            match["score"] = 60
+            match["tone"] = "good"
+        elif match["label"] == "Possible match":
+            match["score"] = 42
+            match["tone"] = "possible"
+        else:
+            match["score"] = 12
+            match["tone"] = "poor"
+
     return raw_matches
 
 
