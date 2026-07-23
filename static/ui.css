@@ -268,18 +268,14 @@ textarea { min-height: 110px; }
 .exercise-field input:focus, .exercise-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(18,184,255,.2); background: rgba(12,16,20,1); }
 .exercise-actions .remove-exercise { padding: .35rem .75rem; border-radius: 8px; background: rgba(255,89,108,.08); border: 1px solid rgba(255,89,108,.25); color: #ff596c; font-size: .78rem; font-weight: 700; transition: all .15s ease; }
 .exercise-actions .remove-exercise:hover { background: rgba(255,89,108,.2); border-color: #ff596c; color: #fff; }
-.exercise-reorder-group { display: flex; align-items: center; gap: .4rem; }
-.exercise-reorder { display: flex; gap: .25rem; }
-.exercise-reorder button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: var(--accent-strong); display: grid; place-items: center; font-size: .7rem; cursor: pointer; transition: all .15s ease; padding: 0; }
-.exercise-reorder button:hover:not(:disabled) { background: rgba(18,184,255,.2); border-color: var(--accent); color: #fff; transform: translateY(-1px); }
-.exercise-reorder button:disabled { opacity: .2; cursor: not-allowed; border-color: transparent; }
 
 /* Recommendation 4: Target & Weight Controls & Warm-up Section */
 .target-control select { border-radius: 10px 0 0 10px; background: rgba(12,16,21,.95); border-right: 0; }
 .target-control input { border-radius: 0 10px 10px 0; }
 .target-unit, .warmup-target-unit { color: var(--accent-strong); font-weight: 750; font-size: .78rem; }
-.exercise-warmup { border-top: 1px dashed rgba(255,255,255,.12); padding-top: .75rem; margin-top: .25rem; }
-.exercise-warmup label { color: var(--muted-strong); font-size: .82rem; font-weight: 650; }
+.exercise-warmup { border-top: 0; padding-top: .2rem; margin-top: .25rem; transition: all .18s ease; }
+.exercise-warmup:has(.warmup-inputs:not(.is-hidden)) { border-top: 1px dashed rgba(255,255,255,.12); padding-top: .65rem; margin-top: .5rem; }
+.exercise-warmup label { color: var(--muted-strong); font-size: .8rem; font-weight: 650; }
 .add-ex-btn { min-height: 42px; border-radius: 12px; border: 1px dashed rgba(18,184,255,.4); background: rgba(18,184,255,.05); color: var(--accent-strong); font-weight: 750; font-size: .88rem; transition: all .18s ease; margin: 0 1.35rem 1.25rem; width: calc(100% - 2.7rem); }
 .add-ex-btn:hover { background: rgba(18,184,255,.14); border-color: var(--accent); color: #fff; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(18,184,255,.2); }
 
