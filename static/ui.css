@@ -205,7 +205,8 @@ textarea { min-height: 110px; }
 
 /* Single Card Selection (No Radio Checkbox, No Double Card Borders) */
 .choice-card input[type="radio"] { display: none !important; }
-.choice-card { display: block !important; border: 0 !important; background: transparent !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; }
+.choice-card { display: block; border: 0 !important; background: transparent !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; }
+.choice-card.is-filtered-out { display: none !important; }
 .choice-card > span { display: block; border-radius: 18px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); padding: 1.25rem; transition: all .18s ease; }
 .choice-card:hover > span { border-color: rgba(18,184,255,.4); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .choice-card input:checked + span { border-color: var(--accent) !important; background: linear-gradient(145deg, rgba(26,35,44,.98), rgba(16,22,28,.98)) !important; box-shadow: 0 0 0 1px var(--accent), 0 14px 32px rgba(18,184,255,.2) !important; }
