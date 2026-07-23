@@ -272,6 +272,15 @@ textarea { min-height: 110px; }
 /* Workout Templates Actions & Target Controls Polish */
 .plan-templates-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .plan-templates-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.warmup-target { text-align: center; justify-self: center; width: 100%; }
+.warmup-target > span { display: block; text-align: center; width: 100%; margin-bottom: .25rem; }
+.warmup-target .target-control { display: flex !important; justify-content: center !important; align-items: center !important; gap: .45rem !important; width: 100% !important; }
+.warmup-target .target-control select { width: 84px !important; min-width: 84px !important; flex: 0 0 84px !important; min-height: 38px !important; height: 38px !important; font-size: .84rem !important; }
+.warmup-target .target-control input { width: 68px !important; flex: 0 0 68px !important; min-height: 38px !important; height: 38px !important; font-size: .84rem !important; }
+
+.warmup-weight { text-align: center; justify-self: center; width: 100%; }
+.warmup-weight > span { display: block; text-align: center; width: 100%; margin-bottom: .25rem; }
+.warmup-weight input { margin: 0 auto; width: 84px !important; min-height: 38px !important; height: 38px !important; font-size: .84rem !important; }
 .target-control { display: grid; grid-template-columns: 84px minmax(58px, 1fr) auto; gap: .45rem; align-items: center; }
 .target-select { position: relative; width: 84px; min-width: 84px; }
 .target-control select { width: 100%; border-radius: 10px !important; background: rgba(12,16,21,.95); border: 1px solid rgba(255,255,255,.12) !important; padding: .45rem 1.6rem .45rem .65rem; font-weight: 700; text-align: left; appearance: none; }
