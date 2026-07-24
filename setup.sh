@@ -51,6 +51,11 @@ sudo sh -c "iptables-save > /etc/iptables/rules.v4" || true
 # Update the service file to use port 8000
 sudo sed -i 's/--port 80/--port 8000/g' /etc/systemd/system/garmincoach.service
 
+echo "Registering Telegram webhook..."
+if [ -f .env ]; then
+    .venv/bin/python scripts/secure_telegram_webhook.py --env .env --domain garmincoach.duckdns.org || true
+fi
+
 echo "Starting service..."
 sudo systemctl daemon-reload
 sudo systemctl enable garmincoach.service
