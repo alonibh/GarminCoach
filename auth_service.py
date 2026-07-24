@@ -216,6 +216,8 @@ def bind_google_identity(
 ) -> User:
     current = now or utcnow()
     subject, email = validate_google_claims(claims, expected_nonce=attempt.nonce)
+
+    # 1. Subject match (already linked Google account)
     existing = session.query(User).filter(User.google_sub == subject).first()
     if existing:
         if existing.status == "deleting":
@@ -224,12 +226,29 @@ def bind_google_identity(
         existing.updated_at = current
         return existing
 
-    # The first account is bootstrapped as owner only when its verified email
-    # exactly matches the server configuration.
-    if session.query(User).count() == 0:
-        if email != normalize_email(owner_email):
-            raise AuthenticationError("This Google account is not invited")
+    normalized_owner = normalize_email(owner_email) if owner_email else ""
+
+    # 2. Check if signing-in email matches configured OWNER_GOOGLE_EMAIL or owner account
+    is_owner_email = bool(normalized_owner and email == normalized_owner)
+    owner_user = (
+        session.query(User).filter(User.role == "owner").first()
+        if is_owner_email or session.query(User).count() <= 1
+        else None
+    )
+
+    if is_owner_email or (owner_user and not owner_user.google_sub):
+        target = owner_user or session.query(User).filter(User.email == email).first()
+        if target:
+            if target.status == "deleting":
+                raise AuthenticationError("Account is unavailable")
+            target.email = email
+            target.google_sub = subject
+            target.role = "owner"
+            target.updated_at = current
+            return target
+
         user = User(
+            id="00000000-0000-0000-0000-000000000001",
             email=email,
             google_sub=subject,
             role="owner",
@@ -242,6 +261,34 @@ def bind_google_identity(
         session.flush()
         return user
 
+    # 3. Check existing user by email
+    existing_by_email = session.query(User).filter(User.email == email).first()
+    if existing_by_email:
+        if existing_by_email.status == "deleting":
+            raise AuthenticationError("Account is unavailable")
+        existing_by_email.google_sub = subject
+        existing_by_email.updated_at = current
+        return existing_by_email
+
+    # 4. Bootstrap as owner if DB is empty
+    if session.query(User).count() == 0:
+        if normalized_owner and email != normalized_owner:
+            raise AuthenticationError("This Google account is not invited")
+        user = User(
+            id="00000000-0000-0000-0000-000000000001",
+            email=email,
+            google_sub=subject,
+            role="owner",
+            status="onboarding",
+            onboarding_step="consent",
+            created_at=current,
+            updated_at=current,
+        )
+        session.add(user)
+        session.flush()
+        return user
+
+    # 5. Require invitation for new non-owner accounts
     if attempt.invitation_id is None:
         raise AuthenticationError("This Google account is not invited")
     invitation = session.get(Invitation, attempt.invitation_id)
@@ -249,8 +296,6 @@ def bind_google_identity(
         raise AuthenticationError("Invitation is invalid or expired")
     if email != invitation.email:
         raise AuthenticationError("Google account does not match the invitation")
-    if session.query(User).filter(User.email == email).first():
-        raise AuthenticationError("Account already exists")
     user = User(
         email=email,
         google_sub=subject,

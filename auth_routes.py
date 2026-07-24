@@ -141,7 +141,8 @@ def google_callback(request: Request, state: str = "", code: str = "", error: st
             "Account not authorized",
             "This Google account is not authorized for GarminCoach.",
         )
-    response = RedirectResponse("/onboarding", status_code=303)
+    dest = "/" if user.onboarding_step == "complete" or user.status == "active" else "/onboarding"
+    response = RedirectResponse(dest, status_code=303)
     response.set_cookie(
         SESSION_COOKIE,
         raw_session,
