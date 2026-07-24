@@ -1496,7 +1496,10 @@ def app_logout():
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     if config.MULTI_USER_ENABLED:
-        return RedirectResponse("/auth/login", status_code=303)
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return RedirectResponse("/auth/login", status_code=303)
+        return RedirectResponse("/onboarding", status_code=303)
     return templates.TemplateResponse(
         request, "login.html", {"email": config.GARMIN_EMAIL, "error": None}
     )
@@ -1583,7 +1586,13 @@ def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
     if config.MULTI_USER_ENABLED:
         user = getattr(request.state, "user", None)
-        if user and user.onboarding_step != "complete":
+        from sync.garmin_registry import get_garmin_registry
+        user_client = get_garmin_registry().get(user.id) if user else None
+        is_garmin_auth = bool(user_client and user_client.is_authenticated())
+        if user and (user.onboarding_step != "complete" or not is_garmin_auth):
+            effective_step = user.onboarding_step
+            if user.onboarding_step == "complete" and not is_garmin_auth:
+                effective_step = "garmin"
             error_messages = {
                 "consent_required": "You must accept the privacy notice to continue.",
                 "invalid_timezone": "Choose a valid timezone from the list.",
@@ -1593,11 +1602,15 @@ def get_onboarding(request: Request):
                 "garmin_session_expired": "The Garmin verification session expired. Sign in again.",
                 "garmin_mfa_failed": "Garmin could not verify that one-time code.",
             }
+            user_view = user
+            if effective_step != user.onboarding_step:
+                from types import SimpleNamespace
+                user_view = SimpleNamespace(**{**user.__dict__, "onboarding_step": effective_step})
             return templates.TemplateResponse(
                 request,
                 "multi_onboarding.html",
                 {
-                    "user": user,
+                    "user": user_view,
                     "timezones": pytz.common_timezones,
                     "error": error_messages.get(request.query_params.get("error", "")),
                     "consent_version": CONSENT_VERSION,
