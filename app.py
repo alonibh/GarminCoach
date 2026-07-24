@@ -1478,7 +1478,7 @@ def app_login_submit(
 @app.get("/app-logout")
 def app_logout():
     if config.MULTI_USER_ENABLED:
-        raise HTTPException(status_code=404)
+        return RedirectResponse("/auth/login", status_code=303)
     response = RedirectResponse("/app-login", status_code=303)
     response.delete_cookie(_COOKIE_NAME, path="/")
     return response
@@ -1487,7 +1487,7 @@ def app_logout():
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     if config.MULTI_USER_ENABLED:
-        raise HTTPException(status_code=404)
+        return RedirectResponse("/auth/login", status_code=303)
     return templates.TemplateResponse(
         request, "login.html", {"email": config.GARMIN_EMAIL, "error": None}
     )
