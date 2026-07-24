@@ -1624,6 +1624,9 @@ def get_onboarding(request: Request):
             {"idx": 5, "name": "Saturday"},
         ]
         
+        from sync.garmin_registry import get_garmin_registry
+        user_client = get_garmin_registry().get(user.id) if (config.MULTI_USER_ENABLED and user) else None
+
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1639,7 +1642,17 @@ def get_onboarding(request: Request):
                     PLAN_CHOICES,
                     key=lambda choice: analysis["plan_matches"][choice["key"]]["rank"],
                 ),
-                "garmin_connected": client.is_authenticated(),
+                "garmin_connected": (
+                    bool(
+                        user
+                        and (
+                            getattr(user, "garmin_connected", False)
+                            or (user_client and user_client.is_authenticated())
+                        )
+                    )
+                    if (config.MULTI_USER_ENABLED and user)
+                    else client.is_authenticated()
+                ),
                 "sync_running": sync_runner.is_running(),
                 "is_editing": bool(profile.onboarding_complete),
             },
