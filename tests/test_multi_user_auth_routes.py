@@ -31,6 +31,7 @@ def _test_app(monkeypatch, tmp_path: Path):
             session.close()
 
     monkeypatch.setattr(auth_routes, "get_control_session", sessions)
+    monkeypatch.setattr("app.get_control_session", sessions)
     monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
     monkeypatch.setattr(config, "GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setattr(config, "GOOGLE_CLIENT_SECRET", "client-secret")
@@ -139,8 +140,7 @@ def test_cookie_auth_middleware_allows_navigation_during_onboarding(monkeypatch,
             role="owner",
         )
         session.add(user)
-        session.flush()
-        _sess, raw_token = create_web_session(session, user_id=user.id)
+        raw_token = create_web_session(session, user)
 
     test_client = TestClient(app)
     test_client.cookies.set("__Host-gc_session", raw_token)
