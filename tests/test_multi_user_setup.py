@@ -76,3 +76,31 @@ def test_invalid_timezone_does_not_modify_user(monkeypatch):
     )
     assert response.status_code == 303
     assert response.headers["location"] == "/onboarding?error=invalid_timezone"
+
+
+def test_active_user_incomplete_onboarding_advances_step(monkeypatch, tmp_path):
+    engine = create_control_engine(tmp_path / "control.db")
+    ControlBase.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    user_id = str(uuid4())
+    with Session.begin() as session:
+        session.add(User(id=user_id, email="owner@example.com", status="active", onboarding_step="consent"))
+
+    @contextmanager
+    def sessions():
+        with Session.begin() as session:
+            yield session
+
+    request = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id=user_id)))
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    monkeypatch.setattr(setup_routes, "get_control_session", sessions)
+
+    response = setup_routes.accept_privacy_notice(request, accepted="yes")
+    assert response.status_code == 303
+    assert response.headers["location"] == "/onboarding"
+    with Session() as session:
+        user = session.get(User, user_id)
+        assert user.onboarding_step == "timezone"
+        assert user.consented_at is not None
+    engine.dispose()
+

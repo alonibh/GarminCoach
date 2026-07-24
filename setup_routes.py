@@ -55,24 +55,22 @@ def accept_privacy_notice(request: Request, accepted: str = Form("")) -> Respons
     dest = "/onboarding"
     with get_control_session() as session:
         user = _user_for_update(session, request)
-        if user.status == "active":
+        now = utcnow()
+        user.consent_version = CONSENT_VERSION
+        user.consented_at = now
+        user.updated_at = now
+        # If user already has timezone + Garmin connected, fully activate
+        if user.timezone and user.garmin_connected:
+            user.onboarding_step = "complete"
+            user.status = "active"
             dest = "/"
+        elif user.timezone:
+            # Has timezone but no Garmin — advance to garmin step
+            user.onboarding_step = "garmin"
         else:
-            now = utcnow()
-            user.consent_version = CONSENT_VERSION
-            user.consented_at = now
-            user.updated_at = now
-            # If user already has timezone + Garmin connected, activate directly
-            if user.timezone and user.garmin_connected:
-                user.onboarding_step = "complete"
-                user.status = "active"
-                dest = "/"
-            elif user.timezone:
-                # Has timezone but no Garmin — skip to garmin step
-                user.onboarding_step = "garmin"
-            else:
-                user.onboarding_step = "timezone"
-    # Session is committed here (after the with block exits normally)
+            # Still needs timezone
+            user.onboarding_step = "timezone"
+    # Session commits here (after the with block exits normally)
     response = RedirectResponse(dest, status_code=303)
     response.headers["Cache-Control"] = "no-store"
     return response
