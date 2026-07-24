@@ -7,6 +7,7 @@ import json
 import re
 from uuid import uuid4
 
+import config
 from sqlalchemy.orm import Session
 
 from coach.decision_engine import DecisionResult, evaluate_morning_decision
@@ -571,8 +572,8 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
         is_auth = False
         if config.MULTI_USER_ENABLED:
             from sync.garmin_registry import get_garmin_registry
-            from tenant_context import get_current_tenant
-            tenant = get_current_tenant()
+            from tenant_context import current_tenant
+            tenant = current_tenant()
             if tenant:
                 user_client = get_garmin_registry().get(tenant.user_id)
                 is_auth = user_client.is_authenticated()

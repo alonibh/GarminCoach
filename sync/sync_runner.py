@@ -24,9 +24,12 @@ _status_guard = threading.RLock()
 def _status_dict() -> dict:
     if not config.MULTI_USER_ENABLED:
         return _legacy_status
-    from tenant_context import require_tenant
+    from tenant_context import current_tenant
 
-    user_id = require_tenant().user_id
+    tenant = current_tenant()
+    if tenant is None:
+        return _legacy_status
+    user_id = tenant.user_id
     with _status_guard:
         return _user_status.setdefault(
             user_id, {"running": False, "summary": None, "started_at": None}
@@ -128,9 +131,11 @@ def _checkpoint_current_tenant() -> None:
         return
     try:
         from sync.garmin_registry import get_garmin_registry
-        from tenant_context import require_tenant
+        from tenant_context import current_tenant
 
-        get_garmin_registry().checkpoint(require_tenant().user_id)
+        tenant = current_tenant()
+        if tenant:
+            get_garmin_registry().checkpoint(tenant.user_id)
     except Exception:
         log.exception("Failed to checkpoint Garmin tokens")
 
