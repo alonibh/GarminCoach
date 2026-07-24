@@ -953,12 +953,7 @@ def dashboard(request: Request):
         user = getattr(request.state, "user", None)
         from sync.garmin_registry import get_garmin_registry
         user_client = get_garmin_registry().get(user.id) if user else None
-        needs_login = not (
-            user
-            and getattr(user, "garmin_connected", False)
-            and user_client
-            and user_client.is_authenticated()
-        )
+        needs_login = not (user_client and user_client.is_authenticated())
     else:
         needs_login = not client.is_authenticated()
         if needs_login:
@@ -1662,12 +1657,7 @@ def get_onboarding(request: Request):
                     key=lambda choice: analysis["plan_matches"][choice["key"]]["rank"],
                 ),
                 "garmin_connected": (
-                    bool(
-                        user
-                        and getattr(user, "garmin_connected", False)
-                        and user_client
-                        and user_client.is_authenticated()
-                    )
+                    bool(user_client and user_client.is_authenticated())
                     if (config.MULTI_USER_ENABLED and user)
                     else client.is_authenticated()
                 ),
