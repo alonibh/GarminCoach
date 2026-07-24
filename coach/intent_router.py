@@ -555,10 +555,24 @@ def _stress_category(value: float) -> str:
 
 
 def _metric_response(session: Session, topic: str | None, today: date) -> str:
-    health = session.get(DailyHealth, today)
-    sleep = session.get(Sleep, today)
-    metrics = session.get(DailyMetrics, today)
-    unavailable = "unavailable for today"
+    target_date = today
+    health = session.get(DailyHealth, target_date)
+    sleep = session.get(Sleep, target_date)
+    metrics = session.get(DailyMetrics, target_date)
+    is_fallback = False
+
+    if not (health or sleep or metrics):
+        latest_dh = session.query(DailyHealth.day).order_by(DailyHealth.day.desc()).first()
+        latest_sl = session.query(Sleep.day).order_by(Sleep.day.desc()).first()
+        dates = [d[0] for d in (latest_dh, latest_sl) if d]
+        if dates:
+            target_date = max(dates)
+            health = session.get(DailyHealth, target_date)
+            sleep = session.get(Sleep, target_date)
+            metrics = session.get(DailyMetrics, target_date)
+            is_fallback = True
+
+    unavailable = "unavailable for today" if not is_fallback else f"unavailable for {target_date:%B %d}"
     if topic == "readiness":
         value = health.training_readiness if health else None
         answer = f"Training readiness: {int(value)}." if value is not None else f"Training readiness is {unavailable}."
@@ -622,7 +636,9 @@ def _metric_response(session: Session, topic: str | None, today: date) -> str:
             goal = f" / {health.step_goal:,}" if health.step_goal else ""
             progress = f" ({round(health.steps / health.step_goal * 100):.0f}% of goal)" if health.step_goal else ""
             parts.append(f"Steps: {health.steps:,}{goal}{progress}")
-        answer = "Today's snapshot\n" + "\n".join(f"• {part}" for part in parts) if parts else "Today's supported metrics are unavailable."
+
+        header = f"Snapshot for {target_date:%B %d} (today's data not synced yet)" if is_fallback else "Today's snapshot"
+        answer = header + "\n" + "\n".join(f"• {part}" for part in parts) if parts else f"Metrics for {target_date:%B %d} are unavailable."
     return f"{answer}\n{_last_sync_text(session)}"
 
 
