@@ -571,7 +571,7 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
     assert "This remains editable" in active_page.text
     assert "<h1>A/B Full Body" in active_page.text
     assert "View original plan" in active_page.text
-    assert "Adjust plan" in active_page.text
+    assert "Change plan" in active_page.text
     assert "Nothing scheduled yet" in active_page.text
     assert "Reset to template" in active_page.text
     assert "Save all days" in active_page.text
@@ -747,7 +747,7 @@ def test_program_tab_shows_active_and_adjust_plan_shows_draft(client):
     assert plan_tab.status_code == 200
     assert "Active Plan" in plan_tab.text
     assert "Review your program" not in plan_tab.text
-    assert 'href="/program?view=draft"' in plan_tab.text
+    assert 'href="/onboarding"' in plan_tab.text
 
     # Adjust plan (/program?view=draft) should show draft Review page
     adjust_plan = c.get("/program?view=draft")
