@@ -7,9 +7,11 @@
   <div class="sync-cluster">
     <div class="sync-freshness"><span class="sync-dot" aria-hidden="true"></span><span id="sync-status">{% if last_sync_at %}Data fetched <span class="time-ago" data-iso="{{ last_sync_at }}"></span>{% else %}Not synced yet{% endif %}{% if device_last_upload %} · Watch <span class="time-ago" data-iso="{{ device_last_upload }}"></span>{% endif %}</span></div>
     <div id="dashboard-actions" class="dashboard-actions">
-      {% if needs_login %}<a href="/login" class="btn small">Connect Garmin</a>{% else %}
       <form id="sync-reset-form" method="post" action="/sync/reset"{% if not sync_running %} hidden{% endif %}><button class="btn-secondary small" title="Force reset if sync is stuck">Reset</button></form>
       <button id="sync-running-indicator" class="btn small" disabled{% if not sync_running %} hidden{% endif %}>Syncing…</button>
+      {% if needs_login %}
+      <a href="/login" class="btn small"{% if sync_running %} hidden{% endif %}>Connect Garmin</a>
+      {% else %}
       <form id="sync-form" method="post" action="/sync"{% if sync_running %} hidden{% endif %}><button class="btn small">{{ icon('sync') }} Sync now</button></form>
       {% endif %}
     </div>

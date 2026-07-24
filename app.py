@@ -953,7 +953,12 @@ def dashboard(request: Request):
         user = getattr(request.state, "user", None)
         from sync.garmin_registry import get_garmin_registry
         user_client = get_garmin_registry().get(user.id) if user else None
-        needs_login = not (user_client and user_client.is_authenticated())
+        needs_login = not (
+            user
+            and getattr(user, "garmin_connected", False)
+            and user_client
+            and user_client.is_authenticated()
+        )
     else:
         needs_login = not client.is_authenticated()
         if needs_login:
@@ -1582,7 +1587,11 @@ def get_onboarding(request: Request):
 
     if config.MULTI_USER_ENABLED:
         user = getattr(request.state, "user", None)
-        if user and user.onboarding_step != "complete":
+        from sync.garmin_registry import get_garmin_registry
+        user_client = get_garmin_registry().get(user.id) if user else None
+        is_garmin_auth = bool(user_client and user_client.is_authenticated()) if user_client else False
+
+        if user and (user.onboarding_step != "complete" or not is_garmin_auth):
             error_messages = {
                 "consent_required": "You must accept the privacy notice to continue.",
                 "invalid_timezone": "Choose a valid timezone from the list.",
@@ -1592,11 +1601,21 @@ def get_onboarding(request: Request):
                 "garmin_session_expired": "The Garmin verification session expired. Sign in again.",
                 "garmin_mfa_failed": "Garmin could not verify that one-time code.",
             }
+            display_user = user
+            if user.onboarding_step == "complete" and not is_garmin_auth:
+                class _UserGarminStepWrapper:
+                    def __init__(self, target):
+                        self._target = target
+                        self.onboarding_step = "garmin"
+                    def __getattr__(self, attr):
+                        return getattr(self._target, attr)
+                display_user = _UserGarminStepWrapper(user)
+
             return templates.TemplateResponse(
                 request,
                 "multi_onboarding.html",
                 {
-                    "user": user,
+                    "user": display_user,
                     "timezones": pytz.common_timezones,
                     "error": error_messages.get(request.query_params.get("error", "")),
                     "consent_version": CONSENT_VERSION,
@@ -1645,10 +1664,9 @@ def get_onboarding(request: Request):
                 "garmin_connected": (
                     bool(
                         user
-                        and (
-                            getattr(user, "garmin_connected", False)
-                            or (user_client and user_client.is_authenticated())
-                        )
+                        and getattr(user, "garmin_connected", False)
+                        and user_client
+                        and user_client.is_authenticated()
                     )
                     if (config.MULTI_USER_ENABLED and user)
                     else client.is_authenticated()

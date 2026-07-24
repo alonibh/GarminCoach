@@ -568,6 +568,23 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
         return "applied", "Safety report closed. Workout planning can resume."
 
     if row.action_type == "start_sync":
+        is_auth = False
+        if config.MULTI_USER_ENABLED:
+            from sync.garmin_registry import get_garmin_registry
+            from tenant_context import get_current_tenant
+            tenant = get_current_tenant()
+            if tenant:
+                user_client = get_garmin_registry().get(tenant.user_id)
+                is_auth = user_client.is_authenticated()
+        else:
+            from sync.garmin_client import client
+            is_auth = client.is_authenticated()
+
+        if not is_auth:
+            row.status = "failed"
+            row.failure_reason = "garmin_not_connected"
+            return "failed", "Garmin is not connected. Please connect your Garmin account first."
+
         from sync import sync_runner
         started = sync_runner.try_start_sync(full=False, force=True)
         row.status = "applied" if started else "failed"
