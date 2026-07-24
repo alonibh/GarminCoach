@@ -101,14 +101,26 @@ def test_activity_sync_captures_provenance_once(session, monkeypatch):
             "metadataDTO": {"workoutId": 4321},
         }
 
-    monkeypatch.setattr(sync_service.client, "_api", SimpleNamespace(get_activity=full_activity))
-    monkeypatch.setattr(sync_service.client, "hr_zones", lambda _activity_id: [])
+    class FakeGarminClient:
+        def __init__(self, api):
+            self._api = api
+        def login(self):
+            pass
+        def hr_zones(self, activity_id):
+            return []
+        @property
+        def api(self):
+            return self._api
+    fake = FakeGarminClient(SimpleNamespace(get_activity=full_activity))
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: fake)
     raw = {
         "activityId": 90,
         "activityType": {"typeKey": "strength_training"},
         "startTimeLocal": "2026-07-02 09:00:00",
     }
-    sync_service._upsert_activity(session, raw)
+    import tenant_context
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        sync_service._upsert_activity(session, raw)
     session.flush()
     row = session.get(Activity, 90)
     assert row.source_workout_id == 4321

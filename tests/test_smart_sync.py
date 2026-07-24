@@ -4,7 +4,15 @@ from datetime import date, datetime, timedelta, timezone
 from garminconnect import GarminConnectTooManyRequestsError
 
 from db import Sleep, SyncState, Workout
+import pytest
+import tenant_context
 import sync.sync_service as svc
+
+
+@pytest.fixture(autouse=True)
+def bind_test_tenant():
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        yield
 
 
 @contextmanager

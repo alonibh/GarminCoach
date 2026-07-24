@@ -30,9 +30,28 @@ class _FakeApi:
         return {"workoutSegments": []}
 
 
+import tenant_context
+
+
+@pytest.fixture(autouse=True)
+def bind_test_tenant():
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        yield
+
+
 def _patch_api(monkeypatch, api):
-    # `client.api` is a property that raises until login(); set the backing
-    # attribute so the property returns our fake instead.
+    class FakeGarminClient:
+        def __init__(self, api):
+            self._api = api
+        def login(self):
+            pass
+        def is_authenticated(self):
+            return True
+        @property
+        def api(self):
+            return self._api
+    fake = FakeGarminClient(api)
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: fake)
     monkeypatch.setattr(svc.client, "_api", api, raising=False)
 
 

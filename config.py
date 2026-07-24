@@ -54,16 +54,14 @@ MORNING_WATCH_END_HOUR = int(os.getenv("MORNING_WATCH_END_HOUR", "12"))
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 DB_PATH = _expand(os.getenv("DB_PATH", "garmincoach.db"))
-MULTI_USER_ENABLED = os.getenv("MULTI_USER_ENABLED", "false").strip().lower() in {
-    "1", "true", "yes", "on",
-}
+MULTI_USER_ENABLED = True
 MULTI_USER_DATA_ROOT = _expand(os.getenv("MULTI_USER_DATA_ROOT", "data/users"))
 CONTROL_DB_PATH = _expand(os.getenv("CONTROL_DB_PATH", "data/control.db"))
-DATA_ENCRYPTION_KEY = os.getenv("DATA_ENCRYPTION_KEY", "").strip()
-OWNER_GOOGLE_EMAIL = os.getenv("OWNER_GOOGLE_EMAIL", "").strip()
+DATA_ENCRYPTION_KEY = os.getenv("DATA_ENCRYPTION_KEY", "64lyr1C49JxpRbwiNetkEd8tFVi2K7Sx6zMFFu3O-po=").strip()
+OWNER_GOOGLE_EMAIL = os.getenv("OWNER_GOOGLE_EMAIL", "alonibh@gmail.com").strip()
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "https://garmincoach.duckdns.org/auth/google/callback").strip()
 APP_USERNAME = os.getenv("APP_USERNAME", "")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 _DEFAULT_SESSION_SECRET = "change-me-to-a-random-string"

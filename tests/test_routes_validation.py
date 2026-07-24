@@ -17,11 +17,15 @@ def client(monkeypatch):
     # Stub the startup side effects (scheduler thread + Garmin network login).
     import sync.scheduler as scheduler
     monkeypatch.setattr(scheduler, "start_scheduler", lambda: None)
-    import sync.garmin_client as gc
-    monkeypatch.setattr(gc.client, "login", lambda *a, **k: False, raising=False)
-    monkeypatch.setattr(gc.client, "is_authenticated", lambda: True, raising=False)
-
-    # Point the shared DB at an isolated in-memory database.
+    class FakeGarminClient:
+        def login(self, *a, **k):
+            return False
+        def is_authenticated(self):
+            return True
+    fake_client = FakeGarminClient()
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: fake_client)
+    from control_db import User
+    monkeypatch.setattr("app.resolve_web_session", lambda s, token: User(id="00000000-0000-0000-0000-000000000001", email="test@example.com", status="active", role="owner", onboarding_step="complete"))
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
@@ -38,11 +42,15 @@ def client(monkeypatch):
         db_module, "SessionLocal",
         sessionmaker(bind=engine, expire_on_commit=False, future=True),
     )
+    import tenant_store
+    monkeypatch.setattr(tenant_store, "engine_for_user", lambda uid, root=None: engine)
     db_module.Base.metadata.create_all(engine)
 
     from fastapi.testclient import TestClient
     import app as app_module
-    return TestClient(app_module.app), db_module
+    import tenant_context
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        yield TestClient(app_module.app), db_module
 
 
 def test_calendar_invalid_month_returns_400(client):
@@ -65,14 +73,15 @@ def test_browser_chat_route_is_not_exposed(client):
 
 def test_set_non_numeric_reps_returns_400(client):
     c, db_module = client
-    # Seed an activity + set to edit.
     from db import Activity, ExerciseSet
     from datetime import datetime
     with db_module.get_session() as s:
-        s.add(Activity(id=7001, activity_type="strength_training", start_time=datetime.now()))
-        s.flush()
-        s.add(ExerciseSet(id=42, activity_id=7001, set_index=0,
-                          exercise_category="BENCH_PRESS", reps=10, weight_kg=20.0))
+        if not s.get(Activity, 7001):
+            s.add(Activity(id=7001, activity_type="strength_training", start_time=datetime.now()))
+            s.flush()
+        if not s.get(ExerciseSet, 42):
+            s.add(ExerciseSet(id=42, activity_id=7001, set_index=0,
+                              exercise_category="BENCH_PRESS", reps=10, weight_kg=20.0))
 
     resp = c.post("/set/42", data={"reps": "abc", "weight_kg": ""}, follow_redirects=False)
     assert resp.status_code == 400
@@ -83,10 +92,12 @@ def test_set_valid_update_redirects(client):
     from db import Activity, ExerciseSet
     from datetime import datetime
     with db_module.get_session() as s:
-        s.add(Activity(id=7002, activity_type="strength_training", start_time=datetime.now()))
-        s.flush()
-        s.add(ExerciseSet(id=43, activity_id=7002, set_index=0,
-                          exercise_category="SQUAT", reps=10, weight_kg=20.0))
+        if not s.get(Activity, 7002):
+            s.add(Activity(id=7002, activity_type="strength_training", start_time=datetime.now()))
+            s.flush()
+        if not s.get(ExerciseSet, 43):
+            s.add(ExerciseSet(id=43, activity_id=7002, set_index=0,
+                              exercise_category="SQUAT", reps=10, weight_kg=20.0))
 
     resp = c.post("/set/43", data={"reps": "12", "weight_kg": "25.5"}, follow_redirects=False)
     assert resp.status_code == 303
@@ -106,7 +117,6 @@ def test_manual_sync_forces_recent_fetch(client, monkeypatch):
     import app as app_module
 
     captured = {}
-    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
     monkeypatch.setattr(
         app_module.sync_runner,
         "try_start_sync",
@@ -124,7 +134,6 @@ def test_manual_sync_json_response_stays_on_dashboard(client, monkeypatch):
     import app as app_module
 
     captured = {}
-    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
     monkeypatch.setattr(
         app_module.sync_runner,
         "try_start_sync",
@@ -166,7 +175,7 @@ def test_dashboard_sync_updates_charts_without_page_reload(client):
     from db import AthleteProfile
 
     with db_module.get_session() as s:
-        s.add(AthleteProfile(id=1, onboarding_complete=True))
+        s.merge(AthleteProfile(id=1, onboarding_complete=True))
 
     response = c.get("/")
 
@@ -185,10 +194,14 @@ def test_onboarding_renders_history_defaults(client):
     from db import Activity, Workout
 
     with db_module.get_session() as s:
-        s.add(Activity(id=8101, activity_type="strength_training", start_time=datetime.now()))
-        s.add(Activity(id=8102, activity_type="strength_training", start_time=datetime.now()))
-        s.add(Activity(id=8103, activity_type="running", start_time=datetime.now()))
-        s.add(Workout(workout_id=8104, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
+        if not s.query(Activity).filter_by(id=8101).first():
+            s.add(Activity(id=8101, activity_type="strength_training", start_time=datetime.now()))
+        if not s.query(Activity).filter_by(id=8102).first():
+            s.add(Activity(id=8102, activity_type="strength_training", start_time=datetime.now()))
+        if not s.query(Activity).filter_by(id=8103).first():
+            s.add(Activity(id=8103, activity_type="running", start_time=datetime.now()))
+        if not s.query(Workout).filter_by(workout_id=8104).first():
+            s.add(Workout(workout_id=8104, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
 
     resp = c.get("/onboarding")
 
@@ -244,7 +257,6 @@ def test_garmin_login_starts_sync_and_redirects_to_onboarding(client, monkeypatc
     import app as app_module
 
     started = {}
-    monkeypatch.setattr(app_module.client, "login", lambda **kwargs: None)
     monkeypatch.setattr(
         app_module.sync_runner,
         "try_start_sync",
@@ -262,7 +274,18 @@ def test_dashboard_routes_new_user_through_connection_and_onboarding(client, mon
     c, _ = client
     import app as app_module
 
-    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: False)
+    class DisconnectedClient:
+        def is_authenticated(self):
+            return False
+        def login(self, *a, **k):
+            return False
+    class ConnectedClient:
+        def is_authenticated(self):
+            return True
+        def login(self, *a, **k):
+            return True
+
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: DisconnectedClient())
     disconnected = c.get("/", follow_redirects=False)
     assert disconnected.status_code == 303
     assert disconnected.headers["location"] == "/login"
@@ -270,7 +293,7 @@ def test_dashboard_routes_new_user_through_connection_and_onboarding(client, mon
     onboarding = c.get("/onboarding")
     assert "Connect Garmin" in onboarding.text
 
-    monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: ConnectedClient())
     connected = c.get("/", follow_redirects=False)
     assert connected.status_code == 200
 
@@ -281,7 +304,8 @@ def test_onboarding_creates_reviewable_program_proposal(client):
     from db import AthleteProfile, Goal, ProgramSession, TrainingProgram, Workout
 
     with db_module.get_session() as s:
-        s.add(Workout(workout_id=9001, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
+        if not s.query(Workout).filter_by(workout_id=9001).first():
+            s.add(Workout(workout_id=9001, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
 
     resp = c.post(
         "/onboarding",
@@ -312,7 +336,7 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         assert program.active is False
         assert "does not assign dates or upload" in program.rationale
 
-        sessions = s.query(ProgramSession).order_by(ProgramSession.sequence_order.asc()).all()
+        sessions = s.query(ProgramSession).filter(ProgramSession.program_id == program.id).order_by(ProgramSession.sequence_order.asc()).all()
         assert [ps.name for ps in sessions] == ["Push A", "Pull A", "Legs A", "Push B", "Pull B", "Legs B"]
         assert all(ps.session_role == "coach_strength" for ps in sessions)
         assert all(ps.base_workout_id is None for ps in sessions)
@@ -346,13 +370,20 @@ def test_existing_total_package_legacy_defaults_migrate_once(client):
         s.flush()
         exercise_id = exercise.id
 
+    from sqlalchemy import text
+    with db_module.get_session() as s:
+        s.execute(text("CREATE TABLE IF NOT EXISTS app_migrations (migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"))
+        s.execute(text("DELETE FROM app_migrations"))
+
     db_module._migrate_add_columns()
     with db_module.get_session() as s:
+        s.expire_all()
         assert s.get(SessionExercise, exercise_id).rest_seconds == 180
         s.get(SessionExercise, exercise_id).rest_seconds = 91
 
     db_module._migrate_add_columns()
     with db_module.get_session() as s:
+        s.expire_all()
         assert s.get(SessionExercise, exercise_id).rest_seconds == 91
 
 
@@ -410,6 +441,11 @@ def test_existing_source_template_rest_defaults_are_migrated_without_touching_cu
         s.add(custom_exercise)
         s.flush()
         custom_exercise_id = custom_exercise.id
+
+    from sqlalchemy import text
+    with db_module.get_session() as s:
+        s.execute(text("CREATE TABLE IF NOT EXISTS app_migrations (migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"))
+        s.execute(text("DELETE FROM app_migrations"))
 
     db_module._migrate_add_columns()
     with db_module.get_session() as s:

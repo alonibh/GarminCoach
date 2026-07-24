@@ -5,7 +5,32 @@ import json
 from contextlib import nullcontext
 from types import SimpleNamespace
 
+import pytest
+from control_db import init_control_db
+
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def setup_control_db():
+    init_control_db()
+    from telegram_link import _chat_hmac
+    from control_db import get_control_session, IntegrationRoute, User, utcnow
+    from secret_vault import UserSecretVault
+    with get_control_session() as cs:
+        user = cs.get(User, "00000000-0000-0000-0000-000000000001")
+        if not user:
+            user = User(id="00000000-0000-0000-0000-000000000001", email="test@example.com", status="active", role="owner")
+            cs.add(user)
+        user.telegram_linked = True
+        cs.flush()
+        route = cs.get(IntegrationRoute, "00000000-0000-0000-0000-000000000001")
+        if not route:
+            route = IntegrationRoute(user_id="00000000-0000-0000-0000-000000000001")
+            cs.add(route)
+        route.telegram_chat_hmac = _chat_hmac("123")
+        route.updated_at = utcnow()
+    UserSecretVault().update("00000000-0000-0000-0000-000000000001", telegram_chat_id="123")
+    yield
 
 def test_telegram_webhook_unauthorized():
     # Missing secret token

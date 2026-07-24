@@ -110,12 +110,19 @@ def test_program_telegram_approval_uploads_verifies_schedules_and_is_idempotent(
             pass
 
     api = FakeApi()
-    monkeypatch.setattr(compiler.client, "login", lambda: None)
-    monkeypatch.setattr(type(compiler.client), "api", property(lambda self: api))
-    action = {"action": "schedule_session", "program_session_id": routine.id, "title": routine.name, "activity_type": "strength_training", "target_date": "2026-07-20", "suggested_time": "18:00", "duration_min": 60, "intensity": "normal"}
-    assert compiler.compile_and_schedule(session, action) is True
-    assert compiler.compile_and_schedule(session, action) is True
-    assert len(api.uploads) == 1
-    assert api.uploads[0]["workoutName"] == "Workout A @ 18:00"
-    assert api.scheduled == [(77, "2026-07-20")]
+    class FakeGarminClient:
+        def __init__(self):
+            self.api = api
+        def login(self):
+            pass
+    fake_garmin_client = FakeGarminClient()
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: fake_garmin_client)
+    import tenant_context
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        action = {"action": "schedule_session", "program_session_id": routine.id, "title": routine.name, "activity_type": "strength_training", "target_date": "2026-07-20", "suggested_time": "18:00", "duration_min": 60, "intensity": "normal"}
+        assert compiler.compile_and_schedule(session, action) is True
+        assert compiler.compile_and_schedule(session, action) is True
+        assert len(api.uploads) == 1
+        assert api.uploads[0]["workoutName"] == "Workout A @ 18:00"
+        assert api.scheduled == [(77, "2026-07-20")]
     assert session.query(PlannedSession).one().garmin_workout_id == 77

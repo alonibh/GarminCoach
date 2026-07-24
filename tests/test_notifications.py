@@ -234,10 +234,19 @@ def test_date_change_moves_verified_garmin_occurrence_before_local_state(session
             self.unscheduled.append(occurrence_id)
 
     api = FakeApi()
-    monkeypatch.setattr(client, "login", lambda: None)
-    monkeypatch.setattr(client, "_api", api)
+    class FakeGarminClient:
+        def __init__(self, api):
+            self._api = api
+        def login(self):
+            pass
+        @property
+        def api(self):
+            return self._api
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: FakeGarminClient(api))
 
-    status, _message = apply_interaction(session, confirmation.interactions[0].interaction_id)
+    import tenant_context
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        status, _message = apply_interaction(session, confirmation.interactions[0].interaction_id)
 
     assert status == "applied"
     assert api.scheduled == [(77, "2026-07-07")]

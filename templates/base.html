@@ -26,13 +26,11 @@
       <a href="/"{% if home_active %} class="active" aria-current="page"{% endif %}>{{ icon('home') }}<span>Overview</span></a>
       <a href="/calendar"{% if current_path.startswith('/calendar') %} class="active" aria-current="page"{% endif %}>{{ icon('calendar') }}<span>Calendar</span></a>
       <a href="/program"{% if current_path.startswith('/program') or current_path.startswith('/onboarding') %} class="active" aria-current="page"{% endif %}>{{ icon('plan') }}<span>Plan</span></a>
-      {% if multi_user_enabled %}<a href="/account"{% if current_path.startswith('/account') %} class="active" aria-current="page"{% endif %}>{{ icon('account') }}<span>Account</span></a>{% endif %}
+      <a href="/account"{% if current_path.startswith('/account') %} class="active" aria-current="page"{% endif %}>{{ icon('account') }}<span>Account</span></a>
     </nav>
     <div class="sidebar-footer">
       <span class="sidebar-caption">Garmin-powered coaching</span>
-      {% if multi_user_enabled %}
       <form method="post" action="/auth/logout"><button type="submit" class="nav-action">{{ icon('logout') }}<span>Sign out</span></button></form>
-      {% else %}<a href="/app-logout" class="nav-action">{{ icon('logout') }}<span>Sign out</span></a>{% endif %}
     </div>
   </aside>
 
@@ -50,9 +48,8 @@
     <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="more-title">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-heading"><div><span class="eyebrow">GarminCoach</span><h2 id="more-title">More</h2></div><button class="sheet-close" type="button" data-more-close aria-label="Close menu">×</button></div>
-      {% if multi_user_enabled %}<a class="sheet-link" href="/account">{{ icon('account') }}<span><b>Account</b><small>Connections, calendars and privacy</small></span>{{ icon('chevron') }}</a>{% endif %}
-      {% if multi_user_enabled %}<form method="post" action="/auth/logout"><button class="sheet-link danger" type="submit">{{ icon('logout') }}<span><b>Sign out</b><small>End this GarminCoach session</small></span>{{ icon('chevron') }}</button></form>
-      {% else %}<a class="sheet-link danger" href="/app-logout">{{ icon('logout') }}<span><b>Sign out</b><small>End this GarminCoach session</small></span>{{ icon('chevron') }}</a>{% endif %}
+      <a class="sheet-link" href="/account">{{ icon('account') }}<span><b>Account</b><small>Connections, calendars and privacy</small></span>{{ icon('chevron') }}</a>
+      <form method="post" action="/auth/logout"><button class="sheet-link danger" type="submit">{{ icon('logout') }}<span><b>Sign out</b><small>End this GarminCoach session</small></span>{{ icon('chevron') }}</button></form>
     </section>
   </div>
   <script src="/static/ui.js?v={{ asset_version() }}" defer></script>

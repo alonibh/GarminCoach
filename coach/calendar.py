@@ -57,16 +57,17 @@ def _download_calendar(url: str) -> bytes:
 
 
 def _configured_calendar_urls() -> list[str]:
-    if not config.MULTI_USER_ENABLED:
-        return [url.strip() for url in config.ICS_CALENDAR_URL.split(",") if url.strip()]
-    from secret_vault import UserSecretVault
-    from tenant_context import require_tenant
-    values = UserSecretVault().read(require_tenant().user_id)
-    feeds = values.get("calendar_feeds")
-    if isinstance(feeds, list):
-        return [item["url"] for item in feeds if isinstance(item, dict) and item.get("url")]
-    legacy = values.get("calendar_ics_url", "")
-    return [legacy] if legacy else []
+    from tenant_context import current_tenant
+    tenant = current_tenant()
+    if tenant is not None:
+        from secret_vault import UserSecretVault
+        values = UserSecretVault().read(tenant.user_id)
+        feeds = values.get("calendar_feeds")
+        if isinstance(feeds, list):
+            return [item["url"] for item in feeds if isinstance(item, dict) and item.get("url")]
+        legacy = values.get("calendar_ics_url", "")
+        return [legacy] if legacy else []
+    return [url.strip() for url in (config.ICS_CALENDAR_URL or "").split(",") if url.strip()]
 
 
 def test_calendar_url(url: str, *, days: int = 30) -> tuple[str, int]:

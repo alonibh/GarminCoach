@@ -1431,15 +1431,9 @@ def _safe_next(next: str) -> str:
     return next
 
 
-@app.get("/app-login", response_class=HTMLResponse)
+@app.get("/app-login")
 def app_login_form(request: Request, next: str = "/"):
-    if config.MULTI_USER_ENABLED:
-        raise HTTPException(status_code=404)
-    return templates.TemplateResponse(
-        request,
-        "app_login.html",
-        {"error": None, "next_url": _safe_next(next)},
-    )
+    return RedirectResponse("/auth/login", status_code=303)
 
 
 @app.post("/app-login", response_class=HTMLResponse)
@@ -1973,8 +1967,6 @@ def reset_program_session_to_template(program_id: int, session_id: int):
 @app.post("/api/program/{program_id}/sessions")
 async def add_program_session(program_id: int, request: Request):
     """Add an independent strength session to an editable program."""
-    if config.MULTI_USER_ENABLED:
-        raise HTTPException(status_code=404)
     try:
         body = await request.json()
     except Exception:

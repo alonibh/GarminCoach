@@ -8,7 +8,15 @@ from db import (
     ObservationFreshness,
 )
 from metrics import freshness
+import pytest
+import tenant_context
 from sync import sync_service
+
+
+@pytest.fixture(autouse=True)
+def bind_test_tenant():
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        yield
 
 
 @contextmanager

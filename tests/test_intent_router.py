@@ -1,5 +1,6 @@
 from datetime import date, datetime
 import json
+import tenant_context
 
 import pytest
 
@@ -705,10 +706,20 @@ def test_cancel_unschedules_garmin_before_changing_local_state(session, monkeypa
             self.unscheduled.append(occurrence_id)
 
     api = FakeApi()
-    monkeypatch.setattr(client, "login", lambda: None)
-    monkeypatch.setattr(client, "_api", api)
+    class FakeGarminClient:
+        def __init__(self, api):
+            self._api = api
+        def login(self):
+            pass
+        @property
+        def api(self):
+            return self._api
+    fake = FakeGarminClient(api)
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: fake)
 
-    status, text = apply_interaction(session, routed.interactions[0].interaction_id)
+    import tenant_context
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        status, text = apply_interaction(session, routed.interactions[0].interaction_id)
 
     assert status == "applied"
     assert text == "Day 1 was cancelled."
@@ -733,10 +744,18 @@ def test_cancel_keeps_local_state_when_garmin_cannot_verify_occurrence(session, 
         def get_scheduled_workouts(self, year, month):
             return {"workouts": []}
 
-    monkeypatch.setattr(client, "login", lambda: None)
-    monkeypatch.setattr(client, "_api", FakeApi())
+    class FakeGarminClient:
+        def __init__(self, api):
+            self._api = api
+        def login(self):
+            pass
+        @property
+        def api(self):
+            return self._api
+    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: FakeGarminClient(FakeApi()))
 
-    status, _text = apply_interaction(session, routed.interactions[0].interaction_id)
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        status, _text = apply_interaction(session, routed.interactions[0].interaction_id)
 
     assert status == "failed"
     assert planned.status == "approved"
