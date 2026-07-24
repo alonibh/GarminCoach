@@ -118,3 +118,34 @@ def test_owner_google_callback_sets_only_hashed_server_session(monkeypatch, tmp_
         assert stored.token_hash == token_hash(raw)
         assert raw not in stored.token_hash
     engine.dispose()
+
+
+def test_cookie_auth_middleware_allows_navigation_during_onboarding(monkeypatch, tmp_path):
+    from app import CookieAuthMiddleware
+    from auth_service import create_web_session
+    client, Session, engine = _test_app(monkeypatch, tmp_path)
+    app = FastAPI()
+    app.add_middleware(CookieAuthMiddleware)
+
+    @app.get("/")
+    def index():
+        return {"ok": True}
+
+    with Session.begin() as session:
+        user = User(
+            id=str(uuid4()),
+            email="onboarding_user@example.com",
+            status="onboarding",
+            role="owner",
+        )
+        session.add(user)
+        session.flush()
+        _sess, raw_token = create_web_session(session, user_id=user.id)
+
+    test_client = TestClient(app)
+    test_client.cookies.set("__Host-gc_session", raw_token)
+    res = test_client.get("/", follow_redirects=False)
+    assert res.status_code == 200
+    assert res.json() == {"ok": True}
+    engine.dispose()
+

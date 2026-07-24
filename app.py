@@ -224,12 +224,6 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
                 request.state.user = user
                 tenant = TenantIdentity(user.id, role=user.role, timezone=user.timezone)
                 with tenant_scope(tenant):
-                    onboarding_allowed = (
-                        (path == "/onboarding" and request.method == "GET")
-                        or path.startswith("/setup/")
-                    )
-                    if user.status != "active" and not onboarding_allowed:
-                        return RedirectResponse("/onboarding", status_code=303)
                     response = await call_next(request)
                     response.headers.setdefault("Cache-Control", "no-store")
                     return response
