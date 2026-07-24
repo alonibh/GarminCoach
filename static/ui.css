@@ -672,16 +672,158 @@ textarea { min-height: 110px; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
-/* Weekly Availability Grid */
-.availability-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-top: 1rem; }
-.availability-day-card { border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: linear-gradient(145deg, rgba(20,25,30,.9), rgba(14,18,22,.9)); padding: 1rem; transition: all .18s ease; }
-.availability-day-card.is-off { border-color: rgba(255,255,255,.04); background: rgba(12,15,18,.6); }
-.availability-day-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .8rem; }
-.availability-day-header strong { color: #fff; font-size: 1rem; font-weight: 800; }
-.rest-day-toggle { display: flex; align-items: center; gap: .4rem; font-size: .82rem; font-weight: 700; color: var(--muted-strong); cursor: pointer; user-select: none; }
-.rest-day-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
-.availability-times { display: flex; gap: .75rem; transition: opacity .18s ease; }
-.time-field { display: flex; flex-direction: column; gap: .3rem; flex: 1; font-size: .78rem; font-weight: 700; color: var(--muted-strong); }
-.time-field input[type="time"] { height: 38px; border-radius: 8px; background: rgba(9,12,15,.95); border: 1px solid rgba(255,255,255,.12); color: #fff; font-weight: 700; padding: 0 .6rem; text-align: center; }
-.time-field input[type="time"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(18,184,255,.2); }
+/* Compact Weekly Availability Grid */
+.availability-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.day-slot-card {
+  border-radius: 14px;
+  background: rgba(16, 21, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.75rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: all 0.15s ease;
+  min-height: 105px;
+}
+
+.day-slot-card:hover {
+  border-color: rgba(18, 184, 255, 0.35);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.day-slot-card.is-rest {
+  background: rgba(10, 13, 16, 0.5);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.day-slot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 0.4rem;
+}
+
+.day-short-name {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.03em;
+}
+
+.compact-rest-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  cursor: pointer;
+  margin: 0 !important;
+  width: auto !important;
+}
+
+.compact-rest-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.toggle-pill {
+  font-size: 0.72rem;
+  font-weight: 750;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(18, 184, 255, 0.15);
+  border: 1px solid rgba(18, 184, 255, 0.3);
+  color: #12b8ff;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.compact-rest-toggle input[type="checkbox"]:checked + .toggle-pill {
+  background: rgba(255, 176, 32, 0.12);
+  border-color: rgba(255, 176, 32, 0.3);
+  color: #ffb020;
+}
+
+.day-slot-body {
+  flex: 1;
+}
+
+.time-range-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.time-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.time-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.time-box input[type="time"] {
+  width: 100% !important;
+  height: 34px !important;
+  padding: 0 0.2rem !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  background: rgba(8, 10, 13, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: #fff !important;
+  text-align: center !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.time-box input[type="time"]:focus {
+  border-color: #12b8ff !important;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(18, 184, 255, 0.2) !important;
+}
+
+.time-sep {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.75rem;
+}
+
+.rest-badge-display {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 0.4rem 0;
+}
+
+@media (max-width: 1024px) {
+  .availability-compact-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .availability-compact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 

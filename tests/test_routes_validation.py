@@ -232,7 +232,7 @@ def test_onboarding_renders_history_defaults(client):
     assert "Anything more specific?" not in resp.text
     assert "How many gym sessions can you" not in resp.text
     assert "Weekly Workout Availability" in resp.text
-    assert "Earliest Start" in resp.text
+    assert "availability-compact-grid" in resp.text
     assert "Full Body · 2 days" in resp.text
     assert "Beginner Full Body · 3 days" in resp.text
     assert "Upper / Lower Bodybuilding · 4 days" in resp.text
