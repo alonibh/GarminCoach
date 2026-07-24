@@ -956,6 +956,8 @@ def dashboard(request: Request):
         needs_login = not (user_client and user_client.is_authenticated())
     else:
         needs_login = not client.is_authenticated()
+        if needs_login:
+            return RedirectResponse("/login", status_code=303)
 
     since = date.today() - timedelta(days=90)
     with get_session() as s:

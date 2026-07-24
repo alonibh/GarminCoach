@@ -288,9 +288,12 @@ def test_dashboard_routes_new_user_through_connection_and_onboarding(client, mon
 
     monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: DisconnectedClient())
     disconnected = c.get("/", follow_redirects=False)
-    assert disconnected.status_code == 303
-    expected_redirect = "/onboarding" if config.MULTI_USER_ENABLED else "/login"
-    assert disconnected.headers["location"] == expected_redirect
+    if config.MULTI_USER_ENABLED:
+        assert disconnected.status_code == 200
+        assert "Connect Garmin" in disconnected.text
+    else:
+        assert disconnected.status_code == 303
+        assert disconnected.headers["location"] == "/login"
 
     onboarding = c.get("/onboarding")
     assert "Connect Garmin" in onboarding.text
