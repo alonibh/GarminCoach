@@ -144,7 +144,10 @@ class GarminClient:
             raise GarminConnectAuthenticationError("Garmin token data is empty")
         api = Garmin()
         api.client.loads(token_json)
-        api.get_full_name()
+        try:
+            api.get_full_name()
+        except Exception:
+            pass
         _ensure_display_name(api)
         self._api = api
 
