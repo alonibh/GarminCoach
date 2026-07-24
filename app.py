@@ -1550,12 +1550,6 @@ def _clean_list(values: list[str] | None) -> list[str]:
     return [v.strip() for v in (values or []) if v and v.strip()]
 
 
-def _constraint_session_duration(constraints: str, default: int = 60) -> int:
-    """Use a clear duration mentioned in free-text constraints, otherwise 60 minutes."""
-    match = re.search(r"\b(\d{2,3})\s*(?:min(?:ute)?s?)\b", constraints, flags=re.IGNORECASE)
-    return min(180, max(20, int(match.group(1)))) if match else default
-
-
 def _onboarding_form_defaults(
     profile: AthleteProfile,
     goal: Goal | None,
@@ -1584,6 +1578,8 @@ def _onboarding_form_defaults(
 @app.get("/onboarding", response_class=HTMLResponse)
 def get_onboarding(request: Request):
     """Fresh generic setup. Detection is advisory until the user confirms."""
+    from coach.scheduling import DEFAULT_WEEKLY_AVAILABILITY, parse_weekly_availability
+
     if config.MULTI_USER_ENABLED:
         user = getattr(request.state, "user", None)
         from sync.garmin_registry import get_garmin_registry
@@ -1625,6 +1621,19 @@ def get_onboarding(request: Request):
         current_sessions = program_sessions_for(session, current_program.id) if current_program else []
         form_defaults = _onboarding_form_defaults(profile, goal, analysis, current_program, current_sessions)
         form_defaults.setdefault("plan_key", analysis["plan_recommendation"]["key"])
+        
+        raw_avail = goal.custom_input or profile.availability or ""
+        weekly_availability = parse_weekly_availability(raw_avail)
+        days_order = [
+            {"idx": 6, "name": "Sunday"},
+            {"idx": 0, "name": "Monday"},
+            {"idx": 1, "name": "Tuesday"},
+            {"idx": 2, "name": "Wednesday"},
+            {"idx": 3, "name": "Thursday"},
+            {"idx": 4, "name": "Friday"},
+            {"idx": 5, "name": "Saturday"},
+        ]
+        
         return templates.TemplateResponse(
             request,
             "onboarding.html",
@@ -1634,6 +1643,8 @@ def get_onboarding(request: Request):
                 "analysis": analysis,
                 "active_program": current_program,
                 "form_defaults": form_defaults,
+                "weekly_availability": weekly_availability,
+                "days_order": days_order,
                 "plan_choices": sorted(
                     PLAN_CHOICES,
                     key=lambda choice: analysis["plan_matches"][choice["key"]]["rank"],
@@ -1664,12 +1675,25 @@ def onboarding_status():
 
 
 @app.post("/onboarding", response_class=RedirectResponse)
-def post_onboarding(
+async def post_onboarding(
     request: Request,
     plan_key: str = Form(""),
-    injuries_limitations: str = Form(""),
 ):
     """Save setup and create a reviewable, undated program proposal."""
+    from coach.scheduling import DEFAULT_WEEKLY_AVAILABILITY
+    form_data = await request.form()
+    availability_dict = {}
+    for day_idx in range(7):
+        is_off = form_data.get(f"avail_off_{day_idx}") in ("on", "true", "1")
+        start_val = str(form_data.get(f"avail_start_{day_idx}") or DEFAULT_WEEKLY_AVAILABILITY[day_idx]["start"])
+        end_val = str(form_data.get(f"avail_end_{day_idx}") or DEFAULT_WEEKLY_AVAILABILITY[day_idx]["end"])
+        availability_dict[str(day_idx)] = {
+            "off": is_off,
+            "start": start_val,
+            "end": end_val,
+        }
+    availability_json = json.dumps(availability_dict)
+
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
         if not profile:
@@ -1677,15 +1701,12 @@ def post_onboarding(
             session.add(profile)
 
         analysis = analyze_user_history(session)
-        requested_duration = _constraint_session_duration(injuries_limitations)
         if plan_key not in PROGRAMS:
             raise HTTPException(status_code=422, detail="Choose one of the available gym routines.")
         template = PROGRAMS[plan_key]
         try:
             proposal = recommend_program(
                 plan_key=plan_key,
-                limitations=injuries_limitations,
-                session_duration_min=requested_duration,
                 history_summary=analysis["classification"]["reason"],
             )
             _apply_recent_strength_weights(session, proposal)
@@ -1697,9 +1718,9 @@ def post_onboarding(
         profile.primary_goal = ""
         profile.goal_detail = ""
         profile.equipment_access = json.dumps(["gym"])
-        profile.availability = ""
-        profile.timing_preferences = ""
-        profile.injuries_limitations = injuries_limitations.strip()
+        profile.availability = availability_json
+        profile.timing_preferences = availability_json
+        profile.injuries_limitations = ""
         profile.scheduling_preferences = "Scheduling options: manual_approval"
         profile.approval_mode = "manual"
         profile.onboarding_complete = True
@@ -1710,7 +1731,7 @@ def post_onboarding(
             goal_row = Goal(id=1)
             session.add(goal_row)
         goal_row.goal = ""
-        goal_row.custom_input = injuries_limitations.strip()
+        goal_row.custom_input = availability_json
         goal_row.updated_at = datetime.now()
 
         for existing in session.query(TrainingProgram).filter(TrainingProgram.status == "draft").all():

@@ -801,9 +801,9 @@ PLAN_KEYS = {choice["key"] for choice in PLAN_CHOICES}
 def recommend_program(
     *,
     plan_key: str,
-    limitations: str,
-    session_duration_min: int,
-    history_summary: str,
+    limitations: str = "",
+    session_duration_min: int = 60,
+    history_summary: str = "",
 ) -> dict[str, Any]:
     if plan_key not in PLAN_KEYS:
         raise ValueError("Choose one of the available gym plans.")
@@ -820,10 +820,7 @@ def recommend_program(
         f"It contains {len(sessions)} undated gym sessions from the cited source.",
         "Approving it does not assign dates or upload workouts.",
     ]
-    if limitations.strip():
-        reasons.append("Your constraints are saved and must be checked before scheduling or exercise changes.")
-    if session_duration_min < max(s["duration_min"] for s in sessions):
-        reasons.append("Your stated time limit may be shorter than this source routine; the proposal is not silently trimmed.")
+    reasons.append("Your weekly workout windows and rest days are saved and applied to scheduling.")
     reasons.append("Unknown weights stay open for first-session calibration.")
 
     return {

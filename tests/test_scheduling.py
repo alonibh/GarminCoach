@@ -6,10 +6,8 @@ from db import Goal, ProgramSession, TrainingProgram
 
 
 def test_sunday_evening_window_accepts_a_ninety_minute_session(session):
-    session.add(Goal(
-        id=1,
-        custom_input="On Sundays-Thursdays no workouts before 18:00. No workouts after 20:00 ever.",
-    ))
+    avail = json.dumps({"6": {"off": False, "start": "18:00", "end": "20:00"}})
+    session.add(Goal(id=1, custom_input=avail))
     program = TrainingProgram(name="Total Package", active=True, status="active")
     session.add(program)
     session.flush()
@@ -34,7 +32,8 @@ def test_sunday_evening_window_accepts_a_ninety_minute_session(session):
 
 
 def test_no_slot_when_a_full_session_does_not_fit(session):
-    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 19:00."))
+    avail = json.dumps({"5": {"off": False, "start": "18:00", "end": "19:00"}})
+    session.add(Goal(id=1, custom_input=avail))
     program = TrainingProgram(name="Program", active=True, status="active")
     session.add(program)
     session.flush()
@@ -53,10 +52,8 @@ def test_no_slot_when_a_full_session_does_not_fit(session):
 def test_chat_timing_question_uses_calculated_slot_without_llm(session, monkeypatch):
     from coach.coach import handle_chat
 
-    session.add(Goal(
-        id=1,
-        custom_input="On Sundays-Thursdays no workouts before 18:00. No workouts after 20:00 ever.",
-    ))
+    avail = json.dumps({"6": {"off": False, "start": "18:00", "end": "20:00"}})
+    session.add(Goal(id=1, custom_input=avail))
     program = TrainingProgram(name="Total Package", active=True, status="active")
     session.add(program)
     session.flush()
@@ -106,7 +103,8 @@ def test_clock_parser_accepts_common_twelve_hour_variants():
 def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch):
     from coach.coach import handle_chat
 
-    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 19:00."))
+    avail = json.dumps({"6": {"off": False, "start": "18:00", "end": "19:00"}})
+    session.add(Goal(id=1, custom_input=avail))
     program = TrainingProgram(name="Program", active=True, status="active")
     session.add(program)
     session.flush()
@@ -125,3 +123,22 @@ def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch
     response, _message = handle_chat(session, "Can I do it tomorrow?")
 
     assert response == "No full workout slot is available Sunday."
+
+
+def test_rest_day_enforces_zero_available_start_times(session):
+    avail = json.dumps({"5": {"off": True, "start": "18:00", "end": "20:00"}})
+    session.add(Goal(id=1, custom_input=avail))
+    program = TrainingProgram(name="Program", active=True, status="active")
+    session.add(program)
+    session.flush()
+    session.add(ProgramSession(
+        program_id=program.id, name="Day 1", duration_min=45, session_role="coach_strength",
+    ))
+    session.commit()
+
+    suggestion = next_available_time(
+        session, now=datetime(2026, 7, 18, 9, 0), schedule=[], max_days=1,
+    )
+
+    assert suggestion is None
+

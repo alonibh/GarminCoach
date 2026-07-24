@@ -231,8 +231,8 @@ def test_onboarding_renders_history_defaults(client):
     assert "What are we working toward?" not in resp.text
     assert "Anything more specific?" not in resp.text
     assert "How many gym sessions can you" not in resp.text
-    assert "How long have you trained consistently" not in resp.text
-    assert "max 45 minutes" in resp.text
+    assert "Weekly Workout Availability" in resp.text
+    assert "Earliest Start" in resp.text
     assert "Full Body · 2 days" in resp.text
     assert "Beginner Full Body · 3 days" in resp.text
     assert "Upper / Lower Bodybuilding · 4 days" in resp.text
@@ -316,7 +316,9 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         "/onboarding",
         data={
             "plan_key": "ppl_6",
-            "injuries_limitations": "No heavy overhead press; max 45 minutes; never suggest after 21:00",
+            "avail_start_6": "18:00",
+            "avail_end_6": "20:00",
+            "avail_off_6": "0",
         },
         follow_redirects=False,
     )
@@ -326,13 +328,13 @@ def test_onboarding_creates_reviewable_program_proposal(client):
         profile = s.get(AthleteProfile, 1)
         assert profile.training_type == "strength_focused"
         assert profile.goal_detail == ""
-        assert profile.timing_preferences == ""
-        assert profile.availability == ""
+        assert json.loads(profile.timing_preferences)["6"]["start"] == "18:00"
+        assert json.loads(profile.availability)["6"]["start"] == "18:00"
         assert json.loads(profile.equipment_access) == ["gym"]
 
         goal = s.get(Goal, 1)
         assert goal.goal == ""
-        assert goal.custom_input == "No heavy overhead press; max 45 minutes; never suggest after 21:00"
+        assert json.loads(goal.custom_input)["6"]["start"] == "18:00"
 
         program = s.query(TrainingProgram).filter(TrainingProgram.status == "draft").one()
         assert program.name == "Push / Pull / Legs A/B · 6 days"
@@ -348,7 +350,7 @@ def test_onboarding_creates_reviewable_program_proposal(client):
 
     setup = c.get("/onboarding")
     assert 'value="ppl_6" checked' in setup.text
-    assert "No heavy overhead press; max 45 minutes; never suggest after 21:00" in setup.text
+    assert 'name="avail_start_6" value="18:00"' in setup.text
 
 
 def test_existing_total_package_legacy_defaults_migrate_once(client):

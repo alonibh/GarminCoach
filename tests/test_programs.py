@@ -71,11 +71,10 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
 def test_source_program_is_not_trimmed_by_free_text_duration_limit():
     proposal = recommend_program(
         plan_key="upper_lower_4",
-        limitations="max 30 minutes", session_duration_min=30,
         history_summary="There are few synced activities.",
     )
     assert len(proposal["sessions"][0]["exercises"]) == len(PROGRAMS["upper_lower_4"]["sessions"][0]["exercises"])
-    assert "not silently trimmed" in proposal["rationale"]
+    assert "weekly workout windows and rest days" in proposal["rationale"]
 
 
 def test_templates_follow_daily_anchor_and_cold_joint_warmup_rules():

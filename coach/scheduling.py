@@ -1,7 +1,4 @@
-"""Deterministic availability calculations for concise timing replies."""
-
-from __future__ import annotations
-
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -10,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from coach.onboarding import active_program, program_sessions_for
 from coach.program_state import program_state_facts
-from db import Goal
+from db import AthleteProfile, Goal
 
 
 _DAY_NAMES = {
@@ -23,6 +20,61 @@ _DAY_NAMES = {
     "sunday": 6, "sun": 6,
 }
 _CLOCK_PATTERN = r"\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?"
+
+# Default workout availability (Sunday-Thursday: 18:00-20:00, Friday: 11:00-15:00, Saturday: 11:00-20:00)
+DEFAULT_WEEKLY_AVAILABILITY = {
+    6: {"off": False, "start": "18:00", "end": "20:00"},  # Sunday
+    0: {"off": False, "start": "18:00", "end": "20:00"},  # Monday
+    1: {"off": False, "start": "18:00", "end": "20:00"},  # Tuesday
+    2: {"off": False, "start": "18:00", "end": "20:00"},  # Wednesday
+    3: {"off": False, "start": "18:00", "end": "20:00"},  # Thursday
+    4: {"off": False, "start": "11:00", "end": "15:00"},  # Friday
+    5: {"off": False, "start": "11:00", "end": "20:00"},  # Saturday
+}
+
+
+def parse_weekly_availability(raw: str | None) -> dict[int, dict]:
+    """Parse JSON weekly availability into a dict keyed by int weekday (0=Mon..6=Sun)."""
+    if not raw or not raw.strip():
+        return {k: dict(v) for k, v in DEFAULT_WEEKLY_AVAILABILITY.items()}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            parsed = {}
+            for day_idx in range(7):
+                str_key = str(day_idx)
+                if str_key in data and isinstance(data[str_key], dict):
+                    day_cfg = data[str_key]
+                    parsed[day_idx] = {
+                        "off": bool(day_cfg.get("off", False)),
+                        "start": str(day_cfg.get("start", DEFAULT_WEEKLY_AVAILABILITY[day_idx]["start"])),
+                        "end": str(day_cfg.get("end", DEFAULT_WEEKLY_AVAILABILITY[day_idx]["end"])),
+                    }
+                elif day_idx in data and isinstance(data[day_idx], dict):
+                    day_cfg = data[day_idx]
+                    parsed[day_idx] = {
+                        "off": bool(day_cfg.get("off", False)),
+                        "start": str(day_cfg.get("start", DEFAULT_WEEKLY_AVAILABILITY[day_idx]["start"])),
+                        "end": str(day_cfg.get("end", DEFAULT_WEEKLY_AVAILABILITY[day_idx]["end"])),
+                    }
+                else:
+                    parsed[day_idx] = dict(DEFAULT_WEEKLY_AVAILABILITY[day_idx])
+            return parsed
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    # Legacy regex fallback for unmigrated plain text constraints
+    lower_by_day, global_lower = _bound_rules(raw, "before")
+    upper_by_day, global_upper = _bound_rules(raw, "after")
+    result = {}
+    for day_idx in range(7):
+        default_cfg = DEFAULT_WEEKLY_AVAILABILITY[day_idx]
+        lower_t = lower_by_day.get(day_idx, global_lower)
+        upper_t = upper_by_day.get(day_idx, global_upper)
+        start_str = lower_t.strftime("%H:%M") if lower_t else default_cfg["start"]
+        end_str = upper_t.strftime("%H:%M") if upper_t else default_cfg["end"]
+        result[day_idx] = {"off": False, "start": start_str, "end": end_str}
+    return result
 
 
 @dataclass(frozen=True)
@@ -200,18 +252,22 @@ def available_start_times(
     accept a replacement time that appears in this deterministic result.
     """
     goal = session.get(Goal, 1)
-    constraints = (goal.custom_input if goal else "") or ""
-    lower_by_day, global_lower = _bound_rules(constraints, "before")
-    upper_by_day, global_upper = _bound_rules(constraints, "after")
-    if not (lower_by_day or global_lower or upper_by_day or global_upper):
+    profile = session.get(AthleteProfile, 1) if session else None
+    raw_constraints = (goal.custom_input if goal and goal.custom_input else (profile.availability if profile else "")) or ""
+
+    weekly = parse_weekly_availability(raw_constraints)
+    day_cfg = weekly.get(target_day.weekday(), DEFAULT_WEEKLY_AVAILABILITY[target_day.weekday()])
+
+    if day_cfg.get("off"):
         return []
 
-    opening = lower_by_day.get(target_day.weekday(), global_lower or time(6, 0))
-    closing = upper_by_day.get(target_day.weekday(), global_upper or time(22, 0))
-    candidate = datetime.combine(target_day, opening)
+    opening_time = _parse_clock(day_cfg.get("start", "18:00")) or time(18, 0)
+    closing_time = _parse_clock(day_cfg.get("end", "20:00")) or time(20, 0)
+
+    candidate = datetime.combine(target_day, opening_time)
     if target_day == now.date():
         candidate = max(candidate, _round_up_to_quarter(now))
-    end_limit = datetime.combine(target_day, closing)
+    end_limit = datetime.combine(target_day, closing_time)
     events = [bounds for item in schedule if (bounds := _event_bounds(item))]
     starts: list[time] = []
     while candidate + timedelta(minutes=duration_min) <= end_limit and len(starts) < limit:

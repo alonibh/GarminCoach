@@ -161,6 +161,92 @@ def _days_since_last_trained(session: Session, routine_exercises: dict) -> dict:
             out[routine_name] = (date.today() - last_act.start_time.date()).days
         else:
             out[routine_name] = None  # never recorded in synced history
+
+def _get_recent_exercise_stats(session: Session, unique_exercises: set) -> dict:
+    """Find up to the 3 most recent performances for specific exercises to show progression."""
+    stats = {}
+    for ex in unique_exercises:
+        if not ex or ex == "Activity":
+            continue
+            
+        # Get all activities containing this exercise, ordered by newest first
+        all_acts = session.query(Activity.id, Activity.start_time).join(ExerciseSet).filter(
+            (ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex),
+            ExerciseSet.weight_kg > 0
+        ).order_by(Activity.start_time.desc()).all()
+        
+        # Deduplicate to get the 3 most recent distinct activities
+        seen_ids = set()
+        recent_acts = []
+        for act in all_acts:
+            if act.id not in seen_ids:
+                seen_ids.add(act.id)
+                recent_acts.append(act)
+                if len(recent_acts) == 3:
+                    break
+        
+        if recent_acts:
+            ex_history = []
+            for act in recent_acts:
+                # Fetch all sets for this exercise from that specific activity
+                sets = session.query(ExerciseSet).filter(
+                    ExerciseSet.activity_id == act.id,
+                    ((ExerciseSet.exercise_category == ex) | (ExerciseSet.exercise_name == ex)),
+                    ExerciseSet.weight_kg > 0,
+                    ExerciseSet.reps.isnot(None)
+                ).all()
+                
+                if sets:
+                    # Find the best set by Epley 1RM, falling back to raw weight if reps > 12
+                    def _score(s):
+                        if s.reps and 1 <= s.reps <= 12:
+                            if s.reps == 1:
+                                return s.weight_kg
+                            return s.weight_kg * (1 + s.reps / 30.0)
+                        return s.weight_kg or 0
+                        
+                    best_set = max(sets, key=_score)
+                    e1rm = _score(best_set)
+                    
+                    days_ago = (date.today() - act.start_time.date()).days if act.start_time else 0
+                    time_str = "today" if days_ago == 0 else f"{days_ago} days ago"
+                    
+                    e1rm_str = f" (Est. 1RM: {round(e1rm, 1)}kg)" if best_set.reps and 1 <= best_set.reps <= 12 else ""
+                    ex_history.append(f"{best_set.weight_kg}kg x{best_set.reps}{e1rm_str} ({time_str})")
+            
+            if ex_history:
+                stats[ex] = ex_history
+
+    return stats
+
+
+def _days_since_last_trained(session: Session, routine_exercises: dict) -> dict:
+    """For each strength routine, how many days since it was last performed.
+
+    `routine_exercises` maps routine name -> set of raw exercise category/name
+    strings belonging to that routine. We find the most recent strength
+    Activity that contains any of those exercises. Serves the system-prompt
+    rule about picking the least-recently-trained muscle group.
+    """
+    out = {}
+    for routine_name, exercises in routine_exercises.items():
+        exercises = {e for e in exercises if e and e != "Activity"}
+        if not exercises:
+            continue
+        last_act = (
+            session.query(Activity.start_time)
+            .join(ExerciseSet)
+            .filter(
+                (ExerciseSet.exercise_category.in_(exercises))
+                | (ExerciseSet.exercise_name.in_(exercises))
+            )
+            .order_by(Activity.start_time.desc())
+            .first()
+        )
+        if last_act and last_act.start_time:
+            out[routine_name] = (date.today() - last_act.start_time.date()).days
+        else:
+            out[routine_name] = None  # never recorded in synced history
     return out
 
 
@@ -170,9 +256,10 @@ def build_snapshot(session: Session) -> str:
     # 1. Goal & Basic Context
     goal_row = session.get(Goal, 1)
     goal_text = goal_row.goal if goal_row else "No specific goal set."
-    constraints = goal_row.custom_input if goal_row else "None."
+    raw_constraints = (goal_row.custom_input if goal_row else "") or ""
     
     from coach.calendar import get_upcoming_schedule
+    from coach.scheduling import parse_weekly_availability
     from time_utils import get_local_now, get_local_tz
     
     try:
@@ -182,10 +269,17 @@ def build_snapshot(session: Session) -> str:
         local_time = datetime.now()
         local_tz = "UTC"
         
+    day_names = {6: "Sun", 0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat"}
+    weekly = parse_weekly_availability(raw_constraints)
+    constraints_summary = ", ".join(
+        f"{day_names[d]}: Rest Day" if weekly[d].get("off") else f"{day_names[d]}: {weekly[d]['start']}-{weekly[d]['end']}"
+        for d in [6, 0, 1, 2, 3, 4, 5]
+    )
+    
     snapshot = {
         "current_local_time": f"{local_time.strftime('%A, %B %d, %Y %H:%M')} (Timezone: {local_tz})",
         "user_goal": goal_text,
-        "user_constraints": constraints,
+        "user_constraints": constraints_summary,
         "upcoming_schedule_7_days": get_upcoming_schedule(days=7)
     }
 
