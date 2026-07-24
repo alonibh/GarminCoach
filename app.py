@@ -954,13 +954,9 @@ def dashboard(request: Request):
         from sync.garmin_registry import get_garmin_registry
         user_client = get_garmin_registry().get(user.id) if user else None
         needs_login = not (user_client and user_client.is_authenticated())
-        redirect_url = "/onboarding"
     else:
         needs_login = not client.is_authenticated()
-        redirect_url = "/login"
 
-    if needs_login:
-        return RedirectResponse(redirect_url, status_code=303)
     since = date.today() - timedelta(days=90)
     with get_session() as s:
         goal_row = s.get(Goal, 1)
