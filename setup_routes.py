@@ -46,6 +46,7 @@ def _activate_connected_user(session, user: User, now: datetime | None = None) -
     user.updated_at = now or utcnow()
 
 
+
 @router.post("/consent")
 def accept_privacy_notice(request: Request, accepted: str = Form("")) -> Response:
     if not config.MULTI_USER_ENABLED:
@@ -59,8 +60,17 @@ def accept_privacy_notice(request: Request, accepted: str = Form("")) -> Respons
         now = utcnow()
         user.consent_version = CONSENT_VERSION
         user.consented_at = now
-        user.onboarding_step = "timezone"
         user.updated_at = now
+        # If user already has timezone + Garmin, activate directly
+        if user.timezone and user.garmin_connected:
+            user.onboarding_step = "complete"
+            user.status = "active"
+            return RedirectResponse("/", status_code=303)
+        # If user already has timezone but no Garmin
+        if user.timezone:
+            user.onboarding_step = "garmin"
+        else:
+            user.onboarding_step = "timezone"
     return _redirect()
 
 
@@ -76,9 +86,15 @@ def choose_timezone(request: Request, timezone_name: str = Form("")) -> Response
         user = _user_for_update(session, request)
         if not user.consented_at:
             return _redirect("consent_required")
+        now = utcnow()
         user.timezone = timezone_name
+        user.updated_at = now
+        # If Garmin is already connected, skip Garmin step and activate
+        if user.garmin_connected:
+            user.onboarding_step = "complete"
+            user.status = "active"
+            return RedirectResponse("/", status_code=303)
         user.onboarding_step = "garmin"
-        user.updated_at = utcnow()
     return _redirect()
 
 

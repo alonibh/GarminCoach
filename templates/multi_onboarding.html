@@ -1,16 +1,159 @@
 {% extends "focused_base.html" %}
 {% block title %}Set up GarminCoach{% endblock %}
 {% block content %}
-{% set step_number = {'consent':1,'timezone':2,'garmin':3,'garmin_mfa':3}.get(user.onboarding_step, 3) %}
-<section class="focus-card">
-  <div class="focus-step" aria-label="Setup progress">{% for n in range(1,4) %}<span class="{% if n < step_number %}done{% elif n == step_number %}active{% endif %}"></span>{% endfor %}</div>
-  <span class="eyebrow">Signed in as {{ user.email }}</span>
-  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
-  {% if user.onboarding_step == 'consent' %}<h1>Privacy and data use</h1><p>GarminCoach stores health, activity, workout, and coaching data on this private server. Your Garmin password and MFA code are used only during connection and are never stored.</p><p class="muted">You can permanently delete your GarminCoach account and locally stored athlete data at any time.</p><form method="post" action="/setup/consent" class="focus-form"><label class="choice-card"><input type="checkbox" name="accepted" value="yes" required><span>I understand and accept this privacy notice.</span></label><button class="btn" type="submit">Accept and continue</button></form>
-  {% elif user.onboarding_step == 'timezone' %}<h1>Your timezone</h1><p class="muted focus-intro">This controls morning syncs, reminders, workouts, summaries, and calendar output.</p><form method="post" action="/setup/timezone" class="focus-form"><label class="field" for="timezone_name">Timezone<input id="timezone_name" name="timezone_name" list="timezones" autocomplete="off" required placeholder="Asia/Jerusalem"></label><datalist id="timezones">{% for timezone in timezones %}<option value="{{ timezone }}">{% endfor %}</datalist><button class="btn" type="submit">Save timezone</button></form>
-  {% elif user.onboarding_step == 'garmin' %}<h1>Connect Garmin</h1><p class="muted focus-intro">Credentials go directly from this server to Garmin for this login attempt and are not written to disk.</p><form method="post" action="/setup/garmin" class="focus-form"><label class="field" for="garmin_email">Garmin email<input id="garmin_email" name="garmin_email" type="email" autocomplete="username" required></label><label class="field" for="garmin_password">Garmin password<input id="garmin_password" name="garmin_password" type="password" autocomplete="current-password" required></label><button class="btn" type="submit">Connect Garmin</button></form>
-  {% elif user.onboarding_step == 'garmin_mfa' %}<h1>Verification code</h1><p class="muted focus-intro">Enter the one-time code Garmin sent you. This temporary login state expires if the server restarts.</p><form method="post" action="/setup/garmin/mfa" class="focus-form"><label class="field" for="mfa_code">One-time code<input id="mfa_code" name="mfa_code" inputmode="numeric" autocomplete="one-time-code" required autofocus></label><button class="btn" type="submit">Verify and finish</button></form>
-  {% else %}<h1>Setup complete</h1><p>Your private Garmin connection is ready.</p><a class="btn" href="/">Open dashboard</a>{% endif %}
-  <form method="post" action="/auth/logout" class="focus-actions"><button class="btn-secondary" type="submit">Sign out</button></form>
+{# Determine step number and whether Garmin step is needed #}
+{% set garmin_steps = ['garmin', 'garmin_mfa'] %}
+{% set step_map = {'consent':1,'timezone':2,'garmin':3,'garmin_mfa':3} %}
+{% set step_number = step_map.get(user.onboarding_step, 1) %}
+{% set total_steps = 3 %}
+
+<section class="focus-card onboarding-card">
+
+  {# ── Progress bar ── #}
+  <div class="ob-progress" aria-label="Setup progress, step {{ step_number }} of {{ total_steps }}">
+    {% for n in range(1, total_steps + 1) %}
+    <div class="ob-progress-seg {% if n < step_number %}done{% elif n == step_number %}active{% endif %}">
+      <span class="ob-progress-dot {% if n < step_number %}done{% elif n == step_number %}active{% endif %}">
+        {% if n < step_number %}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1.5 5l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {% else %}{{ n }}{% endif %}
+      </span>
+      <div class="ob-progress-bar"></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ── Identity pill ── #}
+  <div class="ob-identity">
+    <div class="ob-avatar">{{ user.email[0].upper() }}</div>
+    <span class="ob-email">{{ user.email }}</span>
+  </div>
+
+  {# ── Error alert ── #}
+  {% if error %}
+  <div class="ob-error" role="alert">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5v4M8 10.5v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    {{ error }}
+  </div>
+  {% endif %}
+
+  {# ══════════════ STEP 1 — CONSENT ══════════════ #}
+  {% if user.onboarding_step == 'consent' %}
+  <div class="ob-step-icon privacy">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+  </div>
+  <h1>Privacy &amp; data use</h1>
+  <p class="ob-intro">GarminCoach stores your health, activity, workout, and coaching data on <strong>this private server</strong>. Your Garmin password is used only to establish a connection and is never written to disk.</p>
+  <ul class="ob-bullets">
+    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" fill="rgba(18,184,255,.15)" stroke="rgba(18,184,255,.4)" stroke-width="1"/><path d="M4 7l2 2 4-4" stroke="#12b8ff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Activity data synced from Garmin Connect</li>
+    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" fill="rgba(18,184,255,.15)" stroke="rgba(18,184,255,.4)" stroke-width="1"/><path d="M4 7l2 2 4-4" stroke="#12b8ff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> AI coaching plans generated for you</li>
+    <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" fill="rgba(18,184,255,.15)" stroke="rgba(18,184,255,.4)" stroke-width="1"/><path d="M4 7l2 2 4-4" stroke="#12b8ff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Delete your account and data at any time</li>
+  </ul>
+  <form method="post" action="/setup/consent" class="ob-form">
+    <label class="ob-checkbox" for="ob_accepted">
+      <input type="checkbox" id="ob_accepted" name="accepted" value="yes" required>
+      <span class="ob-checkbox-box"></span>
+      <span class="ob-checkbox-label">I understand and accept this privacy notice</span>
+    </label>
+    <button class="btn ob-btn" type="submit">Accept and continue <span class="ob-btn-arrow">→</span></button>
+  </form>
+
+  {# ══════════════ STEP 2 — TIMEZONE ══════════════ #}
+  {% elif user.onboarding_step == 'timezone' %}
+  <div class="ob-step-icon timezone">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
+    </svg>
+  </div>
+  <h1>Your timezone</h1>
+  <p class="ob-intro">Controls morning syncs, reminders, workout scheduling, summaries, and your calendar export.</p>
+  <form method="post" action="/setup/timezone" class="ob-form">
+    <label class="ob-field" for="timezone_name">
+      <span class="ob-field-label">Timezone</span>
+      <div class="ob-input-wrap">
+        <svg class="ob-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <input id="timezone_name" name="timezone_name" list="timezones" autocomplete="off" required placeholder="Asia/Jerusalem" class="ob-input has-icon">
+      </div>
+    </label>
+    <datalist id="timezones">{% for tz in timezones %}<option value="{{ tz }}">{% endfor %}</datalist>
+    <button class="btn ob-btn" type="submit">Save timezone <span class="ob-btn-arrow">→</span></button>
+  </form>
+
+  {# ══════════════ STEP 3 — GARMIN ══════════════ #}
+  {% elif user.onboarding_step == 'garmin' %}
+  <div class="ob-step-icon garmin">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+    </svg>
+  </div>
+  <h1>Connect Garmin</h1>
+  <p class="ob-intro">Enter your Garmin Connect credentials. They go directly to Garmin for this login and are <strong>never stored</strong> on this server.</p>
+  <form method="post" action="/setup/garmin" class="ob-form" id="garmin-form">
+    <label class="ob-field" for="garmin_email">
+      <span class="ob-field-label">Garmin email</span>
+      <div class="ob-input-wrap">
+        <svg class="ob-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        <input id="garmin_email" name="garmin_email" type="email" autocomplete="username" required placeholder="you@example.com" class="ob-input has-icon">
+      </div>
+    </label>
+    <label class="ob-field" for="garmin_password">
+      <span class="ob-field-label">Garmin password</span>
+      <div class="ob-input-wrap ob-pw-wrap">
+        <svg class="ob-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <input id="garmin_password" name="garmin_password" type="password" autocomplete="current-password" required placeholder="••••••••" class="ob-input has-icon">
+        <button type="button" class="ob-pw-toggle" aria-label="Show/hide password" onclick="var i=document.getElementById('garmin_password');i.type=i.type==='password'?'text':'password'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </label>
+    <div class="ob-notice">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Credentials are sent directly to Garmin and never stored locally
+    </div>
+    <button class="btn ob-btn" type="submit" id="garmin-submit">Connect Garmin <span class="ob-btn-arrow">→</span></button>
+  </form>
+
+  {# ══════════════ STEP 3b — MFA ══════════════ #}
+  {% elif user.onboarding_step == 'garmin_mfa' %}
+  <div class="ob-step-icon garmin">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>
+    </svg>
+  </div>
+  <h1>Verification code</h1>
+  <p class="ob-intro">Garmin sent a one-time code to your email or phone. Enter it below to finish connecting.</p>
+  <form method="post" action="/setup/garmin/mfa" class="ob-form">
+    <label class="ob-field" for="mfa_code">
+      <span class="ob-field-label">One-time code</span>
+      <div class="ob-input-wrap">
+        <svg class="ob-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        <input id="mfa_code" name="mfa_code" inputmode="numeric" autocomplete="one-time-code" required autofocus placeholder="000000" class="ob-input has-icon mfa-input">
+      </div>
+    </label>
+    <p class="ob-mfa-hint">This login session expires if the server restarts.</p>
+    <button class="btn ob-btn" type="submit">Verify and finish <span class="ob-btn-arrow">→</span></button>
+  </form>
+
+  {# ══════════════ COMPLETE ══════════════ #}
+  {% else %}
+  <div class="ob-step-icon success">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+      <polyline points="22 4 12 14.01 9 11.01"/>
+    </svg>
+  </div>
+  <h1>All set!</h1>
+  <p class="ob-intro">Your private Garmin connection is ready. Head to your dashboard to start coaching.</p>
+  <a class="btn ob-btn" href="/">Open dashboard <span class="ob-btn-arrow">→</span></a>
+  {% endif %}
+
+  {# ── Sign out ── #}
+  <form method="post" action="/auth/logout" class="ob-signout">
+    <button class="ob-signout-btn" type="submit">Sign out</button>
+  </form>
+
 </section>
 {% endblock %}

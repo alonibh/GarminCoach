@@ -459,6 +459,89 @@ textarea { min-height: 110px; }
 .focus-step { display: flex; gap: .4rem; margin-bottom: 1.25rem; }
 .focus-step span { height: 5px; flex: 1; border-radius: 99px; background: rgba(255,255,255,.1); }
 .focus-step span.done, .focus-step span.active { background: linear-gradient(90deg, #12b8ff, #56ccff); box-shadow: 0 0 10px rgba(18,184,255,.5); }
+.focus-actions { margin-top: 1.25rem; display: grid; gap: .75rem; }
+.focus-brand { display: flex; align-items: center; gap: .55rem; margin-bottom: 1.5rem; text-decoration: none; }
+
+/* ── Onboarding v2 ── */
+.onboarding-card { animation: ob-fade-up .45s cubic-bezier(.22,.8,.36,1) both; }
+@keyframes ob-fade-up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+/* Progress */
+.ob-progress { display: flex; align-items: center; gap: 0; margin-bottom: 1.75rem; }
+.ob-progress-seg { display: flex; align-items: center; flex: 1; }
+.ob-progress-seg:last-child { flex: 0; }
+.ob-progress-dot { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,.07); border: 1.5px solid rgba(255,255,255,.15); color: #69737d; font-size: .7rem; font-weight: 800; flex-shrink: 0; transition: all .3s ease; }
+.ob-progress-dot.done { background: rgba(18,184,255,.18); border-color: #12b8ff; color: #12b8ff; }
+.ob-progress-dot.active { background: linear-gradient(135deg,#12b8ff,#009ceb); border-color: #56ccff; color: #001017; box-shadow: 0 0 14px rgba(18,184,255,.5); }
+.ob-progress-bar { flex: 1; height: 2px; background: rgba(255,255,255,.07); margin: 0 .35rem; border-radius: 99px; }
+.ob-progress-seg.done .ob-progress-bar, .ob-progress-seg.active .ob-progress-bar { background: linear-gradient(90deg,#12b8ff,#56ccff); }
+
+/* Identity */
+.ob-identity { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.5rem; padding: .55rem .8rem; border-radius: 999px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.08); width: fit-content; }
+.ob-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg,#12b8ff,#009ceb); color: #001017; font-size: .75rem; font-weight: 850; flex-shrink: 0; }
+.ob-email { font-size: .82rem; color: var(--muted-strong); font-weight: 600; }
+
+/* Error */
+.ob-error { display: flex; align-items: center; gap: .6rem; padding: .75rem 1rem; border-radius: 12px; background: rgba(241,92,109,.12); border: 1px solid rgba(241,92,109,.35); color: #ff8794; font-size: .88rem; margin-bottom: 1.25rem; }
+
+/* Step icon */
+.ob-step-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 18px; margin-bottom: 1rem; }
+.ob-step-icon.privacy { background: rgba(18,184,255,.12); border: 1px solid rgba(18,184,255,.3); color: #12b8ff; }
+.ob-step-icon.timezone { background: rgba(99,232,162,.12); border: 1px solid rgba(99,232,162,.3); color: #63e8a2; }
+.ob-step-icon.garmin { background: rgba(255,167,61,.12); border: 1px solid rgba(255,167,61,.3); color: #ffa73d; }
+.ob-step-icon.success { background: rgba(63,185,80,.14); border: 1px solid rgba(63,185,80,.35); color: #3fb950; }
+
+/* Headings & intro */
+.onboarding-card h1 { margin: 0 0 .55rem; font-size: clamp(1.55rem,4vw,2.1rem); font-weight: 850; color: #fff; letter-spacing: -.03em; line-height: 1.15; }
+.ob-intro { margin: 0 0 1.35rem; color: var(--muted-strong); font-size: .93rem; line-height: 1.65; }
+.ob-intro strong { color: var(--fg); }
+
+/* Bullets */
+.ob-bullets { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: .55rem; }
+.ob-bullets li { display: flex; align-items: center; gap: .65rem; font-size: .88rem; color: var(--muted-strong); }
+
+/* Form */
+.ob-form { display: grid; gap: 1rem; }
+.ob-field { display: grid; gap: .4rem; }
+.ob-field-label { font-size: .82rem; font-weight: 750; color: var(--fg); letter-spacing: .01em; }
+.ob-input-wrap { position: relative; }
+.ob-input-icon { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #4a535c; pointer-events: none; }
+.ob-input { width: 100%; min-height: 50px; border-radius: 14px; border: 1.5px solid rgba(255,255,255,.1); background: rgba(0,0,0,.35); color: #fff; padding: 0 1rem; font-size: .95rem; transition: border-color .2s, box-shadow .2s; outline: none; }
+.ob-input.has-icon { padding-left: 2.75rem; }
+.ob-input:focus { border-color: rgba(18,184,255,.6); box-shadow: 0 0 0 3px rgba(18,184,255,.15); }
+.ob-pw-wrap .ob-pw-toggle { position: absolute; right: .75rem; top: 50%; transform: translateY(-50%); background: none; border: 0; color: #4a535c; cursor: pointer; padding: .25rem; display: grid; place-items: center; transition: color .15s; }
+.ob-pw-wrap .ob-pw-toggle:hover { color: var(--muted-strong); }
+.ob-pw-wrap .ob-input { padding-right: 2.75rem; }
+
+/* Custom checkbox */
+.ob-checkbox { display: flex; align-items: flex-start; gap: .75rem; cursor: pointer; padding: 1rem; border-radius: 14px; background: rgba(18,184,255,.04); border: 1.5px solid rgba(18,184,255,.15); transition: background .2s, border-color .2s; }
+.ob-checkbox:hover { background: rgba(18,184,255,.08); border-color: rgba(18,184,255,.3); }
+.ob-checkbox input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ob-checkbox-box { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; border: 1.5px solid rgba(255,255,255,.2); background: rgba(0,0,0,.4); flex-shrink: 0; margin-top: .1rem; transition: all .2s; }
+.ob-checkbox input:checked ~ .ob-checkbox-box { background: linear-gradient(135deg,#12b8ff,#009ceb); border-color: #56ccff; box-shadow: 0 0 10px rgba(18,184,255,.4); }
+.ob-checkbox input:checked ~ .ob-checkbox-box::after { content: ''; display: block; width: 5px; height: 9px; border: 2px solid #001017; border-top: 0; border-left: 0; transform: rotate(45deg) translateY(-1px); }
+.ob-checkbox-label { font-size: .9rem; color: var(--fg); line-height: 1.5; }
+
+/* CTA button */
+.ob-btn { display: flex; align-items: center; justify-content: center; gap: .5rem; width: 100%; min-height: 52px; border-radius: 999px; font-size: 1rem; font-weight: 850; background: linear-gradient(135deg, #12b8ff, #009ceb); border: 1.5px solid #56ccff; color: #001017; box-shadow: 0 8px 28px rgba(18,184,255,.38); transition: all .2s ease; text-decoration: none; }
+.ob-btn:hover { background: linear-gradient(135deg, #56ccff, #12b8ff); transform: translateY(-2px); box-shadow: 0 14px 35px rgba(18,184,255,.52); color: #001017; }
+.ob-btn-arrow { font-size: 1.1rem; transition: transform .2s; }
+.ob-btn:hover .ob-btn-arrow { transform: translateX(3px); }
+
+/* Notice */
+.ob-notice { display: flex; align-items: center; gap: .55rem; padding: .65rem .85rem; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); color: #4a535c; font-size: .8rem; }
+.ob-notice svg { flex-shrink: 0; color: #3fb950; }
+
+/* MFA hint */
+.ob-mfa-hint { font-size: .8rem; color: #4a535c; margin: -.25rem 0 .25rem; }
+
+/* MFA input */
+.mfa-input { letter-spacing: .35em; font-size: 1.4rem; font-weight: 700; text-align: center; }
+
+/* Sign out */
+.ob-signout { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(255,255,255,.07); text-align: center; }
+.ob-signout-btn { background: none; border: 0; color: #4a535c; font-size: .82rem; cursor: pointer; padding: .25rem; transition: color .15s; }
+.ob-signout-btn:hover { color: var(--muted-strong); }
 
 @media (max-width: 1100px) {
   .secondary-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
