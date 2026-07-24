@@ -45,22 +45,22 @@
           <p>Configure your workout hours for each day of the week, or check Rest Day to take the day off.</p>
         </div>
       </div>
-      <div class="availability-rows-container">
+      <div class="availability-rows-container" style="display: flex !important; flex-direction: column !important; gap: 0.5rem !important; margin-top: 1.2rem !important; width: 100% !important;">
         {% for day in days_order %}
         {% set cfg = weekly_availability[day.idx] %}
-        <div class="availability-row {% if cfg.off %}is-rest{% endif %}" id="avail-row-{{ day.idx }}">
-          <div class="avail-day-name">
-            <strong>{{ day.name }}</strong>
+        <div class="availability-row {% if cfg.off %}is-rest{% endif %}" id="avail-row-{{ day.idx }}" style="display: flex !important; flex-direction: row !important; align-items: center !important; justify-content: flex-start !important; gap: 1.2rem !important; padding: 0.6rem 1rem !important; margin: 0 !important; background: rgba(16, 21, 26, 0.85) !important; border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 10px !important; box-sizing: border-box !important; width: 100% !important;">
+          <div class="avail-day-name" style="width: 110px !important; min-width: 110px !important; flex-shrink: 0 !important; margin: 0 !important;">
+            <strong style="color: #fff !important; font-size: 0.95rem !important; font-weight: 800 !important; display: block !important;">{{ day.name }}</strong>
           </div>
-          <label class="avail-rest-label">
-            <input type="checkbox" name="avail_off_{{ day.idx }}" id="avail_off_{{ day.idx }}" {% if cfg.off %}checked{% endif %} onchange="toggleDayRow('{{ day.idx }}')">
-            <span>Rest Day</span>
-          </label>
-          <div class="avail-time-pickers" id="avail-times-{{ day.idx }}" {% if cfg.off %}style="display: none;"{% endif %}>
-            <span class="time-label">From</span>
-            <input type="time" name="avail_start_{{ day.idx }}" value="{{ cfg.start }}" {% if cfg.off %}disabled{% endif %}>
-            <span class="time-label">To</span>
-            <input type="time" name="avail_end_{{ day.idx }}" value="{{ cfg.end }}" {% if cfg.off %}disabled{% endif %}>
+          <div style="display: flex !important; flex-direction: row !important; align-items: center !important; gap: 0.45rem !important; width: 110px !important; min-width: 110px !important; flex-shrink: 0 !important; margin: 0 !important;">
+            <input type="checkbox" name="avail_off_{{ day.idx }}" id="avail_off_{{ day.idx }}" {% if cfg.off %}checked{% endif %} onchange="toggleDayRow('{{ day.idx }}')" style="width: 18px !important; height: 18px !important; min-height: 18px !important; max-height: 18px !important; margin: 0 !important; padding: 0 !important; cursor: pointer !important; accent-color: #12b8ff !important; flex-shrink: 0 !important; display: inline-block !important;">
+            <label for="avail_off_{{ day.idx }}" style="color: var(--muted-strong) !important; font-size: 0.88rem !important; font-weight: 700 !important; margin: 0 !important; padding: 0 !important; cursor: pointer !important; display: inline !important; width: auto !important; line-height: 1 !important;">Rest Day</label>
+          </div>
+          <div class="avail-time-pickers" id="avail-times-{{ day.idx }}" style="display: {% if cfg.off %}none{% else %}flex{% endif %} !important; flex-direction: row !important; align-items: center !important; gap: 0.5rem !important; margin: 0 !important; padding: 0 !important;">
+            <span class="time-label" style="color: var(--muted) !important; font-size: 0.8rem !important; font-weight: 700 !important; text-transform: uppercase !important; display: inline !important; margin: 0 !important;">From</span>
+            <input type="time" name="avail_start_{{ day.idx }}" value="{{ cfg.start }}" {% if cfg.off %}disabled{% endif %} style="width: 110px !important; min-width: 110px !important; max-width: 110px !important; height: 36px !important; min-height: 36px !important; max-height: 36px !important; padding: 0 0.5rem !important; background: rgba(8, 10, 13, 0.95) !important; border: 1px solid rgba(255, 255, 255, 0.15) !important; border-radius: 6px !important; color: #fff !important; font-size: 0.88rem !important; font-weight: 700 !important; text-align: center !important; margin: 0 !important; display: inline-block !important; box-sizing: border-box !important;">
+            <span class="time-label" style="color: var(--muted) !important; font-size: 0.8rem !important; font-weight: 700 !important; text-transform: uppercase !important; display: inline !important; margin: 0 0 0 0.3rem !important;">To</span>
+            <input type="time" name="avail_end_{{ day.idx }}" value="{{ cfg.end }}" {% if cfg.off %}disabled{% endif %} style="width: 110px !important; min-width: 110px !important; max-width: 110px !important; height: 36px !important; min-height: 36px !important; max-height: 36px !important; padding: 0 0.5rem !important; background: rgba(8, 10, 13, 0.95) !important; border: 1px solid rgba(255, 255, 255, 0.15) !important; border-radius: 6px !important; color: #fff !important; font-size: 0.88rem !important; font-weight: 700 !important; text-align: center !important; margin: 0 !important; display: inline-block !important; box-sizing: border-box !important;">
           </div>
         </div>
         {% endfor %}
@@ -74,11 +74,11 @@
 
           if (checkbox.checked) {
             row.classList.add('is-rest');
-            times.style.display = 'none';
+            times.style.setProperty('display', 'none', 'important');
             inputs.forEach(i => i.disabled = true);
           } else {
             row.classList.remove('is-rest');
-            times.style.display = 'flex';
+            times.style.setProperty('display', 'flex', 'important');
             inputs.forEach(i => i.disabled = false);
           }
         }
