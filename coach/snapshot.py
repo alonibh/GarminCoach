@@ -440,7 +440,13 @@ def build_snapshot(session: Session) -> str:
             snapshot["latest_sleep"] = pruned
 
     # 4. Recent Workouts (Last 3)
-    recent_activities = session.query(Activity).order_by(Activity.start_time.desc()).limit(3).all()
+    recent_activities = (
+        session.query(Activity)
+        .filter(Activity.duration_s.isnot(None), Activity.duration_s > 0)
+        .order_by(Activity.start_time.desc())
+        .limit(3)
+        .all()
+    )
     workouts = []
     
     def _humanize_ex(name: str) -> str:

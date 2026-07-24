@@ -78,7 +78,7 @@ def test_set_non_numeric_reps_returns_400(client):
     from datetime import datetime
     with db_module.get_session() as s:
         if not s.get(Activity, 7001):
-            s.add(Activity(id=7001, activity_type="strength_training", start_time=datetime.now()))
+            s.add(Activity(id=7001, activity_type="strength_training", start_time=datetime.now(), duration_s=1800))
             s.flush()
         if not s.get(ExerciseSet, 42):
             s.add(ExerciseSet(id=42, activity_id=7001, set_index=0,
@@ -94,7 +94,7 @@ def test_set_valid_update_redirects(client):
     from datetime import datetime
     with db_module.get_session() as s:
         if not s.get(Activity, 7002):
-            s.add(Activity(id=7002, activity_type="strength_training", start_time=datetime.now()))
+            s.add(Activity(id=7002, activity_type="strength_training", start_time=datetime.now(), duration_s=1800))
             s.flush()
         if not s.get(ExerciseSet, 43):
             s.add(ExerciseSet(id=43, activity_id=7002, set_index=0,
@@ -196,11 +196,11 @@ def test_onboarding_renders_history_defaults(client):
 
     with db_module.get_session() as s:
         if not s.query(Activity).filter_by(id=8101).first():
-            s.add(Activity(id=8101, activity_type="strength_training", start_time=datetime.now()))
+            s.add(Activity(id=8101, activity_type="strength_training", start_time=datetime.now(), duration_s=1800))
         if not s.query(Activity).filter_by(id=8102).first():
-            s.add(Activity(id=8102, activity_type="strength_training", start_time=datetime.now()))
+            s.add(Activity(id=8102, activity_type="strength_training", start_time=datetime.now(), duration_s=1800))
         if not s.query(Activity).filter_by(id=8103).first():
-            s.add(Activity(id=8103, activity_type="running", start_time=datetime.now()))
+            s.add(Activity(id=8103, activity_type="running", start_time=datetime.now(), duration_s=1800))
         if not s.query(Workout).filter_by(workout_id=8104).first():
             s.add(Workout(workout_id=8104, name="Upper Strength", sport_type="strength_training", steps_json="[]"))
 

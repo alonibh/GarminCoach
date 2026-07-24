@@ -880,7 +880,7 @@ def _calendar_response(session: Session, now: datetime) -> str:
 
 
 def _activity_response(session: Session) -> str:
-    rows = session.query(Activity).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(10).all()
+    rows = session.query(Activity).filter(Activity.duration_s.isnot(None), Activity.duration_s > 0).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(10).all()
     # Older local versions stored proposed gym sessions as activities with this
     # marker. Completed Garmin workouts can now use the same prefix, so only
     # suppress unverified rows that have no Garmin workout provenance.

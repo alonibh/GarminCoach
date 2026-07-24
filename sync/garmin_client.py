@@ -227,9 +227,12 @@ class GarminClientProxy:
         if not config.MULTI_USER_ENABLED:
             return _legacy_client
         from sync.garmin_registry import get_garmin_registry
-        from tenant_context import require_tenant
+        from tenant_context import current_tenant
 
-        return get_garmin_registry().get(require_tenant().user_id)
+        tenant = current_tenant()
+        if tenant is None:
+            return _legacy_client
+        return get_garmin_registry().get(tenant.user_id)
 
     @property
     def api(self) -> Garmin:

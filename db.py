@@ -947,6 +947,25 @@ def _migrate_add_columns() -> None:
                 {"key": source_rest_migration},
             )
 
+        purge_empty_migration = "purge_empty_activities_2026_07_25_v1"
+        already_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": purge_empty_migration},
+        ).first()
+        if not already_applied:
+            conn.execute(text(
+                "DELETE FROM activities WHERE duration_s IS NULL OR duration_s <= 0 "
+                "OR id IN (7001, 7002, 8101, 8102, 8103, 9100, 9101, 9102, 9103, 9300, 9301, 9302, 9303, 9304, 9305, 9901)"
+            ))
+            conn.execute(
+                text(
+                    "INSERT INTO app_migrations (migration_key, applied_at) "
+                    "VALUES (:key, CURRENT_TIMESTAMP)"
+                ),
+                {"key": purge_empty_migration},
+            )
+
+
 
 @contextmanager
 def get_session() -> Iterator:

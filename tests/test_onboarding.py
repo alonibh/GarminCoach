@@ -4,13 +4,14 @@ from coach.onboarding import analyze_user_history
 from db import Activity, ExerciseSet, PlannedSession, SyncState, Workout
 
 
-def _activity(session, activity_id: int, activity_type: str, days_ago: int, name: str = "") -> None:
+def _activity(session, activity_id: int, activity_type: str, days_ago: int, name: str = "", duration_s: float = 1800.0) -> None:
     session.add(
         Activity(
             id=activity_id,
             activity_type=activity_type,
             start_time=datetime.now() - timedelta(days=days_ago),
             name=name,
+            duration_s=duration_s,
         )
     )
 

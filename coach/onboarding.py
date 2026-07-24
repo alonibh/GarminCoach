@@ -84,6 +84,7 @@ def _usable_completed_activities(activities: list[Activity]) -> list[Activity]:
     return [
         a for a in activities
         if a.start_time and a.activity_type and activity_family(a.activity_type) != "Other"
+        and (a.duration_s is not None and a.duration_s > 0)
     ]
 
 

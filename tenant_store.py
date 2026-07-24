@@ -139,7 +139,10 @@ def get_user_session(
         raise
     finally:
         session.close()
-        if Path(root).resolve() != Path(config.MULTI_USER_DATA_ROOT).resolve():
+        if (
+            Path(root).resolve() != Path(config.MULTI_USER_DATA_ROOT).resolve()
+            and str(engine.url) != "sqlite://"
+        ):
             engine.dispose()
 
 

@@ -636,13 +636,14 @@ def test_calendar_response_uses_chat_datetime_format_for_current_and_legacy_even
 def test_recent_activities_hides_legacy_schedule_placeholders_and_formats_datetimes(session, monkeypatch):
     _fixed_router(monkeypatch)
     session.add_all([
-        Activity(id=1, name="Cardio", activity_type="cardio", start_time=datetime(2026, 7, 17, 8, 30)),
-        Activity(id=2, name="🏋 Chest & Biceps @ 18:00", activity_type="strength_training", start_time=datetime(2026, 7, 18, 18)),
+        Activity(id=1, name="Cardio", activity_type="cardio", start_time=datetime(2026, 7, 17, 8, 30), duration_s=1800),
+        Activity(id=2, name="🏋 Chest & Biceps @ 18:00", activity_type="strength_training", start_time=datetime(2026, 7, 18, 18), duration_s=1800),
         Activity(
             id=3,
             name="🏋️ Full Body 1 @ 18:30",
             activity_type="strength_training",
             start_time=datetime(2026, 7, 20, 19, 43),
+            duration_s=1800,
             source_workout_id=1637820025,
             provenance_checked=True,
         ),

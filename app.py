@@ -969,7 +969,11 @@ def dashboard(request: Request):
         # All workouts in the past month (no row cap).
         activities = (
             s.query(Activity)
-            .filter(Activity.start_time >= datetime.combine(since, datetime.min.time()))
+            .filter(
+                Activity.start_time >= datetime.combine(since, datetime.min.time()),
+                Activity.duration_s.isnot(None),
+                Activity.duration_s > 0,
+            )
             .order_by(Activity.start_time.desc())
             .all()
         )

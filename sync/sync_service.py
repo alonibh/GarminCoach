@@ -425,6 +425,9 @@ def _sync_activities(session: Session, start: date, end: date) -> int:
     count = 0
     consecutive_429 = 0
     for raw in raw_list or []:
+        raw_dur = raw.get("duration")
+        if raw_dur is None or float(raw_dur) <= 0:
+            continue
         act_id = _upsert_activity(session, raw)
         if act_id is None:
             continue

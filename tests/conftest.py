@@ -4,6 +4,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import db as db_module
+import tenant_store
+
+
+@pytest.fixture(autouse=True)
+def isolate_tenant_engines(tmp_path, monkeypatch):
+    """Ensure every test uses isolated temporary directories and clean engine caches.
+
+    Prevents tests from mutating config.MULTI_USER_DATA_ROOT or user athlete.db files.
+    """
+    tenant_store._engines.clear()
+    monkeypatch.setattr("config.MULTI_USER_DATA_ROOT", tmp_path / "users")
+    yield
+    tenant_store._engines.clear()
 
 
 @pytest.fixture
