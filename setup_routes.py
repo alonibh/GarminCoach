@@ -46,32 +46,36 @@ def _activate_connected_user(session, user: User, now: datetime | None = None) -
     user.updated_at = now or utcnow()
 
 
-
 @router.post("/consent")
 def accept_privacy_notice(request: Request, accepted: str = Form("")) -> Response:
     if not config.MULTI_USER_ENABLED:
         return Response(status_code=404)
     if accepted != "yes":
         return _redirect("consent_required")
+    dest = "/onboarding"
     with get_control_session() as session:
         user = _user_for_update(session, request)
         if user.status == "active":
-            return RedirectResponse("/", status_code=303)
-        now = utcnow()
-        user.consent_version = CONSENT_VERSION
-        user.consented_at = now
-        user.updated_at = now
-        # If user already has timezone + Garmin, activate directly
-        if user.timezone and user.garmin_connected:
-            user.onboarding_step = "complete"
-            user.status = "active"
-            return RedirectResponse("/", status_code=303)
-        # If user already has timezone but no Garmin
-        if user.timezone:
-            user.onboarding_step = "garmin"
+            dest = "/"
         else:
-            user.onboarding_step = "timezone"
-    return _redirect()
+            now = utcnow()
+            user.consent_version = CONSENT_VERSION
+            user.consented_at = now
+            user.updated_at = now
+            # If user already has timezone + Garmin connected, activate directly
+            if user.timezone and user.garmin_connected:
+                user.onboarding_step = "complete"
+                user.status = "active"
+                dest = "/"
+            elif user.timezone:
+                # Has timezone but no Garmin — skip to garmin step
+                user.onboarding_step = "garmin"
+            else:
+                user.onboarding_step = "timezone"
+    # Session is committed here (after the with block exits normally)
+    response = RedirectResponse(dest, status_code=303)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/timezone")
@@ -82,20 +86,25 @@ def choose_timezone(request: Request, timezone_name: str = Form("")) -> Response
         pytz.timezone(timezone_name)
     except pytz.UnknownTimeZoneError:
         return _redirect("invalid_timezone")
+    dest = "/onboarding"
     with get_control_session() as session:
         user = _user_for_update(session, request)
         if not user.consented_at:
-            return _redirect("consent_required")
-        now = utcnow()
-        user.timezone = timezone_name
-        user.updated_at = now
-        # If Garmin is already connected, skip Garmin step and activate
-        if user.garmin_connected:
-            user.onboarding_step = "complete"
-            user.status = "active"
-            return RedirectResponse("/", status_code=303)
-        user.onboarding_step = "garmin"
-    return _redirect()
+            dest = "/onboarding?error=consent_required"
+        else:
+            now = utcnow()
+            user.timezone = timezone_name
+            user.updated_at = now
+            # If Garmin is already connected, activate and skip Garmin step
+            if user.garmin_connected:
+                user.onboarding_step = "complete"
+                user.status = "active"
+                dest = "/"
+            else:
+                user.onboarding_step = "garmin"
+    response = RedirectResponse(dest, status_code=303)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/garmin")
@@ -106,11 +115,16 @@ def connect_garmin(
 ) -> Response:
     if not config.MULTI_USER_ENABLED:
         return Response(status_code=404)
+    user_id: str | None = None
     with get_control_session() as session:
         user = _user_for_update(session, request)
         if not user.consented_at or not user.timezone:
-            return _redirect("configuration_required")
-        user_id = user.id
+            # Commit is not needed here — no writes; but structured consistently
+            user_id = None
+        else:
+            user_id = user.id
+    if user_id is None:
+        return _redirect("configuration_required")
     try:
         result = get_garmin_registry().begin_login(
             user_id, garmin_email.strip(), garmin_password
@@ -138,11 +152,15 @@ def connect_garmin(
 def complete_garmin_mfa(request: Request, mfa_code: str = Form("")) -> Response:
     if not config.MULTI_USER_ENABLED:
         return Response(status_code=404)
+    user_id: str | None = None
     with get_control_session() as session:
         user = _user_for_update(session, request)
         if user.onboarding_step != "garmin_mfa":
-            return _redirect("garmin_session_expired")
-        user_id = user.id
+            user_id = None
+        else:
+            user_id = user.id
+    if user_id is None:
+        return _redirect("garmin_session_expired")
     try:
         get_garmin_registry().complete_mfa(user_id, mfa_code)
     except GarminConnectTooManyRequestsError:

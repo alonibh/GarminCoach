@@ -39,12 +39,14 @@
 
   {# ══════════════ STEP 1 — CONSENT ══════════════ #}
   {% if user.onboarding_step == 'consent' %}
-  <div class="ob-step-icon privacy">
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-    </svg>
-  </div>
-  <h1>Privacy &amp; data use</h1>
+  <h1 class="ob-heading-with-icon">
+    <span class="ob-heading-icon">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+    </span>
+    Privacy &amp; data use
+  </h1>
   <p class="ob-intro">GarminCoach stores your health, activity, workout, and coaching data on <strong>this private server</strong>. Your Garmin password is used only to establish a connection and is never written to disk.</p>
   <ul class="ob-bullets">
     <li><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" fill="rgba(18,184,255,.15)" stroke="rgba(18,184,255,.4)" stroke-width="1"/><path d="M4 7l2 2 4-4" stroke="#12b8ff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Activity data synced from Garmin Connect</li>
@@ -53,11 +55,12 @@
   </ul>
   <form method="post" action="/setup/consent" class="ob-form">
     <label class="ob-checkbox" for="ob_accepted">
-      <input type="checkbox" id="ob_accepted" name="accepted" value="yes" required>
+      <input type="checkbox" id="ob_accepted" name="accepted" value="yes" required
+             onchange="document.getElementById('ob-consent-btn').disabled=!this.checked">
       <span class="ob-checkbox-box"></span>
       <span class="ob-checkbox-label">I understand and accept this privacy notice</span>
     </label>
-    <button class="btn ob-btn" type="submit">Accept and continue <span class="ob-btn-arrow">→</span></button>
+    <button id="ob-consent-btn" class="btn ob-btn" type="submit" disabled>Accept and continue <span class="ob-btn-arrow">→</span></button>
   </form>
 
   {# ══════════════ STEP 2 — TIMEZONE ══════════════ #}
