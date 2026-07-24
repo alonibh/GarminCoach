@@ -22,6 +22,15 @@ from garminconnect import (
 import config
 
 
+def _ensure_display_name(api: Garmin) -> None:
+    if not getattr(api, "display_name", None):
+        if hasattr(api, "_load_profile_and_settings"):
+            try:
+                api._load_profile_and_settings()
+            except Exception:
+                pass
+
+
 class GarminClient:
     def __init__(
         self,
@@ -62,6 +71,7 @@ class GarminClient:
             api = Garmin()
             api.login(token_store)
             api.get_full_name()  # cheap authenticated call — proves the session
+            _ensure_display_name(api)
             self._api = api
             return
         except Exception:
@@ -87,6 +97,7 @@ class GarminClient:
         # Verify the session is genuinely authenticated before accepting it.
         # (A rate-limited / partial login can otherwise return without raising.)
         api.get_full_name()
+        _ensure_display_name(api)
         self._api = api
 
     def begin_login(self, email: str, password: str) -> str:
@@ -110,6 +121,7 @@ class GarminClient:
             self._api = None
             return "mfa_required"
         api.get_full_name()
+        _ensure_display_name(api)
         self._pending_api = None
         self._pending_state = None
         self._api = api
@@ -121,6 +133,7 @@ class GarminClient:
         api = self._pending_api
         api.resume_login(self._pending_state, code.strip())
         api.get_full_name()
+        _ensure_display_name(api)
         self._pending_api = None
         self._pending_state = None
         self._api = api
@@ -132,6 +145,7 @@ class GarminClient:
         api = Garmin()
         api.client.loads(token_json)
         api.get_full_name()
+        _ensure_display_name(api)
         self._api = api
 
     def serialized_tokens(self) -> str:
@@ -145,8 +159,6 @@ class GarminClient:
 
     def is_authenticated(self) -> bool:
         return self._api is not None
-
-    # --- Fetchers ---------------------------------------------------------
     # Thin wrappers; names mirror the plan's verified method list.
 
     def activities_by_date(self, start: date, end: date) -> list[dict]:
