@@ -955,9 +955,18 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
 # --- routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    needs_login = not client.is_authenticated()
+    if config.MULTI_USER_ENABLED:
+        user = getattr(request.state, "user", None)
+        from sync.garmin_registry import get_garmin_registry
+        user_client = get_garmin_registry().get(user.id) if user else None
+        needs_login = not (user_client and user_client.is_authenticated())
+        redirect_url = "/onboarding"
+    else:
+        needs_login = not client.is_authenticated()
+        redirect_url = "/login"
+
     if needs_login:
-        return RedirectResponse("/login", status_code=303)
+        return RedirectResponse(redirect_url, status_code=303)
     since = date.today() - timedelta(days=90)
     with get_session() as s:
         goal_row = s.get(Goal, 1)
@@ -1322,11 +1331,19 @@ def edit_set(
 @app.post("/sync")
 def sync_now(request: Request, full: bool = Form(False)):
     wants_json = "application/json" in request.headers.get("accept", "")
-    # Can't sync without an authenticated Garmin session — send to login.
-    if not client.is_authenticated():
+    if config.MULTI_USER_ENABLED:
+        user = getattr(request.state, "user", None)
+        from sync.garmin_registry import get_garmin_registry
+        user_client = get_garmin_registry().get(user.id) if user else None
+        is_auth = user_client.is_authenticated() if user_client else False
+    else:
+        is_auth = client.is_authenticated()
+
+    if not is_auth:
         if wants_json:
             return JSONResponse({"error": "Garmin authentication required"}, status_code=401)
-        return RedirectResponse("/login", status_code=303)
+        redirect_url = "/onboarding" if config.MULTI_USER_ENABLED else "/login"
+        return RedirectResponse(redirect_url, status_code=303)
     started = sync_runner.try_start_sync(full, force=not full)
     if wants_json:
         return JSONResponse({"started": started, "running": sync_runner.is_running()})
