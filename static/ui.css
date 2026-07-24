@@ -672,114 +672,84 @@ textarea { min-height: 110px; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
-/* Compact Weekly Availability Grid */
-.availability-compact-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 0.6rem;
+/* Single Inline Row Weekly Availability */
+.availability-rows-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
   margin-top: 1rem;
 }
 
-.day-slot-card {
-  border-radius: 14px;
-  background: rgba(16, 21, 26, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 0.75rem 0.65rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  transition: all 0.15s ease;
-  min-height: 105px;
-}
-
-.day-slot-card:hover {
-  border-color: rgba(18, 184, 255, 0.35);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-}
-
-.day-slot-card.is-rest {
-  background: rgba(10, 13, 16, 0.5);
-  border-color: rgba(255, 255, 255, 0.05);
-}
-
-.day-slot-header {
+.availability-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  padding-bottom: 0.4rem;
+  gap: 1.25rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(16, 21, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.15s ease;
 }
 
-.day-short-name {
-  font-size: 0.88rem;
+.availability-row:hover {
+  border-color: rgba(18, 184, 255, 0.3);
+}
+
+.availability-row.is-rest {
+  background: rgba(10, 13, 16, 0.4);
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+.avail-day-name {
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.avail-day-name strong {
+  font-size: 0.92rem;
   font-weight: 800;
   color: #fff;
-  letter-spacing: 0.03em;
 }
 
-.compact-rest-toggle {
-  display: inline-flex !important;
+.avail-rest-label {
+  display: flex !important;
   align-items: center;
-  cursor: pointer;
+  gap: 0.45rem;
+  width: 110px !important;
+  flex-shrink: 0;
   margin: 0 !important;
-  width: auto !important;
-}
-
-.compact-rest-toggle input[type="checkbox"] {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-}
-
-.toggle-pill {
-  font-size: 0.72rem;
-  font-weight: 750;
-  padding: 0.15rem 0.45rem;
-  border-radius: 6px;
-  background: rgba(18, 184, 255, 0.15);
-  border: 1px solid rgba(18, 184, 255, 0.3);
-  color: #12b8ff;
-  transition: all 0.15s ease;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted-strong);
+  cursor: pointer;
   user-select: none;
 }
 
-.compact-rest-toggle input[type="checkbox"]:checked + .toggle-pill {
-  background: rgba(255, 176, 32, 0.12);
-  border-color: rgba(255, 176, 32, 0.3);
-  color: #ffb020;
+.avail-rest-label input[type="checkbox"] {
+  width: 16px !important;
+  height: 16px !important;
+  accent-color: #12b8ff;
+  cursor: pointer;
+  margin: 0 !important;
 }
 
-.day-slot-body {
-  flex: 1;
-}
-
-.time-range-group {
+.avail-time-pickers {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.5rem;
 }
 
-.time-box {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  flex: 1;
-  min-width: 0;
-}
-
-.time-label {
-  font-size: 0.65rem;
+.avail-time-pickers .time-label {
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
 }
 
-.time-box input[type="time"] {
-  width: 100% !important;
-  height: 34px !important;
-  padding: 0 0.2rem !important;
+.avail-time-pickers input[type="time"] {
+  width: 105px !important;
+  height: 32px !important;
+  padding: 0 0.3rem !important;
   font-size: 0.82rem !important;
   font-weight: 700 !important;
   border-radius: 6px !important;
@@ -791,38 +761,22 @@ textarea { min-height: 110px; }
   box-sizing: border-box !important;
 }
 
-.time-box input[type="time"]:focus {
+.avail-time-pickers input[type="time"]:focus {
   border-color: #12b8ff !important;
   outline: none;
   box-shadow: 0 0 0 2px rgba(18, 184, 255, 0.2) !important;
 }
 
-.time-sep {
-  color: var(--muted);
-  font-size: 0.8rem;
-  margin-top: 0.75rem;
-}
-
-.rest-badge-display {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--muted);
-  padding: 0.4rem 0;
-}
-
-@media (max-width: 1024px) {
-  .availability-compact-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 640px) {
-  .availability-compact-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .availability-row {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .avail-day-name {
+    width: 90px;
+  }
+  .avail-rest-label {
+    width: 90px !important;
   }
 }
 

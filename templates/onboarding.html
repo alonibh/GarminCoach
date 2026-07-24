@@ -42,59 +42,43 @@
         <span class="section-emoji" aria-hidden="true">📅</span>
         <div>
           <h2>Weekly Workout Availability & Time Slots</h2>
-          <p>Set your preferred workout start window for each day of the week, or mark days as rest days.</p>
+          <p>Configure your workout hours for each day of the week, or check Rest Day to take the day off.</p>
         </div>
       </div>
-      <div class="availability-compact-grid">
+      <div class="availability-rows-container">
         {% for day in days_order %}
         {% set cfg = weekly_availability[day.idx] %}
-        <div class="day-slot-card {% if cfg.off %}is-rest{% endif %}" id="avail-card-{{ day.idx }}">
-          <div class="day-slot-header">
-            <span class="day-short-name">{{ day.name[:3] }}</span>
-            <label class="compact-rest-toggle" title="Toggle Rest Day">
-              <input type="checkbox" name="avail_off_{{ day.idx }}" id="avail_off_{{ day.idx }}" {% if cfg.off %}checked{% endif %} onchange="toggleRestDay('{{ day.idx }}')">
-              <span class="toggle-pill">{% if cfg.off %}Rest{% else %}Active{% endif %}</span>
-            </label>
+        <div class="availability-row {% if cfg.off %}is-rest{% endif %}" id="avail-row-{{ day.idx }}">
+          <div class="avail-day-name">
+            <strong>{{ day.name }}</strong>
           </div>
-          <div class="day-slot-body" id="avail-times-{{ day.idx }}" {% if cfg.off %}style="display: none;"{% endif %}>
-            <div class="time-range-group">
-              <div class="time-box">
-                <span class="time-label">From</span>
-                <input type="time" name="avail_start_{{ day.idx }}" value="{{ cfg.start }}" {% if cfg.off %}disabled{% endif %}>
-              </div>
-              <span class="time-sep">–</span>
-              <div class="time-box">
-                <span class="time-label">To</span>
-                <input type="time" name="avail_end_{{ day.idx }}" value="{{ cfg.end }}" {% if cfg.off %}disabled{% endif %}>
-              </div>
-            </div>
-          </div>
-          <div class="rest-badge-display" id="avail-off-msg-{{ day.idx }}" {% if not cfg.off %}style="display: none;"{% endif %}>
-            <span>☕ Rest Day</span>
+          <label class="avail-rest-label">
+            <input type="checkbox" name="avail_off_{{ day.idx }}" id="avail_off_{{ day.idx }}" {% if cfg.off %}checked{% endif %} onchange="toggleDayRow('{{ day.idx }}')">
+            <span>Rest Day</span>
+          </label>
+          <div class="avail-time-pickers" id="avail-times-{{ day.idx }}" {% if cfg.off %}style="display: none;"{% endif %}>
+            <span class="time-label">From</span>
+            <input type="time" name="avail_start_{{ day.idx }}" value="{{ cfg.start }}" {% if cfg.off %}disabled{% endif %}>
+            <span class="time-label">To</span>
+            <input type="time" name="avail_end_{{ day.idx }}" value="{{ cfg.end }}" {% if cfg.off %}disabled{% endif %}>
           </div>
         </div>
         {% endfor %}
       </div>
       <script>
-        function toggleRestDay(dayIdx) {
+        function toggleDayRow(dayIdx) {
           const checkbox = document.getElementById('avail_off_' + dayIdx);
-          const card = document.getElementById('avail-card-' + dayIdx);
-          const timesDiv = document.getElementById('avail-times-' + dayIdx);
-          const offMsg = document.getElementById('avail-off-msg-' + dayIdx);
-          const label = card.querySelector('.toggle-pill');
-          const inputs = timesDiv.querySelectorAll('input[type="time"]');
+          const row = document.getElementById('avail-row-' + dayIdx);
+          const times = document.getElementById('avail-times-' + dayIdx);
+          const inputs = times.querySelectorAll('input[type="time"]');
 
           if (checkbox.checked) {
-            card.classList.add('is-rest');
-            timesDiv.style.display = 'none';
-            offMsg.style.display = 'flex';
-            if (label) label.textContent = 'Rest';
+            row.classList.add('is-rest');
+            times.style.display = 'none';
             inputs.forEach(i => i.disabled = true);
           } else {
-            card.classList.remove('is-rest');
-            timesDiv.style.display = 'block';
-            offMsg.style.display = 'none';
-            if (label) label.textContent = 'Active';
+            row.classList.remove('is-rest');
+            times.style.display = 'flex';
             inputs.forEach(i => i.disabled = false);
           }
         }
