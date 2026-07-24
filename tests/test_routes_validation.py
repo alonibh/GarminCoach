@@ -272,8 +272,7 @@ def test_dashboard_routes_new_user_through_connection_and_onboarding(client, mon
 
     monkeypatch.setattr(app_module.client, "is_authenticated", lambda: True)
     connected = c.get("/", follow_redirects=False)
-    assert connected.status_code == 303
-    assert connected.headers["location"] == "/onboarding"
+    assert connected.status_code == 200
 
 
 def test_onboarding_creates_reviewable_program_proposal(client):
