@@ -65,13 +65,15 @@
 
   {# ══════════════ STEP 2 — TIMEZONE ══════════════ #}
   {% elif user.onboarding_step == 'timezone' %}
-  <div class="ob-step-icon timezone">
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <polyline points="12 6 12 12 16 14"/>
-    </svg>
-  </div>
-  <h1>Your timezone</h1>
+  <h1 class="ob-heading-with-icon">
+    <span class="ob-heading-icon timezone">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+    </span>
+    Your timezone
+  </h1>
   <p class="ob-intro">Controls morning syncs, reminders, workout scheduling, summaries, and your calendar export.</p>
   <form method="post" action="/setup/timezone" class="ob-form">
     <label class="ob-field" for="timezone_name">
@@ -87,12 +89,14 @@
 
   {# ══════════════ STEP 3 — GARMIN ══════════════ #}
   {% elif user.onboarding_step == 'garmin' %}
-  <div class="ob-step-icon garmin">
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-    </svg>
-  </div>
-  <h1>Connect Garmin</h1>
+  <h1 class="ob-heading-with-icon">
+    <span class="ob-heading-icon garmin">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+      </svg>
+    </span>
+    Connect Garmin
+  </h1>
   <p class="ob-intro">Enter your Garmin Connect credentials. They go directly to Garmin for this login and are <strong>never stored</strong> on this server.</p>
   <form method="post" action="/setup/garmin" class="ob-form" id="garmin-form">
     <label class="ob-field" for="garmin_email">
@@ -121,12 +125,14 @@
 
   {# ══════════════ STEP 3b — MFA ══════════════ #}
   {% elif user.onboarding_step == 'garmin_mfa' %}
-  <div class="ob-step-icon garmin">
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>
-    </svg>
-  </div>
-  <h1>Verification code</h1>
+  <h1 class="ob-heading-with-icon">
+    <span class="ob-heading-icon garmin">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>
+      </svg>
+    </span>
+    Verification code
+  </h1>
   <p class="ob-intro">Garmin sent a one-time code to your email or phone. Enter it below to finish connecting.</p>
   <form method="post" action="/setup/garmin/mfa" class="ob-form">
     <label class="ob-field" for="mfa_code">
@@ -142,13 +148,15 @@
 
   {# ══════════════ COMPLETE ══════════════ #}
   {% else %}
-  <div class="ob-step-icon success">
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-      <polyline points="22 4 12 14.01 9 11.01"/>
-    </svg>
-  </div>
-  <h1>All set!</h1>
+  <h1 class="ob-heading-with-icon">
+    <span class="ob-heading-icon success">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+        <polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+    </span>
+    All set!
+  </h1>
   <p class="ob-intro">Your private Garmin connection is ready. Head to your dashboard to start coaching.</p>
   <a class="btn ob-btn" href="/">Open dashboard <span class="ob-btn-arrow">→</span></a>
   {% endif %}
