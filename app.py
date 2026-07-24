@@ -962,9 +962,7 @@ def dashboard(request: Request):
     with get_session() as s:
         goal_row = s.get(Goal, 1)
         active_goal = goal_row.goal if goal_row and goal_row.goal else None
-        profile = s.get(AthleteProfile, 1)
-        if not profile or not profile.onboarding_complete:
-            return RedirectResponse("/onboarding", status_code=303)
+        profile = s.get(AthleteProfile, 1) or AthleteProfile(id=1)
         current_program = active_program(s)
         
         # All workouts in the past month (no row cap).
@@ -1736,21 +1734,17 @@ def get_program_page(
 ):
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
-        if not profile or not profile.onboarding_complete:
-            return RedirectResponse("/onboarding", status_code=303)
         active = active_program(session)
         draft = None
         if view in ("draft", "proposal", "review") or proposal:
             draft = session.get(TrainingProgram, proposal) if proposal else latest_draft_program(session)
             if not draft and active:
-                return RedirectResponse("/onboarding", status_code=303)
+                draft = None
         elif not active:
             draft = latest_draft_program(session)
         if draft and draft.status != "draft":
             draft = None
         current_program = draft or active
-        if not current_program:
-            return RedirectResponse("/onboarding", status_code=303)
         sessions = program_sessions_for(session, current_program.id) if current_program else []
         strength_sessions = [item for item in sessions if item.session_role == "coach_strength"]
         # Additional sessions created before ``is_custom`` was introduced were
