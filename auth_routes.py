@@ -138,18 +138,20 @@ def google_callback(request: Request, state: str = "", code: str = "", error: st
             )
             raw_session = create_web_session(session, user)
 
-    except AuthenticationError:
+    except AuthenticationError as exc:
+        logger.warning("Google OAuth authentication failed: %s", exc)
         return _auth_message(
             request,
-            "Account not authorized",
-            "This Google account is not authorized for GarminCoach.",
+            "Sign-in failed",
+            str(exc) or "This Google account could not be authenticated.",
+            status_code=401,
         )
     except Exception as exc:
         logger.exception("Google OAuth callback failed: %s", exc)
         return _auth_message(
             request,
             "Sign-in error",
-            "An error occurred while logging in with Google. Please try signing in again.",
+            "An error occurred while logging in with Google. Please click 'Back to sign in' and try again.",
             status_code=500,
         )
     dest = "/" if user.onboarding_step == "complete" or user.status == "active" else "/onboarding"

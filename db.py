@@ -720,11 +720,12 @@ _SESSION_EXERCISE_ADD_COLUMNS = {
 }
 
 
-def _migrate_add_columns() -> None:
+def _migrate_add_columns(target_engine: Engine | None = None) -> None:
     from sqlalchemy import inspect, text
 
-    insp = inspect(engine)
-    with engine.begin() as conn:
+    eng = target_engine or engine
+    insp = inspect(eng)
+    with eng.begin() as conn:
         # Migrate activities
         existing_act = {c["name"] for c in insp.get_columns("activities")}
         missing_act = {k: v for k, v in _ACTIVITY_ADD_COLUMNS.items() if k not in existing_act}

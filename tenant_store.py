@@ -81,17 +81,29 @@ def provision_user_store(
     seed_path = Path(seed_database).resolve() if seed_database else None
     if not db_path.exists() and seed_path and seed_path.exists():
         temporary = directory / ".athlete.db.bootstrap"
-        source = sqlite3.connect(f"file:{seed_path.as_posix()}?mode=ro", uri=True)
-        destination = sqlite3.connect(temporary)
         try:
-            source.backup(destination)
-        finally:
-            destination.close()
-            source.close()
-        os.replace(temporary, db_path)
+            source = sqlite3.connect(f"file:{seed_path.as_posix()}?mode=ro", uri=True, timeout=10)
+            destination = sqlite3.connect(temporary, timeout=10)
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+                source.close()
+            os.replace(temporary, db_path)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Failed to seed user database from %s: %s", seed_path, exc)
+            if temporary.exists():
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+
     engine = _create_engine_for_path(db_path)
     try:
         Base.metadata.create_all(engine)
+        from db import _migrate_add_columns
+        _migrate_add_columns(engine)
     finally:
         engine.dispose()
     try:
