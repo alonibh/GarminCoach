@@ -44,6 +44,7 @@ class GarminClient:
         self._pending_api: Optional[Garmin] = None
         self._pending_state: dict | None = None
         self._hr_zone_cache: dict[int, list] = {}
+        self._session_expired: bool = False
 
     # --- Auth -------------------------------------------------------------
     def login(
@@ -57,36 +58,28 @@ class GarminClient:
         password is supplied, performs a fresh login, prompting for MFA via
         ``mfa_prompt`` when Garmin requires it, then caches the new token.
         """
-        # The token store is a directory; ensure it exists so the library can
-        # persist tokens into it after a fresh login.
         token_dir = self.token_store
         token_dir.mkdir(parents=True, exist_ok=True)
         token_store = str(token_dir)
 
-        # 1) Try resuming from cached token — the happy path, no creds needed.
-        #    Garmin.login(path) loads tokens from `path` if present; raises if
-        #    no usable token exists there. Only accept it if a real API call
-        #    works (a loaded-but-expired token must NOT count as success).
         try:
             api = Garmin()
             api.login(token_store)
             api.get_full_name()  # cheap authenticated call — proves the session
             _ensure_display_name(api)
             self._api = api
+            self._session_expired = False
             return
         except Exception:
             self._api = None  # fall through to credential login
 
-        # 2) Fresh login with credentials (+ MFA via prompt_mfa callback).
         if not self.email or not password:
+            self._session_expired = True
             raise GarminConnectAuthenticationError(
                 "No valid cached token and no email/password provided. "
                 "Run the first-login flow with your Garmin password."
             )
 
-        # With prompt_mfa set and return_on_mfa=False, login() performs the full
-        # flow (calling prompt_mfa when Garmin challenges) and AUTOMATICALLY dumps
-        # tokens to the tokenstore path — no separate save call needed.
         api = Garmin(
             email=self.email,
             password=password,
@@ -94,11 +87,10 @@ class GarminClient:
             return_on_mfa=False,
         )
         api.login(token_store)
-        # Verify the session is genuinely authenticated before accepting it.
-        # (A rate-limited / partial login can otherwise return without raising.)
         api.get_full_name()
         _ensure_display_name(api)
         self._api = api
+        self._session_expired = False
 
     def begin_login(self, email: str, password: str) -> str:
         """Start a fresh per-user login without persisting the password.
@@ -147,9 +139,12 @@ class GarminClient:
         try:
             api.get_full_name()
         except Exception as exc:
+            self._api = None
+            self._session_expired = True
             raise GarminConnectAuthenticationError("Garmin session token is expired or invalid") from exc
         _ensure_display_name(api)
         self._api = api
+        self._session_expired = False
 
     def serialized_tokens(self) -> str:
         return self.api.client.dumps()
@@ -161,7 +156,7 @@ class GarminClient:
         return self._api
 
     def is_authenticated(self) -> bool:
-        return self._api is not None
+        return self._api is not None and not self._session_expired
     # Thin wrappers; names mirror the plan's verified method list.
 
     def activities_by_date(self, start: date, end: date) -> list[dict]:

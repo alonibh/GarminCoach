@@ -1602,7 +1602,8 @@ def get_onboarding(request: Request):
         user_client = get_garmin_registry().get(user.id) if user else None
         is_garmin_auth = bool(user_client and user_client.is_authenticated()) if user_client else False
 
-        if user and (user.onboarding_step != "complete" or not is_garmin_auth):
+        requested_step = request.query_params.get("step")
+        if user and (user.onboarding_step != "complete" or not is_garmin_auth or requested_step == "garmin"):
             error_messages = {
                 "consent_required": "You must accept the privacy notice to continue.",
                 "invalid_timezone": "Choose a valid timezone from the list.",
@@ -1613,7 +1614,7 @@ def get_onboarding(request: Request):
                 "garmin_mfa_failed": "Garmin could not verify that one-time code.",
             }
             display_user = user
-            if user.onboarding_step == "complete" and not is_garmin_auth:
+            if (user.onboarding_step == "complete" and not is_garmin_auth) or requested_step == "garmin":
                 class _UserGarminStepWrapper:
                     def __init__(self, target):
                         self._target = target
