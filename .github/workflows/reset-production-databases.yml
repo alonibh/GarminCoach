@@ -127,7 +127,7 @@ jobs:
               exit 1
             fi
 
-            process_count=$(pgrep -fc '[u]vicorn app:app')
+            process_count=$(pgrep -xc uvicorn)
             if [ "$process_count" -ne 1 ]; then
               echo "Expected one application process; found $process_count"
               exit 1
@@ -162,7 +162,7 @@ jobs:
             fi
 
             sudo systemctl status garmincoach --no-pager --full
-            pgrep -af '[u]vicorn app:app'
+            pgrep -ax uvicorn
             http_status=$(curl --silent --output /dev/null \
               --write-out '%{http_code}' http://127.0.0.1:8000/)
             echo "Health HTTP status: $http_status"
