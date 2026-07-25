@@ -162,6 +162,8 @@ def create_control_engine(path: Path | str | None = None) -> Engine:
     target_path = path if path is not None else config.CONTROL_DB_PATH
     db_path = Path(target_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    from tenant_store import verify_and_repair_sqlite
+    verify_and_repair_sqlite(db_path)
     engine = create_engine(
         f"sqlite:///{db_path}", future=True, connect_args={"timeout": 30}
     )

@@ -57,6 +57,25 @@ def test_vault_rejects_wrong_encryption_key(tmp_path):
         UserSecretVault(Fernet.generate_key()).read(user_id, root=tmp_path)
 
 
+def test_restore_tokens_raises_auth_error_when_validation_fails(monkeypatch):
+    client = GarminClient(email="test@example.com", token_store=Path("/tmp"))
+    from garminconnect import GarminConnectAuthenticationError
+
+    class FakeBadGarmin:
+        def __init__(self):
+            self.client = self
+        def loads(self, data):
+            pass
+        def get_full_name(self):
+            raise Exception("Token expired 401")
+
+    monkeypatch.setattr("sync.garmin_client.Garmin", FakeBadGarmin)
+
+    with pytest.raises(GarminConnectAuthenticationError):
+        client.restore_tokens('{"token":"expired"}')
+
+
+
 def test_registry_checkpoints_only_to_the_matching_user(tmp_path):
     data_root = tmp_path / "users"
     runtime_root = tmp_path / "runtime"

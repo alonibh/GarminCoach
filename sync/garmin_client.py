@@ -146,8 +146,8 @@ class GarminClient:
         api.client.loads(token_json)
         try:
             api.get_full_name()
-        except Exception:
-            pass
+        except Exception as exc:
+            raise GarminConnectAuthenticationError("Garmin session token is expired or invalid") from exc
         _ensure_display_name(api)
         self._api = api
 

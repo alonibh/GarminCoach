@@ -13,7 +13,10 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from coach import coach
-from garminconnect import GarminConnectTooManyRequestsError
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectTooManyRequestsError,
+)
 
 import config
 from db import (
@@ -30,6 +33,13 @@ from sync.garmin_client import client
 from time_utils import get_local_tz
 
 logger = logging.getLogger(__name__)
+
+def _is_auth_error(exc: Exception) -> bool:
+    if isinstance(exc, GarminConnectAuthenticationError):
+        return True
+    msg = str(exc).lower()
+    err_type = type(exc).__name__.lower()
+    return "401" in msg or "authentication" in msg or "unauthorized" in msg or "authentication" in err_type
 
 # Activity type substrings that carry per-set strength detail.
 _STRENGTH_HINTS = ("strength", "weight")
@@ -452,7 +462,9 @@ def _sync_sleep(session, day: date) -> bool:
         data = client.sleep(day)
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Sleep fetch failed for %s", day, exc_info=True)
         return False
     dto = _g(data, "dailySleepDTO", default={}) or {}
@@ -493,7 +505,9 @@ def _sync_daily_health(session, day: date) -> None:
         row.hrv_baseline_high = _g(hrv, "hrvSummary", "baseline", "balancedUpper")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("HRV fetch failed for %s", day, exc_info=True)
 
     try:
@@ -503,7 +517,9 @@ def _sync_daily_health(session, day: date) -> None:
             row.resting_hr = vals[0].get("value")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Resting HR fetch failed for %s", day, exc_info=True)
 
     try:
@@ -511,7 +527,9 @@ def _sync_daily_health(session, day: date) -> None:
         row.stress_avg = stress.get("avgStressLevel")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Stress fetch failed for %s", day, exc_info=True)
 
     try:
@@ -528,7 +546,9 @@ def _sync_daily_health(session, day: date) -> None:
                 row.body_battery_current = levels[-1]  # most recent reading
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Body battery fetch failed for %s", day, exc_info=True)
 
     try:
@@ -538,7 +558,9 @@ def _sync_daily_health(session, day: date) -> None:
             row.step_goal = steps[0].get("stepGoal")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Steps fetch failed for %s", day, exc_info=True)
 
     try:
@@ -549,7 +571,9 @@ def _sync_daily_health(session, day: date) -> None:
             row.bmr_kcal = summary.get("bmrKilocalories")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
 
     try:
@@ -559,7 +583,9 @@ def _sync_daily_health(session, day: date) -> None:
             row.training_readiness = readiness_data.get("trainingReadiness") or readiness_data.get("value")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Training readiness fetch failed for %s", day, exc_info=True)
 
     try:
@@ -568,7 +594,9 @@ def _sync_daily_health(session, day: date) -> None:
             row.training_status = status_data.get("mostRecentTrainingStatus")
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Training status fetch failed for %s", day, exc_info=True)
 
     session.add(row)
@@ -891,6 +919,22 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 summary["days"] += 1
                 consecutive_429 = 0
                 last_completed_day = day
+            except GarminConnectAuthenticationError as e:
+                if config.MULTI_USER_ENABLED:
+                    try:
+                        from tenant_context import current_tenant
+                        from sync.garmin_registry import get_garmin_registry
+                        tenant = current_tenant()
+                        if tenant:
+                            get_garmin_registry().evict(tenant.user_id)
+                    except Exception:
+                        pass
+                summary["skipped"] = True
+                summary["code"] = "authentication_required"
+                summary["errors"].append(
+                    "Garmin Connect session expired. Please re-authenticate your Garmin account."
+                )
+                return summary
             except GarminConnectTooManyRequestsError as e:
                 consecutive_429 += 1
                 summary["errors"].append(f"Rate limited at {day}: {e}")

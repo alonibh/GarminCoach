@@ -98,4 +98,24 @@ def test_control_db_contains_identity_metadata_not_athlete_tables(tmp_path: Path
     assert "activities" not in table_names
     with Session() as session:
         assert session.query(Invitation).one().email == "invitee@example.com"
-    engine.dispose()
+
+
+def test_malformed_sqlite_is_quarantined_and_recreated(tmp_path: Path):
+    user_id = str(uuid4())
+    db_path = provision_user_store(user_id, tmp_path)
+    assert db_path.exists()
+
+    # Corrupt the SQLite database file deliberately
+    db_path.write_bytes(b"INVALID_SQLITE_HEADER_CORRUPTED_FILE_DATA_12345")
+
+    # Provisioning / opening again must quarantine corrupt file and create a fresh healthy DB
+    repaired_path = provision_user_store(user_id, tmp_path)
+    assert repaired_path == db_path
+    assert repaired_path.exists()
+
+    corrupt_files = list(tmp_path.glob("**/*.corrupt.*"))
+    assert len(corrupt_files) >= 1
+
+    with get_user_session(user_id, tmp_path) as session:
+        session.add(Goal(id=1, goal="recreated after corruption", custom_input=""))
+        assert session.get(Goal, 1).goal == "recreated after corruption"
