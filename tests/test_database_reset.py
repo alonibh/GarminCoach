@@ -234,3 +234,5 @@ def test_recovery_workflow_is_manual_and_doubly_guarded():
     assert "push:" not in workflow
     assert workflow.count("WIPE_ALL_GARMINCOACH_DATABASES") >= 3
     assert "--confirm-destroy-all-data" in workflow
+    assert 'Environment="APP_WORKER_COUNT=1"' in workflow
+    assert "--workers 1" in workflow

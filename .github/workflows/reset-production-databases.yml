@@ -49,15 +49,20 @@ jobs:
 
             cd ~/garmincoach
             recovery_source=$(mktemp -d)
-            cleanup() {
-              rm -rf -- "$recovery_source"
-            }
             diagnostics() {
               sudo systemctl status garmincoach --no-pager --full || true
               sudo journalctl -u garmincoach -n 100 --no-pager || true
             }
+            cleanup() {
+              exit_code=$?
+              if [ "$exit_code" -ne 0 ]; then
+                diagnostics
+              fi
+              rm -rf -- "$recovery_source"
+              trap - EXIT
+              exit "$exit_code"
+            }
             trap cleanup EXIT
-            trap diagnostics ERR
 
             sudo systemctl stop garmincoach
             for attempt in $(seq 1 20); do
@@ -92,6 +97,17 @@ jobs:
               coach metrics notify sync scripts
             python -c "import app"
 
+            sudo install -d -m 0755 \
+              /etc/systemd/system/garmincoach.service.d
+            printf '%s\n' \
+              '[Service]' \
+              'Environment="APP_WORKER_COUNT=1"' \
+              'ExecStart=' \
+              'ExecStart=/home/ubuntu/garmincoach/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 300' \
+              | sudo tee \
+                /etc/systemd/system/garmincoach.service.d/10-single-worker.conf \
+                > /dev/null
+            sudo systemctl daemon-reload
             sudo systemctl start garmincoach
             sudo systemctl is-active --quiet garmincoach
 
