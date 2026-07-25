@@ -158,8 +158,9 @@ class AuditEvent(ControlBase):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-def create_control_engine(path: Path | str = config.CONTROL_DB_PATH) -> Engine:
-    db_path = Path(path).resolve()
+def create_control_engine(path: Path | str | None = None) -> Engine:
+    target_path = path if path is not None else config.CONTROL_DB_PATH
+    db_path = Path(target_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(
         f"sqlite:///{db_path}", future=True, connect_args={"timeout": 30}

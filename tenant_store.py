@@ -32,9 +32,10 @@ def canonical_user_id(user_id: str) -> str:
     return canonical
 
 
-def user_root(user_id: str, root: Path | str = config.MULTI_USER_DATA_ROOT) -> Path:
+def user_root(user_id: str, root: Path | str | None = None) -> Path:
     canonical = canonical_user_id(user_id)
-    base = Path(root).resolve()
+    base_root = root if root is not None else config.MULTI_USER_DATA_ROOT
+    base = Path(base_root).resolve()
     target = (base / canonical).resolve()
     if target.parent != base:
         raise ValueError("User storage path escaped the configured root")
@@ -42,7 +43,7 @@ def user_root(user_id: str, root: Path | str = config.MULTI_USER_DATA_ROOT) -> P
 
 
 def athlete_db_path(
-    user_id: str, root: Path | str = config.MULTI_USER_DATA_ROOT
+    user_id: str, root: Path | str | None = None
 ) -> Path:
     return user_root(user_id, root) / "athlete.db"
 
@@ -65,7 +66,7 @@ def _create_engine_for_path(db_path: Path) -> Engine:
 
 def provision_user_store(
     user_id: str,
-    root: Path | str = config.MULTI_USER_DATA_ROOT,
+    root: Path | str | None = None,
     *,
     seed_database: Path | str | None = None,
 ) -> Path:
@@ -101,24 +102,25 @@ def provision_user_store(
 
 
 def engine_for_user(
-    user_id: str, root: Path | str = config.MULTI_USER_DATA_ROOT
+    user_id: str, root: Path | str | None = None
 ) -> Engine:
     canonical = canonical_user_id(user_id)
+    base_root = root if root is not None else config.MULTI_USER_DATA_ROOT
     # Test/alternate roots intentionally bypass the process cache so a user ID
     # can be exercised safely against multiple temporary roots.
-    use_cache = Path(root).resolve() == Path(config.MULTI_USER_DATA_ROOT).resolve()
+    use_cache = Path(base_root).resolve() == Path(config.MULTI_USER_DATA_ROOT).resolve()
     if not use_cache:
-        db_path = athlete_db_path(canonical, root)
+        db_path = athlete_db_path(canonical, base_root)
         if not db_path.exists():
-            provision_user_store(canonical, root)
+            provision_user_store(canonical, base_root)
         return _create_engine_for_path(db_path)
 
     with _engine_lock:
         engine = _engines.get(canonical)
         if engine is None:
-            db_path = athlete_db_path(canonical, root)
+            db_path = athlete_db_path(canonical, base_root)
             if not db_path.exists():
-                provision_user_store(canonical, root)
+                provision_user_store(canonical, base_root)
             engine = _create_engine_for_path(db_path)
             _engines[canonical] = engine
         return engine
@@ -126,9 +128,10 @@ def engine_for_user(
 
 @contextmanager
 def get_user_session(
-    user_id: str, root: Path | str = config.MULTI_USER_DATA_ROOT
+    user_id: str, root: Path | str | None = None
 ) -> Iterator:
     engine = engine_for_user(user_id, root)
+    base_root = root if root is not None else config.MULTI_USER_DATA_ROOT
     Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     session = Session()
     try:
@@ -140,7 +143,7 @@ def get_user_session(
     finally:
         session.close()
         if (
-            Path(root).resolve() != Path(config.MULTI_USER_DATA_ROOT).resolve()
+            Path(base_root).resolve() != Path(config.MULTI_USER_DATA_ROOT).resolve()
             and str(engine.url) != "sqlite://"
         ):
             engine.dispose()

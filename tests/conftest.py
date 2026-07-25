@@ -15,6 +15,7 @@ def isolate_tenant_engines(tmp_path, monkeypatch):
     """
     tenant_store._engines.clear()
     monkeypatch.setattr("config.MULTI_USER_DATA_ROOT", tmp_path / "users")
+    monkeypatch.setattr("config.CONTROL_DB_PATH", tmp_path / "control.db")
     yield
     tenant_store._engines.clear()
 
