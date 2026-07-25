@@ -854,23 +854,35 @@ def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[d
 
 def _dashboard_chart_data(session) -> dict:
     """Return the dashboard series used by the in-page chart refresh."""
-    since = date.today() - timedelta(days=90)
-    health = (
+    today = date.today()
+    since = today - timedelta(days=90)
+    health_rows = (
         session.query(DailyHealth)
         .filter(DailyHealth.day >= since)
         .order_by(DailyHealth.day.asc())
         .all()
     )
-    sleep = (
+    sleep_rows = (
         session.query(Sleep)
         .filter(Sleep.day >= since)
         .order_by(Sleep.day.asc())
         .all()
     )
+    health_by_day = {h.day: h for h in health_rows}
+    sleep_by_day = {s.day: s for s in sleep_rows}
+
+    padded_health = []
+    padded_sleep = []
+    cur_day = since
+    while cur_day <= today:
+        padded_health.append(health_by_day.get(cur_day) or DailyHealth(day=cur_day))
+        padded_sleep.append(sleep_by_day.get(cur_day) or Sleep(day=cur_day))
+        cur_day += timedelta(days=1)
+
     overnight_ready = _overnight_metrics_ready(session)
     return {
-        "health_series": _dashboard_health_series(health, overnight_ready),
-        "sleep_series": _dashboard_sleep_series(sleep, overnight_ready),
+        "health_series": _dashboard_health_series(padded_health, overnight_ready),
+        "sleep_series": _dashboard_sleep_series(padded_sleep, overnight_ready),
     }
 
 

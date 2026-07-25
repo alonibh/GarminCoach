@@ -18,9 +18,11 @@ from auth_service import (
     revoke_web_session,
 )
 from control_db import get_control_session
+import logging
 from google_oidc import exchange_code
 from tenant_store import provision_user_store
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(config.PROJECT_ROOT / "templates"))
@@ -135,11 +137,20 @@ def google_callback(request: Request, state: str = "", code: str = "", error: st
                 ),
             )
             raw_session = create_web_session(session, user)
+
     except AuthenticationError:
         return _auth_message(
             request,
             "Account not authorized",
             "This Google account is not authorized for GarminCoach.",
+        )
+    except Exception as exc:
+        logger.exception("Google OAuth callback failed: %s", exc)
+        return _auth_message(
+            request,
+            "Sign-in error",
+            "An error occurred while logging in with Google. Please try signing in again.",
+            status_code=500,
         )
     dest = "/" if user.onboarding_step == "complete" or user.status == "active" else "/onboarding"
     response = RedirectResponse(dest, status_code=303)
