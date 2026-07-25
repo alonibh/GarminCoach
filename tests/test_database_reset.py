@@ -1,6 +1,7 @@
 import inspect
 from pathlib import Path
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -200,6 +201,45 @@ def test_reset_requires_service_to_be_stopped_before_modifying_files(
         )
     assert control.exists()
     assert "old_data" in _tables(control)
+
+
+def test_service_stopped_check_uses_main_pid_and_exact_process_name(monkeypatch):
+    calls = []
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        if command[:2] == ["systemctl", "is-active"]:
+            return subprocess.CompletedProcess(command, 3, "inactive\n", "")
+        if command[:2] == ["systemctl", "show"]:
+            return subprocess.CompletedProcess(command, 0, "0\n", "")
+        return subprocess.CompletedProcess(command, 1, "", "")
+
+    monkeypatch.setattr(database_reset.os, "name", "posix")
+    monkeypatch.setattr(database_reset.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(database_reset.subprocess, "run", run)
+
+    database_reset.require_service_stopped()
+
+    assert ["pgrep", "-x", "uvicorn"] in calls
+
+
+def test_service_stopped_check_rejects_lingering_uvicorn(monkeypatch):
+    def run(command, **_kwargs):
+        if command[:2] == ["systemctl", "is-active"]:
+            return subprocess.CompletedProcess(command, 3, "inactive\n", "")
+        if command[:2] == ["systemctl", "show"]:
+            return subprocess.CompletedProcess(command, 0, "0\n", "")
+        return subprocess.CompletedProcess(command, 0, "123\n", "")
+
+    monkeypatch.setattr(database_reset.os, "name", "posix")
+    monkeypatch.setattr(database_reset.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(database_reset.subprocess, "run", run)
+
+    with pytest.raises(
+        database_reset.DatabaseResetError,
+        match="application process is still running",
+    ):
+        database_reset.require_service_stopped()
 
 
 def test_reset_failure_returns_nonzero(monkeypatch, capsys):

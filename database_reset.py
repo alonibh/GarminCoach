@@ -83,10 +83,18 @@ def require_service_stopped(service_name: str = SERVICE_NAME) -> None:
     )
     if state.stdout.strip() not in {"inactive", "failed"}:
         raise DatabaseResetError("GarminCoach service must be stopped first")
+    main_pid = subprocess.run(
+        ["systemctl", "show", service_name, "-p", "MainPID", "--value"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if main_pid.returncode != 0 or main_pid.stdout.strip() != "0":
+        raise DatabaseResetError("A GarminCoach application process is still running")
     if shutil.which("pgrep") is None:
         raise DatabaseResetError("Cannot verify GarminCoach process state")
     processes = subprocess.run(
-        ["pgrep", "-f", "[u]vicorn app:app"],
+        ["pgrep", "-x", "uvicorn"],
         check=False,
         capture_output=True,
         text=True,
