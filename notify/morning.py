@@ -41,8 +41,6 @@ def _sent_brief_at(session) -> datetime | None:
     if sent:
         return sent.sent_at
 
-    # Compatibility with briefings sent directly before the durable outbox was
-    # introduced. CoachMessage is the only durable receipt for those sends.
     from db import CoachMessage
     message = (
         session.query(CoachMessage)
@@ -54,7 +52,21 @@ def _sent_brief_at(session) -> datetime | None:
         .order_by(CoachMessage.created_at)
         .first()
     )
-    return message.created_at.replace(tzinfo=None) if message and message.created_at else None
+    if message and message.created_at:
+        pending_outbox = (
+            session.query(NotificationOutbox)
+            .filter(
+                NotificationOutbox.event_type == "morning_briefing",
+                NotificationOutbox.status == "pending",
+                NotificationOutbox.created_at >= datetime.combine(day, time.min),
+                NotificationOutbox.created_at <= datetime.combine(day, time.max),
+            )
+            .first()
+        )
+        if pending_outbox:
+            return None
+        return message.created_at.replace(tzinfo=None)
+    return None
 
 
 def reconcile_sent_brief(session, row: MorningBriefState | None = None) -> bool:
@@ -141,7 +153,11 @@ def enqueue_late_material_update(session) -> bool:
             "KEEP_PLANNED_SESSION", "PROPOSE_NEXT_SESSION", "PROGRAM_REST_DAY",
         }
     )
-    if not (became_poor or program_became_available):
+    was_best_effort = bool(original.get("best_effort"))
+    now_complete = not current.best_effort
+    became_complete = was_best_effort and now_complete
+
+    if not (became_poor or program_became_available or became_complete):
         return False
     existing = session.query(NotificationOutbox).filter_by(
         idempotency_key=f"late-update:{current.idempotency_key}"

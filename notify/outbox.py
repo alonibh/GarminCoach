@@ -105,7 +105,46 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
     payload = json.loads(row.payload_json)
     if row.event_type == "morning_briefing":
         if not _decision_is_current(session, row):
-            return None
+            day = row.due_at.date()
+            sent_brief = (
+                session.query(NotificationOutbox)
+                .filter(
+                    NotificationOutbox.event_type == "morning_briefing",
+                    NotificationOutbox.status == "sent",
+                    NotificationOutbox.sent_at >= datetime.combine(day, time.min),
+                    NotificationOutbox.sent_at <= datetime.combine(day, time.max),
+                )
+                .first()
+            )
+            if sent_brief:
+                return None
+
+            record = session.get(DecisionRecord, row.decision_id) if row.decision_id else None
+            best_effort = False
+            if record:
+                source = json.loads(record.result_json)
+                best_effort = bool(source.get("best_effort"))
+            from coach.decision_engine import evaluate_morning_decision
+            from coach.renderer import render_morning
+            current = evaluate_morning_decision(
+                session,
+                allow_incomplete=best_effort,
+                target=day,
+                evaluated_at=get_local_now(),
+            )
+            text, _markup, interaction_ids = render_morning(session, current)
+            if not text:
+                return None
+            from coach.interactions import reply_markup_for_ids
+            formatted_text = f"*Morning Briefing*\n\n{text}"
+            row.decision_id = current.decision_id
+            row.idempotency_key = f"briefing:{current.idempotency_key}"
+            row.payload_json = json.dumps(
+                {"text": formatted_text, "interaction_ids": interaction_ids},
+                sort_keys=True,
+            )
+            return formatted_text, reply_markup_for_ids(session, interaction_ids)
+
         from coach.interactions import reply_markup_for_ids
         return payload["text"], reply_markup_for_ids(session, payload.get("interaction_ids", []))
 

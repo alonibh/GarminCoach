@@ -124,6 +124,48 @@ def test_outbox_survives_new_sessions_and_sends_only_once(tmp_path, monkeypatch)
     engine.dispose()
 
 
+def test_morning_brief_outbox_updates_and_sends_when_data_arrives(session, monkeypatch):
+    from coach.decision_engine import evaluate_morning_decision
+    from notify.outbox import deliver_notification, enqueue_notification
+    from db import Sleep
+
+    today = date(2026, 7, 25)
+    now = datetime(2026, 7, 25, 11, 30)
+    monkeypatch.setattr("notify.outbox.get_local_now", lambda: now)
+    monkeypatch.setattr("coach.decision_engine.get_local_now", lambda: now)
+
+    res1 = evaluate_morning_decision(session, allow_incomplete=True, target=today)
+    assert res1.best_effort is True
+    row = enqueue_notification(
+        session,
+        event_type="morning_briefing",
+        due_at=now,
+        payload={"text": "Best effort brief", "interaction_ids": []},
+        decision_id=res1.decision_id,
+        idempotency_key=f"briefing:{res1.idempotency_key}",
+    )
+    session.commit()
+
+    sleep_row = Sleep(
+        day=today,
+        sleep_start_time=datetime(2026, 7, 25, 0, 30),
+        sleep_end_time=datetime(2026, 7, 25, 8, 30),
+        total_s=28800.0,
+        score=85.0,
+    )
+    session.add(sleep_row)
+    session.commit()
+
+    sent = []
+    monkeypatch.setattr("notify.outbox.send_message", lambda text, reply_markup=None: sent.append(text) or True)
+
+    outcome = deliver_notification(session, row, now)
+    assert outcome == "sent"
+    assert row.status == "sent"
+    assert len(sent) == 1
+    assert "*Morning Briefing*" in sent[0]
+
+
 def test_calendar_conflict_offers_revalidated_buttons(session, monkeypatch):
     planned = _planned(session)
     queued = enqueue_pre_workout_reminder(session, planned)
