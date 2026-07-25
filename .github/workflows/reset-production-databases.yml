@@ -1,0 +1,153 @@
+name: Reset Production Databases
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type WIPE_ALL_GARMINCOACH_DATABASES to continue
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reset-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate destructive confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [ "$CONFIRMATION" != "WIPE_ALL_GARMINCOACH_DATABASES" ]; then
+            echo "Destructive confirmation did not match"
+            exit 64
+          fi
+
+      - name: Reset databases and deploy
+        uses: appleboy/ssh-action@v1.2.5
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          TARGET_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: CONFIRMATION,TARGET_SHA
+          command_timeout: 12m
+          script: |
+            set -Eeuo pipefail
+            if [ "$CONFIRMATION" != "WIPE_ALL_GARMINCOACH_DATABASES" ]; then
+              echo "Destructive confirmation did not match"
+              exit 64
+            fi
+
+            cd ~/garmincoach
+            recovery_source=$(mktemp -d)
+            cleanup() {
+              rm -rf -- "$recovery_source"
+            }
+            diagnostics() {
+              sudo systemctl status garmincoach --no-pager --full || true
+              sudo journalctl -u garmincoach -n 100 --no-pager || true
+            }
+            trap cleanup EXIT
+            trap diagnostics ERR
+
+            sudo systemctl stop garmincoach
+            for attempt in $(seq 1 20); do
+              if ! pgrep -f '[u]vicorn app:app' > /dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            if pgrep -f '[u]vicorn app:app' > /dev/null; then
+              echo "GarminCoach process did not stop"
+              exit 1
+            fi
+
+            source .venv/bin/activate
+            CONTROL_DB_PATH=$(python -c "import config; print(config.CONTROL_DB_PATH)")
+            DB_PATH=$(python -c "import config; print(config.DB_PATH)")
+            MULTI_USER_DATA_ROOT=$(python -c "import config; print(config.MULTI_USER_DATA_ROOT)")
+            export CONTROL_DB_PATH DB_PATH MULTI_USER_DATA_ROOT
+
+            git fetch origin "$TARGET_SHA"
+            git archive "$TARGET_SHA" | tar -x -C "$recovery_source"
+            python "$recovery_source/scripts/reset_all_databases.py" \
+              --confirm-destroy-all-data \
+              --quarantine-parent "$PWD/database_quarantine"
+            python -c "import sqlite3, os; paths=(os.environ['CONTROL_DB_PATH'], os.environ['DB_PATH']); assert all(sqlite3.connect(path).execute('PRAGMA integrity_check').fetchall() == [('ok',)] for path in paths)"
+            python -c "import sqlite3, os; row=sqlite3.connect(os.environ['CONTROL_DB_PATH']).execute(\"SELECT 1 FROM migration_versions WHERE version='ask_coach_v1'\").fetchone(); assert row == (1,)"
+
+            git reset --hard "$TARGET_SHA"
+            python -m pip install -r requirements.txt
+            python -m compileall -q app.py config.py control_db.py db.py \
+              db_migration.py database_reset.py process_lock.py tenant_store.py \
+              coach metrics notify sync scripts
+            python -c "import app"
+
+            sudo systemctl start garmincoach
+            sudo systemctl is-active --quiet garmincoach
+
+            healthy=false
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent --show-error --max-time 10 \
+                http://127.0.0.1:8000/ > /dev/null; then
+                healthy=true
+                break
+              fi
+              sleep 5
+            done
+            if [ "$healthy" != true ]; then
+              echo "Health check failed after database reset"
+              exit 1
+            fi
+
+            process_count=$(pgrep -fc '[u]vicorn app:app')
+            if [ "$process_count" -ne 1 ]; then
+              echo "Expected one application process; found $process_count"
+              exit 1
+            fi
+
+            restart_count_before=$(systemctl show garmincoach -p NRestarts --value)
+            sleep 10
+            restart_count_after=$(systemctl show garmincoach -p NRestarts --value)
+            if [ "$restart_count_before" != "$restart_count_after" ]; then
+              echo "GarminCoach entered a restart loop"
+              exit 1
+            fi
+
+            if ! systemctl show garmincoach -p Environment --value \
+              | grep -q 'APP_WORKER_COUNT=1'; then
+              echo "APP_WORKER_COUNT is not set to one"
+              exit 1
+            fi
+            if ! systemctl show garmincoach -p ExecStart --value \
+              | grep -q -- '--workers 1'; then
+              echo "Systemd ExecStart does not enforce one worker"
+              exit 1
+            fi
+
+            git fetch origin
+            deployed_sha=$(git rev-parse HEAD)
+            origin_sha=$(git rev-parse origin/main)
+            if [ "$deployed_sha" != "$TARGET_SHA" ] || \
+               [ "$origin_sha" != "$TARGET_SHA" ]; then
+              echo "Deployed commit does not match origin/main"
+              exit 1
+            fi
+
+            sudo systemctl status garmincoach --no-pager --full
+            pgrep -af '[u]vicorn app:app'
+            http_status=$(curl --silent --output /dev/null \
+              --write-out '%{http_code}' http://127.0.0.1:8000/)
+            echo "Health HTTP status: $http_status"
+            echo "Application process count: $process_count"
+            echo "Deployed commit: $deployed_sha"
+            sudo journalctl -u garmincoach -n 100 --no-pager

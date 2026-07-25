@@ -221,6 +221,25 @@ network such as Tailscale can provide remote access without changing the app.
 
 See [`.env.example`](.env.example) for all supported settings.
 
+## Explicit database reset
+
+Database corruption never triggers an automatic wipe. An operator may perform a
+complete reset only while the service is stopped and only with the destructive
+confirmation flag:
+
+```bash
+sudo systemctl stop garmincoach
+.venv/bin/python scripts/reset_all_databases.py --confirm-destroy-all-data
+sudo systemctl start garmincoach
+```
+
+The command discovers the configured control, single-user, and canonical tenant
+databases; moves existing SQLite files and sidecars into a timestamped
+`database_quarantine/` directory; recreates clean schemas through the normal
+migration and initialization functions; and requires every new database to pass
+`PRAGMA integrity_check`. Quarantined corrupt files are retained for forensics
+but are explicitly not valid backups.
+
 ## Current limitations
 
 - Single-user only; no multi-user preparation is intentionally included yet.

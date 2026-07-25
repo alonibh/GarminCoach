@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 garmincoach.lock
 migration_backups/
+database_quarantine/
 *.pyo
 *.egg-info/
 

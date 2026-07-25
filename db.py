@@ -562,11 +562,12 @@ def dispose_engine() -> None:
     engine.dispose()
 
 
-def init_db() -> None:
-    Base.metadata.create_all(engine)
-    _migrate_add_columns()
+def init_db(target_engine: Engine | None = None) -> None:
+    eng = target_engine or engine
+    Base.metadata.create_all(eng)
+    _migrate_add_columns(eng)
     
-    with engine.begin() as conn:
+    with eng.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_exercise_sets_name_activity ON exercise_sets (exercise_name, activity_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_activities_source_workout_id ON activities (source_workout_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_planned_sessions_completed_activity_id ON planned_sessions (completed_activity_id)"))
