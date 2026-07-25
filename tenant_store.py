@@ -48,7 +48,71 @@ def athlete_db_path(
     return user_root(user_id, root) / "athlete.db"
 
 
+def verify_and_repair_sqlite(db_path: Path) -> bool:
+    """Check if SQLite database file at db_path is valid. If malformed, quarantine it and return False."""
+    if not db_path.exists():
+        return True
+    try:
+        conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=5)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA quick_check")
+            row = cursor.fetchone()
+            if row and row[0] == "ok":
+                return True
+            import logging
+            logging.getLogger(__name__).error("Database quick_check failed for %s: %s", db_path, row)
+        finally:
+            conn.close()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("Database connection/integrity check failed for %s: %s", db_path, exc)
+
+    # Before quarantining, attempt SQLite backup recovery to preserve all user data
+    recovered_path = db_path.with_name(f"{db_path.name}.recovered")
+    try:
+        source_conn = sqlite3.connect(db_path, timeout=5)
+        dest_conn = sqlite3.connect(recovered_path, timeout=5)
+        try:
+            source_conn.backup(dest_conn)
+            dest_conn.close()
+            source_conn.close()
+            os.replace(recovered_path, db_path)
+            import logging
+            logging.getLogger(__name__).info("Successfully recovered database for %s via backup stream", db_path)
+            return True
+        except Exception:
+            dest_conn.close()
+            source_conn.close()
+    except Exception:
+        pass
+    if recovered_path.exists():
+        try:
+            recovered_path.unlink()
+        except OSError:
+            pass
+
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    quarantine = db_path.with_name(f"{db_path.name}.corrupt.{timestamp}")
+    import logging
+    logging.getLogger(__name__).warning("Quarantining malformed database %s -> %s", db_path, quarantine)
+    try:
+        for ext in ("", "-wal", "-shm"):
+            p = Path(f"{db_path}{ext}")
+            if p.exists():
+                os.replace(p, Path(f"{quarantine}{ext}"))
+    except Exception as q_exc:
+        logging.getLogger(__name__).error("Failed to quarantine malformed database %s: %s", db_path, q_exc)
+        try:
+            db_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return False
+
+
 def _create_engine_for_path(db_path: Path) -> Engine:
+    verify_and_repair_sqlite(db_path)
     engine = create_engine(
         f"sqlite:///{db_path}", future=True, connect_args={"timeout": 30}
     )
@@ -78,6 +142,7 @@ def provision_user_store(
         # Windows ACLs are managed by the service account; chmod is best-effort.
         pass
     db_path = directory / "athlete.db"
+    verify_and_repair_sqlite(db_path)
     seed_path = Path(seed_database).resolve() if seed_database else None
     if not db_path.exists() and seed_path and seed_path.exists():
         temporary = directory / ".athlete.db.bootstrap"
