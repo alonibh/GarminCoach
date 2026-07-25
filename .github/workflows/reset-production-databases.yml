@@ -66,12 +66,14 @@ jobs:
 
             sudo systemctl stop garmincoach
             for attempt in $(seq 1 20); do
-              if ! pgrep -f '[u]vicorn app:app' > /dev/null; then
+              main_pid=$(systemctl show garmincoach -p MainPID --value)
+              if [ "$main_pid" = "0" ] && ! pgrep -x uvicorn > /dev/null; then
                 break
               fi
               sleep 1
             done
-            if pgrep -f '[u]vicorn app:app' > /dev/null; then
+            main_pid=$(systemctl show garmincoach -p MainPID --value)
+            if [ "$main_pid" != "0" ] || pgrep -x uvicorn > /dev/null; then
               echo "GarminCoach process did not stop"
               exit 1
             fi
