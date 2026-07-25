@@ -240,6 +240,33 @@ def test_onboarding_renders_history_defaults(client):
     assert "Upper Strength" not in resp.text
 
 
+def test_onboarding_step_garmin_renders_connect_form(client, monkeypatch):
+    c, session_factory = client
+    import config
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    from control_db import User, init_control_db, get_control_session, utcnow
+    init_control_db()
+    with get_control_session() as session:
+        user = session.get(User, "00000000-0000-0000-0000-000000000001")
+        if not user:
+            user = User(
+                id="00000000-0000-0000-0000-000000000001",
+                email="test@example.com",
+                status="active",
+                onboarding_step="complete",
+                consented_at=utcnow(),
+                timezone="Asia/Jerusalem",
+            )
+            session.add(user)
+            session.commit()
+
+    resp = c.get("/onboarding?step=garmin")
+    assert resp.status_code == 200
+    assert "Connect Garmin" in resp.text
+    assert "garmin_password" in resp.text
+
+
+
 def test_goal_route_and_setup_nav_removed(client):
     c, _ = client
 
