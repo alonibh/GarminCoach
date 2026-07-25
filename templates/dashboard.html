@@ -554,6 +554,7 @@ const POLL_MS = 3000;
 const MAX_POLLS = 200;  // safety cap: stop after ~10 min
 let syncTimer = null;
 let syncPolls = 0;
+let wasSyncRunning = {{ sync_running|tojson }};
 
 function setSyncControls(running) {
   const syncForm = document.getElementById('sync-form');
@@ -656,6 +657,7 @@ async function pollSyncStatus() {
     if (!response.ok) throw new Error('Sync status request failed');
     const data = await response.json();
     if (data.running) {
+      wasSyncRunning = true;
       setSyncControls(true);
       scheduleSyncPoll();
       return;
@@ -665,6 +667,11 @@ async function pollSyncStatus() {
     renderSyncStatus(data);
     renderSyncSummary(data.summary);
     updateDashboardCharts(data);
+
+    if (wasSyncRunning) {
+      wasSyncRunning = false;
+      window.location.replace(window.location.href);
+    }
   } catch (_) {
     scheduleSyncPoll();
   }
@@ -672,6 +679,7 @@ async function pollSyncStatus() {
 
 document.getElementById('sync-form')?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  wasSyncRunning = true;
   setSyncControls(true);
   renderSyncSummary(null);
   syncPolls = 0;
@@ -687,6 +695,7 @@ document.getElementById('sync-form')?.addEventListener('submit', async (event) =
     if (!response.ok) throw new Error('Sync request failed');
     scheduleSyncPoll(0);
   } catch (_) {
+    wasSyncRunning = false;
     setSyncControls(false);
     renderSyncSummary({skipped: true, reason: 'Could not start sync. Try again.'});
   }
