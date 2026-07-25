@@ -532,23 +532,18 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
 
 
 def handle_chat(session: Session, user_text: str) -> tuple[str, CoachMessage]:
-    """Handle chat exclusively through the deterministic closed catalog."""
-    from coach.intent_router import route_chat
-
-    routed = route_chat(session, user_text)
-    payload = {}
-    if routed.interactions:
-        payload["interaction_ids"] = [item.interaction_id for item in routed.interactions]
-    if routed.reply_markup:
-        payload["reply_markup"] = routed.reply_markup
-    user_msg = CoachMessage(role="user", content=user_text, created_at=datetime.now(timezone.utc))
+    """Return button-only guidance for legacy internal callers."""
+    text = (
+        "Use the buttons below, or tap Ask Coach to ask a fitness or health "
+        "question."
+    )
     asst_msg = CoachMessage(
         role="assistant",
-        content=routed.text,
+        content=text,
         created_at=datetime.now(timezone.utc),
         data_snapshot=None,
-        pending_action_json=json.dumps(payload) if payload else None,
+        pending_action_json=None,
     )
-    session.add_all((user_msg, asst_msg))
+    session.add(asst_msg)
     session.commit()
-    return routed.text, asst_msg
+    return text, asst_msg

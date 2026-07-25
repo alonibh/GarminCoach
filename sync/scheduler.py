@@ -218,3 +218,12 @@ def start_scheduler() -> BackgroundScheduler:
     sched.start()
     _scheduler = sched
     return sched
+
+
+def stop_schedulers() -> None:
+    """Stop the process-wide scheduler; safe before startup or after shutdown."""
+    global _scheduler
+    scheduler = _scheduler
+    _scheduler = None
+    if scheduler is not None and scheduler.running:
+        scheduler.shutdown(wait=False)

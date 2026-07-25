@@ -29,7 +29,8 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/garmincoach
 Environment="PATH=/home/ubuntu/garmincoach/.venv/bin"
-ExecStart=/home/ubuntu/garmincoach/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80
+Environment="APP_WORKER_COUNT=1"
+ExecStart=/home/ubuntu/garmincoach/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --workers 1
 Restart=always
 
 [Install]

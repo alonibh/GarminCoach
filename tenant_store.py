@@ -239,3 +239,11 @@ def dispose_user_engine(user_id: str) -> None:
         engine = _engines.pop(canonical, None)
     if engine is not None:
         engine.dispose()
+
+
+def dispose_all_user_engines() -> None:
+    with _engine_lock:
+        engines = list(_engines.values())
+        _engines.clear()
+    for engine in engines:
+        engine.dispose()

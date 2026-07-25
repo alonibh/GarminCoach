@@ -8,11 +8,23 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
 from pathlib import Path
 from typing import Iterator, Optional
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, create_engine, event
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    create_engine,
+    event,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -147,6 +159,21 @@ class TelegramLinkTicket(ControlBase):
     consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class AskCoachConsent(ControlBase):
+    __tablename__ = "ask_coach_consents"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    consent_version: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(64))
+    data_categories_version: Mapped[str] = mapped_column(String(32))
+    data_categories_json: Mapped[str] = mapped_column(Text)
+    category_hash: Mapped[str] = mapped_column(String(64))
+    consented_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
 class AuditEvent(ControlBase):
     __tablename__ = "audit_events"
 
@@ -195,6 +222,107 @@ def get_control_engine() -> Engine:
 
 def init_control_db(engine: Engine | None = None) -> None:
     ControlBase.metadata.create_all(engine or get_control_engine())
+
+
+def dispose_control_engine() -> None:
+    global _control_engine, _control_session_factory
+    engine = _control_engine
+    _control_engine = None
+    _control_session_factory = None
+    if engine is not None:
+        engine.dispose()
+
+
+def canonicalize_categories(
+    categories: tuple[str, ...] | list[str],
+) -> tuple[str, str]:
+    """Return canonical JSON and SHA-256 for category identifiers."""
+    cleaned: list[str] = []
+    for category in categories:
+        if not isinstance(category, str):
+            raise TypeError("Category identifiers must be strings")
+        stripped = category.strip().lower()
+        if not stripped:
+            raise ValueError("Empty category identifier")
+        cleaned.append(stripped)
+    canonical_json = json.dumps(
+        sorted(set(cleaned)), separators=(",", ":"), sort_keys=True
+    )
+    category_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    return canonical_json, category_hash
+
+
+def get_ask_coach_consent(user_id: str) -> AskCoachConsent | None:
+    with get_control_session() as session:
+        return session.get(AskCoachConsent, user_id)
+
+
+def record_ask_coach_consent(
+    user_id: str,
+    version: str,
+    provider: str,
+    categories_version: str,
+    categories: tuple[str, ...] | list[str],
+) -> AskCoachConsent:
+    canonical_json, category_hash = canonicalize_categories(categories)
+    with get_control_session() as session:
+        consent = session.get(AskCoachConsent, user_id)
+        if consent is None:
+            consent = AskCoachConsent(user_id=user_id)
+            session.add(consent)
+        consent.consent_version = version
+        consent.provider = provider
+        consent.data_categories_version = categories_version
+        consent.data_categories_json = canonical_json
+        consent.category_hash = category_hash
+        consent.consented_at = utcnow()
+        consent.revoked_at = None
+        session.flush()
+        session.expunge(consent)
+        return consent
+
+
+def revoke_ask_coach_consent(user_id: str) -> AskCoachConsent | None:
+    with get_control_session() as session:
+        consent = session.get(AskCoachConsent, user_id)
+        if consent is not None:
+            consent.revoked_at = utcnow()
+            session.flush()
+            session.expunge(consent)
+        return consent
+
+
+def is_consent_valid(consent: AskCoachConsent | None) -> bool:
+    if consent is None or consent.revoked_at is not None:
+        return False
+    if consent.consent_version != config.ASK_COACH_CONSENT_VERSION:
+        return False
+    if consent.provider != config.ASK_COACH_PROVIDER:
+        return False
+    if (
+        consent.data_categories_version
+        != config.ASK_COACH_DATA_CATEGORIES_VERSION
+    ):
+        return False
+    try:
+        stored = json.loads(consent.data_categories_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(stored, list) or not all(
+        isinstance(item, str) for item in stored
+    ):
+        return False
+    try:
+        _, stored_hash = canonicalize_categories(stored)
+        _, expected_hash = canonicalize_categories(
+            config.CURRENT_ASK_COACH_DATA_CATEGORIES
+        )
+    except (TypeError, ValueError):
+        return False
+    return (
+        hmac.compare_digest(stored_hash, consent.category_hash)
+        and hmac.compare_digest(stored_hash, expected_hash)
+    )
 
 
 @contextmanager

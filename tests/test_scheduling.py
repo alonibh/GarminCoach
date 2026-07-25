@@ -49,7 +49,7 @@ def test_no_slot_when_a_full_session_does_not_fit(session):
     assert suggestion is None
 
 
-def test_chat_timing_question_uses_calculated_slot_without_llm(session, monkeypatch):
+def test_operational_chat_text_is_button_only_without_llm(session, monkeypatch):
     from coach.coach import handle_chat
 
     avail = json.dumps({"6": {"off": False, "start": "18:00", "end": "20:00"}})
@@ -62,20 +62,12 @@ def test_chat_timing_question_uses_calculated_slot_without_llm(session, monkeypa
     ))
     session.commit()
 
-    monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days: {"state": "fresh", "events": [
-            {"title": "Event", "start": "2026-07-19 12:30", "end": "16:00"},
-        ]},
-    )
-    monkeypatch.setattr("time_utils.get_local_now", lambda: datetime(2026, 7, 18, 19, 31))
-    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: datetime(2026, 7, 18, 19, 31))
     monkeypatch.setattr("coach.llm.generate", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")))
 
     response, message = handle_chat(session, "Can I do it tomorrow?")
 
-    assert response == "Please confirm: Day 1 on Sunday at 18:00."
-    assert json.loads(message.pending_action_json)["interaction_ids"]
+    assert response.startswith("Use the buttons below")
+    assert message.pending_action_json is None
 
 
 def test_timing_intent_variants_and_requested_days():
@@ -100,7 +92,7 @@ def test_clock_parser_accepts_common_twelve_hour_variants():
     assert _parse_clock("6 am").strftime("%H:%M") == "06:00"
 
 
-def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch):
+def test_timing_text_never_falls_back_to_legacy_llm(session, monkeypatch):
     from coach.coach import handle_chat
 
     avail = json.dumps({"6": {"off": False, "start": "18:00", "end": "19:00"}})
@@ -112,17 +104,11 @@ def test_recognized_timing_question_never_falls_back_to_llm(session, monkeypatch
         program_id=program.id, name="Day 1", duration_min=90, session_role="coach_strength",
     ))
     session.commit()
-    monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days: {"state": "fresh", "events": []},
-    )
-    monkeypatch.setattr("time_utils.get_local_now", lambda: datetime(2026, 7, 18, 9, 0))
-    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: datetime(2026, 7, 18, 9, 0))
     monkeypatch.setattr("coach.llm.generate", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")))
 
     response, _message = handle_chat(session, "Can I do it tomorrow?")
 
-    assert response == "No full workout slot is available Sunday."
+    assert response.startswith("Use the buttons below")
 
 
 def test_rest_day_enforces_zero_available_start_times(session):
@@ -141,4 +127,3 @@ def test_rest_day_enforces_zero_available_start_times(session):
     )
 
     assert suggestion is None
-

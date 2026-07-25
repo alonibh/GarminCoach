@@ -171,6 +171,12 @@ Important modules:
 | Garmin workout compilation | `coach/garmin_compiler.py` |
 | Telegram and durable notifications | `notify/telegram.py`, `notify/morning.py`, `notify/outbox.py`, `notify/weekly.py` |
 
+Production runs exactly one application worker and one service replica
+(`APP_WORKER_COUNT=1`, Uvicorn `--workers 1`). The local `garmincoach.lock`
+advisory lock prevents a second process on the same host; it cannot detect a
+replica on another host, so deployment verification must also confirm one
+running service replica.
+
 ## Setup
 
 ```bash

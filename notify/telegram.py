@@ -34,14 +34,22 @@ def _make_request(url: str, payload: dict) -> bool:
     with urllib.request.urlopen(req, timeout=10) as response:
         return response.status == 200
 
-def send_message(text: str, chat_id: str | None = None, reply_markup: dict | None = None) -> bool:
-    """Send a markdown-formatted message to the Telegram chat."""
+def send_message(
+    text: str,
+    chat_id: str | None = None,
+    reply_markup: dict | None = None,
+    *,
+    parse_mode: str | None = "Markdown",
+) -> bool:
+    """Send a message to the tenant's Telegram chat."""
     bot_token = config.TELEGRAM_BOT_TOKEN
     target_chat_id = _tenant_chat_id(chat_id)
     if not bot_token or not target_chat_id:
         return False
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": target_chat_id, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": target_chat_id, "text": text}
+    if parse_mode is not None:
+        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
         
@@ -76,14 +84,23 @@ def answer_callback_query(callback_query_id: str, text: str | None = None) -> bo
     except urllib.error.URLError:
         return False
 
-def edit_message_text(text: str, chat_id: str, message_id: int, reply_markup: dict | None = None) -> bool:
+def edit_message_text(
+    text: str,
+    chat_id: str,
+    message_id: int,
+    reply_markup: dict | None = None,
+    *,
+    parse_mode: str | None = "Markdown",
+) -> bool:
     """Edit an existing message, e.g. to remove inline buttons after an action."""
     bot_token = config.TELEGRAM_BOT_TOKEN
     target_chat_id = _tenant_chat_id(chat_id)
     if not bot_token or not target_chat_id: return False
     
     url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
-    payload = {"chat_id": target_chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": target_chat_id, "message_id": message_id, "text": text}
+    if parse_mode is not None:
+        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
         

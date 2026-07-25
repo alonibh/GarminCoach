@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import db as db_module
+import control_db
 import tenant_store
 
 
@@ -14,10 +15,13 @@ def isolate_tenant_engines(tmp_path, monkeypatch):
     Prevents tests from mutating config.MULTI_USER_DATA_ROOT or user athlete.db files.
     """
     tenant_store._engines.clear()
+    control_db.dispose_control_engine()
     monkeypatch.setattr("config.MULTI_USER_DATA_ROOT", tmp_path / "users")
     monkeypatch.setattr("config.CONTROL_DB_PATH", tmp_path / "control.db")
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "legacy.db")
     yield
     tenant_store._engines.clear()
+    control_db.dispose_control_engine()
 
 
 @pytest.fixture

@@ -39,6 +39,51 @@ GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.9"))
 GEMINI_TOP_K = int(os.getenv("GEMINI_TOP_K", "40"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 
+# --- Ask Coach (advisory-only Gemini integration) ---
+ASK_COACH_MODEL = os.getenv("ASK_COACH_MODEL", "gemini-3.6-flash")
+ASK_COACH_THINKING_LEVEL = os.getenv("ASK_COACH_THINKING_LEVEL", "medium")
+ASK_COACH_MAX_OUTPUT_TOKENS = int(os.getenv("ASK_COACH_MAX_OUTPUT_TOKENS", "1024"))
+ASK_COACH_TIMEOUT_SECONDS = int(os.getenv("ASK_COACH_TIMEOUT_SECONDS", "25"))
+ASK_COACH_TRANSIENT_RETRIES = int(os.getenv("ASK_COACH_TRANSIENT_RETRIES", "1"))
+ASK_COACH_SCHEMA_CORRECTION_RETRIES = int(
+    os.getenv("ASK_COACH_SCHEMA_CORRECTION_RETRIES", "1")
+)
+ASK_COACH_HISTORY_MAX_MESSAGES = int(
+    os.getenv("ASK_COACH_HISTORY_MAX_MESSAGES", "10")
+)
+ASK_COACH_HISTORY_MAX_CHARS = int(os.getenv("ASK_COACH_HISTORY_MAX_CHARS", "8000"))
+ASK_COACH_SNAPSHOT_MAX_CHARS = int(
+    os.getenv("ASK_COACH_SNAPSHOT_MAX_CHARS", "30000")
+)
+ASK_COACH_MAX_RECENT_ACTIVITIES = int(
+    os.getenv("ASK_COACH_MAX_RECENT_ACTIVITIES", "40")
+)
+ASK_COACH_MAX_CALENDAR_EVENTS = int(
+    os.getenv("ASK_COACH_MAX_CALENDAR_EVENTS", "30")
+)
+ASK_COACH_MAX_PROGRAM_EXERCISES = int(
+    os.getenv("ASK_COACH_MAX_PROGRAM_EXERCISES", "80")
+)
+ASK_COACH_SESSION_IDLE_MINUTES = int(
+    os.getenv("ASK_COACH_SESSION_IDLE_MINUTES", "120")
+)
+ASK_COACH_CONSENT_VERSION = os.getenv(
+    "ASK_COACH_CONSENT_VERSION", "ask-coach-v1"
+)
+ASK_COACH_PROVIDER = os.getenv("ASK_COACH_PROVIDER", "Google Gemini")
+ASK_COACH_DATA_CATEGORIES_VERSION = "ask-coach-categories-v1"
+CURRENT_ASK_COACH_DATA_CATEGORIES = (
+    "profile.coaching_relevant",
+    "recovery.metrics",
+    "training.recent_14_days",
+    "training.trends_6_weeks",
+    "program.active",
+    "sessions.planned",
+    "recommendation.official",
+    "calendar.titles_and_times_7_days",
+    "conversation.current_session",
+)
+
 # --- Sync ---
 INITIAL_BACKFILL_DAYS = int(os.getenv("INITIAL_BACKFILL_DAYS", "90"))
 AUTO_SYNC_TIMES = [
@@ -53,6 +98,7 @@ MORNING_WATCH_END_HOUR = int(os.getenv("MORNING_WATCH_END_HOUR", "12"))
 # --- App ---
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
+APP_WORKER_COUNT = int(os.getenv("APP_WORKER_COUNT", "1"))
 DB_PATH = _expand(os.getenv("DB_PATH", "garmincoach.db"))
 MULTI_USER_ENABLED = True
 MULTI_USER_DATA_ROOT = _expand(os.getenv("MULTI_USER_DATA_ROOT", "data/users"))

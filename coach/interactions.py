@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from dataclasses import dataclass
 import hashlib
 import json
-import re
 from uuid import uuid4
 
 import config
@@ -13,10 +13,7 @@ from sqlalchemy.orm import Session
 from coach.decision_engine import DecisionResult, evaluate_morning_decision
 from coach.onboarding import active_program
 from db import (
-    AthleteSafetyReport,
-    ChatIntentAudit,
     DecisionRecord,
-    MorningBriefState,
     PendingInteraction,
     PlannedSession,
     ProgramCursor,
@@ -116,10 +113,6 @@ def stage_decision_actions(
         action for action in result.permitted_actions
         if action_types is None or action["type"] in action_types
     ]
-    if any(
-        row.active for row in session.query(AthleteSafetyReport).filter_by(active=True).all()
-    ):
-        selected = [action for action in selected if action["type"] != "schedule_original_session"]
     if not selected:
         return staged
     versions = (program_version(session), sync_version(session), calendar_version(session))
@@ -166,8 +159,6 @@ def stage_decision_actions(
 def button_label(action_type: str) -> str:
     return {
         "schedule_original_session": "Approve and schedule",
-        "confirm_safety_report": "Record report",
-        "clear_safety_report": "Resume planning",
         "keep_planned_session": "Keep workout",
         "keep_calendar_time": "Keep workout",
         "request_reschedule": "Set another date",
@@ -254,153 +245,6 @@ def reply_markup_for_ids(session: Session, interaction_ids: list[str]) -> dict |
     return reply_markup([row for row in rows if row and row.status == "pending"])
 
 
-def _stage_explicit_schedule(
-    session: Session, user_text: str, now: datetime
-) -> tuple[str, list[PendingInteraction]]:
-    """Calculate and stage an explicit dated schedule request without using chat context."""
-    from coach.calendar import get_upcoming_schedule_result
-    from coach.scheduling import _parse_clock, next_available_time, requested_day
-
-    target_day = requested_day(user_text, now.date())
-    if target_day is None:
-        return "State the target day, for example: today, tomorrow, or Monday.", []
-    calendar = get_upcoming_schedule_result(days=7)
-    if calendar["state"] == "unconfigured":
-        return "Calendar is not connected, so I cannot verify a workout time.", []
-    if calendar["state"] != "fresh":
-        return "Calendar data is unavailable, so I cannot verify a workout time.", []
-    clock_matches = re.findall(
-        r"\b((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?)|(?:[01]?\d|2[0-3]):[0-5]\d)\b",
-        user_text,
-        re.IGNORECASE,
-    )
-    preferred = next((parsed for value in reversed(clock_matches) if (parsed := _parse_clock(value))), None)
-    suggestion = next_available_time(
-        session,
-        now=now,
-        schedule=calendar["events"],
-        start_day=target_day,
-        max_days=1,
-        preferred_time=preferred,
-    )
-    if not suggestion:
-        return f"No schedulable workout slot is available {target_day:%A}.", []
-    versions = (program_version(session), sync_version(session), calendar_version(session))
-    payload = {
-        "action": "schedule_session",
-        "program_session_id": suggestion.program_session_id,
-        "activity_type": "strength_training",
-        "title": suggestion.session_name,
-        "target_date": suggestion.day.isoformat(),
-        "suggested_time": suggestion.start.strftime("%H:%M"),
-        "duration_min": suggestion.duration_min,
-        "intensity": "normal",
-        "modifications": [],
-    }
-    row = PendingInteraction(
-        interaction_id=str(uuid4()), decision_id=None,
-        action_type="schedule_original_session", target_type="program_session",
-        target_id=suggestion.program_session_id,
-        payload_json=json.dumps(payload, sort_keys=True),
-        program_version=versions[0], sync_version=versions[1], calendar_version=versions[2],
-        created_at=now, expires_at=now + timedelta(hours=1), status="pending",
-    )
-    session.add(row)
-    session.flush()
-    return (
-        f"Please confirm: {suggestion.session_name} on {suggestion.day:%A} "
-        f"at {suggestion.start:%H:%M}.",
-        [row],
-    )
-
-
-def stage_free_text_change(session: Session, user_text: str) -> tuple[str, list[PendingInteraction]] | None:
-    """Recognize a small, explicit change vocabulary; everything else stays informational."""
-    lowered = " ".join(user_text.lower().split())
-    now = get_local_now().replace(tzinfo=None)
-    awaiting = (
-        session.query(PendingInteraction)
-        .filter_by(action_type="request_reschedule", status="awaiting_input")
-        .order_by(PendingInteraction.created_at.desc())
-        .first()
-    )
-    if awaiting:
-        match = re.search(r"\b([01]\d|2[0-3]):([0-5]\d)\b", user_text)
-        if not match:
-            return "State an exact same-day time in HH:MM format.", []
-        planned = session.get(PlannedSession, awaiting.target_id)
-        if not planned or planned.status in {"completed", "cancelled"}:
-            awaiting.status = "superseded"
-            return "The planned session is no longer current.", []
-        time_text = match.group(0)
-        awaiting.status = "superseded"
-        row = PendingInteraction(
-            interaction_id=str(uuid4()), decision_id=None,
-            action_type="reschedule_planned_time", target_type="planned_session",
-            target_id=planned.id,
-            payload_json=json.dumps({"planned_session_id": planned.id, "suggested_time": time_text}),
-            program_version=program_version(session), sync_version=sync_version(session),
-            calendar_version=calendar_version(session), created_at=now,
-            expires_at=now + timedelta(hours=1), status="pending",
-        )
-        session.add(row)
-        session.flush()
-        from time_utils import format_chat_date
-        return f"Confirm: move {planned.title} to {time_text} on {format_chat_date(planned.target_date)}.", [row]
-    safety_terms = ("pain", "dizzy", "dizziness", "faint", "chest pain", "unusual difficulty")
-    if any(term in lowered for term in safety_terms):
-        report_type = "pain" if "pain" in lowered else "dizziness" if "dizz" in lowered or "faint" in lowered else "difficulty"
-        row = PendingInteraction(
-            interaction_id=str(uuid4()),
-            decision_id=None,
-            action_type="confirm_safety_report",
-            target_type="safety_report",
-            target_id=None,
-            payload_json=json.dumps({"report_type": report_type, "report_text": user_text}, sort_keys=True),
-            program_version=program_version(session),
-            sync_version=sync_version(session),
-            calendar_version=calendar_version(session),
-            created_at=now,
-            expires_at=now + timedelta(hours=1),
-            status="pending",
-        )
-        session.add(row)
-        session.flush()
-        return f"Confirm this report: {user_text}", [row]
-
-    from coach.scheduling import is_schedule_request
-    if is_schedule_request(user_text):
-        return _stage_explicit_schedule(session, user_text, now)
-
-    requested = None
-    if any(phrase in lowered for phrase in ("schedule today", "schedule the workout", "schedule the session", "book the workout")):
-        requested = "schedule_original_session"
-    elif any(word in lowered for word in ("reschedule", "move the workout", "change the time")):
-        return "State the exact target date and time. No schedule change has been made.", []
-    if not requested:
-        return None
-
-    today = get_local_now().date()
-    morning_state = session.get(MorningBriefState, today)
-    result = evaluate_morning_decision(
-        session,
-        allow_incomplete=bool(morning_state and morning_state.answer_anyway),
-        target=today,
-        evaluated_at=get_local_now(),
-    )
-    allowed = {item["type"] for item in result.permitted_actions}
-    if requested not in allowed:
-        return "That change is not permitted by the current decision. Ask for today's recommendation first.", []
-    staged = stage_decision_actions(session, result, action_types={requested})
-    if requested == "schedule_original_session":
-        match = re.search(r"\b([01]\d|2[0-3]):([0-5]\d)\b", user_text)
-        if match and staged:
-            payload = json.loads(staged[0].payload_json)
-            payload["suggested_time"] = match.group(0)
-            staged[0].payload_json = json.dumps(payload, sort_keys=True)
-    return f"Confirm: {button_label(requested)}.", staged
-
-
 def cancel_interaction(session: Session, interaction_id: str) -> bool:
     row = session.get(PendingInteraction, interaction_id)
     if not row or row.status != "pending":
@@ -408,18 +252,6 @@ def cancel_interaction(session: Session, interaction_id: str) -> bool:
     row.status = "rejected"
     row.failure_reason = "user_cancelled"
     return True
-
-
-def _interaction_intent(action_type: str) -> str:
-    return {
-        "schedule_original_session": "schedule_workout",
-        "reschedule_planned_time": "reschedule_workout",
-        "request_reschedule": "reschedule_workout",
-        "cancel_planned_session": "cancel_workout",
-        "start_sync": "request_sync",
-        "confirm_safety_report": "report_safety_issue",
-        "clear_safety_report": "clear_safety_report",
-    }.get(action_type, "unknown")
 
 
 def reject_interaction(session: Session, interaction_id: str) -> str:
@@ -433,25 +265,8 @@ def reject_interaction(session: Session, interaction_id: str) -> str:
         text = "Proposal rejected. The workout remains pending and will not be proactively proposed again today."
     elif row.action_type in {"cancel_planned_session", "reschedule_planned_time"}:
         text = "Workout kept unchanged."
-    elif row.action_type == "confirm_safety_report":
-        text = "Safety report not recorded."
-    elif row.action_type == "clear_safety_report":
-        text = "Safety report remains active."
     else:
         text = "Action dismissed. Nothing was changed."
-    session.add(ChatIntentAudit(
-        message_text=f"button:{row.action_type}", provider="deterministic",
-        model="closed-catalog-v2", router_mode="deterministic",
-        intent=_interaction_intent(row.action_type),
-        evidence_json=json.dumps({
-            "input_method": "button", "interaction_id": interaction_id,
-            "action_type": row.action_type, "starting_state": "confirm",
-            "ending_state": None, "transition": "confirm->rejected",
-            "final_outcome": "rejected", "failure_reason": row.failure_reason,
-        }, sort_keys=True),
-        validation_status="rejected", failure_reason=row.failure_reason,
-        latency_ms=0, created_at=get_local_now().replace(tzinfo=None),
-    ))
     return text
 
 
@@ -461,49 +276,6 @@ def mark_delivery_failed(session: Session, interaction_ids: list[str], reason: s
         if row and row.status == "pending":
             row.status = "failed"
             row.failure_reason = f"delivery_failed:{reason}"[:1000]
-
-
-def request_different_time(session: Session, interaction_id: str) -> str:
-    """Turn a schedule proposal into typed date-then-time selection."""
-    from db import ChatDialogueState
-    row = session.get(PendingInteraction, interaction_id)
-    now = get_local_now().replace(tzinfo=None)
-    if not row or row.status != "pending" or row.action_type != "schedule_original_session":
-        return "This proposal is no longer available."
-    payload = json.loads(row.payload_json)
-    row.status = "superseded"
-    row.failure_reason = "different_time_requested"
-    session.merge(ChatDialogueState(
-        state_id=1,
-        intent="schedule_workout",
-        slots_json=json.dumps({
-            "workout_text": payload.get("title"),
-            "program_session_id": payload.get("program_session_id"),
-            "duration_min": payload.get("duration_min") or 60,
-            "selection_mode": True,
-            "flow_nonce": uuid4().hex[:8],
-            "step": "date",
-        }, sort_keys=True),
-        missing_slot="date",
-        created_at=now,
-        updated_at=now,
-        expires_at=datetime(2099, 12, 31, 23, 59),
-    ))
-    session.flush()
-    session.add(ChatIntentAudit(
-        message_text="button:schedule_different_time", provider="deterministic",
-        model="closed-catalog-v2", router_mode="deterministic",
-        intent="schedule_workout",
-        evidence_json=json.dumps({
-            "input_method": "button", "interaction_id": interaction_id,
-            "action_type": "schedule_different_time", "starting_state": "confirm",
-            "ending_state": "date", "transition": "confirm->date",
-            "final_outcome": "awaiting_input", "failure_reason": "",
-        }, sort_keys=True),
-        validation_status="awaiting_input", failure_reason="", latency_ms=0,
-        created_at=now,
-    ))
-    return "Which new date should I use?"
 
 
 def _walk_dicts(value):
@@ -541,33 +313,6 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
         row.status = "expired"
         row.failure_reason = "expired"
         return "stale", "This action expired. Ask again for a current proposal."
-    if row.action_type == "confirm_safety_report":
-        if row.program_version != program_version(session):
-            row.status = "superseded"
-            row.failure_reason = "program_changed"
-            return "stale", "Program data changed. Restate the report if it is still relevant."
-        payload = json.loads(row.payload_json)
-        session.add(AthleteSafetyReport(
-            report_type=payload["report_type"],
-            report_text=payload["report_text"],
-            confirmed_at=now,
-            active=True,
-        ))
-        row.status = "applied"
-        row.applied_at = now
-        return "applied", "Safety report confirmed."
-
-    if row.action_type == "clear_safety_report":
-        report = session.get(AthleteSafetyReport, row.target_id)
-        if not report or not report.active:
-            row.status = "superseded"
-            row.failure_reason = "safety_report_not_active"
-            return "stale", "The safety report is no longer active."
-        report.active = False
-        row.status = "applied"
-        row.applied_at = now
-        return "applied", "Safety report closed. Workout planning can resume."
-
     if row.action_type == "start_sync":
         is_auth = False
         if config.MULTI_USER_ENABLED:
@@ -657,37 +402,6 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
         row.status = "applied"
         row.applied_at = now
         return "applied", "Workout kept unchanged."
-
-    if row.action_type == "request_reschedule":
-        planned = session.get(PlannedSession, row.target_id)
-        if (
-            not planned
-            or planned.status in {"completed", "cancelled"}
-            or row.program_version != program_version(session)
-            or row.calendar_version != calendar_version(session)
-        ):
-            row.status = "superseded"
-            row.failure_reason = "program_or_calendar_changed"
-            return "stale", "Program or calendar data changed. Ask again."
-        from db import ChatDialogueState
-        row.status = "applied"
-        row.applied_at = now
-        session.merge(ChatDialogueState(
-            state_id=1,
-            intent="reschedule_workout",
-            slots_json=json.dumps({
-                "planned_session_id": planned.id,
-                "duration_min": planned.duration_min,
-                "selection_mode": True,
-                "flow_nonce": uuid4().hex[:8],
-                "step": "date",
-            }, sort_keys=True),
-            missing_slot="date",
-            created_at=now,
-            updated_at=now,
-            expires_at=datetime(2099, 12, 31, 23, 59),
-        ))
-        return "awaiting_input", "Which new date should I use?"
 
     if row.action_type == "reschedule_planned_time":
         planned = session.get(PlannedSession, row.target_id)
@@ -881,34 +595,8 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
 
 
 def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
-    """Apply and audit the final outcome of a confirmation button."""
-    row = session.get(PendingInteraction, interaction_id)
-    status, text = _apply_interaction(session, interaction_id)
-    action_type = row.action_type if row else "unknown"
-    intent = _interaction_intent(action_type)
-    ending_state = "date" if status == "awaiting_input" else None
-    session.add(ChatIntentAudit(
-        message_text=f"button:{action_type}",
-        provider="deterministic",
-        model="closed-catalog-v2",
-        router_mode="deterministic",
-        intent=intent,
-        evidence_json=json.dumps({
-            "input_method": "button",
-            "interaction_id": interaction_id,
-            "action_type": action_type,
-            "starting_state": "confirm",
-            "ending_state": ending_state,
-            "transition": f"confirm->{ending_state or status}",
-            "final_outcome": status,
-            "failure_reason": row.failure_reason if row else "interaction_missing",
-        }, sort_keys=True),
-        validation_status=status,
-        failure_reason=row.failure_reason if row else "interaction_missing",
-        latency_ms=0,
-        created_at=get_local_now().replace(tzinfo=None),
-    ))
-    return status, text
+    """Apply the final outcome of a validated confirmation button."""
+    return _apply_interaction(session, interaction_id)
 
 
 def stage_calendar_conflict(session: Session, planned, conflict: dict) -> list[PendingInteraction]:
@@ -928,3 +616,415 @@ def stage_calendar_conflict(session: Session, planned, conflict: dict) -> list[P
         rows.append(row)
     session.flush()
     return rows
+
+
+@dataclass(frozen=True)
+class FlowTurn:
+    text: str
+    reply_markup: dict | None
+
+
+def _flow_markup(
+    row: PendingInteraction, labels: list[str], kind: str
+) -> dict:
+    payload = json.loads(row.payload_json)
+    nonce = payload["nonce"]
+    buttons = [
+        {
+            "text": label,
+            "callback_data": (
+                f"flow:{row.interaction_id}:{nonce}:{kind}:{index}"
+            ),
+        }
+        for index, label in enumerate(labels)
+    ]
+    return {
+        "inline_keyboard": [
+            buttons[index : index + 2]
+            for index in range(0, len(buttons), 2)
+        ]
+        + [[
+            {
+                "text": "Cancel",
+                "callback_data": (
+                    f"flow:{row.interaction_id}:{nonce}:cancel:0"
+                ),
+            }
+        ]]
+    }
+
+
+def _new_flow(
+    session: Session,
+    *,
+    flow_type: str,
+    payload: dict,
+    target_type: str,
+    target_id: int | None,
+) -> PendingInteraction:
+    now = get_local_now().replace(tzinfo=None)
+    payload = {
+        "flow_type": flow_type,
+        "flow_step": payload["flow_step"],
+        **payload,
+        "nonce": uuid4().hex[:8],
+        "page": 0,
+    }
+    row = PendingInteraction(
+        interaction_id=str(uuid4()),
+        decision_id=None,
+        action_type="button_flow",
+        target_type=target_type,
+        target_id=target_id,
+        payload_json=json.dumps(payload, sort_keys=True),
+        program_version=program_version(session),
+        sync_version=sync_version(session),
+        calendar_version=calendar_version(session),
+        created_at=now,
+        expires_at=now + timedelta(hours=1),
+        status="pending",
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def begin_schedule_flow(session: Session) -> FlowTurn:
+    program = active_program(session)
+    if program is None:
+        return FlowTurn("No active training program is available.", None)
+    cursor = session.get(ProgramCursor, program.id)
+    program_session = (
+        session.get(ProgramSession, cursor.next_program_session_id)
+        if cursor and cursor.next_program_session_id
+        else (
+            session.query(ProgramSession)
+            .filter(ProgramSession.program_id == program.id)
+            .order_by(ProgramSession.sequence_order, ProgramSession.id)
+            .first()
+        )
+    )
+    if program_session is None:
+        return FlowTurn("The active program has no schedulable session.", None)
+    today = get_local_now().date()
+    offered_dates = [
+        (today + timedelta(days=offset)).isoformat() for offset in range(7)
+    ]
+    row = _new_flow(
+        session,
+        flow_type="schedule",
+        payload={
+            "flow_step": "choose_date",
+            "program_session_id": program_session.id,
+            "offered_dates": offered_dates,
+            "offered_times": [],
+        },
+        target_type="program_session",
+        target_id=program_session.id,
+    )
+    labels = [
+        date.fromisoformat(value).strftime("%a %d %b")
+        for value in offered_dates
+    ]
+    return FlowTurn(
+        f"Choose a date for {program_session.name}.",
+        _flow_markup(row, labels, "date"),
+    )
+
+
+def begin_reschedule_flow(
+    session: Session, planned_session_id: int | None = None
+) -> FlowTurn:
+    now = get_local_now().replace(tzinfo=None)
+    if planned_session_id is not None:
+        planned_rows = [session.get(PlannedSession, planned_session_id)]
+        planned_rows = [row for row in planned_rows if row is not None]
+    else:
+        planned_rows = (
+            session.query(PlannedSession)
+            .filter(
+                PlannedSession.target_date >= now.date(),
+                PlannedSession.status.notin_(("completed", "cancelled")),
+            )
+            .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
+            .limit(8)
+            .all()
+        )
+    if not planned_rows:
+        return FlowTurn("No upcoming workout is available to reschedule.", None)
+    ids = [row.id for row in planned_rows]
+    flow_step = "choose_session" if len(ids) > 1 else "choose_date"
+    target = ids[0] if len(ids) == 1 else None
+    offered_dates = [
+        (now.date() + timedelta(days=offset)).isoformat()
+        for offset in range(7)
+    ]
+    row = _new_flow(
+        session,
+        flow_type="reschedule",
+        payload={
+            "flow_step": flow_step,
+            "planned_session_id": target,
+            "offered_planned_session_ids": ids,
+            "offered_dates": offered_dates,
+            "offered_times": [],
+        },
+        target_type="planned_session",
+        target_id=target,
+    )
+    if flow_step == "choose_session":
+        labels = [
+            f"{planned.title} · {planned.target_date:%a}"
+            for planned in planned_rows
+        ]
+        return FlowTurn(
+            "Choose the workout to reschedule.",
+            _flow_markup(row, labels, "session"),
+        )
+    labels = [
+        date.fromisoformat(value).strftime("%a %d %b")
+        for value in offered_dates
+    ]
+    return FlowTurn(
+        f"Choose a new date for {planned_rows[0].title}.",
+        _flow_markup(row, labels, "date"),
+    )
+
+
+def begin_alternate_time(
+    session: Session, interaction_id: str
+) -> FlowTurn:
+    source = session.get(PendingInteraction, interaction_id)
+    if (
+        source is None
+        or source.status != "pending"
+        or source.action_type != "schedule_original_session"
+    ):
+        return FlowTurn("This proposal is no longer available.", None)
+    payload = json.loads(source.payload_json)
+    source.status = "superseded"
+    source.failure_reason = "different_time_requested"
+    offered_dates = [
+        (get_local_now().date() + timedelta(days=offset)).isoformat()
+        for offset in range(7)
+    ]
+    row = _new_flow(
+        session,
+        flow_type="schedule",
+        payload={
+            "flow_step": "choose_date",
+            "program_session_id": payload["program_session_id"],
+            "offered_dates": offered_dates,
+            "offered_times": [],
+        },
+        target_type="program_session",
+        target_id=int(payload["program_session_id"]),
+    )
+    labels = [
+        date.fromisoformat(value).strftime("%a %d %b")
+        for value in offered_dates
+    ]
+    return FlowTurn(
+        "Choose another date.",
+        _flow_markup(row, labels, "date"),
+    )
+
+
+def _flow_stale(row: PendingInteraction | None, now: datetime) -> bool:
+    return bool(
+        row is None
+        or row.status != "pending"
+        or row.action_type != "button_flow"
+        or row.expires_at < now
+    )
+
+
+def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
+    parts = callback_data.split(":")
+    if len(parts) != 5 or parts[0] != "flow":
+        return FlowTurn("This choice is no longer available.", None)
+    _, interaction_id, nonce, kind, raw_index = parts
+    row = session.get(PendingInteraction, interaction_id)
+    now = get_local_now().replace(tzinfo=None)
+    if _flow_stale(row, now):
+        if row and row.status == "pending":
+            row.status = "expired"
+        return FlowTurn("This choice expired. Start again from the menu.", None)
+    payload = json.loads(row.payload_json)
+    if payload.get("nonce") != nonce:
+        return FlowTurn("This choice is no longer current.", None)
+    if kind == "cancel":
+        row.status = "rejected"
+        row.failure_reason = "user_cancelled"
+        return FlowTurn("Flow cancelled. Nothing was changed.", None)
+    try:
+        index = int(raw_index)
+    except ValueError:
+        return FlowTurn("This choice is invalid.", None)
+
+    if payload["flow_step"] == "choose_session" and kind == "session":
+        offered = payload["offered_planned_session_ids"]
+        if not 0 <= index < len(offered):
+            return FlowTurn("This choice is invalid.", None)
+        planned = session.get(PlannedSession, int(offered[index]))
+        if planned is None or planned.status in {"completed", "cancelled"}:
+            row.status = "superseded"
+            return FlowTurn("That workout is no longer current.", None)
+        payload["planned_session_id"] = planned.id
+        payload["flow_step"] = "choose_date"
+        row.target_id = planned.id
+        row.payload_json = json.dumps(payload, sort_keys=True)
+        labels = [
+            date.fromisoformat(value).strftime("%a %d %b")
+            for value in payload["offered_dates"]
+        ]
+        return FlowTurn(
+            f"Choose a new date for {planned.title}.",
+            _flow_markup(row, labels, "date"),
+        )
+
+    if payload["flow_step"] == "choose_date" and kind == "date":
+        offered = payload["offered_dates"]
+        if not 0 <= index < len(offered):
+            return FlowTurn("This choice is invalid.", None)
+        payload["target_date"] = offered[index]
+        payload["offered_times"] = ["06:00", "07:00", "18:00", "19:00"]
+        payload["flow_step"] = "choose_time"
+        row.payload_json = json.dumps(payload, sort_keys=True)
+        return FlowTurn(
+            "Choose a time.",
+            _flow_markup(row, payload["offered_times"], "time"),
+        )
+
+    if payload["flow_step"] == "choose_time" and kind == "time":
+        offered = payload["offered_times"]
+        if not 0 <= index < len(offered):
+            return FlowTurn("This choice is invalid.", None)
+        selected_time = offered[index]
+        target_date = payload["target_date"]
+        if payload["flow_type"] == "reschedule":
+            planned = session.get(
+                PlannedSession, int(payload["planned_session_id"])
+            )
+            if planned is None or planned.status in {"completed", "cancelled"}:
+                row.status = "superseded"
+                return FlowTurn("That workout is no longer current.", None)
+            row.action_type = "reschedule_planned_time"
+            row.target_type = "planned_session"
+            row.target_id = planned.id
+            row.payload_json = json.dumps(
+                {
+                    "flow_type": "reschedule",
+                    "flow_step": "confirm",
+                    "planned_session_id": planned.id,
+                    "target_date": target_date,
+                    "suggested_time": selected_time,
+                    "offered_times": offered,
+                    "page": payload.get("page", 0),
+                },
+                sort_keys=True,
+            )
+            text = (
+                f"Confirm: move {planned.title} to "
+                f"{target_date} at {selected_time}."
+            )
+        else:
+            program_session = session.get(
+                ProgramSession, int(payload["program_session_id"])
+            )
+            if program_session is None:
+                row.status = "superseded"
+                return FlowTurn("That program session is no longer current.", None)
+            row.action_type = "schedule_original_session"
+            row.target_type = "program_session"
+            row.target_id = program_session.id
+            row.payload_json = json.dumps(
+                {
+                    "action": "schedule_session",
+                    "flow_type": "schedule",
+                    "flow_step": "confirm",
+                    "program_session_id": program_session.id,
+                    "activity_type": (
+                        program_session.sport_type or "strength_training"
+                    ),
+                    "title": program_session.name,
+                    "target_date": target_date,
+                    "suggested_time": selected_time,
+                    "duration_min": program_session.duration_min or 60,
+                    "intensity": "normal",
+                    "modifications": [],
+                    "offered_times": offered,
+                    "page": payload.get("page", 0),
+                },
+                sort_keys=True,
+            )
+            text = (
+                f"Confirm: schedule {program_session.name} on "
+                f"{target_date} at {selected_time}."
+            )
+        return FlowTurn(text, reply_markup([row]))
+    return FlowTurn("This choice is no longer current.", None)
+
+
+def stage_sync_confirmation(session: Session) -> FlowTurn:
+    now = get_local_now().replace(tzinfo=None)
+    row = PendingInteraction(
+        interaction_id=str(uuid4()),
+        decision_id=None,
+        action_type="start_sync",
+        target_type="sync",
+        target_id=None,
+        payload_json=json.dumps({"action": "start_sync"}, sort_keys=True),
+        program_version=program_version(session),
+        sync_version=sync_version(session),
+        calendar_version=calendar_version(session),
+        created_at=now,
+        expires_at=now + timedelta(minutes=15),
+        status="pending",
+    )
+    session.add(row)
+    session.flush()
+    return FlowTurn("Start a Garmin sync now?", reply_markup([row]))
+
+
+def stage_cancel_choices(session: Session) -> FlowTurn:
+    now = get_local_now().replace(tzinfo=None)
+    planned_rows = (
+        session.query(PlannedSession)
+        .filter(
+            PlannedSession.target_date >= now.date(),
+            PlannedSession.status == "approved",
+        )
+        .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
+        .limit(8)
+        .all()
+    )
+    if not planned_rows:
+        return FlowTurn("No approved upcoming workout is available to cancel.", None)
+    versions = (program_version(session), sync_version(session), calendar_version(session))
+    interactions = []
+    for planned in planned_rows:
+        row = PendingInteraction(
+            interaction_id=str(uuid4()),
+            decision_id=None,
+            action_type="cancel_planned_session",
+            target_type="planned_session",
+            target_id=planned.id,
+            payload_json=json.dumps(
+                {
+                    "planned_session_id": planned.id,
+                    "selection_label": f"{planned.title} · {planned.target_date:%a}",
+                },
+                sort_keys=True,
+            ),
+            program_version=versions[0],
+            sync_version=versions[1],
+            calendar_version=versions[2],
+            created_at=now,
+            expires_at=now + timedelta(hours=1),
+            status="pending",
+        )
+        session.add(row)
+        interactions.append(row)
+    session.flush()
+    return FlowTurn("Choose a workout to cancel.", reply_markup(interactions))

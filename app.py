@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import os
+import asyncio
+from contextlib import asynccontextmanager
+import inspect
+import json
 import threading
 from datetime import date, datetime, timedelta
 
@@ -44,17 +48,199 @@ from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program, warmup_def
 from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata, muscle_group_for
 from metrics.engine import acwr_label
 from sync.garmin_client import client
-from sync.scheduler import start_multi_user_scheduler, start_scheduler
+from sync.scheduler import (
+    start_multi_user_scheduler,
+    start_scheduler,
+    stop_schedulers,
+)
 from time_utils import get_local_date
 from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
 from auth_routes import router as auth_router
 from account_routes import router as account_router
 from setup_routes import CONSENT_VERSION, router as setup_router
 from auth_service import resolve_web_session
-from control_db import get_control_session, init_control_db
-from tenant_context import TenantIdentity, bind_tenant, reset_tenant, tenant_scope
+from control_db import (
+    User,
+    canonicalize_categories,
+    get_control_session,
+    init_control_db,
+)
+from tenant_context import TenantIdentity, tenant_scope
 
-app = FastAPI(title="GarminCoach")
+def validate_startup_configuration() -> None:
+    """Validate local Ask Coach and single-process settings without network I/O."""
+    if not config.GEMINI_API_KEY.strip():
+        raise RuntimeError("GEMINI_API_KEY is required")
+    if not config.ASK_COACH_MODEL.strip():
+        raise RuntimeError("ASK_COACH_MODEL must not be empty")
+    if config.ASK_COACH_THINKING_LEVEL not in {
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    }:
+        raise RuntimeError("ASK_COACH_THINKING_LEVEL is invalid")
+    numeric_ranges = {
+        "ASK_COACH_MAX_OUTPUT_TOKENS": (
+            config.ASK_COACH_MAX_OUTPUT_TOKENS,
+            1,
+            8192,
+        ),
+        "ASK_COACH_TIMEOUT_SECONDS": (
+            config.ASK_COACH_TIMEOUT_SECONDS,
+            1,
+            120,
+        ),
+        "ASK_COACH_TRANSIENT_RETRIES": (
+            config.ASK_COACH_TRANSIENT_RETRIES,
+            0,
+            1,
+        ),
+        "ASK_COACH_SCHEMA_CORRECTION_RETRIES": (
+            config.ASK_COACH_SCHEMA_CORRECTION_RETRIES,
+            0,
+            1,
+        ),
+        "ASK_COACH_HISTORY_MAX_MESSAGES": (
+            config.ASK_COACH_HISTORY_MAX_MESSAGES,
+            2,
+            100,
+        ),
+        "ASK_COACH_HISTORY_MAX_CHARS": (
+            config.ASK_COACH_HISTORY_MAX_CHARS,
+            100,
+            100_000,
+        ),
+        "ASK_COACH_SNAPSHOT_MAX_CHARS": (
+            config.ASK_COACH_SNAPSHOT_MAX_CHARS,
+            1_000,
+            100_000,
+        ),
+        "ASK_COACH_MAX_RECENT_ACTIVITIES": (
+            config.ASK_COACH_MAX_RECENT_ACTIVITIES,
+            1,
+            500,
+        ),
+        "ASK_COACH_MAX_CALENDAR_EVENTS": (
+            config.ASK_COACH_MAX_CALENDAR_EVENTS,
+            1,
+            500,
+        ),
+        "ASK_COACH_MAX_PROGRAM_EXERCISES": (
+            config.ASK_COACH_MAX_PROGRAM_EXERCISES,
+            1,
+            1_000,
+        ),
+        "ASK_COACH_SESSION_IDLE_MINUTES": (
+            config.ASK_COACH_SESSION_IDLE_MINUTES,
+            1,
+            1_440,
+        ),
+    }
+    for name, (value, minimum, maximum) in numeric_ranges.items():
+        if not minimum <= value <= maximum:
+            raise RuntimeError(
+                f"{name} must be between {minimum} and {maximum}"
+            )
+    if config.APP_WORKER_COUNT != 1:
+        raise RuntimeError("APP_WORKER_COUNT must equal 1")
+    if not config.ASK_COACH_DATA_CATEGORIES_VERSION.strip():
+        raise RuntimeError(
+            "ASK_COACH_DATA_CATEGORIES_VERSION must not be empty"
+        )
+    if not config.CURRENT_ASK_COACH_DATA_CATEGORIES:
+        raise RuntimeError("Ask Coach data categories must not be empty")
+    canonical_json, _ = canonicalize_categories(
+        config.CURRENT_ASK_COACH_DATA_CATEGORIES
+    )
+    canonical = json.loads(canonical_json)
+    if len(canonical) != len(config.CURRENT_ASK_COACH_DATA_CATEGORIES):
+        raise RuntimeError("Ask Coach data categories contain duplicates")
+
+
+def initialize_databases() -> None:
+    init_control_db()
+    if config.MULTI_USER_ENABLED:
+        from tenant_store import provision_user_store
+
+        with get_control_session() as control_session:
+            user_ids = [row.id for row in control_session.query(User).all()]
+        for user_id in user_ids:
+            provision_user_store(user_id)
+    else:
+        init_db()
+
+
+async def run_cleanup(name: str, action) -> None:
+    try:
+        result = action()
+        if inspect.isawaitable(result):
+            await result
+    except (Exception, asyncio.CancelledError) as exc:
+        from coach.privacy_logger import log_sanitized_cleanup_error
+
+        log_sanitized_cleanup_error(name, exc)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    from coach.ask_coach_llm import close_gemini_client, init_gemini_client
+    from coach.ask_coach_session import (
+        cancel_session_cleanup_task,
+        clear_in_memory_state,
+        start_session_cleanup_task,
+    )
+    from coach.telegram_webhook import (
+        cancel_active_gemini_tasks,
+        clear_shutting_down_flag,
+        set_shutting_down_flag,
+        update_deduplicator,
+    )
+    from db_migration import dispose_all_engines, run_destructive_migrations
+    from process_lock import acquire_process_lock, release_process_lock
+
+    process_lock = None
+    cleanup_task_started = False
+    gemini_client_started = False
+    schedulers_started = False
+    clear_shutting_down_flag()
+    try:
+        process_lock = acquire_process_lock()
+        validate_startup_configuration()
+        dispose_all_engines()
+        run_destructive_migrations()
+        initialize_databases()
+        init_gemini_client()
+        gemini_client_started = True
+        start_session_cleanup_task()
+        cleanup_task_started = True
+        if config.MULTI_USER_ENABLED:
+            start_multi_user_scheduler()
+        else:
+            start_scheduler()
+        schedulers_started = True
+        yield
+    finally:
+        set_shutting_down_flag()
+        if cleanup_task_started:
+            await run_cleanup(
+                "session_cleanup_task", cancel_session_cleanup_task
+            )
+        await run_cleanup("active_gemini_tasks", cancel_active_gemini_tasks)
+        await run_cleanup("in_memory_state", clear_in_memory_state)
+        update_deduplicator.clear()
+        if gemini_client_started:
+            await run_cleanup("gemini_client", close_gemini_client)
+        if schedulers_started:
+            await run_cleanup("schedulers", stop_schedulers)
+        await run_cleanup("database_engines", dispose_all_engines)
+        if process_lock is not None:
+            await run_cleanup(
+                "process_lock", lambda: release_process_lock(process_lock)
+            )
+
+
+app = FastAPI(title="GarminCoach", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(config.PROJECT_ROOT / "static")), name="static")
 app.include_router(auth_router)
 app.include_router(account_router)
@@ -161,7 +347,6 @@ def _replace_session_exercises(session, program_session: ProgramSession, exercis
 
 import hashlib
 import hmac
-import json
 import secrets
 import time as _time
 from fastapi.responses import Response
@@ -310,21 +495,6 @@ templates.env.filters["humanize"] = _humanize
 
 # Sync run-state lives in sync_runner (shared with the scheduler, atomic start).
 from sync import sync_runner  # noqa: E402
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    if config.MULTI_USER_ENABLED:
-        init_control_db()
-        start_multi_user_scheduler()
-        return
-    init_db()
-    # Try to resume a cached Garmin session silently; don't block startup.
-    try:
-        client.login()
-    except Exception:
-        pass
-    start_scheduler()
 
 
 # --- helpers --------------------------------------------------------------
@@ -2601,264 +2771,24 @@ def coach_calendar_feed():
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    """Handle incoming messages from Telegram."""
-    # 0. Size Limit
-    content_length = request.headers.get('content-length')
+    """Authenticate and dispatch a Telegram update without blocking on Gemini."""
+    content_length = request.headers.get("content-length")
     if content_length and int(content_length) > 2 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Payload too large")
-
-    # 1. Verify Secret Token
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
     if secret != config.TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
-        
-    data = {}
-    tenant_token = None
-    authorized_chat_id = config.TELEGRAM_CHAT_ID
     try:
         data = await request.json()
-        callback = data.get("callback_query") or {}
-        message = data.get("message") or callback.get("message") or {}
-        chat = message.get("chat") or {}
-        incoming_chat_id = chat.get("id")
-        incoming_chat_type = chat.get("type")
-        incoming_text = message.get("text") if not callback else None
-
-        if config.MULTI_USER_ENABLED:
-            from notify.telegram import send_link_message
-            from sync.scheduler import refresh_user_jobs
-            from telegram_link import consume_link_code, resolve_chat_tenant, unlink_user
-
-            if incoming_chat_type != "private" or incoming_chat_id is None:
-                return {"status": "ok"}
-            parts = (incoming_text or "").strip().split(maxsplit=1)
-            command = parts[0].split("@", 1)[0].casefold() if parts else ""
-            link_code = None
-            if command == "/link" and len(parts) == 2:
-                link_code = parts[1]
-            elif command == "/start" and len(parts) == 2 and parts[1].startswith("link_"):
-                link_code = parts[1].removeprefix("link_")
-            if command in {"/link", "/start"} and link_code is None:
-                send_link_message("Generate a link command from GarminCoach Account settings.", str(incoming_chat_id))
-                return {"status": "ok"}
-            if link_code is not None:
-                try:
-                    identity = consume_link_code(link_code, str(incoming_chat_id))
-                except ValueError as exc:
-                    send_link_message(str(exc), str(incoming_chat_id))
-                    return {"status": "ok"}
-                refresh_user_jobs(identity.user_id)
-                send_link_message("Telegram is linked to your GarminCoach account.", str(incoming_chat_id))
-                return {"status": "ok"}
-
-            identity = resolve_chat_tenant(str(incoming_chat_id))
-            if identity is None:
-                if incoming_text:
-                    send_link_message("This chat is not linked. Generate a link command in GarminCoach Account settings.", str(incoming_chat_id))
-                return {"status": "ok"}
-            authorized_chat_id = str(incoming_chat_id)
-            tenant_token = bind_tenant(identity)
-            if command == "/unlink":
-                unlink_user(identity.user_id)
-                refresh_user_jobs(identity.user_id)
-                reset_tenant(tenant_token)
-                tenant_token = None
-                send_link_message("Telegram was unlinked from GarminCoach.", str(incoming_chat_id))
-                return {"status": "ok"}
-
-        # If it's a callback query from an inline button
-        if "callback_query" in data:
-            callback = data["callback_query"]
-            callback_id = callback.get("id")
-            chat_id = callback.get("message", {}).get("chat", {}).get("id")
-            chat_type = callback.get("message", {}).get("chat", {}).get("type")
-            message_id = callback.get("message", {}).get("message_id")
-            callback_data = callback.get("data", "")
-            
-            from notify import telegram
-            telegram.answer_callback_query(callback_id)
-            
-            if str(chat_id) == authorized_chat_id and chat_type == "private":
-                if callback_data.startswith("flow:"):
-                    from coach.intent_router import handle_flow_callback
-                    with get_session() as db:
-                        turn = handle_flow_callback(db, callback_data)
-                        text = turn.text
-                        markup = turn.reply_markup
-                        if turn.interactions:
-                            from coach.interactions import reply_markup
-                            markup = reply_markup(turn.interactions)
-                    telegram.edit_message_text(
-                        text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup,
-                    )
-
-                elif callback_data in {"date_choice_today", "date_choice_tomorrow"}:
-                    telegram.edit_message_text(
-                        "This old date choice expired. Start the scheduling flow again.",
-                        chat_id=str(chat_id), message_id=message_id,
-                    )
-
-                elif callback_data.startswith("catalog_details_metric_"):
-                    from coach.intent_router import metric_detail_response
-                    topic = callback_data.removeprefix("catalog_details_metric_")
-                    with get_session() as db:
-                        text = metric_detail_response(db, topic)
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
-
-                elif callback_data.startswith("decision_different_time_"):
-                    from coach.interactions import request_different_time
-                    interaction_id = callback_data.removeprefix("decision_different_time_")
-                    with get_session() as db:
-                        text = request_different_time(db, interaction_id)
-                        from coach.intent_router import dialogue_reply_markup
-                        markup = dialogue_reply_markup(db)
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup)
-
-                elif callback_data.startswith("decision_action_"):
-                    from coach.interactions import apply_interaction
-                    interaction_id = callback_data.removeprefix("decision_action_")
-                    with get_session() as db:
-                        status, text = apply_interaction(db, interaction_id)
-                        markup = None
-                        if status == "awaiting_input":
-                            from coach.intent_router import dialogue_reply_markup
-                            markup = dialogue_reply_markup(db)
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id, reply_markup=markup)
-
-                elif callback_data.startswith("decision_cancel_"):
-                    from coach.interactions import reject_interaction
-                    interaction_id = callback_data.removeprefix("decision_cancel_")
-                    with get_session() as db:
-                        text = reject_interaction(db, interaction_id)
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
-
-                elif callback_data.startswith("morning_synced_"):
-                    from notify.morning import start_priority_fetch
-                    started = start_priority_fetch()
-                    text = "Fetching the new Garmin data. The briefing will follow automatically." if started else "A fetch is already running or today's briefing is complete."
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
-
-                elif callback_data.startswith("morning_anyway_"):
-                    from notify.morning import answer_anyway
-                    day_key = callback_data.rsplit("_", 1)[-1]
-                    accepted = answer_anyway(day_key)
-                    text = "Preparing the briefing without the missing data." if accepted else "This choice is no longer current."
-                    telegram.edit_message_text(text, chat_id=str(chat_id), message_id=message_id)
-
-                elif callback_data.startswith(("approve_workout_", "reject_workout_", "reschedule_workout_")):
-                    telegram.edit_message_text(
-                        "This legacy action expired. Ask for a current proposal.",
-                        chat_id=str(chat_id), message_id=message_id,
-                    )
-
-                elif callback_data.startswith("approve_workout_"):
-                    msg_id = int(callback_data.split("_")[-1])
-                    with get_session() as db:
-                        from db import CoachMessage
-                        msg = db.get(CoachMessage, msg_id)
-                        if msg and msg.pending_action_json:
-                            from coach.garmin_compiler import compile_and_schedule
-                            payload = json.loads(msg.pending_action_json)
-                            payload = _ensure_schedule_target_date(payload, msg)
-                            success = compile_and_schedule(db, payload)
-                            
-                            if success:
-                                msg.pending_action_json = None
-                                from notify.reminders import schedule_pre_workout_reminder
-                                schedule_pre_workout_reminder(payload)
-                                msg.content += "\n\n*Workout successfully approved, uploaded, and scheduled on your Garmin Calendar.*"
-                                telegram.edit_message_text("*Workout successfully approved and scheduled.*", chat_id=str(chat_id), message_id=message_id)
-                            else:
-                                msg.content += "\n\n*Failed to schedule workout on Garmin.*"
-                                telegram.edit_message_text("*Failed to schedule workout on Garmin.*", chat_id=str(chat_id), message_id=message_id)
-                            db.commit()
-                
-                elif callback_data.startswith("reject_workout_"):
-                    msg_id = int(callback_data.split("_")[-1])
-                    with get_session() as db:
-                        from db import CoachMessage
-                        msg = db.get(CoachMessage, msg_id)
-                        if msg:
-                            msg.pending_action_json = None
-                            db.commit()
-                    telegram.edit_message_text("*Workout suggestion dismissed.*", chat_id=str(chat_id), message_id=message_id)
-                    
-                elif callback_data.startswith("reschedule_workout_"):
-                    msg_id = int(callback_data.split("_")[-1])
-                    with get_session() as db:
-                        from db import CoachMessage
-                        msg = db.get(CoachMessage, msg_id)
-                        if msg:
-                            msg.content += "\n\n*User requested to reschedule.*"
-                            db.commit()
-                    telegram.edit_message_text("*When would you like to reschedule it?* Reply with a time or day, for example: tomorrow at 18:00.", chat_id=str(chat_id), message_id=message_id)
-
-            
-            return {"status": "ok"}
-            
-        # Regular text message
-        message = data.get("message", {})
-        chat_id = message.get("chat", {}).get("id")
-        chat_type = message.get("chat", {}).get("type")
-        text = message.get("text")
-        
-        # We only care about text messages from the authorized chat
-        if text and str(chat_id) == authorized_chat_id and chat_type == "private":
-            from coach.coach import handle_chat
-            from notify import telegram
-            
-            telegram.send_chat_action(str(chat_id), "typing")
-            
-            # Pass to AI Coach
-            with get_session() as db:
-                response_text, asst_msg = handle_chat(db, text)
-                reply_markup = None
-                interaction_ids = []
-                if asst_msg.pending_action_json:
-                    pending = json.loads(asst_msg.pending_action_json)
-                    interaction_ids = pending.get("interaction_ids", [])
-                    reply_markup = pending.get("reply_markup")
-                    if interaction_ids:
-                        from coach.interactions import reply_markup_for_ids
-                        reply_markup = reply_markup_for_ids(db, interaction_ids)
-                    if interaction_ids and not reply_markup:
-                        from coach.interactions import mark_delivery_failed
-                        mark_delivery_failed(db, interaction_ids, "markup_unavailable")
-                        asst_msg.pending_action_json = None
-                        asst_msg.content = "I couldn't create safe confirmation controls. No action was taken."
-                        response_text = asst_msg.content
-                else:
-                    # Refresh Telegram's persistent reply keyboard so menu
-                    # changes replace older client-cached button layouts.
-                    from coach.intent_router import _menu_markup
-                    reply_markup = _menu_markup()
-            
-            # Send response back to Telegram
-            delivered = telegram.send_message(response_text, chat_id=str(chat_id), reply_markup=reply_markup)
-            if interaction_ids and not delivered:
-                with get_session() as db:
-                    from coach.interactions import mark_delivery_failed
-                    mark_delivery_failed(db, interaction_ids, "telegram_send_failed")
-            
-    except Exception as e:
-        import logging
-        logging.error(f"Telegram webhook failed: {e}")
-        try:
-            from notify import telegram
-            chat_id = (data.get("message") or {}).get("chat", {}).get("id")
-            if chat_id and str(chat_id) == authorized_chat_id:
-                detail = "An error occurred while processing your request. No operation was applied. Please try again later."
-                if not config.MULTI_USER_ENABLED:
-                    detail = f"An error occurred while processing your request:\n`{str(e)}`\n\nNo operation was applied. Please try again later."
-                telegram.send_message(f"*Coach error:*\n{detail}", chat_id=str(chat_id))
-        except Exception:
-            pass
-    finally:
-        if tenant_token is not None:
-            reset_tenant(tenant_token)
-        
-    return {"status": "ok"}
-
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from None
+    from coach.telegram_webhook import handle_telegram_update
+    try:
+        return await handle_telegram_update(data)
+    except Exception as exc:
+        from coach.privacy_logger import log_sanitized_error
+        log_sanitized_error(type(exc).__name__)
+        return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn

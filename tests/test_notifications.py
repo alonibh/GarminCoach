@@ -4,7 +4,7 @@ from datetime import date, datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from coach.interactions import apply_interaction, stage_calendar_conflict, stage_free_text_change
+from coach.interactions import apply_interaction, stage_calendar_conflict
 from db import (
     Activity,
     ActivityProgramMatch,
@@ -194,107 +194,6 @@ def test_calendar_conflict_offers_revalidated_buttons(session, monkeypatch):
     status, _ = apply_interaction(session, keep.interaction_id)
     assert status == "stale"
     assert keep.status == "superseded"
-
-
-def test_reschedule_confirmation_rechecks_the_new_time(session, monkeypatch):
-    from coach.intent_router import route_chat
-
-    planned = _planned(session)
-    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
-    session.commit()
-    fixed = datetime(2026, 7, 6, 17)
-    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: fixed)
-    monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
-    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
-    actions = stage_calendar_conflict(
-        session,
-        planned,
-        {"title": "First conflict", "start": "2026-07-06 17:45", "end": "18:30"},
-    )
-    reschedule = next(row for row in actions if row.action_type == "request_reschedule")
-    assert apply_interaction(session, reschedule.interaction_id)[0] == "awaiting_input"
-    monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days=7: {"events": [], "state": "fresh", "error": None},
-    )
-    assert "Available on Tuesday" in route_chat(session, "tomorrow").text
-    confirmation = route_chat(session, "18:15")
-    confirmations = confirmation.interactions
-    monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days=2: {
-            "events": [{"title": "Second conflict", "start": "2026-07-07 18:45", "end": "19:30"}],
-            "state": "fresh",
-            "error": None,
-        },
-    )
-
-    status, message = apply_interaction(session, confirmations[0].interaction_id)
-
-    assert status == "stale"
-    assert "Second conflict" in message
-    assert planned.target_date == date(2026, 7, 6)
-    assert planned.suggested_time == "18:00"
-
-
-def test_date_change_moves_verified_garmin_occurrence_before_local_state(session, monkeypatch):
-    from coach.intent_router import route_chat
-    from sync.garmin_client import client
-
-    planned = _planned(session)
-    planned.status = "approved"
-    planned.garmin_workout_id = 77
-    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
-    session.commit()
-    fixed = datetime(2026, 7, 6, 17)
-    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: fixed)
-    monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
-    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
-    monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days=7: {"events": [], "state": "fresh", "error": None},
-    )
-
-    assert route_chat(session, "Change workout date").text == "Which new date should I use? You can also type another date."
-    assert "Available on Tuesday" in route_chat(session, "tomorrow").text
-    confirmation = route_chat(session, "18:15")
-
-    class FakeApi:
-        def __init__(self):
-            self.scheduled = []
-            self.unscheduled = []
-
-        def get_scheduled_workouts(self, year, month):
-            return {"workouts": [{
-                "scheduledWorkoutId": 13, "workoutId": 77, "date": "2026-07-06",
-            }]}
-
-        def schedule_workout(self, workout_id, target_day):
-            self.scheduled.append((workout_id, target_day))
-
-        def unschedule_workout(self, occurrence_id):
-            self.unscheduled.append(occurrence_id)
-
-    api = FakeApi()
-    class FakeGarminClient:
-        def __init__(self, api):
-            self._api = api
-        def login(self):
-            pass
-        @property
-        def api(self):
-            return self._api
-    monkeypatch.setattr("sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: FakeGarminClient(api))
-
-    import tenant_context
-    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
-        status, _message = apply_interaction(session, confirmation.interactions[0].interaction_id)
-
-    assert status == "applied"
-    assert api.scheduled == [(77, "2026-07-07")]
-    assert api.unscheduled == [13]
-    assert planned.target_date == date(2026, 7, 7)
-    assert planned.suggested_time == "18:15"
 
 
 def test_weekly_summary_uses_synced_same_rep_progression_without_acwr(session):

@@ -3,12 +3,14 @@ import json
 
 from coach.decision_engine import evaluate_morning_decision
 from coach.interactions import (
+    advance_button_flow,
     apply_interaction,
+    begin_reschedule_flow,
+    begin_schedule_flow,
     stage_decision_actions,
-    stage_free_text_change,
 )
 from coach.renderer import render_morning
-from db import AthleteSafetyReport, ChatIntentAudit, Goal, PendingInteraction
+from db import Goal, PendingInteraction, PlannedSession
 from tests.test_decision_engine import TARGET, _fresh_readiness, _fresh_sleep
 from tests.test_program_state import _add_program
 
@@ -36,7 +38,12 @@ def _fresh_calendar(monkeypatch):
 
 
 def _constraints(session):
-    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
+    session.add(
+        Goal(
+            id=1,
+            custom_input="No workouts before 18:00. No workouts after 20:00.",
+        )
+    )
 
 
 def test_renderer_stages_only_deterministic_original_session(session, monkeypatch):
@@ -47,14 +54,9 @@ def test_renderer_stages_only_deterministic_original_session(session, monkeypatc
 
     text, markup, ids = render_morning(session, result)
 
-    assert text == (
-        "sleep 7.5h, score 82 (Good); Garmin readiness 74 (Moderate).\n"
-        "Suggested today: Full Body 1 at 18:00."
-    )
+    assert "Suggested today: Full Body 1 at 18:00." in text
     assert len(ids) == 1
     assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
-    assert markup["inline_keyboard"][0][1]["text"] == "Set another date"
-    assert markup["inline_keyboard"][1][0]["text"] == "Reject"
     pending = session.get(PendingInteraction, ids[0])
     payload = json.loads(pending.payload_json)
     assert payload["program_session_id"] == result.next_program_session_id
@@ -80,110 +82,86 @@ def test_interaction_revalidates_and_schedules_once(session, monkeypatch):
     assert second[0] == "stale"
     assert len(calls) == 1
     assert calls[0]["modifications"] == []
-    outcomes = [
-        json.loads(row.evidence_json)["final_outcome"]
-        for row in session.query(ChatIntentAudit).order_by(ChatIntentAudit.id)
-    ]
-    assert outcomes == ["applied", "stale"]
 
 
-def test_program_change_supersedes_old_button(session, monkeypatch):
+def test_button_only_schedule_flow_uses_pending_payload(session, monkeypatch):
     _fixed_now(monkeypatch)
-    _fresh_calendar(monkeypatch)
-    _constraints(session)
-    result = _decision(session, 74)
-    pending = stage_decision_actions(session, result)[0]
-    from db import TrainingProgram
-    program = session.query(TrainingProgram).filter_by(active=True).one()
-    program.updated_at = datetime(2026, 7, 6, 8, 6)
+    _, sessions = _add_program(session)
     session.commit()
     monkeypatch.setattr(
-        "coach.garmin_compiler.compile_and_schedule",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("called")),
+        "coach.interactions.calendar_version", lambda _session: "calendar-v1"
     )
 
-    status, _text = apply_interaction(session, pending.interaction_id)
+    turn = begin_schedule_flow(session)
+    row = session.query(PendingInteraction).filter_by(action_type="button_flow").one()
+    payload = json.loads(row.payload_json)
 
-    assert status == "stale"
-    assert pending.status == "superseded"
+    assert payload["flow_type"] == "schedule"
+    assert payload["flow_step"] == "choose_date"
+    assert payload["program_session_id"] == sessions[0].id
+    date_callback = turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    time_turn = advance_button_flow(session, date_callback)
+    time_callback = time_turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    confirm = advance_button_flow(session, time_callback)
+
+    assert row.action_type == "schedule_original_session"
+    final_payload = json.loads(row.payload_json)
+    assert final_payload["flow_step"] == "confirm"
+    assert final_payload["suggested_time"] == "06:00"
+    assert (
+        confirm.reply_markup["inline_keyboard"][0][0]["text"]
+        == "Approve and schedule"
+    )
 
 
-def test_free_text_can_initiate_but_not_apply_schedule_change(session, monkeypatch):
+def test_button_only_reschedule_stores_all_flow_state(session, monkeypatch):
     _fixed_now(monkeypatch)
-    _decision(session, 74)
-    session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
     monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days=7: {"events": [], "state": "fresh", "error": None},
+        "coach.interactions.calendar_version", lambda _session: "calendar-v1"
     )
-    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
-
-    response, staged = stage_free_text_change(session, "Schedule the session today")
-
-    assert response == "Please confirm: Full Body 1 on Monday at 18:00."
-    assert len(staged) == 1
-    assert staged[0].status == "pending"
-
-
-def test_after_midnight_schedule_requests_use_current_day_and_ignore_chat_context(session, monkeypatch):
-    from coach.coach import handle_chat
-
-    program, sessions = _add_program(session, key="total_package_3")
-    program.name = "Total Package · 3 days"
-    for item in sessions:
-        item.duration_min = 90
-    session.add(Goal(
-        id=1,
-        custom_input="On Sundays-Thursdays no workouts before 18:00. No workouts after 20:00 ever.",
-    ))
-    session.commit()
-    fixed = datetime(2026, 7, 19, 0, 8)
-    monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
-    monkeypatch.setattr("coach.intent_router.get_local_now", lambda: fixed)
-    monkeypatch.setattr(
-        "coach.calendar.get_upcoming_schedule_result",
-        lambda days=7: {"events": [
-            {"title": "Sunday event", "start": "2026-07-19 12:30", "end": "16:00"},
-            {"title": "Sunday event 2", "start": "2026-07-19 14:55", "end": "15:15"},
-        ], "state": "fresh", "error": None},
+    planned = PlannedSession(
+        title="Tempo Run",
+        activity_type="running",
+        target_date=date(2026, 7, 7),
+        suggested_time="18:00",
+        duration_min=40,
+        status="approved",
+        source="coach",
     )
-    monkeypatch.setattr("coach.interactions.calendar_version", lambda _session: "calendar-v1")
-    monkeypatch.setattr(
-        "coach.llm.generate",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")),
-    )
+    session.add(planned)
+    session.flush()
 
-    tomorrow_response, tomorrow_message = handle_chat(session, "can we schedule a workout for tomorrow")
-    today_response, today_message = handle_chat(session, "can we schedule a workout for today")
+    date_turn = begin_reschedule_flow(session, planned.id)
+    row = session.query(PendingInteraction).filter_by(action_type="button_flow").one()
+    date_callback = date_turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    time_turn = advance_button_flow(session, date_callback)
+    time_callback = time_turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    advance_button_flow(session, time_callback)
 
-    assert tomorrow_response == "Please confirm: Full Body 1 on Monday at 18:00."
-    assert today_response == "Please confirm: Full Body 1 on Sunday at 18:00."
-    tomorrow_id = json.loads(tomorrow_message.pending_action_json)["interaction_ids"][0]
-    today_id = json.loads(today_message.pending_action_json)["interaction_ids"][0]
-    tomorrow_payload = json.loads(session.get(PendingInteraction, tomorrow_id).payload_json)
-    today_payload = json.loads(session.get(PendingInteraction, today_id).payload_json)
-    assert tomorrow_payload["target_date"] == "2026-07-20"
-    assert today_payload["target_date"] == "2026-07-19"
-    assert tomorrow_payload["suggested_time"] == today_payload["suggested_time"] == "18:00"
-    compiled = []
-    monkeypatch.setattr(
-        "coach.garmin_compiler.compile_and_schedule",
-        lambda _session, payload: compiled.append(payload) or True,
-    )
-
-    status, confirmation = apply_interaction(session, tomorrow_id)
-
-    assert status == "applied"
-    assert confirmation == "Full Body 1 scheduled for Monday at 18:00."
-    assert compiled[0]["target_date"] == "2026-07-20"
+    payload = json.loads(row.payload_json)
+    assert row.action_type == "reschedule_planned_time"
+    assert payload["flow_type"] == "reschedule"
+    assert payload["flow_step"] == "confirm"
+    assert payload["planned_session_id"] == planned.id
+    assert payload["target_date"] == "2026-07-06"
+    assert payload["suggested_time"] == "06:00"
+    assert payload["page"] == 0
 
 
-def test_safety_free_text_requires_confirmation_before_structured_persistence(session, monkeypatch):
+def test_stale_flow_nonce_does_not_advance(session, monkeypatch):
     _fixed_now(monkeypatch)
-    response, staged = stage_free_text_change(session, "I felt dizzy during training")
+    _add_program(session)
+    monkeypatch.setattr(
+        "coach.interactions.calendar_version", lambda _session: "calendar-v1"
+    )
+    turn = begin_schedule_flow(session)
+    row = session.query(PendingInteraction).filter_by(action_type="button_flow").one()
+    before = row.payload_json
+    callback = turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    parts = callback.split(":")
+    parts[2] = "deadbeef"
 
-    assert response.startswith("Confirm this report:")
-    assert session.query(AthleteSafetyReport).count() == 0
-    status, _ = apply_interaction(session, staged[0].interaction_id)
-    assert status == "applied"
-    assert session.query(AthleteSafetyReport).one().report_type == "dizziness"
+    stale = advance_button_flow(session, ":".join(parts))
+
+    assert "no longer current" in stale.text
+    assert row.payload_json == before

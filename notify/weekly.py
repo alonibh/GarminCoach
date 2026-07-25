@@ -10,7 +10,6 @@ from coach.program_state import program_state_facts
 from db import (
     Activity,
     ActivityProgramMatch,
-    AthleteSafetyReport,
     ExerciseSet,
     PlannedSession,
     ProgramSession,
@@ -94,7 +93,6 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
     ).count()
     progression = _strength_progression(session, week_start, week_end)
 
-    issues = session.query(AthleteSafetyReport).filter_by(active=True).count()
     state = program_state_facts(session, program, on_date=week_end) if program else None
 
     if expected is not None and completed <= expected:
@@ -114,8 +112,6 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
         lines.append(f"Schedule: {missed} planned {noun} incomplete.")
     if progression:
         lines.append(f"Progress: {progression}.")
-    if issues:
-        lines.append(f"Confirmed unresolved safety reports: {issues}.")
     if state:
         lines.append(f"Next: {state['next_session_name']}.")
     return "\n".join(lines)

@@ -455,7 +455,6 @@ stateful concepts are stored in SQLite.
 | `PendingInteraction` | exact action, target/version hashes, expiry, status |
 | `NotificationOutbox` | event type, due time, quiet-hour policy, status, attempts, idempotency key |
 | `MorningBriefState` | decision day, fetch/deadline state, prompt status, answer-anyway choice |
-| `AthleteSafetyReport` | confirmed user-reported limitation, active state, timestamps |
 
 `DailyHealth.training_readiness` is the raw Garmin score and remains separate
 from `DailyMetrics.readiness`. The custom composite `DailyMetrics.readiness`

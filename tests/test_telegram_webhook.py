@@ -1,198 +1,253 @@
-from fastapi.testclient import TestClient
-from app import app
-import config
-import json
-from contextlib import nullcontext
-from types import SimpleNamespace
+import asyncio
 
+from fastapi.testclient import TestClient
 import pytest
+
+import config
+from app import app
+from coach.ask_coach_session import session_manager
+from coach.telegram_webhook import (
+    OPERATIONAL_TEXT_GUIDANCE,
+    _split_plain_text,
+    update_deduplicator,
+)
 from control_db import init_control_db
 
 client = TestClient(app)
+USER_ID = "00000000-0000-0000-0000-000000000001"
+
 
 @pytest.fixture(autouse=True)
 def setup_control_db():
     init_control_db()
-    from telegram_link import _chat_hmac
-    from control_db import get_control_session, IntegrationRoute, User, utcnow
+    from control_db import IntegrationRoute, User, get_control_session, utcnow
     from secret_vault import UserSecretVault
-    with get_control_session() as cs:
-        user = cs.get(User, "00000000-0000-0000-0000-000000000001")
+    from telegram_link import _chat_hmac
+
+    with get_control_session() as control_session:
+        user = control_session.get(User, USER_ID)
         if not user:
-            user = User(id="00000000-0000-0000-0000-000000000001", email="test@example.com", status="active", role="owner")
-            cs.add(user)
+            user = User(
+                id=USER_ID,
+                email="test@example.com",
+                status="active",
+                role="owner",
+                timezone="UTC",
+            )
+            control_session.add(user)
         user.telegram_linked = True
-        cs.flush()
-        route = cs.get(IntegrationRoute, "00000000-0000-0000-0000-000000000001")
+        control_session.flush()
+        route = control_session.get(IntegrationRoute, USER_ID)
         if not route:
-            route = IntegrationRoute(user_id="00000000-0000-0000-0000-000000000001")
-            cs.add(route)
+            route = IntegrationRoute(user_id=USER_ID)
+            control_session.add(route)
         route.telegram_chat_hmac = _chat_hmac("123")
         route.updated_at = utcnow()
-    UserSecretVault().update("00000000-0000-0000-0000-000000000001", telegram_chat_id="123")
+    UserSecretVault().update(USER_ID, telegram_chat_id="123")
+    update_deduplicator.clear()
+    asyncio.run(session_manager.clear_all())
     yield
+    asyncio.run(session_manager.clear_all())
+    update_deduplicator.clear()
+
+
+def _headers():
+    return {
+        "X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET
+    }
+
 
 def test_telegram_webhook_unauthorized():
-    # Missing secret token
-    response = client.post("/telegram/webhook", json={"message": "hello"})
-    assert response.status_code == 401
-
-    # Wrong secret token
+    assert client.post("/telegram/webhook", json={"message": "hello"}).status_code == 401
     response = client.post(
         "/telegram/webhook",
         headers={"X-Telegram-Bot-Api-Secret-Token": "wrong_secret"},
-        json={"message": "hello"}
+        json={"message": "hello"},
     )
     assert response.status_code == 401
 
+
 def test_telegram_webhook_payload_too_large():
-    # Payload over 2MB limit
-    large_payload = "a" * (3 * 1024 * 1024)
     response = client.post(
         "/telegram/webhook",
         headers={
-            "X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET,
-            "Content-Length": str(len(large_payload))
+            **_headers(),
+            "Content-Length": str(3 * 1024 * 1024),
         },
-        json={"message": large_payload}
+        json={"message": "small body"},
     )
     assert response.status_code == 413
 
 
-def test_actionable_message_serializes_reply_markup(monkeypatch):
+def test_operational_text_receives_inline_menu(monkeypatch):
     sent = []
-    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
-    monkeypatch.setattr("notify.telegram.send_chat_action", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "notify.telegram.send_message",
-        lambda text, chat_id=None, reply_markup=None: sent.append((text, reply_markup)) or True,
-    )
-    monkeypatch.setattr(
-        "coach.coach.handle_chat",
-        lambda *_args, **_kwargs: (
-            "Confirm workout.",
-            SimpleNamespace(
-                pending_action_json=json.dumps({"interaction_ids": ["interaction-1"]}),
-                content="Confirm workout.",
-            ),
-        ),
-    )
-    markup = {"inline_keyboard": [[{"text": "Approve", "callback_data": "decision_action_1"}]]}
-    monkeypatch.setattr("coach.interactions.reply_markup_for_ids", lambda *_args: markup)
-
-    response = client.post(
-        "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
-        json={"message": {"chat": {"id": 123, "type": "private"}, "text": "Schedule today"}},
-    )
-
-    assert response.status_code == 200
-    assert sent == [("Confirm workout.", markup)]
-
-
-def test_static_catalog_menu_is_delivered_without_pending_action(monkeypatch):
-    sent = []
-    markup = {"keyboard": [[{"text": "Today's recommendation"}]], "is_persistent": True}
-    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
-    monkeypatch.setattr("notify.telegram.send_chat_action", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        "notify.telegram.send_message",
-        lambda text, chat_id=None, reply_markup=None: sent.append((text, reply_markup)) or True,
-    )
-    monkeypatch.setattr(
-        "coach.coach.handle_chat",
-        lambda *_args, **_kwargs: (
-            "Choose an action.",
-            SimpleNamespace(
-                pending_action_json=json.dumps({"reply_markup": markup}),
-                content="Choose an action.",
-            ),
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, chat_id, reply_markup, kwargs)) or True
         ),
     )
 
     response = client.post(
         "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
-        json={"message": {"chat": {"id": 123, "type": "private"}, "text": "/menu"}},
+        headers=_headers(),
+        json={
+            "update_id": 100,
+            "message": {
+                "chat": {"id": 123, "type": "private"},
+                "text": "Metrics",
+            },
+        },
     )
 
     assert response.status_code == 200
-    assert sent == [("Choose an action.", markup)]
+    assert sent[0][0] == OPERATIONAL_TEXT_GUIDANCE
+    callbacks = {
+        button["callback_data"]
+        for row in sent[0][2]["inline_keyboard"]
+        for button in row
+    }
+    assert {"menu:metrics", "menu:ask_coach", "menu:privacy"} <= callbacks
+    assert sent[0][3]["parse_mode"] is None
 
 
-def test_standard_response_refreshes_the_current_persistent_menu(monkeypatch):
+def test_update_id_is_accepted_only_once(monkeypatch):
     sent = []
-    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
-    monkeypatch.setattr("notify.telegram.send_chat_action", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "notify.telegram.send_message",
-        lambda text, chat_id=None, reply_markup=None: sent.append((text, reply_markup)) or True,
+        lambda *args, **kwargs: sent.append((args, kwargs)) or True,
     )
-    monkeypatch.setattr(
-        "coach.coach.handle_chat",
-        lambda *_args, **_kwargs: ("Current metrics.", SimpleNamespace(pending_action_json=None, content="Current metrics.")),
-    )
+    payload = {
+        "update_id": 101,
+        "message": {
+            "chat": {"id": 123, "type": "private"},
+            "text": "Metrics",
+        },
+    }
 
-    response = client.post(
-        "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
-        json={"message": {"chat": {"id": 123, "type": "private"}, "text": "Metrics"}},
-    )
+    assert client.post("/telegram/webhook", headers=_headers(), json=payload).status_code == 200
+    assert client.post("/telegram/webhook", headers=_headers(), json=payload).status_code == 200
 
-    assert response.status_code == 200
-    labels = [button["text"] for row in sent[0][1]["keyboard"] for button in row]
-    assert "Explain recommendation" not in labels
-    assert "Find a workout time" in labels
+    assert len(sent) == 1
 
 
-def test_state_bound_flow_button_continues_the_schedule_flow(monkeypatch):
+@pytest.mark.parametrize(
+    "callback_data",
+    [
+        "menu:metrics",
+        "decision_action_old",
+        "decision_cancel_old",
+        "decision_different_time_old",
+        "flow:old:nonce:date:0",
+        "morning_synced_old",
+        "morning_anyway_old",
+        "approve_workout_old",
+        "reject_workout_old",
+        "reschedule_workout_old",
+        "catalog_details_metric_sleep",
+        "unknown:callback",
+    ],
+)
+def test_active_ask_coach_blocks_every_other_callback(
+    monkeypatch, callback_data
+):
     edited = []
-    choices = []
-    markup = {"inline_keyboard": [[{"text": "Approve and schedule", "callback_data": "decision_action_1"}]]}
-    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
-    monkeypatch.setattr("notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True)
+    asyncio.run(session_manager.create_session(USER_ID, "123"))
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
     monkeypatch.setattr(
         "notify.telegram.edit_message_text",
-        lambda text, chat_id, message_id, reply_markup=None: edited.append((text, chat_id, message_id, reply_markup)) or True,
-    )
-    monkeypatch.setattr("app.get_session", lambda: nullcontext(object()))
-    monkeypatch.setattr(
-        "coach.intent_router.handle_flow_callback",
-        lambda _db, choice: (
-            choices.append(choice)
-            or SimpleNamespace(
-                text="Please confirm: Full Body 1 on Sunday at 18:00.",
-                interactions=[SimpleNamespace()],
-                reply_markup=None,
-            )
+        lambda text, chat_id, message_id, reply_markup=None, **kwargs: (
+            edited.append((text, reply_markup, kwargs)) or True
         ),
     )
-    monkeypatch.setattr("coach.interactions.reply_markup", lambda *_args: markup)
 
     response = client.post(
         "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
-        json={"callback_query": {
-            "id": "callback-1", "data": "flow:abcd1234:d:20260719",
-            "message": {"message_id": 7, "chat": {"id": 123, "type": "private"}},
-        }},
+        headers=_headers(),
+        json={
+            "update_id": hash(callback_data) & 0x7FFFFFFF,
+            "callback_query": {
+                "id": "callback",
+                "data": callback_data,
+                "message": {
+                    "message_id": 7,
+                    "chat": {"id": 123, "type": "private"},
+                },
+            },
+        },
     )
 
     assert response.status_code == 200
-    assert choices == ["flow:abcd1234:d:20260719"]
-    assert edited == [("Please confirm: Full Body 1 on Sunday at 18:00.", "123", 7, markup)]
+    assert "Ask Coach is active" in edited[0][0]
+    assert edited[0][1]["inline_keyboard"][0][0]["callback_data"] == "ask:exit"
+    assert edited[0][2]["parse_mode"] is None
 
 
-def test_personal_data_is_ignored_in_group_chats(monkeypatch):
-    sent = []
-    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "123")
-    monkeypatch.setattr("notify.telegram.send_message", lambda *args, **kwargs: sent.append(args) or True)
+def test_back_to_menu_closes_session_and_discards_late_delivery(monkeypatch):
+    asyncio.run(session_manager.create_session(USER_ID, "123"))
+    acquired = asyncio.run(session_manager.try_acquire_in_flight(USER_ID))
+    edited = []
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda text, chat_id, message_id, reply_markup=None, **kwargs: (
+            edited.append((text, reply_markup)) or True
+        ),
+    )
 
     response = client.post(
         "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": config.TELEGRAM_WEBHOOK_SECRET},
-        json={"message": {"chat": {"id": 123, "type": "group"}, "text": "Show my readiness"}},
+        headers=_headers(),
+        json={
+            "update_id": 102,
+            "callback_query": {
+                "id": "callback",
+                "data": "ask:exit",
+                "message": {
+                    "message_id": 7,
+                    "chat": {"id": 123, "type": "private"},
+                },
+            },
+        },
     )
 
+    assert response.status_code == 200
+    assert not asyncio.run(session_manager.has_active_session(USER_ID))
+    assert not asyncio.run(
+        session_manager.validate_session_for_delivery(
+            USER_ID, "123", acquired.generation_token
+        )
+    )
+    assert edited[0][1]["inline_keyboard"]
+
+
+def test_plain_text_split_is_bounded_and_lossless():
+    text = ("word " * 1200).strip()
+    chunks = _split_plain_text(text)
+    assert all(len(chunk) <= 3800 for chunk in chunks)
+    assert " ".join(chunks) == text
+
+
+def test_group_chat_is_ignored(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda *args, **kwargs: sent.append(args) or True,
+    )
+    response = client.post(
+        "/telegram/webhook",
+        headers=_headers(),
+        json={
+            "update_id": 103,
+            "message": {
+                "chat": {"id": 123, "type": "group"},
+                "text": "Show my readiness",
+            },
+        },
+    )
     assert response.status_code == 200
     assert sent == []
