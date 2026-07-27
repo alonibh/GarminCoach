@@ -45,11 +45,13 @@ shapes are covered by fixtures.
   current recovery facts, seven wellness days, 30 activity days, ten strength
   details, and current slow metrics).
 - [x] Complete bounded scheduled Stage 2 summary backfill (28 wellness days and
-  90 activity-summary days); strength-detail completion and other Phase 2B work remain.
+  90 activity-summary days).
+- [x] Complete bounded scheduled Stage 2 strength-detail backfill (fixed latest
+  20 eligible strength activities within the Stage 2 90-day window).
 - [ ] Prefer combined/range endpoints over per-day duplicate requests.
 - [ ] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.
-- [ ] Make activity enrichment explicit and new/incomplete-activity only.
+- [ ] Make general activity enrichment explicit and new/incomplete-activity only.
 - [ ] Remove all ordinary UI-triggered Garmin calls.
 - [ ] Make manual sync current/incremental rather than a full rebuild.
 

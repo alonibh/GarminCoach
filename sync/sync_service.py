@@ -6,6 +6,7 @@ activity is logged and skipped; the sync continues.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
@@ -56,6 +57,9 @@ _STAGE2_SLEEP_GAP = "stage2_sleep_next_gap"
 _STAGE2_DAILY_HEALTH_GAP = "stage2_daily_health_next_gap"
 _STAGE2_ACTIVITY_GAP = "stage2_activity_summary_next_gap"
 _STAGE2_SUMMARY_COMPLETE = "stage2_summary_backfill_complete"
+_STAGE2_STRENGTH_CANDIDATES = "stage2_strength_candidate_ids"
+_STAGE2_STRENGTH_NEXT_INDEX = "stage2_strength_next_index"
+_STAGE2_STRENGTH_COMPLETE = "stage2_strength_backfill_complete"
 _STAGE2_WELLNESS_DAYS = 28
 _STAGE2_ACTIVITY_DAYS = 90
 _STAGE2_ACTIVITY_CHUNK_DAYS = 30
@@ -408,18 +412,21 @@ def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int
     return act_id
 
 
-def _sync_exercise_sets(session, activity_id: int) -> None:
-    """Replace non-edited sets for an activity; preserve user-edited ones."""
+def _sync_exercise_sets(session, activity_id: int) -> bool:
+    """Replace non-edited sets and report whether Garmin resolved the activity."""
     try:
         data = client.exercise_sets(activity_id)
     except GarminConnectTooManyRequestsError:
         raise  # let the circuit breaker handle rate limits
     except Exception:
         logger.warning("Exercise-sets fetch failed for activity %s", activity_id, exc_info=True)
-        return  # a single bad activity shouldn't abort the whole sync
+        return False  # normal-sync callers intentionally treat this as non-fatal
+    if not isinstance(data, dict):
+        logger.warning("Garmin returned an invalid exercise-set response for activity %s", activity_id)
+        return False
     sets = _g(data, "exerciseSets", default=[]) or []
     if not sets:
-        return
+        return True
 
     existing = (
         session.query(ExerciseSet).filter(ExerciseSet.activity_id == activity_id).all()
@@ -450,6 +457,7 @@ def _sync_exercise_sets(session, activity_id: int) -> None:
                 edited=False,
             )
         )
+    return True
 
 
 def _sync_workouts(session: Session) -> None:
@@ -800,7 +808,8 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                 .all()
             )
             for activity in strength:
-                _sync_exercise_sets(session, activity.id)
+                if _sync_exercise_sets(session, activity.id) is False:
+                    return False
             mark("strength_sets")
 
         # 7-8. Current-only slow values.  Never call the historical helpers.
@@ -1194,6 +1203,81 @@ def _run_stage2_summary_backfill(session: Session, today: date, summary: dict) -
     return True
 
 
+def _stage2_strength_candidates(session: Session, anchor: date) -> list[int]:
+    """Return the immutable Stage 2 strength candidate snapshot, creating it once."""
+    saved = _get_state(session, _STAGE2_STRENGTH_CANDIDATES)
+    if saved is not None:
+        try:
+            candidate_ids = json.loads(saved)
+            if isinstance(candidate_ids, list) and all(isinstance(value, int) for value in candidate_ids):
+                return candidate_ids
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Invalid Stage 2 strength candidate journal; retaining no new candidates.")
+            return []
+
+    start = datetime.combine(anchor - timedelta(days=_STAGE2_ACTIVITY_DAYS - 1), datetime.min.time())
+    end = datetime.combine(anchor + timedelta(days=1), datetime.min.time())
+    activities = (
+        session.query(Activity.id)
+        .filter(Activity.activity_type.ilike("%strength%") | Activity.activity_type.ilike("%weight%"))
+        .filter(Activity.start_time >= start, Activity.start_time < end)
+        .filter(~Activity.sets.any())
+        .order_by(Activity.start_time.desc(), Activity.id.desc())
+        .limit(20)
+        .all()
+    )
+    candidate_ids = [activity_id for (activity_id,) in activities]
+    _set_state(session, _STAGE2_STRENGTH_CANDIDATES, json.dumps(candidate_ids))
+    _set_state(session, _STAGE2_STRENGTH_NEXT_INDEX, "0")
+    return candidate_ids
+
+
+def _run_stage2_strength_backfill(session: Session, today: date, summary: dict) -> bool:
+    """Resolve at most one fixed Stage 2 strength candidate per scheduled sync."""
+    if (
+        _get_state(session, _STAGE1_COMPLETE) != "complete"
+        or _get_state(session, _STAGE2_SUMMARY_COMPLETE) != "complete"
+        or _get_state(session, _STAGE2_STRENGTH_COMPLETE) == "complete"
+    ):
+        return False
+
+    anchor = _parse_state_date(_get_state(session, _STAGE2_ANCHOR))
+    if anchor is None:
+        # Legacy installations may have the summary marker but no anchor.  Seed
+        # it once so this strength journal still has a fixed, auditable window.
+        anchor = today
+        _set_state(session, _STAGE2_ANCHOR, anchor.isoformat())
+    candidate_ids = _stage2_strength_candidates(session, anchor)
+    try:
+        next_index = int(_get_state(session, _STAGE2_STRENGTH_NEXT_INDEX) or "0")
+    except ValueError:
+        next_index = 0
+        _set_state(session, _STAGE2_STRENGTH_NEXT_INDEX, "0")
+
+    if next_index >= len(candidate_ids):
+        _set_state(session, _STAGE2_STRENGTH_COMPLETE, "complete")
+        return True
+
+    activity_id = candidate_ids[next_index]
+    try:
+        if _sync_exercise_sets(session, activity_id) is False:
+            summary["errors"].append(
+                f"Stage 2 strength sets failed for activity {activity_id}; it will retry."
+            )
+            return True
+    except GarminConnectTooManyRequestsError as exc:
+        until = _note_rate_limited(session)
+        summary["errors"].append(f"Rate limited on Stage 2 strength activity {activity_id}: {exc}")
+        summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+        return True
+
+    next_index += 1
+    _set_state(session, _STAGE2_STRENGTH_NEXT_INDEX, str(next_index))
+    if next_index >= len(candidate_ids):
+        _set_state(session, _STAGE2_STRENGTH_COMPLETE, "complete")
+    return True
+
+
 def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 
@@ -1239,7 +1323,10 @@ def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fal
                     summary["skipped"] = True
                     summary["reason"] = "No new Garmin device upload or activity since the last sync."
                     if allow_backfill:
-                        _run_stage2_summary_backfill(session, today, summary)
+                        if _get_state(session, _STAGE2_SUMMARY_COMPLETE) == "complete":
+                            _run_stage2_strength_backfill(session, today, summary)
+                        else:
+                            _run_stage2_summary_backfill(session, today, summary)
                     return summary
             except GarminConnectTooManyRequestsError as e:
                 until = _note_rate_limited(session)
@@ -1328,7 +1415,10 @@ def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fal
         # Stage 2 is scheduled-only and always follows current work.  Full and
         # forced requests deliberately retain their existing semantics.
         if allow_backfill and not full and not force:
-            _run_stage2_summary_backfill(session, today, summary)
+            if _get_state(session, _STAGE2_SUMMARY_COMPLETE) == "complete":
+                _run_stage2_strength_backfill(session, today, summary)
+            else:
+                _run_stage2_summary_backfill(session, today, summary)
             if _is_in_cooldown(session)[0] or summary.get("code") == "authentication_required":
                 return summary
 

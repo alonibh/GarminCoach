@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from garminconnect import GarminConnectTooManyRequestsError
 
-from db import Activity, DeviceCapability, MetricSnapshot, Sleep, SyncState, Workout
+from db import Activity, DeviceCapability, ExerciseSet, MetricSnapshot, Sleep, SyncState, Workout
 import pytest
 import tenant_context
 import sync.sync_service as svc
@@ -31,6 +31,18 @@ def _wire_common(monkeypatch, session):
     monkeypatch.setattr(svc, "_snapshot_summary_metrics", lambda: None)
     monkeypatch.setattr("metrics.engine.recompute_all", lambda: None)
     monkeypatch.setattr(svc.coach, "generate_daily_suggestion", lambda session: None)
+
+
+def _stage2_strength_ready(session, anchor=None):
+    anchor = anchor or date.today()
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_summary_backfill_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    return anchor
+
+
+def _strength_activity(activity_id, when):
+    return Activity(id=activity_id, activity_type="strength_training", start_time=when, duration_s=60)
 
 
 def _device_payload(dt):
@@ -674,3 +686,137 @@ def test_stage2_429_preserves_independent_wellness_progress(session, monkeypatch
     assert session.get(SyncState, "stage2_daily_health_next_gap").value == (today - timedelta(days=7)).isoformat()
     assert session.get(SyncState, "garmin_cooldown_until").value
     assert session.get(SyncState, "stage2_summary_backfill_complete") is None
+
+
+def test_stage2_strength_waits_for_summary_completion(session, monkeypatch):
+    today = date.today()
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", today.isoformat())
+    session.add(_strength_activity(1, datetime.combine(today, datetime.min.time())))
+    session.commit()
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: (_ for _ in ()).throw(AssertionError("too early")))
+
+    assert svc._run_stage2_strength_backfill(session, today, {"errors": []}) is False
+    assert session.get(SyncState, "stage2_strength_candidate_ids") is None
+
+
+def test_stage2_strength_candidates_are_fixed_ordered_and_exclude_existing_sets(session):
+    anchor = _stage2_strength_ready(session)
+    start = datetime.combine(anchor, datetime.min.time())
+    activities = [_strength_activity(i, start - timedelta(days=i // 2)) for i in range(1, 25)]
+    activities.extend([
+        _strength_activity(30, start - timedelta(days=90)),
+        Activity(id=31, activity_type="running", start_time=start, duration_s=60),
+    ])
+    session.add_all(activities)
+    session.add(ExerciseSet(activity_id=1, set_index=0, edited=False))
+    session.commit()
+
+    candidates = svc._stage2_strength_candidates(session, anchor)
+
+    expected = [
+        activity.id for activity in sorted(
+            activities[:24], key=lambda activity: (activity.start_time, activity.id), reverse=True
+        ) if activity.id != 1
+    ][:20]
+    assert candidates == expected
+    session.add(_strength_activity(99, start + timedelta(hours=1)))
+    session.commit()
+    assert svc._stage2_strength_candidates(session, anchor) == candidates
+
+
+def test_stage2_strength_one_successful_request_per_run_and_completion(session, monkeypatch):
+    anchor = _stage2_strength_ready(session)
+    session.add_all([_strength_activity(2, datetime.combine(anchor, datetime.min.time())), _strength_activity(1, datetime.combine(anchor, datetime.min.time()))])
+    session.commit()
+    calls = []
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda activity_id: calls.append(activity_id) or {"exerciseSets": []})
+
+    svc._run_stage2_strength_backfill(session, anchor, {"errors": []})
+    assert calls == [2]
+    assert session.get(SyncState, "stage2_strength_next_index").value == "1"
+    assert session.get(SyncState, "stage2_strength_backfill_complete") is None
+    svc._run_stage2_strength_backfill(session, anchor, {"errors": []})
+    assert calls == [2, 1]
+    assert session.get(SyncState, "stage2_strength_backfill_complete").value == "complete"
+
+
+def test_stage2_strength_nonempty_and_empty_successes_both_advance(session, monkeypatch):
+    anchor = _stage2_strength_ready(session)
+    session.add_all([_strength_activity(2, datetime.combine(anchor, datetime.min.time())), _strength_activity(1, datetime.combine(anchor, datetime.min.time()))])
+    session.commit()
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda activity_id: {"exerciseSets": [] if activity_id == 1 else [{"weight": 10000, "exercises": [{"name": "Squat"}]}]})
+
+    svc._run_stage2_strength_backfill(session, anchor, {"errors": []})
+    assert session.get(SyncState, "stage2_strength_next_index").value == "1"
+    assert session.query(ExerciseSet).filter_by(activity_id=2).count() == 1
+    svc._run_stage2_strength_backfill(session, anchor, {"errors": []})
+    assert session.get(SyncState, "stage2_strength_backfill_complete").value == "complete"
+
+
+def test_stage2_strength_failures_and_429_retain_same_candidate(session, monkeypatch):
+    anchor = _stage2_strength_ready(session)
+    session.add(_strength_activity(1, datetime.combine(anchor, datetime.min.time())))
+    session.commit()
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: None)
+    summary = {"errors": []}
+    svc._run_stage2_strength_backfill(session, anchor, summary)
+    assert session.get(SyncState, "stage2_strength_next_index").value == "0"
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: (_ for _ in ()).throw(GarminConnectTooManyRequestsError("too many")))
+    svc._run_stage2_strength_backfill(session, anchor, summary)
+    assert session.get(SyncState, "stage2_strength_next_index").value == "0"
+    assert session.get(SyncState, "garmin_cooldown_until").value
+
+
+def test_stage2_strength_empty_candidates_complete_without_garmin(session, monkeypatch):
+    anchor = _stage2_strength_ready(session)
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: (_ for _ in ()).throw(AssertionError("no candidate request")))
+
+    svc._run_stage2_strength_backfill(session, anchor, {"errors": []})
+    assert session.get(SyncState, "stage2_strength_candidate_ids").value == "[]"
+    assert session.get(SyncState, "stage2_strength_backfill_complete").value == "complete"
+
+
+def test_stage2_strength_is_excluded_from_manual_priority_force_and_full(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = _stage2_strength_ready(session)
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        _state(session, key, today.isoformat())
+    _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    calls = []
+    monkeypatch.setattr(svc, "_run_stage2_strength_backfill", lambda *_: calls.append("strength"))
+    monkeypatch.setattr(svc, "_preflight", lambda *_: {"device_changed": False, "activity_changed": False, "device_upload": None})
+    monkeypatch.setattr(svc, "_sync_activities", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(svc, "_sync_resource_days", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(svc, "_workouts_due", lambda *_: False)
+
+    svc.run_sync()
+    monkeypatch.setattr(svc, "run_priority_sync", lambda: {})
+    svc.run_priority_sync()
+    svc.run_sync(force=True, allow_backfill=True)
+    svc.run_sync(full=True, allow_backfill=True)
+    assert calls == []
+
+
+def test_stage1_strength_marker_waits_for_set_request_success(session, monkeypatch):
+    today = date.today()
+    for name in ("device", "today_sleep", "training_readiness", "sleep", "daily_health", "activities"):
+        _state(session, f"stage1_bootstrap_{name}", "complete")
+    session.add(_strength_activity(1, datetime.combine(today, datetime.min.time())))
+    session.commit()
+    monkeypatch.setattr(svc, "_sync_exercise_sets", lambda *_: False)
+
+    assert svc._sync_stage1(session, today, {"activities": 0, "days": 0, "errors": []}) is False
+    assert session.get(SyncState, "stage1_bootstrap_strength_sets") is None
+
+
+def test_exercise_set_sync_protects_edited_rows_and_returns_success(session, monkeypatch):
+    activity = _strength_activity(1, datetime.now())
+    session.add(activity)
+    session.flush()
+    session.add(ExerciseSet(activity_id=1, set_index=0, exercise_name="Edited", edited=True))
+    session.commit()
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {"exerciseSets": [{"weight": 20000, "exercises": [{"name": "Garmin"}]}]})
+
+    assert svc._sync_exercise_sets(session, 1) is True
+    assert session.query(ExerciseSet).filter_by(activity_id=1, set_index=0).one().exercise_name == "Edited"
