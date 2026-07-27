@@ -151,7 +151,7 @@ The complete ten-routine audit is in
 
 ## Technical architecture
 
-- Python 3.11+
+- Python 3.12
 - FastAPI and Jinja2
 - SQLAlchemy 2.0 with SQLite
 - APScheduler for local jobs
@@ -181,12 +181,13 @@ running service replica.
 
 ```bash
 cd garmincoach
-python3 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
 ```
 
-On Windows, use `.venv\Scripts\pip` and `.venv\Scripts\python` instead.
+On Windows, install Python 3.12 and use `.venv\Scripts\pip` and
+`.venv\Scripts\python` instead.
 
 At minimum, set `GARMIN_EMAIL`. Password and MFA are entered through the app on
 first connection and are not written to `.env`; Garmin tokens are cached in

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -13,9 +12,6 @@ from secret_vault import UserSecretVault
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "garmin_tokens"
-EXPECTED_VERSION = os.getenv("GARMINCONNECT_COMPAT_VERSION")
-
-
 def _fixture(name: str):
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
@@ -70,10 +66,6 @@ def test_synthetic_token_round_trips_through_encrypted_vault(tmp_path):
     assert vault.read(user_id, root=tmp_path)["garmin_tokens"] == serialized
 
 
-@pytest.mark.skipif(
-    EXPECTED_VERSION is None,
-    reason="requires the isolated garminconnect 0.3.7 compatibility environment",
-)
 def test_037_accepts_its_synthetic_token_structure_without_network_calls():
     from garminconnect import Garmin
 
@@ -84,10 +76,6 @@ def test_037_accepts_its_synthetic_token_structure_without_network_calls():
     assert json.loads(api.client.dumps()) == _fixture("garminconnect_037.json")
 
 
-@pytest.mark.skipif(
-    EXPECTED_VERSION is None,
-    reason="requires the isolated garminconnect 0.3.7 compatibility environment",
-)
 def test_037_rejects_pre_030_token_structure_and_requires_fresh_login():
     from garminconnect import Garmin
 

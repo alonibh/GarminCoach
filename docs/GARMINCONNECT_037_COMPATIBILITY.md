@@ -1,45 +1,40 @@
 # GarminConnect 0.3.7 Compatibility
 
-**Phase:** 2A.2
+**Phase:** 2A.3
 
 **Date:** 2026-07-27
 
 **Policy:** [`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md)
 
-**Conclusion:** The known response-contract incompatibilities are fixed, and
-the code is ready for a controlled runtime/dependency migration. A production
-upgrade is not yet proven safe because the production interpreter and token
-format have not been observed, and a real account may require
-reauthentication.
+**Conclusion:** The known response-contract incompatibilities are fixed. The
+production runtime is already Python 3.12, so this is a controlled package
+upgrade to `garminconnect[typed]==0.3.7`, with the current environment and Git
+SHA retained for rollback. A production token may still require reauthentication.
 
-This work does not change the production Python runtime, `requirements.txt`,
-Garmin authentication behavior, sync orchestration, database schema, coaching
-authority, or Telegram behavior. No Garmin account, endpoint, credential, or
-real token was used.
+This package upgrade does not change Garmin authentication behavior, sync
+orchestration, database schema, coaching authority, or Telegram behavior. No
+Garmin account, endpoint, credential, or real token is used by its checks.
 
-## Current runtime assumptions
+## Controlled package-upgrade contract
 
 | Area | Current assumption | Migration consequence |
 | --- | --- | --- |
-| Declared application runtime | `README.md` and `run.bat` say Python 3.11+ | This does not prove that production is running Python 3.12. |
-| Normal CI | `.github/workflows/deploy.yml` pins Python 3.11 | Normal CI cannot install `garminconnect==0.3.7`, which requires Python 3.12+. |
-| Compatibility CI | A separate job pins Python 3.12 and `garminconnect[typed]==0.3.7` | It tests the complete offline suite without changing production dependencies. |
-| Production executable | systemd starts `/home/ubuntu/garmincoach/.venv/bin/uvicorn`; deploy and reset workflows activate that `.venv` | The virtual environment's original interpreter determines production Python. |
-| GitHub deployment | Reuses `.venv` and installs `requirements.txt` into it | It does not recreate or upgrade the environment's interpreter. |
-| `deploy.ps1` / `setup.sh` path | Creates `.venv` with unversioned `python3` when needed | `python3` must not be assumed to mean Python 3.12. |
-| Reset/recovery | Reuses `.venv` and its `python` | Recovery does not migrate the runtime. |
+| Production preflight | Python 3.12.3; `.venv/bin/python` resolves to `/usr/bin/python3.12`; `garminconnect` is 0.3.6 | No interpreter installation or runtime migration is needed. |
+| Declared application runtime | `README.md`, `run.bat`, setup, and CI require Python 3.12 | Python 3.12 is explicit rather than inferred from `python3`. |
+| Application dependency | `requirements.txt` pins `garminconnect[typed]==0.3.7` | Every normal test and deployment environment validates the exact distribution. |
+| CI | The complete offline suite runs under Python 3.12 | The former compatibility-only job is unnecessary; its contract tests run in the normal suite. |
+| Candidate environment | Deployment clones `.venv` to `.venv-garminconnect-037-<SHA>` | The working `.venv` and its package state are never modified. |
+| Runtime selection | A temporary systemd override starts the checked candidate | It is installed only after exact-package/import, compile/import, and compatibility-test checks pass. |
+| Rollback | The deployment trap restores the previous Git SHA and systemd override | The original `.venv` remains the rollback environment. |
 
-Moving production to Python 3.12 still requires a new environment created with
-an explicitly verified Python 3.12 executable. The existing production
-environment must not be recreated until the read-only probe below has been run
-and its output recorded.
+The read-only production preflight captured this runtime evidence before the
+package switch. It made no Garmin request and did not read tokens or databases.
 
 ## Compatibility-test results
 
-The test-only dependency file
-[`requirements-compat-garminconnect-037.txt`](../requirements-compat-garminconnect-037.txt)
-installs the exact requirement `garminconnect[typed]==0.3.7` without changing
-`requirements.txt`.
+The main dependency file installs the exact requirement
+`garminconnect[typed]==0.3.7`; all compatibility contracts run in the standard
+Python 3.12 suite.
 
 Local isolated result:
 
@@ -49,9 +44,6 @@ Local isolated result:
 - Complete suite: 414 passed
 - Expected failures: 0
 - Unexpected failures: 0
-
-The unchanged normal environment also completed the full suite: 386 passed
-and 28 exact-0.3.7-only checks skipped. There were no failures.
 
 The three Phase 2A.1 expected incompatibilities now pass:
 
@@ -107,42 +99,36 @@ an old token, and it does not change production authentication behavior.
 
 The following are still unproven:
 
-- the Python executable and version behind the production `.venv`;
-- the installed production `garminconnect` version;
 - the actual production token serialization generation;
 - whether the real token can be refreshed or must be replaced;
 - whether fresh login and MFA complete successfully for the production account;
 - real-account response variations beyond the sanitized supported fixtures.
 
-No production compatibility claim should be made until the probe output is
-captured. Even with Python 3.12 confirmed, the owner must plan for a controlled
-one-time reauthentication and retain a rollback path that does not destroy the
-existing environment or encrypted token.
+Even with Python 3.12 confirmed, the owner must plan for a controlled one-time
+reauthentication and retain a rollback path that does not destroy the existing
+environment or encrypted token.
 
 ## Upgrade decision
 
-The response adapters and offline contracts are ready for a controlled
-runtime/dependency migration. An immediate in-place production upgrade is
-**not yet safe** because production-version evidence and a real-token
-reauthentication outcome are still missing.
+The response adapters and offline contracts are ready for a controlled,
+rollback-capable package upgrade. Token reauthentication remains an expected,
+owner-supervised possibility after a healthy deployment.
 
 ## Exact next step
 
-**Phase 2A.3:** capture the production probe output, then build a separate
-explicit Python 3.12 virtual environment with exact
-`garminconnect[typed]==0.3.7`; run the full tests and offline smoke checks
-there; perform an owner-supervised token restore or fresh-login/MFA validation;
-and switch systemd only after those checks pass with the current environment
-retained for rollback.
+Deployment clones the existing Python 3.12 environment, installs the pinned
+package in that candidate, runs compatibility tests and smoke checks, then
+switches systemd only after those checks pass. Do not enter credentials or MFA
+during deployment. If the healthy application reports an expired Garmin
+session, reauthenticate through its existing Connect Garmin account UI.
 
 ## Required production evidence
 
-The owner must run exactly:
+The completed preflight ran:
 
 ```bash
 cd /home/ubuntu/garmincoach && /home/ubuntu/garmincoach/.venv/bin/python /home/ubuntu/garmincoach/scripts/garmin_compat_probe.py
 ```
 
 The command is read-only. It makes no Garmin request, reads no credentials or
-tokens, and modifies no file or database. Record its complete seven-line
-output before planning the Python 3.12 environment replacement.
+tokens, and modifies no file or database.

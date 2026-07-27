@@ -1,4 +1,0 @@
--r requirements.txt
-
-# Test-only compatibility target. Production continues to use requirements.txt.
-garminconnect[typed]==0.3.7

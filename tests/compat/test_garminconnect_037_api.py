@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 from importlib.metadata import version
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
@@ -10,11 +9,7 @@ from typing import get_args, get_origin, get_type_hints
 import pytest
 
 
-EXPECTED_VERSION = os.getenv("GARMINCONNECT_COMPAT_VERSION")
-pytestmark = pytest.mark.skipif(
-    EXPECTED_VERSION is None,
-    reason="requires the isolated garminconnect 0.3.7 compatibility environment",
-)
+EXPECTED_VERSION = "0.3.7"
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "garmin"
 

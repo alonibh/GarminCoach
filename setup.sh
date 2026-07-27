@@ -3,15 +3,16 @@ set -e
 
 echo "Updating system and installing dependencies..."
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip iptables-persistent
+sudo apt-get install -y python3.12-venv python3-pip iptables-persistent
 
 echo "Extracting app..."
 mkdir -p ~/garmincoach
 tar -xzf ~/garmincoach.tar.gz -C ~/garmincoach/
 
-echo "Setting up virtual environment..."
+echo "Setting up the Python 3.12 virtual environment..."
 cd ~/garmincoach
-python3 -m venv .venv
+python3.12 --version
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
@@ -39,7 +40,7 @@ EOF
 
 echo "Allowing Uvicorn to bind to Port 80..."
 # Allow python to bind to port 80 without root
-sudo setcap 'cap_net_bind_service=+ep' $(readlink -f ~/.venv/bin/python3 || echo ~/.venv/bin/python) || true
+sudo setcap 'cap_net_bind_service=+ep' "$(readlink -f .venv/bin/python)" || true
 # Alternatively, use iptables to route 80 to 8000
 sudo iptables -A PREROUTING -t nat -i enp0s3 -p tcp --dport 80 -j REDIRECT --to-port 8000 || true
 sudo iptables -A PREROUTING -t nat -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 8000 || true

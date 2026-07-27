@@ -12,13 +12,13 @@ echo(
 
 REM --- 1) Find Python ----------------------------------------
 set "PY="
-where py >nul 2>nul && set "PY=py -3"
+where py >nul 2>nul && py -3.12 -c "import sys; raise SystemExit(sys.version_info[:2] != (3, 12))" >nul 2>nul && set "PY=py -3.12"
 if not defined PY (
-    where python >nul 2>nul && set "PY=python"
+    where python >nul 2>nul && python -c "import sys; raise SystemExit(sys.version_info[:2] != (3, 12))" >nul 2>nul && set "PY=python"
 )
 if not defined PY (
     echo [ERROR] Python was not found on your PATH.
-    echo Install Python 3.11+ from https://www.python.org/downloads/
+    echo Install Python 3.12 from https://www.python.org/downloads/
     echo and tick "Add python.exe to PATH" during install, then re-run this file.
     pause
     exit /b 1
@@ -27,7 +27,7 @@ echo Using Python: %PY%
 
 REM --- 2) Create virtual environment (first run only) --------
 if not exist ".venv\Scripts\python.exe" (
-    echo Creating virtual environment in .venv ...
+    echo Creating Python 3.12 virtual environment in .venv ...
     %PY% -m venv .venv
     if errorlevel 1 (
         echo [ERROR] Failed to create the virtual environment.
@@ -39,6 +39,12 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "VENV_PY=.venv\Scripts\python.exe"
+"%VENV_PY%" -c "import sys; raise SystemExit(sys.version_info[:2] != (3, 12))" >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] Existing .venv is not Python 3.12. Recreate it with Python 3.12.
+    pause
+    exit /b 1
+)
 
 REM --- 3) Install / update dependencies ----------------------
 echo Installing dependencies (this may take a minute the first time) ...
