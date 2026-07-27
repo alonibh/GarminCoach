@@ -64,7 +64,7 @@ def _user_with_feed(Session, tmp_path, *, email="athlete@example.com", status="a
     return user, token
 
 
-def _add_session(user, tmp_path, *, title, target_day=date(2026, 7, 27), status="approved"):
+def _add_session(user, tmp_path, *, title, target_day=date(2026, 7, 27), status="approved", planned_id=None):
     with get_user_session(user.id, tmp_path / "users") as session:
         stale = session.get(SyncState, "coach_calendar_events")
         if stale is None:
@@ -72,6 +72,7 @@ def _add_session(user, tmp_path, *, title, target_day=date(2026, 7, 27), status=
         else:
             stale.value = "not valid JSON"
         session.add(PlannedSession(
+            id=planned_id,
             title=title,
             target_date=target_day,
             suggested_time="18:00",
@@ -129,6 +130,23 @@ def test_private_calendar_feed_is_public_tenant_scoped_and_stable(monkeypatch, t
     second_response = client.get(f"/calendar/feed/{second_token}.ics", follow_redirects=False)
     assert "Other athlete workout" in second_response.text
     assert "Monday strength" not in second_response.text
+    engine.dispose()
+
+
+def test_calendar_uids_are_distinct_for_same_per_tenant_session_id(monkeypatch, tmp_path):
+    client, Session, engine = _calendar_test_app(monkeypatch, tmp_path)
+    first, first_token = _user_with_feed(Session, tmp_path)
+    second, second_token = _user_with_feed(Session, tmp_path, email="other@example.com")
+    _add_session(first, tmp_path, title="First", planned_id=1)
+    _add_session(second, tmp_path, title="Second", planned_id=1)
+
+    def event_uid(token):
+        response = client.get(f"/calendar/feed/{token}.ics", follow_redirects=False)
+        calendar = Calendar.from_ical(response.content)
+        event = next(component for component in calendar.walk() if component.name == "VEVENT")
+        return str(event["UID"])
+
+    assert event_uid(first_token) != event_uid(second_token)
     engine.dispose()
 
 

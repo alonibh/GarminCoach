@@ -69,6 +69,12 @@ from control_db import (
     valid_calendar_feed_token,
 )
 from tenant_context import TenantIdentity, tenant_scope
+from logging_filters import install_calendar_feed_access_log_filter
+
+
+# Uvicorn configures its access logger before importing the application.  Add
+# this filter during import so no opaque feed URL reaches a handler unredacted.
+install_calendar_feed_access_log_filter()
 
 def validate_startup_configuration() -> None:
     """Validate local Ask Coach and single-process settings without network I/O."""
@@ -2780,8 +2786,15 @@ def coach_calendar_feed():
     )
 
 
+def _calendar_user_namespace(user_id: str) -> str:
+    """Derive a stable, non-identifying namespace for a user's ICS UIDs."""
+    return hashlib.sha256(
+        f"garmincoach-calendar-user-v1:{user_id}".encode("utf-8")
+    ).hexdigest()
+
+
 def _planned_session_calendar(
-    sessions: list[PlannedSession], *, timezone_name: str | None
+    sessions: list[PlannedSession], *, timezone_name: str | None, user_namespace: str
 ) -> str:
     """Render stable ICS events from the authoritative planned-session store."""
     from icalendar import Calendar, Event
@@ -2819,7 +2832,7 @@ def _planned_session_calendar(
         else:
             timestamp = timestamp.astimezone(pytz.utc)
         uid_digest = hashlib.sha256(
-            f"garmincoach-planned-session-v1:{planned.id}".encode("ascii")
+            f"garmincoach-planned-session-v1:{user_namespace}:{planned.id}".encode("ascii")
         ).hexdigest()
 
         event = Event()
@@ -2869,7 +2882,9 @@ def private_coach_calendar_feed(token: str):
                 .all()
             )
         ics_content = _planned_session_calendar(
-            planned_sessions, timezone_name=tenant.timezone
+            planned_sessions,
+            timezone_name=tenant.timezone,
+            user_namespace=_calendar_user_namespace(user.id),
         )
 
     from fastapi.responses import Response
