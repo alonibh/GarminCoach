@@ -164,6 +164,8 @@ def test_snapshot_schedule_uses_planned_workouts_without_calendar_network(sessio
     import coach.calendar as cal
     from coach.snapshot import build_snapshot
 
+    fixed_local_now = datetime(2026, 7, 28, 0, 21)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: fixed_local_now)
     monkeypatch.setattr(
         cal,
         "get_upcoming_schedule",
@@ -171,7 +173,7 @@ def test_snapshot_schedule_uses_planned_workouts_without_calendar_network(sessio
     )
     session.add(PlannedSession(
         title="GarminCoach run",
-        target_date=datetime.now().date(),
+        target_date=fixed_local_now.date(),
         suggested_time="18:00",
         status="approved",
     ))
