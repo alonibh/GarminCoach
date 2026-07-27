@@ -49,6 +49,9 @@ _RESOURCE_CURSOR_KEYS = {
     "daily_health": "last_daily_health_sync_through",
 }
 
+_STAGE1_COMPLETE = "stage1_bootstrap_complete"
+_STAGE1_PREFIX = "stage1_bootstrap_"
+
 
 # --- small helpers --------------------------------------------------------
 def _g(d: Any, *keys, default=None):
@@ -146,6 +149,27 @@ def _resource_start(session: Session, resource: str, today: date, full: bool) ->
         return today - timedelta(days=config.INITIAL_BACKFILL_DAYS)
     # Re-sync the last few days too (data settles after the day ends).
     return cursor - timedelta(days=3)
+
+
+def _stage1_key(name: str) -> str:
+    return f"{_STAGE1_PREFIX}{name}"
+
+
+def _has_meaningful_sync_progress(session: Session) -> bool:
+    """Never surprise an existing installation with a new-account bootstrap."""
+    # Bootstrap's own partial cursors are not legacy progress.  They are its
+    # resume journal and must continue through to the completion marker.
+    if session.query(SyncState).filter(SyncState.key.like(f"{_STAGE1_PREFIX}%")).count():
+        return False
+    if _get_state(session, "last_sync_through") or _get_state(session, "last_sync_at"):
+        return True
+    if any(_get_state(session, key) for key in _RESOURCE_CURSOR_KEYS.values()):
+        return True
+    return any((
+        session.query(Activity).count(),
+        session.query(Sleep).count(),
+        session.query(DailyHealth).count(),
+    ))
 
 
 def _utc_now() -> datetime:
@@ -283,7 +307,7 @@ def _parse_sleep_dt(value: Any, *, is_gmt: bool = False) -> Optional[datetime]:
     return parsed.replace(tzinfo=timezone.utc).astimezone(get_local_tz()).replace(tzinfo=None)
 
 
-def _upsert_activity(session, raw: dict) -> Optional[int]:
+def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int]:
     act_id = raw.get("activityId")
     if act_id is None:
         return None
@@ -321,7 +345,7 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
     # The activities_by_date endpoint doesn't actually include RPE/Feel for historical
     # workouts. We need to fetch the full activity details to reliably get them.
     # To avoid N+1 HTTP calls on every sync, we only fetch if we don't already have it.
-    if (
+    if enrich and (
         ((new_rpe is None or new_feel is None) and (act.rpe is None or act.feel is None))
         or not act.provenance_checked
     ):
@@ -479,23 +503,35 @@ def _sync_workouts(session: Session) -> None:
     session.commit()
 
 
-def _sync_activities(session: Session, start: date, end: date) -> int:
+def _sync_activities(
+    session: Session, start: date, end: date, *, strength_limit: int | None = None,
+    enrich: bool = True, vo2_values: list[tuple[str, float]] | None = None,
+) -> int:
     try:
         raw_list = client.activities_by_date(start, end)
     except GarminConnectTooManyRequestsError:
         raise
         
     count = 0
+    strength_ids: list[tuple[datetime, int]] = []
     for raw in raw_list or []:
         raw_dur = raw.get("duration")
         if raw_dur is None or float(raw_dur) <= 0:
             continue
-        act_id = _upsert_activity(session, raw)
+        act_id = _upsert_activity(session, raw, enrich=enrich)
         if act_id is None:
             continue
         if _is_strength(_g(raw, "activityType", "typeKey", default="") or ""):
-            _sync_exercise_sets(session, act_id)
+            when = _parse_dt(raw.get("startTimeLocal") or raw.get("startTimeGMT")) or datetime.min
+            strength_ids.append((when, act_id))
+        if vo2_values is not None and raw.get("vO2MaxValue") is not None:
+            try:
+                vo2_values.append(((raw.get("startTimeLocal") or "")[:10], round(float(raw["vO2MaxValue"]), 1)))
+            except (TypeError, ValueError):
+                pass
         count += 1
+    for _, act_id in sorted(strength_ids, reverse=True)[:strength_limit]:
+        _sync_exercise_sets(session, act_id)
     return count
 
 
@@ -540,7 +576,7 @@ def _sync_sleep(session, day: date) -> bool:
     return True
 
 
-def _sync_daily_health(session, day: date) -> bool:
+def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> bool:
     row = session.get(DailyHealth, day) or DailyHealth(day=day)
     complete = True
 
@@ -628,35 +664,145 @@ def _sync_daily_health(session, day: date) -> bool:
         logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
         complete = False
 
-    try:
-        readiness_data = normalize_training_readiness(
-            client.training_readiness(day),
-            day,
-        )
-        if readiness_data is not None:
-            row.training_readiness = readiness_data["trainingReadiness"]
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Training readiness fetch failed for %s", day, exc_info=True)
-        complete = False
-
-    try:
-        status_data = client.training_status(day)
-        if isinstance(status_data, dict):
-            row.training_status = status_data.get("mostRecentTrainingStatus")
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Training status fetch failed for %s", day, exc_info=True)
-        complete = False
+    # Readiness and status are current-only facts.  Historical wellness sync
+    # deliberately never calls either endpoint.
+    if current_optional:
+        _sync_current_optional_health(session, day, row)
 
     session.add(row)
     return complete
+
+
+def _sync_current_optional_health(session: Session, day: date, row: DailyHealth | None = None) -> None:
+    """Fetch current-only optional recovery facts, respecting capability."""
+    from metrics.freshness import capability_state, note_capability_observed
+
+    row = row or session.get(DailyHealth, day) or DailyHealth(day=day)
+    readiness_capability = capability_state(session)
+    if readiness_capability != "unsupported":
+        payload = normalize_training_readiness(client.training_readiness(day), day)
+        if payload is not None:
+            row.training_readiness = payload["trainingReadiness"]
+            note_capability_observed(session)
+
+    if capability_state(session, "training_status") == "supported":
+        status_data = client.training_status(day)
+        if isinstance(status_data, dict):
+            row.training_status = status_data.get("mostRecentTrainingStatus")
+    session.add(row)
+
+
+def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
+    """Fast, resumable first-account bootstrap.  Do not add Stage 2 here."""
+    from metrics.freshness import capability_state, note_capability_from_device, note_capability_observed
+
+    def done(name: str) -> bool:
+        return bool(_get_state(session, _stage1_key(name)))
+
+    def mark(name: str) -> None:
+        _set_state(session, _stage1_key(name), "complete")
+
+    try:
+        # 1. Device upload and capability.  Do not call activity preflight here:
+        # its extra request would violate the bootstrap request order.
+        if not done("device"):
+            device = client.device_last_used() or {}
+            note_capability_from_device(session, device)
+            upload = _device_upload_iso_from_payload(device)
+            _set_state(session, "device_last_upload", upload)
+            if upload:
+                _set_state(session, "last_processed_device_upload", upload)
+            mark("device")
+
+        # 2. Today's sleep.
+        if not done("today_sleep"):
+            if _sync_sleep(session, today) is False:
+                return False
+            mark("today_sleep")
+
+        # 3. Today's Training Readiness, only when supported or unknown.
+        if not done("training_readiness"):
+            if capability_state(session) != "unsupported":
+                payload = normalize_training_readiness(client.training_readiness(today), today)
+                row = session.get(DailyHealth, today) or DailyHealth(day=today)
+                if payload is not None:
+                    row.training_readiness = payload["trainingReadiness"]
+                    note_capability_observed(session)
+                session.add(row)
+            mark("training_readiness")  # unsupported and empty current responses are resolved.
+
+        # 4. The seven-day wellness window.  Today's sleep was already fetched;
+        # fetch the other six nights, then advance its cursor through today.
+        window_start = today - timedelta(days=6)
+        if not done("sleep"):
+            for day in (window_start + timedelta(days=n) for n in range(6)):
+                if _sync_sleep(session, day) is False:
+                    return False
+                _advance_resource_cursor(session, "sleep", day)
+            _advance_resource_cursor(session, "sleep", today)
+            mark("sleep")
+        if not done("daily_health"):
+            for day in (window_start + timedelta(days=n) for n in range(7)):
+                if _sync_daily_health(session, day, current_optional=False) is False:
+                    return False
+                _advance_resource_cursor(session, "daily_health", day)
+            mark("daily_health")
+            summary["days"] = 7
+
+        # 5. 30 days of summaries; no per-activity enrichment in Stage 1.
+        vo2_values: list[tuple[str, float]] = []
+        if not done("activities"):
+            summary["activities"] = _sync_activities(
+                session, today - timedelta(days=29), today, strength_limit=0,
+                enrich=False, vo2_values=vo2_values,
+            )
+            _advance_resource_cursor(session, "activities", today)
+            mark("activities")
+
+        # 6. Set details only for the ten most recent fetched strength activities.
+        if not done("strength_sets"):
+            strength = (
+                session.query(Activity)
+                .filter(Activity.activity_type.ilike("%strength%") | Activity.activity_type.ilike("%weight%"))
+                .filter(Activity.start_time >= datetime.combine(today - timedelta(days=29), datetime.min.time()))
+                .order_by(Activity.start_time.desc())
+                .limit(10)
+                .all()
+            )
+            for activity in strength:
+                _sync_exercise_sets(session, activity.id)
+            mark("strength_sets")
+
+        # 7-8. Current-only slow values.  Never call the historical helpers.
+        if not done("fitness_age"):
+            fitness_age = client.fitness_age(today) or {}
+            value = fitness_age.get("fitnessAge")
+            if value is not None:
+                _upsert_snapshot(session, "fitness_age", [((fitness_age.get("lastUpdated") or today.isoformat())[:10], round(float(value), 1))])
+            mark("fitness_age")
+        if not done("vo2max"):
+            if vo2_values:
+                _upsert_snapshot(session, "vo2max", [max(vo2_values)])
+            mark("vo2max")
+
+        # 9. Status has no inferred capability: unknown and unsupported are
+        # resolved without a request; supported accounts fetch today's value.
+        if not done("training_status"):
+            if capability_state(session, "training_status") == "supported":
+                status = client.training_status(today)
+                if isinstance(status, dict):
+                    row = session.get(DailyHealth, today) or DailyHealth(day=today)
+                    row.training_status = status.get("mostRecentTrainingStatus")
+                    session.add(row)
+            mark("training_status")
+
+        _set_state(session, _STAGE1_COMPLETE, "complete")
+        return True
+    except GarminConnectTooManyRequestsError as exc:
+        until = _note_rate_limited(session)
+        summary["errors"].append(f"Rate limited during Stage 1: {exc}")
+        summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+        return False
 
 
 # --- orchestration --------------------------------------------------------
@@ -934,6 +1080,20 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 "Garmin is in local cooldown after a 429 until "
                 f"{cooldown_until.isoformat(timespec='seconds') if cooldown_until else 'later'}."
             )
+            return summary
+
+        # A clean account gets the bounded usable bootstrap.  Legacy cursors,
+        # resource cursors, or existing synced rows are all treated as real
+        # progress, so upgrading an installation never restarts history.
+        if (
+            not full
+            and not _get_state(session, _STAGE1_COMPLETE)
+            and not _has_meaningful_sync_progress(session)
+        ):
+            _sync_stage1(session, today, summary)
+            if summary["activities"] or summary["days"]:
+                _set_state(session, "last_sync_at", _utc_now().isoformat(timespec="seconds"))
+                _clear_cooldown(session)
             return summary
 
         resource_cursors = {

@@ -312,6 +312,10 @@ class GarminClient:
     def training_status(self, day: date) -> dict:
         return self.api.get_training_status(day.isoformat())
 
+    def fitness_age(self, day: date) -> dict:
+        """Current Fitness Age only; callers must not turn this into a scan."""
+        return self.api.get_fitnessage_data(day.isoformat())
+
 
 _legacy_client = GarminClient()
 

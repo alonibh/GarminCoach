@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from garminconnect import GarminConnectTooManyRequestsError
 
-from db import Sleep, SyncState, Workout
+from db import Activity, DeviceCapability, Sleep, SyncState, Workout
 import pytest
 import tenant_context
 import sync.sync_service as svc
@@ -304,3 +304,112 @@ def test_first_429_stops_remaining_calls_and_preserves_partial_resource_progress
     assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["sleep"]).value == today.isoformat()
     assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["daily_health"]).value == (today - timedelta(days=2)).isoformat()
     assert session.get(SyncState, "garmin_cooldown_until").value
+
+
+def _stage1_client(monkeypatch, events):
+    """Minimal Garmin fixture that records only bootstrap endpoint ordering."""
+    monkeypatch.setattr(svc.client, "device_last_used", lambda: events.append("device") or {})
+    monkeypatch.setattr(svc.client, "sleep", lambda day: events.append(("sleep", day)) or {"dailySleepDTO": {}})
+    monkeypatch.setattr(svc.client, "training_readiness", lambda day: events.append(("readiness", day)) or {})
+    monkeypatch.setattr(svc.client, "hrv", lambda day: events.append(("hrv", day)) or {})
+    monkeypatch.setattr(svc.client, "resting_hr", lambda day: events.append(("rhr", day)) or {})
+    monkeypatch.setattr(svc.client, "stress", lambda day: events.append(("stress", day)) or {})
+    monkeypatch.setattr(svc.client, "body_battery", lambda start, end: events.append(("bb", start)) or [])
+    monkeypatch.setattr(svc.client, "daily_steps", lambda start, end: events.append(("steps", start)) or [])
+    monkeypatch.setattr(svc.client, "user_summary", lambda day: events.append(("summary", day)) or {})
+    monkeypatch.setattr(svc.client, "fitness_age", lambda day: events.append(("fitness", day)) or {"fitnessAge": 35, "lastUpdated": day.isoformat()})
+    monkeypatch.setattr(svc.client, "training_status", lambda day: events.append(("status", day)) or {})
+
+
+def test_stage1_order_windows_and_strength_limit(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    events = []
+    _stage1_client(monkeypatch, events)
+    activities = [
+        {"activityId": n, "duration": 1200, "startTimeLocal": f"{(today - timedelta(days=n)).isoformat()} 08:00:00",
+         "activityType": {"typeKey": "strength_training" if n < 12 else "running"},
+         "vO2MaxValue": 45 if n == 12 else None}
+        for n in range(15)
+    ]
+    monkeypatch.setattr(svc.client, "activities_by_date", lambda start, end: events.append(("activities", start, end)) or activities)
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda activity_id: events.append(("sets", activity_id)) or {})
+    session.add(DeviceCapability(metric="training_status", support_state="supported", evidence_source="test", updated_at=datetime.now()))
+    session.commit()
+
+    svc.run_sync()
+
+    assert events[0] == "device"
+    assert events[1] == ("sleep", today)
+    assert events[2] == ("readiness", today)
+    activity_event = next(event for event in events if event[0] == "activities")
+    assert activity_event[1:] == (today - timedelta(days=29), today)
+    sleep_days = [event[1] for event in events if event[0] == "sleep"]
+    assert sleep_days == [today] + [today - timedelta(days=n) for n in range(6, 0, -1)]
+    assert not any(event[0] in {"readiness", "status"} and event[1] != today for event in events if isinstance(event, tuple))
+    assert [event[1] for event in events if event[0] == "sets"] == list(range(10))
+    assert events.index(activity_event) < events.index(("sets", 0)) < events.index(("fitness", today)) < events.index(("status", today))
+    assert session.get(SyncState, "stage1_bootstrap_complete").value == "complete"
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["sleep"]).value == today.isoformat()
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["daily_health"]).value == today.isoformat()
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["activities"]).value == today.isoformat()
+
+
+def test_stage1_skips_existing_progress_and_resumes_partial(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    _state(session, "last_sync_through", (date.today() - timedelta(days=1)).isoformat())
+    starts = []
+    monkeypatch.setattr(svc.client, "device_last_used", lambda: {})
+    monkeypatch.setattr(svc.client, "recent_activities", lambda *_: [])
+    monkeypatch.setattr(svc, "_sync_activities", lambda _s, start, _e, **_kwargs: starts.append(start) or 0)
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *_: True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda *_, **__: True)
+    svc.run_sync(force=True)
+    assert starts != [date.today() - timedelta(days=29)]
+
+    session.query(SyncState).delete()
+    session.commit()
+    events = []
+    _stage1_client(monkeypatch, events)
+    _state(session, "stage1_bootstrap_device", "complete")
+    _state(session, "stage1_bootstrap_today_sleep", "complete")
+    _state(session, "stage1_bootstrap_training_readiness", "complete")
+    monkeypatch.setattr(svc.client, "activities_by_date", lambda *_: [])
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
+    svc.run_sync()
+    assert "device" not in events
+    assert ("sleep", date.today()) not in events
+    assert session.get(SyncState, "stage1_bootstrap_complete").value == "complete"
+
+
+def test_stage1_429_stops_and_completion_waits_for_remaining_work(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    events = []
+    _stage1_client(monkeypatch, events)
+    monkeypatch.setattr(
+        svc.client, "training_readiness",
+        lambda *_: (_ for _ in ()).throw(GarminConnectTooManyRequestsError("too many")),
+    )
+
+    summary = svc.run_sync()
+
+    assert session.get(SyncState, "stage1_bootstrap_today_sleep").value == "complete"
+    assert session.get(SyncState, "stage1_bootstrap_complete") is None
+    assert session.get(SyncState, "garmin_cooldown_until").value
+    assert not any(event[0] == "hrv" for event in events if isinstance(event, tuple))
+
+
+def test_stage1_unsupported_optional_metrics_complete_without_calls(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    events = []
+    _stage1_client(monkeypatch, events)
+    monkeypatch.setattr(svc.client, "activities_by_date", lambda *_: [])
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
+    session.add(DeviceCapability(metric="training_readiness", support_state="unsupported", evidence_source="test", updated_at=datetime.now()))
+    session.add(DeviceCapability(metric="training_status", support_state="unsupported", evidence_source="test", updated_at=datetime.now()))
+    session.commit()
+
+    svc.run_sync()
+
+    assert not any(event[0] in {"readiness", "status"} for event in events if isinstance(event, tuple))
+    assert session.get(SyncState, "stage1_bootstrap_complete").value == "complete"

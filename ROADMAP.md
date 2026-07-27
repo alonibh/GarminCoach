@@ -40,7 +40,9 @@ shapes are covered by fixtures.
 
 - [x] Replace the global sync cursor with per-resource cursors.
 - [ ] Track per-resource gaps.
-- [ ] Implement Stage 1 usable bootstrap and bounded Stage 2 backfill.
+- [x] Implement the bounded Stage 1 usable bootstrap (device/capability,
+  current recovery facts, seven wellness days, 30 activity days, ten strength
+  details, and current slow metrics); Stage 2 backfill remains unimplemented.
 - [ ] Prefer combined/range endpoints over per-day duplicate requests.
 - [ ] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.
