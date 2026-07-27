@@ -408,7 +408,7 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
         if config.MULTI_USER_ENABLED:
             path = request.url.path
             public = ("/static", "/auth", "/invite", "/favicon", "/telegram/webhook", "/calendar/feed/")
-            if path == "/calendar/coach.ics" or path.startswith(public):
+            if path == "/health" or path == "/calendar/coach.ics" or path.startswith(public):
                 return await call_next(request)
             raw_session = request.cookies.get(MULTI_USER_SESSION_COOKIE, "")
             with get_control_session() as control_session:
@@ -427,7 +427,7 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
 
         # Skip auth for public paths.
         path = request.url.path
-        if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        if path == "/health" or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
 
         # Check session cookie.
@@ -439,6 +439,11 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
         return RedirectResponse(f"/app-login?next={path}", status_code=303)
 
 app.add_middleware(CookieAuthMiddleware)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 def _localize_message_created_at(created_at: datetime | None) -> datetime | None:
