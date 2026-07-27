@@ -1,168 +1,148 @@
-# GarminConnect 0.3.7 Compatibility Preflight
+# GarminConnect 0.3.7 Compatibility
 
-**Phase:** 2A.1
+**Phase:** 2A.2
 
 **Date:** 2026-07-27
 
 **Policy:** [`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md)
 
-**Conclusion:** Do not upgrade production yet.
+**Conclusion:** The known response-contract incompatibilities are fixed, and
+the code is ready for a controlled runtime/dependency migration. A production
+upgrade is not yet proven safe because the production interpreter and token
+format have not been observed, and a real account may require
+reauthentication.
 
-This report is a read-only preflight. It does not change the production Python
-runtime, `requirements.txt`, Garmin authentication, synchronization, stored
-data, or coaching behavior. No Garmin account or endpoint was used.
+This work does not change the production Python runtime, `requirements.txt`,
+Garmin authentication behavior, sync orchestration, database schema, coaching
+authority, or Telegram behavior. No Garmin account, endpoint, credential, or
+real token was used.
 
 ## Current runtime assumptions
 
-| Area | Current assumption | Consequence for Python 3.12 |
+| Area | Current assumption | Migration consequence |
 | --- | --- | --- |
-| Declared application runtime | `README.md` and `run.bat` say Python 3.11+ | This does not guarantee 3.12. |
-| Normal CI | `.github/workflows/deploy.yml` pins Python 3.11 | Normal CI cannot install `garminconnect==0.3.7`, whose package metadata requires Python 3.12+. |
-| Production executable | systemd starts `/home/ubuntu/garmincoach/.venv/bin/uvicorn`; deploy and reset workflows activate `.venv` and invoke its `python` | The virtual environment's original interpreter, not the `python3` command currently on `PATH`, determines production Python. |
-| GitHub deployment | Reuses the existing `.venv` and runs `python -m pip install -r requirements.txt` | It never recreates or upgrades the virtual environment interpreter. |
-| `deploy.ps1` / `setup.sh` path | Excludes `.venv` from the archive, then runs unversioned `python3 -m venv .venv` on the server | It does not prove `python3` is 3.12 and does not explicitly create a clean replacement environment. |
-| Production reset/recovery | Reuses `.venv`, runs reset code with its `python`, and reinstalls `requirements.txt` into it | A reset does not migrate the runtime. |
-| Test configuration | There is no `pyproject.toml`, `tox.ini`, `.python-version`, or pytest Python-version constraint | The workflow or selected executable is the only runtime pin. |
-| Local Windows launcher | Reuses `.venv` after first creation and accepts any discovered Python advertised as 3.11+ | It does not migrate an existing environment to 3.12. |
+| Declared application runtime | `README.md` and `run.bat` say Python 3.11+ | This does not prove that production is running Python 3.12. |
+| Normal CI | `.github/workflows/deploy.yml` pins Python 3.11 | Normal CI cannot install `garminconnect==0.3.7`, which requires Python 3.12+. |
+| Compatibility CI | A separate job pins Python 3.12 and `garminconnect[typed]==0.3.7` | It tests the complete offline suite without changing production dependencies. |
+| Production executable | systemd starts `/home/ubuntu/garmincoach/.venv/bin/uvicorn`; deploy and reset workflows activate that `.venv` | The virtual environment's original interpreter determines production Python. |
+| GitHub deployment | Reuses `.venv` and installs `requirements.txt` into it | It does not recreate or upgrade the environment's interpreter. |
+| `deploy.ps1` / `setup.sh` path | Creates `.venv` with unversioned `python3` when needed | `python3` must not be assumed to mean Python 3.12. |
+| Reset/recovery | Reuses `.venv` and its `python` | Recovery does not migrate the runtime. |
 
-Moving production to Python 3.12 requires a newly created, explicitly
-versioned environment, for example one built with `python3.12 -m venv`, followed
-by dependency installation and smoke checks before systemd is switched. The
-current GitHub deployment does not perform that operation.
+Moving production to Python 3.12 still requires a new environment created with
+an explicitly verified Python 3.12 executable. The existing production
+environment must not be recreated until the read-only probe below has been run
+and its output recorded.
 
-The current deployment cannot be considered able to install Python-3.12-only
-packages until the production probe reports the actual `.venv` interpreter.
-If it reports Python 3.11 or lower, pip cannot install `garminconnect==0.3.7`.
-Even if it reports 3.12+, the response and authentication blockers below still
-prevent an upgrade.
-
-## Isolated compatibility test
+## Compatibility-test results
 
 The test-only dependency file
 [`requirements-compat-garminconnect-037.txt`](../requirements-compat-garminconnect-037.txt)
-installs the normal requirements together with the exact requirement
-`garminconnect[typed]==0.3.7`. `requirements.txt` is unchanged.
-
-The non-production CI job uses Python 3.12, asserts the installed distribution
-is exactly `0.3.7`, and runs the complete suite. It is intentionally not a
-dependency of the production deploy job in this preflight phase.
+installs the exact requirement `garminconnect[typed]==0.3.7` without changing
+`requirements.txt`.
 
 Local isolated result:
 
 - Python: 3.12.13
 - `garminconnect`: exactly 0.3.7
 - Pydantic: 2.13.4
-- Tests collected: 403
-- Passed: 400
-- Expected incompatibilities (`xfail`): 3
+- Complete suite: 414 passed
+- Expected failures: 0
 - Unexpected failures: 0
 
-The unchanged default local environment also completed the full `tests/` tree:
-374 passed, 26 exact-0.3.7 checks skipped, and the same 3 known contract gaps
-were recorded as expected incompatibilities.
+The unchanged normal environment also completed the full suite: 386 passed
+and 28 exact-0.3.7-only checks skipped. There were no failures.
 
-All methods currently called by `sync/garmin_client.py` still exist and accept
-the current call shapes in 0.3.7. The tested surface includes authentication
-entry points, token serialization members, activities, activity detail,
-strength sets, HR zones, sleep, HRV, Body Battery, stress, resting HR, steps,
-daily stats, device metadata, Training Readiness, Training Status, and workout
-reads. This is an offline signature check, not evidence that Garmin accepts a
-production token or returns an account-specific payload.
+The three Phase 2A.1 expected incompatibilities now pass:
 
-## Response-shape findings
+1. `avgRespirationValue` is accepted alongside
+   `averageRespirationValue`.
+2. Training Readiness snapshot lists normalize into the existing internal
+   dictionary shape.
+3. Multiple same-day snapshots select the latest valid timestamp.
 
-Sanitized synthetic fixtures cover daily stats, sleep, HRV, Body Battery,
-Training Readiness list snapshots, the legacy Training Readiness dictionary,
-an empty response, multiple same-day snapshots, and activities.
+All tests are offline. Method-signature and synthetic-token checks are not
+evidence that Garmin accepts a production account's token or payload.
 
-| Contract | Result |
-| --- | --- |
-| Daily stats | Current raw-dictionary fields used by GarminCoach parse successfully; the 0.3.7 `DailyStats` typed model validates the fixture. |
-| Sleep core fields | Duration, stages, timestamps, and score parse successfully. |
-| Sleep respiration | Incompatible: the 0.3.7 typed model uses `avgRespirationValue`; the current adapter reads `averageRespirationValue`. |
-| HRV | Current overnight and baseline fields parse successfully; the 0.3.7 `HrvData` model validates the fixture. |
-| Body Battery | Current value-array parsing succeeds; the 0.3.7 `BodyBatteryEntry` model validates the fixture. |
-| Activities | Current summary parsing succeeds; the 0.3.7 `Activity` model validates the fixture. |
-| Legacy Training Readiness dictionary | Current `trainingReadiness` parsing succeeds. |
-| Empty Training Readiness list | Safely remains missing. |
-| 0.3.7 Training Readiness list | Incompatible: 0.3.7 declares `list[dict]` with snapshot field `score`; GarminCoach declares and parses a dictionary containing `trainingReadiness` or `value`. |
-| Multiple same-day readiness snapshots | Incompatible: there is no adapter that filters to the decision date and selects the latest valid snapshot. |
+## Fixed response contracts
 
-The incompatibilities are explicit strict expected failures. They do not
-silently pass as compatible behavior.
+One pure Garmin-boundary normalizer now handles legacy Training Readiness
+dictionaries and 0.3.7 snapshot lists. It receives the target local decision
+date, rejects malformed and off-date entries, returns missing for an empty
+valid response, and selects the latest valid same-day snapshot by timestamp.
+The normalized dictionary retains the score as `trainingReadiness` and
+preserves available source fields such as `recoveryTime` and `level`.
 
-## Adapters that must change
+Both normal daily-health sync and priority/morning sync call this same
+normalizer. There is no second response-shape assumption that can select a
+different value. The normalizer validates transport data only; it does not
+interpret a score or make a coaching decision.
 
-The next implementation must remain at the Garmin boundary:
+Sleep ingestion now maps both known respiration aliases into the existing
+`respiration_avg` field. Sleep calculation, freshness, cadence, and UI behavior
+are unchanged.
 
-1. Change `GarminClient.training_readiness` to expose the real response
-   contract rather than declaring `dict`.
-2. Add one pure Training Readiness normalization function that accepts the
-   legacy dictionary and 0.3.7 snapshot list, rejects invalid/off-date entries,
-   and selects the latest valid same-day snapshot.
-3. Route both `_sync_daily_health` and `run_priority_sync` through that
-   normalizer so they cannot disagree.
-4. Accept both known sleep respiration aliases without changing other sleep
-   semantics.
-5. If `TypedGarmin` is adopted later, convert typed models to the existing
-   internal raw contract at one boundary; current sync parsers assume
-   dictionaries and must not receive Pydantic models directly.
+## Token-contract findings
 
-No decision-engine or sync-orchestration change is needed for these contract
-fixes.
+Sanitized synthetic fixtures and offline tests establish these distinct
+contracts:
 
-## Authentication and token-format risks
+| Library contract | Serialized structure | Result |
+| --- | --- | --- |
+| Pre-0.3 (`garth`) | Base64-encoded JSON array containing an OAuth1 object followed by an OAuth2 object | The expected field structure and encoding are covered. |
+| GarminConnect 0.3.7 | JSON object containing `di_token`, `di_refresh_token`, and `di_client_id` | Synthetic serialization and loading succeed under exact 0.3.7. |
 
-GarminCoach currently encrypts the string returned by `api.client.dumps()` and
-restores it with `api.client.loads()`. Version 0.3.7 serializes native DI OAuth
-access/refresh data with a different token structure and uses
-`garmin_tokens.json` for path-based storage. Its loader requires recognized
-token fields.
+The encrypted `UserSecretVault` round-trips synthetic 0.3.7 token data, and the
+encrypted file does not contain the synthetic access token in plaintext.
+Existing MFA continuation remains process-local, is reused to complete the
+login, and is not written to the token directory before MFA completes.
 
-Therefore:
+The exact 0.3.7 loader gracefully rejects a synthetic pre-0.3 serialized token
+as structurally unsupported and remains unauthenticated. Therefore an existing
+production token may require a fresh login and possibly MFA after migration.
+This phase deliberately does not translate, discard, or automatically replace
+an old token, and it does not change production authentication behavior.
 
-- a token blob created by a pre-0.3 production installation may not load under
-  0.3.7;
-- a one-time password/MFA reauthentication may be required;
-- successful offline existence/signature checks do not prove cached-token
-  restore, refresh, MFA resume, or production account login;
-- the production token format and installed package version remain unknown
-  because this task did not read credentials or token storage.
+## Remaining uncertainty and risk
 
-Before an upgrade, sanitized token-format fixtures must cover current encrypted
-blob restore and 0.3.7 serialization, and the owner must explicitly accept the
-possible one-time reauthentication.
+The following are still unproven:
+
+- the Python executable and version behind the production `.venv`;
+- the installed production `garminconnect` version;
+- the actual production token serialization generation;
+- whether the real token can be refreshed or must be replaced;
+- whether fresh login and MFA complete successfully for the production account;
+- real-account response variations beyond the sanitized supported fixtures.
+
+No production compatibility claim should be made until the probe output is
+captured. Even with Python 3.12 confirmed, the owner must plan for a controlled
+one-time reauthentication and retain a rollback path that does not destroy the
+existing environment or encrypted token.
 
 ## Upgrade decision
 
-Upgrading is **not currently safe**.
+The response adapters and offline contracts are ready for a controlled
+runtime/dependency migration. An immediate in-place production upgrade is
+**not yet safe** because production-version evidence and a real-token
+reauthentication outcome are still missing.
 
-Python 3.12 and the exact dependency can install and run the complete offline
-suite, and the methods GarminCoach calls are present. However, production
-runtime evidence is missing, current Training Readiness parsing would discard
-the 0.3.7 snapshot-list response, the latest same-day snapshot is not selected,
-the sleep respiration alias differs, and pre-0.3 token restoration is
-unverified.
+## Exact next step
 
-## Exact next implementation task
-
-**Phase 2A.2:** implement and test a pure Garmin response-normalization adapter
-for the 0.3.7 Training Readiness snapshot list and sleep respiration alias,
-route both existing readiness ingestion paths through it, and add sanitized
-old/new token-format compatibility tests. Do not change sync orchestration,
-coaching authority, or production dependency pins in that task.
+**Phase 2A.3:** capture the production probe output, then build a separate
+explicit Python 3.12 virtual environment with exact
+`garminconnect[typed]==0.3.7`; run the full tests and offline smoke checks
+there; perform an owner-supervised token restore or fresh-login/MFA validation;
+and switch systemd only after those checks pass with the current environment
+retained for rollback.
 
 ## Required production evidence
 
-After this commit is present on the production checkout, the owner must run
-exactly:
+The owner must run exactly:
 
 ```bash
 cd /home/ubuntu/garmincoach && /home/ubuntu/garmincoach/.venv/bin/python /home/ubuntu/garmincoach/scripts/garmin_compat_probe.py
 ```
 
 The command is read-only. It makes no Garmin request, reads no credentials or
-tokens, and modifies no file or database. Record its complete seven-line output
-before planning the Python 3.12 environment replacement. Until that output is
-available, this report makes no claim about the production Python,
-`garminconnect`, Pydantic, typed-import, executable, or repository versions.
+tokens, and modifies no file or database. Record its complete seven-line
+output before planning the Python 3.12 environment replacement.

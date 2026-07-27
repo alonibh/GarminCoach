@@ -1,0 +1,20 @@
+[
+  {
+    "oauth_token": "synthetic-oauth1-token",
+    "oauth_token_secret": "synthetic-oauth1-secret",
+    "mfa_token": null,
+    "mfa_expiration_timestamp": null,
+    "domain": "garmin.com"
+  },
+  {
+    "scope": "connect:all",
+    "jti": "synthetic-jti",
+    "token_type": "Bearer",
+    "access_token": "synthetic-access-token",
+    "refresh_token": "synthetic-refresh-token",
+    "expires_in": 3600,
+    "expires_at": 1900000000,
+    "refresh_token_expires_in": 2592000,
+    "refresh_token_expires_at": 1902592000
+  }
+]

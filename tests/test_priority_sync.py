@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 
 from db import (
     CoachMessage,
+    DailyHealth,
     DeviceCapability,
     MorningBriefState,
     ObservationFreshness,
@@ -63,6 +64,41 @@ def test_priority_sync_records_supported_readiness_and_per_signal_freshness(sess
     assert session.get(
         ObservationFreshness, (freshness.TRAINING_READINESS, date(2026, 7, 4))
     ).state == freshness.FRESH
+
+
+def test_priority_sync_normalizes_latest_same_day_readiness_snapshot(session, monkeypatch):
+    _wire_priority(monkeypatch, session)
+    monkeypatch.setattr(
+        sync_service.client,
+        "training_readiness",
+        lambda _day: [
+            {
+                "calendarDate": "2026-07-04",
+                "timestamp": "2026-07-04T04:30:00Z",
+                "score": 61,
+            },
+            {
+                "calendarDate": "2026-07-03",
+                "timestamp": "2026-07-03T23:59:00Z",
+                "score": 99,
+            },
+            {
+                "calendarDate": "2026-07-04",
+                "timestamp": "2026-07-04T07:45:00Z",
+                "score": 81,
+            },
+        ],
+    )
+
+    result = sync_service.run_priority_sync()
+
+    assert result["ready"] is True
+    assert session.get(
+        ObservationFreshness,
+        (freshness.TRAINING_READINESS, date(2026, 7, 4)),
+    ).state == freshness.FRESH
+
+    assert session.get(DailyHealth, date(2026, 7, 4)).training_readiness == 81
 
 
 def test_missing_readiness_does_not_turn_unknown_capability_into_unsupported(session, monkeypatch):

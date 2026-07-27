@@ -5,9 +5,8 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from db import Activity, DailyHealth, Sleep
+from sync.garmin_client import normalize_training_readiness
 from sync import sync_service
 
 
@@ -115,11 +114,7 @@ def test_sleep_contract_parses(session, monkeypatch):
     assert sleep.score == 82
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="0.3.7 typed sleep uses avgRespirationValue; current parser expects averageRespirationValue",
-)
-def test_037_sleep_respiration_alias_requires_adapter_change(session, monkeypatch):
+def test_037_sleep_respiration_alias_parses(session, monkeypatch):
     monkeypatch.setattr(
         sync_service,
         "client",
@@ -127,6 +122,34 @@ def test_037_sleep_respiration_alias_requires_adapter_change(session, monkeypatc
     )
     sync_service._sync_sleep(session, TARGET)
     session.flush()
+    assert session.get(Sleep, TARGET).respiration_avg == 14.2
+
+
+def test_legacy_sleep_respiration_alias_still_parses(session, monkeypatch):
+    payload = _fixture("sleep.json")
+    dto = payload["dailySleepDTO"]
+    dto["averageRespirationValue"] = dto.pop("avgRespirationValue")
+    contract_client = ContractClient(_fixture("training_readiness_empty.json"))
+    contract_client.sleep = lambda _day: payload
+    monkeypatch.setattr(sync_service, "client", contract_client)
+
+    sync_service._sync_sleep(session, TARGET)
+    session.flush()
+
+    assert session.get(Sleep, TARGET).respiration_avg == 14.2
+
+
+def test_legacy_sleep_respiration_alias_still_parses(session, monkeypatch):
+    payload = _fixture("sleep.json")
+    dto = payload["dailySleepDTO"]
+    dto["averageRespirationValue"] = dto.pop("avgRespirationValue")
+    contract_client = ContractClient(_fixture("training_readiness_empty.json"))
+    contract_client.sleep = lambda _day: payload
+    monkeypatch.setattr(sync_service, "client", contract_client)
+
+    sync_service._sync_sleep(session, TARGET)
+    session.flush()
+
     assert session.get(Sleep, TARGET).respiration_avg == 14.2
 
 
@@ -171,11 +194,7 @@ def test_empty_training_readiness_response_remains_missing(session, monkeypatch)
     assert health.training_readiness is None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="current production parser accepts dictionaries only; 0.3.7 returns snapshot lists",
-)
-def test_037_training_readiness_snapshot_list_requires_adapter_change(
+def test_037_training_readiness_snapshot_list_parses(
     session,
     monkeypatch,
 ):
@@ -187,11 +206,7 @@ def test_037_training_readiness_snapshot_list_requires_adapter_change(
     assert health.training_readiness == 71
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="current production parser cannot select the latest valid same-day snapshot",
-)
-def test_multiple_same_day_training_readiness_snapshots_require_selection_adapter(
+def test_multiple_same_day_training_readiness_snapshots_select_latest(
     session,
     monkeypatch,
 ):
@@ -201,6 +216,55 @@ def test_multiple_same_day_training_readiness_snapshots_require_selection_adapte
         "training_readiness_multiple_same_day.json",
     )
     assert health.training_readiness == 82
+
+
+def test_training_readiness_normalizer_preserves_supporting_fields():
+    normalized = normalize_training_readiness(
+        _fixture("training_readiness_list.json"),
+        TARGET,
+    )
+
+    assert normalized is not None
+    assert normalized["trainingReadiness"] == 71
+    assert normalized["recoveryTime"] == 120
+    assert normalized["level"] == "MODERATE"
+
+
+def test_training_readiness_normalizer_rejects_malformed_and_off_date_entries():
+    normalized = normalize_training_readiness(
+        [
+            None,
+            "not-a-snapshot",
+            {"calendarDate": TARGET.isoformat(), "timestamp": "invalid", "score": 99},
+            {
+                "calendarDate": "2026-07-24",
+                "timestamp": "2026-07-24T23:59:00Z",
+                "score": 100,
+            },
+            {
+                "calendarDate": TARGET.isoformat(),
+                "timestamp": "2026-07-25T05:00:00Z",
+                "score": "not-a-score",
+            },
+            {
+                "calendarDate": TARGET.isoformat(),
+                "timestamp": "2026-07-25T06:00:00Z",
+                "score": 73,
+                "recoveryTime": 180,
+            },
+        ],
+        TARGET,
+    )
+
+    assert normalized is not None
+    assert normalized["trainingReadiness"] == 73
+    assert normalized["recoveryTime"] == 180
+
+
+def test_training_readiness_normalizer_returns_missing_for_empty_or_invalid_response():
+    assert normalize_training_readiness([], TARGET) is None
+    assert normalize_training_readiness([{"score": 71}], TARGET) is None
+    assert normalize_training_readiness({"calendarDate": "invalid", "value": 71}, TARGET) is None
 
 
 def test_contract_fixtures_are_synthetic_and_contain_no_auth_material():

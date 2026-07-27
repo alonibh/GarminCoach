@@ -10,8 +10,8 @@ the DB schema happens in sync/sync_service.py.
 """
 from __future__ import annotations
 
-from datetime import date
-from typing import Callable, Optional
+from datetime import date, datetime, timezone
+from typing import Any, Callable, Optional
 
 from garminconnect import (
     Garmin,
@@ -20,6 +20,107 @@ from garminconnect import (
 )
 
 import config
+
+
+def _readiness_score(snapshot: dict[str, Any]) -> int | None:
+    value = snapshot.get("trainingReadiness")
+    if value is None:
+        value = snapshot.get("value")
+    if value is None:
+        value = snapshot.get("score")
+    if isinstance(value, bool):
+        return None
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return None
+    if score < 1 or score > 100:
+        return None
+    return score
+
+
+def _readiness_date(snapshot: dict[str, Any]) -> date | None:
+    raw_date = snapshot.get("calendarDate")
+    if isinstance(raw_date, str):
+        try:
+            return date.fromisoformat(raw_date)
+        except ValueError:
+            return None
+
+    raw_timestamp = snapshot.get("timestampLocal")
+    if not isinstance(raw_timestamp, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _readiness_timestamp(snapshot: dict[str, Any]) -> datetime | None:
+    for key in ("timestamp", "timestampLocal"):
+        raw = snapshot.get(key)
+        if not isinstance(raw, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    return None
+
+
+def _normalized_readiness(
+    snapshot: dict[str, Any],
+    target_date: date,
+) -> dict[str, Any] | None:
+    score = _readiness_score(snapshot)
+    if score is None:
+        return None
+
+    snapshot_date = _readiness_date(snapshot)
+    if snapshot_date is not None and snapshot_date != target_date:
+        return None
+    if "calendarDate" in snapshot and snapshot_date is None:
+        return None
+
+    normalized = dict(snapshot)
+    normalized["calendarDate"] = target_date.isoformat()
+    normalized["trainingReadiness"] = score
+    return normalized
+
+
+def normalize_training_readiness(
+    response: object,
+    target_date: date,
+) -> dict[str, Any] | None:
+    """Normalize Garmin Training Readiness without interpreting its score.
+
+    Legacy library versions returned one dictionary. GarminConnect 0.3.7
+    returns timestamped snapshots. List entries must belong to the target local
+    date and carry a usable timestamp; the latest valid snapshot wins.
+    """
+    if isinstance(response, dict):
+        return _normalized_readiness(response, target_date)
+    if not isinstance(response, list):
+        return None
+
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    for entry in response:
+        if not isinstance(entry, dict):
+            continue
+        normalized = _normalized_readiness(entry, target_date)
+        if normalized is None or _readiness_date(entry) != target_date:
+            continue
+        timestamp = _readiness_timestamp(entry)
+        if timestamp is None:
+            continue
+        candidates.append((timestamp, normalized))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def _ensure_display_name(api: Garmin) -> None:
@@ -205,7 +306,7 @@ class GarminClient:
     def device_last_used(self) -> dict:
         return self.api.get_device_last_used()
 
-    def training_readiness(self, day: date) -> dict:
+    def training_readiness(self, day: date) -> dict | list[dict]:
         return self.api.get_training_readiness(day.isoformat())
 
     def training_status(self, day: date) -> dict:

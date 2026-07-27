@@ -127,6 +127,8 @@ def test_mfa_continuation_state_is_kept_in_memory_and_reused(monkeypatch, tmp_pa
     client = GarminClient(token_store=tmp_path)
     assert client.begin_login("athlete@example.com", "password") == "mfa_required"
     pending_api = client._pending_api
+    assert client._pending_state == continuation
+    assert list(tmp_path.iterdir()) == []
     client.complete_mfa("123456")
     assert pending_api.resumed_with == (continuation, "123456")
     assert client.is_authenticated()

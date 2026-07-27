@@ -5,7 +5,7 @@ import json
 import os
 from importlib.metadata import version
 from pathlib import Path
-from typing import get_origin, get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
@@ -109,11 +109,11 @@ def test_constructor_and_token_serialization_members_used_by_adapter_exist():
     assert callable(api.client.dumps)
 
 
-def test_current_wrapper_declares_incompatible_training_readiness_return_shape():
+def test_wrapper_declares_both_supported_training_readiness_return_shapes():
     from garminconnect import Garmin
     from sync.garmin_client import GarminClient
 
     upstream_return = inspect.signature(Garmin.get_training_readiness).return_annotation
     wrapper_return = get_type_hints(GarminClient.training_readiness)["return"]
     assert get_origin(upstream_return) is list
-    assert wrapper_return is dict
+    assert set(get_args(wrapper_return)) == {dict, list[dict]}

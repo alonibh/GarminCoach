@@ -29,7 +29,7 @@ from db import (
     Workout,
     get_session,
 )
-from sync.garmin_client import client
+from sync.garmin_client import client, normalize_training_readiness
 from time_utils import get_local_tz
 
 logger = logging.getLogger(__name__)
@@ -490,6 +490,8 @@ def _sync_sleep(session, day: date) -> bool:
     row.awake_s = dto.get("awakeSleepSeconds")
     row.score = _g(dto, "sleepScores", "overall", "value")
     row.respiration_avg = dto.get("averageRespirationValue")
+    if row.respiration_avg is None:
+        row.respiration_avg = dto.get("avgRespirationValue")
     row.sleep_stress_avg = dto.get("avgSleepStress")
     session.add(row)
     return True
@@ -577,10 +579,12 @@ def _sync_daily_health(session, day: date) -> None:
         logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
 
     try:
-        readiness_data = client.training_readiness(day)
-        if isinstance(readiness_data, dict):
-            # The exact key varies by device generation, but typically:
-            row.training_readiness = readiness_data.get("trainingReadiness") or readiness_data.get("value")
+        readiness_data = normalize_training_readiness(
+            client.training_readiness(day),
+            day,
+        )
+        if readiness_data is not None:
+            row.training_readiness = readiness_data["trainingReadiness"]
     except GarminConnectTooManyRequestsError:
         raise
     except Exception as exc:
@@ -800,12 +804,11 @@ def run_priority_sync() -> dict:
             _priority_individual_health(session, target, device_upload_at)
         else:
             try:
-                payload = client.training_readiness(target)
-                value = None
-                if isinstance(payload, dict):
-                    value = payload.get("trainingReadiness")
-                    if value is None:
-                        value = payload.get("value")
+                payload = normalize_training_readiness(
+                    client.training_readiness(target),
+                    target,
+                )
+                value = payload["trainingReadiness"] if payload is not None else None
                 health = session.get(DailyHealth, target) or DailyHealth(day=target)
                 if value is not None:
                     health.training_readiness = int(value)
