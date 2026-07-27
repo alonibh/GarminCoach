@@ -1,116 +1,93 @@
 # GarminCoach Roadmap
 
-Updated 2026-07-22. This roadmap follows the current product contract: concise
-data-grounded coaching, deterministic authority for consequential decisions,
-no metric-driven workout rewriting, and explicit user confirmation.
+Updated 2026-07-27. The approved target metric and sync policy is
+[`docs/METRIC_SYNC_POLICY.md`](docs/METRIC_SYNC_POLICY.md).
 
 ## Completed baseline
 
-### Garmin data and web UI
+- [x] Garmin authentication/MFA and local token persistence.
+- [x] Activities, strength sets, sleep, HRV, resting HR, Body Battery, stress,
+  steps, Fitness Age, VO2 max, and supported-device Training Readiness.
+- [x] Dashboard, activity views, calendar, program editor, Garmin workout
+  compilation, deterministic program cursor, and completion reconciliation.
+- [x] Per-signal freshness, tri-state capability, typed persisted decisions,
+  versioned Telegram confirmations, durable outbox, reminders, calendar conflict
+  handling, and deterministic weekly summary.
+- [x] Retired custom readiness and limited ACWR to descriptive UI use.
+- [x] Approved Phase 1 metric authority, sync windows, and product surfaces.
 
-- [x] Cached Garmin authentication with MFA and rate-limit protection.
-- [x] Initial backfill, scheduled incremental sync, manual sync, and priority
-  morning sync.
-- [x] Activities, strength sets, sleep, HRV, resting heart rate, Body Battery,
-  stress, steps, Fitness Age, VO2 max, and supported-device Garmin Training
-  Readiness.
-- [x] Type-aware workout detail, dashboard trends, monthly calendar, PWA assets,
-  application authentication, HTTPS deployment, and public coach ICS feed.
-- [x] Per-signal freshness and tri-state device-capability records.
+## Next — Phase 2A: Garmin compatibility and contract safety
 
-### Program engine
+This is the next Codex task. It must not refactor sync or alter coaching behavior.
 
-- [x] Ten source-reviewed strength templates from two through six sessions.
-- [x] Rolling sequence and recovery intervals without forcing weekday names.
-- [x] Source-reviewed between-set rest timers and deterministic warm-up steps.
-- [x] Reviewable program proposal, explicit activation, and editable sessions.
-- [x] Structured Garmin strength workout compilation.
-- [x] Completion reconciliation using Garmin workout provenance or a guarded
-  unique fingerprint within the active program.
-- [x] Program cursor that does not reset at week boundaries or accumulate missed
-  sessions as debt.
+- [ ] Record production Python and installed `garminconnect` versions.
+- [ ] Move the supported runtime to Python 3.12.
+- [ ] Pin and test `garminconnect[typed]==0.3.7`.
+- [ ] Verify encrypted token restore, fresh login, MFA resume, token refresh, and
+  the expected one-time reauthentication for pre-0.3 tokens.
+- [ ] Add sanitized fixtures/contract tests for daily stats, sleep, HRV, Body
+  Battery, Training Readiness, Recovery Time, activities, body composition,
+  Fitness Age, VO2 max, and Training Status.
+- [ ] Fix Training Readiness snapshot selection behind a stable GarminCoach adapter.
+- [ ] Evaluate upstream strength helpers, exercise catalog, and `update_workout`
+  without replacing curated GarminCoach program policy.
+- [ ] Run the complete test suite and provide a compatibility report before deployment.
 
-### Deterministic coach and Telegram
+**Gate:** existing production behavior remains unchanged and all required payload
+shapes are covered by fixtures.
 
-- [x] Typed, persisted morning decisions with versioned evidence rules.
-- [x] Garmin Training Readiness category handling on supported devices; no
-  fallback composite score on unsupported devices.
-- [x] Program-rest precedence and immutable workout content under metric-based
-  warnings.
-- [x] Immediate morning briefing plus 11:30 retry-fetch/answer-anyway flow.
-- [x] Versioned confirmation buttons, stale-action rejection, and atomic
-  scheduling/rescheduling.
-- [x] Durable outbox, 22:00-07:00 quiet hours, one-hour reminder, calendar
-  conflict handling, late Poor-readiness update, and Saturday 20:00 summary.
-- [x] Informational free-text chat separated from decision and mutation
-  authority.
+## Phase 2B: Resource-aware sync foundation
 
-## Active priorities
+- [ ] Replace the global sync cursor with per-resource cursors and gaps.
+- [ ] Implement Stage 1 usable bootstrap and bounded Stage 2 backfill.
+- [ ] Prefer combined/range endpoints over per-day duplicate requests.
+- [ ] Add endpoint telemetry and immediate low-priority circuit break on first 429.
+- [ ] Make activity enrichment explicit and new/incomplete-activity only.
+- [ ] Remove all ordinary UI-triggered Garmin calls.
+- [ ] Make manual sync current/incremental rather than a full rebuild.
 
-### P0 — End-to-end operational verification
+**Gate:** a fresh database becomes usable quickly, resumes safely after failure,
+and never restarts a monolithic 90-day health crawl.
 
-- [ ] Complete a real watch-to-Garmin-to-app morning cycle after a fresh Garmin
-  login and record endpoint/freshness behavior for the connected Vivoactive 5.
-- [ ] Exercise Telegram webhook, button confirmation, calendar mutation,
-  reminder delivery, restart recovery, and idempotency in one production-like
-  scenario.
-- [ ] Verify a completed GarminCoach-generated strength workout advances exactly
-  one active-program session and retains the linked activity audit trail.
-- [ ] Add an operator-facing health view for authentication state, endpoint
-  errors, queued notifications, last successful priority sync, and failed jobs.
+## Phase 3: Approved metrics and recovery flow
 
-### P1 — Source-template fidelity
+- [ ] Store HRV Status, seven-day average, and coverage.
+- [ ] Store Recovery Time and richer Body Battery summaries.
+- [ ] Add intensity minutes and conditional body-composition support.
+- [ ] Make capability device/account/scale/activity scoped.
+- [ ] Evaluate recovery only after a workout is selected in the website.
+- [ ] Use Training Readiness as the only biometric with direct V1 authority.
+- [ ] Show unsupported-device sleep/HRV/Recovery Time warnings without inventing
+  a replacement score or automatic fallback outcome.
+- [ ] Add the fixed 30-minute Active Recovery Garmin workout.
+- [ ] Add Telegram-only original/walk/rest actions with pending-session semantics.
 
-- [ ] Add explicit superset groups so paired exercises compile and reconcile as
-  pairs rather than straight sets.
-- [ ] Separate between-set rest from between-exercise transition time; this is
-  needed for the Planet Fitness PPL 45/90-second rule.
-- [ ] Represent source tempos such as three-second negatives when Garmin workout
-  steps can carry the instruction reliably.
-- [ ] Decide how optional source components, such as the five-day program's ab
-  session, should be exposed without implying they are mandatory.
-- [ ] Add program-duration review and deload prompts only after each source rule
-  and resulting user interaction are approved.
+**Gate:** no biometric except fresh Training Readiness can automatically change
+the selected workout, and every mutation requires a current Telegram confirmation.
 
-### P1 — Evidence coverage for devices without Training Readiness
+## Phase 4: Progress and UI
 
-- [ ] Review candidate rules for sleep, HRV trend, resting heart rate, and stress
-  individually; define populations, required history, missing-data behavior,
-  effect size, exclusions, evidence grade, and boundary tests.
-- [ ] Add only rules that support a concrete decision without inventing a
-  replacement readiness score.
-- [ ] Keep unsupported-device behavior program/calendar-driven until a rule
-  passes that review.
+- [ ] Add meaningful 28-day recovery/health trends.
+- [ ] Keep Fitness Age and VO2 max with weekly current-value refresh and local history.
+- [ ] Show Training Status only when account/device capability supports it.
+- [ ] Add weight/body-fat trends only when useful account data exists.
+- [ ] Improve weekly summary with meaningful changes, coverage, program adherence,
+  and strength progression.
+- [ ] Keep AI context compact and exclude raw sensor histories.
 
-### P2 — Program progression
+## Later product work
 
-- [ ] Encode source-specific progression rules separately for every routine.
-- [ ] Use only synced completed sets to prepare a proposed future target.
-- [ ] Require confirmation and show the exact source rule and performance facts
-  before changing a target weight.
-- [ ] Never infer a weight increase from readiness or from a single failed set.
+- Source-template superset and transition-timer fidelity.
+- Source-specific progression proposals with confirmation.
+- Program-duration/deload review prompts.
+- Operator health and restore tooling.
+- Additional evidence rules only after separate review and boundary tests.
 
-### P2 — Reliability and maintainability
+## Deliberately excluded
 
-- [ ] Replace deprecated FastAPI startup events with a lifespan handler.
-- [ ] Add backup/restore documentation and automated SQLite integrity checks.
-- [ ] Add structured operational logging without exposing Garmin tokens,
-  calendar URLs, Telegram secrets, or health data.
-- [ ] Add deployment smoke tests for application login, public ICS access, and
-  authenticated private routes.
-
-## Deliberately deferred
-
-- Multi-user support. The current app remains single-user and does not add
-  preparatory tenancy abstractions yet.
-- Automatic source-program renewal, deload, or weight progression.
-- Metric-adjusted alternate workouts or automatic reductions in sets, reps, or
-  weights.
-- Uploading recovery activities to Garmin.
-- Nutrition, medical, injury-risk, emergency, or diagnostic recommendations.
-- General cross-sport plan generation, race planning, and dynamically changing
-  heart-rate zones.
-- Strava integration and PDF report export.
-
-Deferred items are not promises. They require a new product decision and, when
-prescriptive, an evidence review before implementation.
+- Custom readiness scores.
+- Metric-driven reductions in exercises, sets, reps, or weights.
+- ACWR-based injury or workout decisions.
+- Medical, diagnostic, emergency, nutrition, or injury-risk recommendations.
+- Raw intraday wellness timelines and per-second activity streams without a
+  separately approved product use.

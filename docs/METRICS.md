@@ -1,22 +1,20 @@
 # GarminCoach — Metrics Reference
 
-> **Coach authority note (2026-07-18):** the custom composite readiness score is
-> retired. Runtime recomputation stores `NULL`, and neither the web UI nor the
-> coach consumes it. Supported devices use Garmin Training Readiness;
-> unsupported devices show individual observations without a synthetic score.
-> ACWR remains descriptive UI data only and must not drive Telegram
-> recommendations or alerts. See
-> [`coach_product_architecture.md`](coach_product_architecture.md).
+> **Approved product scope (2026-07-27):** [`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md)
+> defines which metrics are fetched, their product use, history, sync cadence,
+> and decision authority. This document remains the source of truth for formulas
+> and implemented metric semantics.
 
-This is the source of truth for every computed metric: the exact formula as
-implemented, every constant, the citation(s), and whether it is **Validated**
-(a published formula) or a **Heuristic** (a defensible choice where no single
-validated formula exists). The unit tests in `tests/test_engine.py` assert the
-numbers below — change them together.
+## Authority summary
 
-> Scope note: this is a personal single-user tool, not a medical device. The
-> Garmin readiness categories and ACWR labels are not diagnoses or predictions
-> of performance.
+- No custom composite readiness score is allowed.
+- Fresh Garmin Training Readiness is the only biometric with direct V1 workout authority.
+- Prime/High/Moderate keep the selected workout; Low keeps it with a warning; Poor recommends Rest with an override.
+- On devices without Training Readiness, sleep, HRV Status, Recovery Time, resting HR, stress, and Body Battery are warnings or informational facts only in V1.
+- Fitness Age remains a UI metric.
+- Training Status remains a capability-aware UI/weekly-summary metric.
+- ACWR remains descriptive UI data only and must not drive coaching or injury-risk claims.
+- The product is not a medical device and does not diagnose recovery, illness, or injury.
 
 ---
 
@@ -25,194 +23,159 @@ numbers below — change them together.
 **Where:** `metrics/engine.py` — `compute_training_load`, `banister_trimp`,
 `edwards_trimp`, `estimate_hr_max`.
 
-Tiered, most-accurate-first. We never invent a load: if no method applies, the
-load is `None`.
+No method applies means `None`; the engine must not invent load.
 
-### Tier 1 — Banister TRIMP — **Validated**
-```
-HRR   = (HRavg − HRrest) / (HRmax − HRrest)        # clamped to [0, 1]
+### Banister TRIMP — validated structure
+
+```text
+HRR   = (HRavg − HRrest) / (HRmax − HRrest), clamped to [0,1]
 TRIMP = duration_min × HRR × A × e^(B × HRR)
 ```
-- `A, B` gender constants: male `0.64 / 1.92`, female `0.86 / 1.92`→`1.67`.
-  When gender is unknown we use the **female** constants because they produce
-  the higher (conservative, no-underestimate) load.
-- `HRmax` falls back to `208 − 0.7 × age` (Tanaka) when not measured.
-- `HRrest` comes from `DailyHealth.resting_hr` for the activity's day.
 
-### Tier 2 — Edwards summated-HR-zone TRIMP — **Validated** (approximate on Garmin zones)
+- male constants: `A=0.64`, `B=1.92`;
+- female constants: `A=0.86`, `B=1.67`;
+- estimated HRmax fallback: `208 − 0.7 × age`;
+- same-day resting HR is required.
+
+### Edwards summated HR-zone TRIMP — validated structure, approximate application
+
+```text
+TRIMP = Σ(minutes_in_zone_i × weight_i), weights = [1,2,3,4,5]
 ```
-TRIMP = Σ (minutes_in_zone_i × w_i),  w = [1, 2, 3, 4, 5]  for zones 1–5
-```
-Edwards defines zones as 50–60 / 60–70 / 70–80 / 80–90 / 90–100 % HRmax.
-**Caveat:** Garmin's native zones are threshold-based, so applying these
-weights to Garmin zone times is approximate.
 
-### Scale caveat — enforced, not just advised
-Banister and Edwards differ ~1.5–2.2× in magnitude, so mixing them within one
-ACWR series makes the ratio spike or drop purely from the formula switch rather
-than from any real change in load. To prevent this, `recompute_all` calls
-`choose_load_method` **once per recompute** to pin a single method for the whole
-activity set: Banister when it can score a majority of activities (HRmax known
-and most activities have avg HR + same-day resting HR), otherwise Edwards for the
-entire set. `compute_training_load(..., method=...)` then never crosses scales —
-when the pinned method's inputs are missing for an activity it returns `None`
-rather than falling back to the other formula. (The `method=None` legacy auto
-path remains only for scoring a single isolated activity, where intra-series
-scale consistency is irrelevant.)
+Garmin zones may not equal the original percentage-of-HRmax zones, so the
+application is approximate.
 
-**Citations:** Banister EW (1991), *Physiological Testing of the High-Performance
-Athlete*, Human Kinetics, pp.403–424 · Morton, Fitz-Clarke & Banister, *J Appl
-Physiol* 1990;69(3):1171–7 · Edwards S (1993), *The Heart Rate Monitor Book* ·
-Tanaka, Monahan & Seals, *JACC* 2001;37(1):153–6 · Akubat & Abt, *J Sci Med
-Sport* 2011;14(3):249–53.
+### Scale consistency
+
+Banister and Edwards values are not interchangeable. One method is pinned for
+an entire recomputation series. An activity missing the pinned method's inputs
+returns `None` instead of switching scales.
+
+**References:** Banister (1991); Morton, Fitz-Clarke & Banister (1990); Edwards
+(1993); Tanaka, Monahan & Seals (2001); Akubat & Abt (2011).
 
 ---
 
-## 2. ACWR (Acute:Chronic Workload Ratio) — **Validated structure / Heuristic thresholds**
+## 2. ACWR — descriptive only
 
-**Where:** `metrics/engine.py` — `generate_ewma_series`,
-`recompute_daily_metrics`, `acwr_label`.
-
-EWMA per Williams et al. 2016:
+```text
+λacute   = 2/(7+1)  = 0.25
+λchronic = 2/(28+1) ≈ 0.069
+EWMA     = load_today × λ + prior_EWMA × (1−λ)
+ACWR     = acute_EWMA / chronic_EWMA
 ```
-λ_acute   = 2/(7+1)  = 0.25
-λ_chronic = 2/(28+1) ≈ 0.069
-EWMA_today = Load_today × λ + (1 − λ) × EWMA_yesterday        # today is i=0
-ACWR = EWMA_acute / EWMA_chronic                              # None if chronic = 0
-```
-Implemented as the equivalent weighted sum over a `3N`-day lookback, **starting
-at i=0 so today's load is included** (the prior version started at i=1, leaving
-every ratio one day stale).
 
-**Labels (`acwr_label`) — thresholds are heuristic** (derived from
-rolling-average team-sport studies, not validated for EWMA on individuals):
+Current labels are heuristic:
 
-| ACWR | Label |
-|------|-------|
-| < 0.8 | underload |
-| 0.8–1.3 | balanced (sweet spot) |
+| ACWR | UI label |
+| --- | --- |
+| <0.8 | underload |
+| 0.8–1.3 | balanced |
 | 1.3–1.5 | elevated |
-| > 1.5 | spike ⚠ |
+| >1.5 | spike |
 
-**Citations:** Williams, West, Cross & Stokes, *BJSM* 2016;51(3):209–10 · Gabbett,
-*BJSM* 2016;50(5):273–80 · Hulin et al., *BJSM* 2016;50(4):231–6 · Esmaeili et
-al., *Front Physiol* 2018;9:1280 · Impellizzeri et al., *J Athl Train*
-2020;55(9):893–901 (critique — why thresholds are guidance only).
+These labels are not validated individual injury thresholds. ACWR must not
+appear in Telegram decisions, warnings, or injury-prevention advice.
 
----
-
-## 3. Readiness authority
-
-### Garmin Training Readiness
-
-**Where:** raw value in `DailyHealth.training_readiness`; category handling in
-`coach/decision_engine.py::training_readiness_category`.
-
-When device capability is explicitly supported and today's value is present,
-the UI and morning decision show Garmin's numeric score and official category:
-
-| Score | Category | Product authority |
-| --- | --- | --- |
-| 95-100 | Prime | No workout change |
-| 75-94 | High | No workout change |
-| 50-74 | Moderate | No workout change |
-| 25-49 | Low | Keep the original workout and add a concise warning |
-| 1-24 | Poor | Advise skipping; preserve an explicit option to do the original workout |
-
-These categories do not predict performance and never change exercises, sets,
-repetitions, or weights. Program-required recovery takes precedence over the
-metric. If a supported device has no current value, the decision omits the
-metric rather than substituting another score.
-
-### Unsupported devices
-
-When capability is explicitly unsupported, individual sleep, HRV, resting
-heart rate, stress, and related observations may still be displayed. They do
-not become a synthetic readiness value. A prescriptive individual-metric rule
-requires a separate evidence registry entry and boundary tests; none currently
-has workout authority.
-
-### Retired custom composite
-
-`metrics/engine.py` retains the pure `compute_readiness` helper and component
-scorers only as legacy/testable code. `recompute_daily_metrics` explicitly sets
-`DailyMetrics.readiness = None`. The field remains in SQLite for schema
-compatibility and must not be used by the UI, snapshot, notification rules, or
-coach.
+**References:** Williams et al. (2016); Gabbett (2016); Hulin et al. (2016);
+Esmaeili et al. (2018); Impellizzeri et al. (2020).
 
 ---
 
-## 4. Sleep debt (hours) — **Validated structure / Heuristic window**
+## 3. Garmin Training Readiness authority
 
-**Where:** `metrics/engine.py` — `compute_sleep_debt`.
+| Score | Category | Product consequence |
+| ---: | --- | --- |
+| 95–100 | Prime | Keep selected workout |
+| 75–94 | High | Keep selected workout |
+| 50–74 | Moderate | Keep selected workout |
+| 25–49 | Low | Keep selected workout; warning |
+| 1–24 | Poor | Recommend Rest; explicit override |
 
-```
-sleep_debt = min( Σ max(0, T − hours_i) over the last N nights, CAP )
-T = 7.0 h     # AASM/SRS adult minimum
-N = 7 nights  # heuristic window
-CAP = 14 h    # = 7 nights × 2 h/night max plausible shortfall (heuristic)
-```
-- **Linear, no decay** — Van Dongen et al. 2003 found near-linear deficit
-  accumulation; there is no published inter-day forgetting factor (the old
-  `weight *= 0.8` was invented).
-- Nights with no data are **excluded**, not imputed as 0 h (which would add a
-  spurious full-target deficit).
-- If the user sets a personal sleep goal, it replaces `T`.
+Program-required rest takes precedence. The score never changes exercises,
+sets, reps, or weights.
 
-**Citations:** Watson et al., *Sleep* 2015;38(6):843–4 · Van Dongen et al.,
-*Sleep* 2003;26(2):117–26.
+A usable score must be fresh, supported, for the current decision date, and
+selected from the latest valid same-day Garmin snapshot. Missing data is not a
+substitute score and does not imply support or non-support.
 
----
-
-## 5. VO₂max fitness category — **Validated lookup table**
-
-**Where:** `app.py` — `COOPER_VO2_NORMS`, `_cooper_norms`, `_vo2_max_details`.
-
-Category (Poor / Fair / Good / Excellent / Superior) from the Cooper Institute
-normative table — the 40th/60th/80th/95th percentile floors by sex and 10-year
-age band (20–29 … 70–79). Ages <20 use 20–29; >79 use 70–79.
-
-```
-Poor      val < Fair_floor
-Fair      Fair_floor      ≤ val < Good_floor
-Good      Good_floor      ≤ val < Excellent_floor
-Excellent Excellent_floor ≤ val < Superior_floor
-Superior  val ≥ Superior_floor
-```
-**On missing age/sex we show the raw value with no category** — we do not
-fabricate a default (the previous code mis-bucketed everyone as a 28-year-old
-male, and its boundary values were also 4–6+ units below the real table).
-
-**Citations:** The Cooper Institute, *Physical Fitness Assessments and Norms for
-Adults and Law Enforcement* (2013), reprinted in the Garmin Forerunner 935
-owner's manual · ACSM, *Guidelines for Exercise Testing and Prescription*, 11th
-ed. (2021), Table 4.7.
+For unsupported devices, individual observations remain visible but have no
+prescriptive workout authority in V1.
 
 ---
 
-## 6. Strength — volume load + estimated 1RM
+## 4. Retired custom readiness
 
-**Where:** `app.py` — `workout_detail`, `_epley_1rm`, `_session_e1rm`.
+`DailyMetrics.readiness` remains only for schema compatibility. Runtime
+recomputation must store `NULL`, and no UI, snapshot, notification, or coach
+path may consume it.
 
-### Volume load (tonnage) — **Validated**
+---
+
+## 5. Sleep debt — validated minimum, heuristic window
+
+```text
+sleep_debt = min(Σ max(0, target − valid_sleep_hours_i), cap)
+target = personal goal when configured, otherwise 7.0 h
+window = 7 valid nights
+cap = 14 h
 ```
-VL = Σ (reps_i × weight_i)   over all working sets
+
+- Missing nights are excluded, not treated as zero sleep.
+- No valid data produces unknown, not zero debt.
+- The seven-night window and cap are product heuristics.
+
+**References:** AASM/SRS adult sleep-duration consensus; Van Dongen et al.
+(2003).
+
+---
+
+## 6. VO2 max category
+
+Use the Cooper Institute age/sex normative table when age and sex are available.
+Without them, show the raw Garmin value without fabricating a category.
+
+Fitness Age is a separate Garmin-provided UI metric and is not derived by
+GarminCoach from this table.
+
+---
+
+## 7. Strength metrics
+
+### Volume load
+
+```text
+volume = Σ(reps_i × weight_i)
 ```
 
-### Estimated 1RM (Epley) — **Validated**
-```
-e1RM = weight × (1 + reps / 30)      # reps > 1
-e1RM = weight                        # reps ≤ 1 (the set is itself a 1RM)
-```
-- Only computed for `reps ≤ 12` (all e1RM equations degrade above that).
-- Bodyweight sets (weight = 0) are skipped.
-- Session e1RM for an exercise = the max e1RM across its sets.
+### Epley estimated 1RM
 
-### Progression — **Heuristic window**
-Compared against the **best e1RM over the last 5 sessions** of the same exercise
-(a rolling baseline is far less noisy than a single-prior-session delta and is
-robust to rep-scheme changes). The 5-session window is a heuristic.
+```text
+e1RM = weight × (1 + reps/30), for reps > 1
+e1RM = weight, for reps <= 1
+```
 
-**Citations:** Epley B (1985), *Boyd Epley Workout* · Schoenfeld et al., *Sports*
-2021;9(2):32 (volume-load definition) · Wood et al., *Meas Phys Educ Exerc Sci*
-2002;6(2):67–94 (Epley accuracy in the 2–10 rep range).
+- Only use sets with `reps <= 12`.
+- Skip bodyweight/unknown-weight sets.
+- Session e1RM is the maximum valid e1RM for the exercise.
+- Progress compares against the best value in the previous five valid sessions;
+  five sessions is a product heuristic.
+
+**References:** Epley (1985); Schoenfeld et al. (2021); Wood et al. (2002).
+
+---
+
+## 8. Informational Garmin metrics
+
+The following are retained for dashboard and weekly-summary use but have no V1
+daily workout authority:
+
+- sleep duration, score, timing, and stages;
+- HRV overnight value, seven-day average, status, and baseline;
+- resting HR, Recovery Time, Body Battery, stress, steps, and intensity minutes;
+- Training Effect and HR zones;
+- VO2 max, Fitness Age, conditional Training Status, weight, and body fat.
+
+Their detailed request strategy and history are defined in
+[`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md).
