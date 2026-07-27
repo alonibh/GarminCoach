@@ -1,10 +1,8 @@
 from datetime import datetime
-from uuid import uuid4
 
 from coach.advisory_snapshot import build_advisory_snapshot
 from coach.renderers import render_calendar
 from db import PlannedSession
-from tenant_context import TenantIdentity, tenant_scope
 
 
 def _now():
@@ -70,53 +68,16 @@ def test_telegram_calendar_reports_unconfigured_when_empty(monkeypatch):
     assert "No events in the next 7 days" in rendered
 
 
-def test_advisory_snapshot_uses_tenant_scoped_cached_private_calendar(monkeypatch, session):
-    import coach.calendar as calendar
-    import coach.advisory_snapshot as snapshot
-
-    now = datetime.now().astimezone()
-    today = now.date()
-    user_one, user_two = str(uuid4()), str(uuid4())
-    session.add(PlannedSession(
-        title="Own workout", target_date=today, suggested_time="18:00", status="approved"
-    ))
-    session.commit()
-    monkeypatch.setattr(snapshot, "datetime", type("Clock", (), {
-        "now": staticmethod(lambda _tz=None: now),
-        "combine": datetime.combine,
-        "strptime": datetime.strptime,
-    }))
-    with tenant_scope(TenantIdentity(user_one, timezone="UTC")):
-        calendar._store_schedule_cache({"state": "fresh", "error": None, "events": [{
-            "title": "Own private", "start": f"{today.isoformat()} 09:00",
-            "end": "10:00", "all_day": False,
-        }]}, days=14)
-        own = build_advisory_snapshot(session)["calendar_next_7_days"]["items"]
-    with tenant_scope(TenantIdentity(user_two, timezone="UTC")):
-        calendar._store_schedule_cache({"state": "fresh", "error": None, "events": [{
-            "title": "Other private", "start": f"{today.isoformat()} 09:00",
-            "end": "10:00", "all_day": False,
-        }]}, days=14)
-        other = build_advisory_snapshot(session)["calendar_next_7_days"]["items"]
-    assert {entry["title"] for entry in own} == {"Own private", "Own workout"}
-    assert "Other private" not in {entry["title"] for entry in own}
-    assert "Other private" in {entry["title"] for entry in other}
-
-
-def test_calendar_cache_requires_coverage(monkeypatch):
-    import coach.calendar as calendar
-
-    user_id = str(uuid4())
-    with tenant_scope(TenantIdentity(user_id, timezone="UTC")):
-        result = {"state": "fresh", "error": None, "events": []}
-        calendar._store_schedule_cache(result, days=3)
-        assert calendar.get_cached_upcoming_schedule_result(days=7) is None
-        calendar._store_schedule_cache(result, days=14)
-        assert calendar.get_cached_upcoming_schedule_result(days=7) == result
-
-
 def test_advisory_snapshot_never_fetches_calendar_network(monkeypatch, session):
     import coach.calendar as calendar
+
+    session.add(PlannedSession(
+        title="GarminCoach workout",
+        target_date=datetime.now().date(),
+        suggested_time="18:00",
+        status="approved",
+    ))
+    session.commit()
 
     monkeypatch.setattr(
         calendar,
@@ -124,7 +85,10 @@ def test_advisory_snapshot_never_fetches_calendar_network(monkeypatch, session):
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("network I/O")),
     )
     snapshot = build_advisory_snapshot(session)
-    assert snapshot["calendar_next_7_days"]["items"] == []
+    items = snapshot["calendar_next_7_days"]["items"]
+    assert [item["title"] for item in items] == ["GarminCoach workout"]
+    assert "Private dentist" not in str(snapshot)
+    assert "09:30" not in str(snapshot)
 
 
 def test_private_calendar_url_is_never_logged(monkeypatch, caplog):

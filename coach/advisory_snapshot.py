@@ -400,44 +400,8 @@ def _calendar(session: Session, today: date, tz: ZoneInfo) -> dict:
             }
         )
 
-    # Private feeds are only included from the short-lived cache populated by
-    # interactive calendar loads.  Ask Coach snapshots remain local DB reads.
-    from coach.calendar import get_cached_upcoming_schedule_result
-
-    cached = get_cached_upcoming_schedule_result(days=7)
-    for event in (cached or {}).get("events", []):
-        if not isinstance(event, dict):
-            continue
-        try:
-            event_day = date.fromisoformat(str(event.get("start", ""))[:10])
-        except ValueError:
-            continue
-        if not today <= event_day < end_day:
-            continue
-        all_day = bool(event.get("all_day"))
-        if all_day:
-            start = datetime.combine(event_day, time.min, tzinfo=tz)
-            end = start + timedelta(days=1)
-        else:
-            try:
-                start = datetime.strptime(
-                    str(event.get("start")), "%Y-%m-%d %H:%M"
-                ).replace(tzinfo=tz)
-                end_clock = time.fromisoformat(str(event.get("end") or "00:00"))
-                end = datetime.combine(event_day, end_clock, tzinfo=tz)
-                if end <= start:
-                    end += timedelta(days=1)
-            except ValueError:
-                continue
-        items.append(
-            {
-                "title": str(event.get("title") or "Event")[:255],
-                "start_time": start.isoformat(),
-                "end_time": end.isoformat(),
-                "all_day": all_day,
-                "source": "personal_calendar",
-            }
-        )
+    # This section intentionally contains GarminCoach workouts only. Private
+    # calendar events are never part of the Ask Coach context.
     items.sort(key=lambda item: item["start_time"])
     return _bounded(items, config.ASK_COACH_MAX_CALENDAR_EVENTS)
 

@@ -258,7 +258,6 @@ def build_snapshot(session: Session) -> str:
     goal_text = goal_row.goal if goal_row else "No specific goal set."
     raw_constraints = (goal_row.custom_input if goal_row else "") or ""
     
-    from coach.calendar import get_upcoming_schedule
     from coach.scheduling import parse_weekly_availability
     from time_utils import get_local_now, get_local_tz
     
@@ -276,11 +275,31 @@ def build_snapshot(session: Session) -> str:
         for d in [6, 0, 1, 2, 3, 4, 5]
     )
     
+    schedule_end = local_time.date() + timedelta(days=7)
+    planned_schedule = (
+        session.query(PlannedSession)
+        .filter(
+            PlannedSession.target_date >= local_time.date(),
+            PlannedSession.target_date < schedule_end,
+            PlannedSession.status.notin_(("cancelled", "completed")),
+        )
+        .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
+        .all()
+    )
     snapshot = {
         "current_local_time": f"{local_time.strftime('%A, %B %d, %Y %H:%M')} (Timezone: {local_tz})",
         "user_goal": goal_text,
         "user_constraints": constraints_summary,
-        "upcoming_schedule_7_days": get_upcoming_schedule(days=7)
+        "upcoming_schedule_7_days": [
+            {
+                "title": planned.title,
+                "start": f"{planned.target_date.isoformat()} {planned.suggested_time or '00:00'}",
+                "end": "",
+                "all_day": False,
+                "source": "garmincoach_workout",
+            }
+            for planned in planned_schedule
+        ],
     }
 
     profile = session.get(AthleteProfile, 1)

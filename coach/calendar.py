@@ -2,8 +2,6 @@ import logging
 import hashlib
 import json
 import secrets
-import threading
-import time
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 from datetime import date, datetime, timedelta
@@ -17,45 +15,6 @@ except ImportError:
 import config
 
 logger = logging.getLogger(__name__)
-
-# Ask Coach must not turn each question into up to five external calendar
-# requests.  Interactive calendar loads refresh this small, per-tenant cache.
-_schedule_cache: dict[str, tuple[float, int, dict]] = {}
-_schedule_cache_lock = threading.Lock()
-SCHEDULE_CACHE_TTL_SECONDS = 300
-SCHEDULE_CACHE_MAX_ENTRIES = 256
-
-
-def _schedule_cache_key() -> str:
-    from tenant_context import current_tenant
-
-    tenant = current_tenant()
-    return tenant.user_id if tenant is not None else "legacy"
-
-
-def _store_schedule_cache(result: dict, *, days: int) -> None:
-    with _schedule_cache_lock:
-        _schedule_cache[_schedule_cache_key()] = (time.monotonic(), days, result.copy())
-        if len(_schedule_cache) > SCHEDULE_CACHE_MAX_ENTRIES:
-            oldest = min(_schedule_cache, key=lambda key: _schedule_cache[key][0])
-            del _schedule_cache[oldest]
-
-
-def get_cached_upcoming_schedule_result(
-    days: int = 7, *, max_age_seconds: int = SCHEDULE_CACHE_TTL_SECONDS
-) -> dict | None:
-    """Return a bounded interactive-calendar result without external I/O."""
-    with _schedule_cache_lock:
-        cached = _schedule_cache.get(_schedule_cache_key())
-    if (
-        cached is None
-        or cached[1] < days
-        or time.monotonic() - cached[0] > max_age_seconds
-    ):
-        return None
-    result = cached[2]
-    return {"events": list(result.get("events", [])), "state": result.get("state"), "error": result.get("error")}
-
 
 def validate_ics_url(url: str) -> str:
     """Allow only HTTPS calendar feeds hosted by Google or Apple."""
@@ -133,7 +92,6 @@ def get_upcoming_schedule_result(days=3) -> dict:
     urls = _configured_calendar_urls()
     if not urls or events is None:
         result = {"events": [], "state": "unconfigured", "error": None}
-        _store_schedule_cache(result, days=days)
         return result
         
     schedule = []
@@ -183,13 +141,11 @@ def get_upcoming_schedule_result(days=3) -> dict:
         # Sort chronologically across all combined calendars
         schedule.sort(key=lambda x: x["start"])
         result = {"events": schedule, "state": "fresh", "error": None}
-        _store_schedule_cache(result, days=days)
         return result
         
     except Exception as exc:
         logger.error("Calendar fetch failed: %s", type(exc).__name__)
         result = {"events": [], "state": "error", "error": type(exc).__name__}
-        _store_schedule_cache(result, days=days)
         return result
 
 

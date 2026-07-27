@@ -160,21 +160,27 @@ def test_profile_program_and_rolling_plan_included(session):
     assert snap["rolling_plan_14_days"][0]["title"] == "Full body A"
 
 
-def test_calendar_titles_keep_unicode_in_snapshot(session, monkeypatch):
+def test_snapshot_schedule_uses_planned_workouts_without_calendar_network(session, monkeypatch):
     import coach.calendar as cal
     from coach.snapshot import build_snapshot
 
-    hebrew_title = "\u05e2\u05e8\u05d1 \u05e7\u05d9\u05e6\u05d5\u05df"
-    monkeypatch.setattr(cal, "get_upcoming_schedule", lambda days=7: [{
-        "title": hebrew_title,
-        "start": "2026-07-08 18:00",
-        "end": "19:00",
-    }])
+    monkeypatch.setattr(
+        cal,
+        "get_upcoming_schedule",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("calendar network")),
+    )
+    session.add(PlannedSession(
+        title="GarminCoach run",
+        target_date=datetime.now().date(),
+        suggested_time="18:00",
+        status="approved",
+    ))
+    session.commit()
 
     snapshot = build_snapshot(session)
 
-    assert hebrew_title in snapshot
-    assert "\\u05" not in snapshot
+    assert "GarminCoach run" in snapshot
+    assert "calendar network" not in snapshot
 
 
 def test_morning_snapshot_rewrite_keeps_unicode(session):
