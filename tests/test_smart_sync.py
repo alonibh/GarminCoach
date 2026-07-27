@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from garminconnect import GarminConnectTooManyRequestsError
 
-from db import Activity, DeviceCapability, Sleep, SyncState, Workout
+from db import Activity, DeviceCapability, MetricSnapshot, Sleep, SyncState, Workout
 import pytest
 import tenant_context
 import sync.sync_service as svc
@@ -413,3 +413,79 @@ def test_stage1_unsupported_optional_metrics_complete_without_calls(session, mon
 
     assert not any(event[0] in {"readiness", "status"} for event in events if isinstance(event, tuple))
     assert session.get(SyncState, "stage1_bootstrap_complete").value == "complete"
+
+
+def test_stage1_resume_persists_activity_summary_vo2_without_refetch(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    events = []
+    _stage1_client(monkeypatch, events)
+    activity_calls = []
+    activities = [{
+        "activityId": 1, "duration": 1200,
+        "startTimeLocal": f"{(today - timedelta(days=2)).isoformat()} 08:00:00",
+        "activityType": {"typeKey": "running"}, "vO2MaxValue": 47.2,
+    }]
+    monkeypatch.setattr(
+        svc.client, "activities_by_date",
+        lambda start, end: activity_calls.append((start, end)) or activities,
+    )
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
+    monkeypatch.setattr(
+        svc.client, "fitness_age",
+        lambda *_: (_ for _ in ()).throw(GarminConnectTooManyRequestsError("too many")),
+    )
+
+    svc.run_sync()
+
+    assert session.get(SyncState, "stage1_bootstrap_activities").value == "complete"
+    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary").value == f"{(today - timedelta(days=2)).isoformat()}|47.2"
+    assert session.get(SyncState, "stage1_bootstrap_vo2max") is None
+    svc._set_state(session, "garmin_cooldown_until", "")
+    session.commit()
+    monkeypatch.setattr(svc.client, "fitness_age", lambda day: {"fitnessAge": 35, "lastUpdated": day.isoformat()})
+
+    svc.run_sync()
+
+    assert len(activity_calls) == 1
+    snapshot = session.get(MetricSnapshot, "vo2max")
+    assert (snapshot.value_date, snapshot.value) == ((today - timedelta(days=2)).isoformat(), 47.2)
+    assert session.get(SyncState, "stage1_bootstrap_vo2max").value == "complete"
+    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary") is None
+
+
+def test_stage1_no_activity_summary_vo2_resolves_without_extra_request(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    events = []
+    _stage1_client(monkeypatch, events)
+    calls = []
+    monkeypatch.setattr(svc.client, "activities_by_date", lambda *args: calls.append(args) or [])
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
+
+    svc.run_sync()
+
+    assert len(calls) == 1
+    assert session.get(MetricSnapshot, "vo2max") is None
+    assert session.get(SyncState, "stage1_bootstrap_vo2max").value == "complete"
+    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary") is None
+
+
+def test_stage1_vo2_marker_waits_for_snapshot_handling(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    _state(session, "stage1_bootstrap_device", "complete")
+    _state(session, "stage1_bootstrap_today_sleep", "complete")
+    _state(session, "stage1_bootstrap_training_readiness", "complete")
+    _state(session, "stage1_bootstrap_sleep", "complete")
+    _state(session, "stage1_bootstrap_daily_health", "complete")
+    _state(session, "stage1_bootstrap_activities", "complete")
+    _state(session, "stage1_bootstrap_strength_sets", "complete")
+    _state(session, "stage1_bootstrap_fitness_age", "complete")
+    _state(session, "stage1_bootstrap_vo2max_summary", f"{today.isoformat()}|47.2")
+    monkeypatch.setattr(svc, "_upsert_snapshot", lambda *_: (_ for _ in ()).throw(RuntimeError("snapshot failed")))
+
+    with pytest.raises(RuntimeError, match="snapshot failed"):
+        svc._sync_stage1(session, today, {"activities": 0, "days": 0, "errors": []})
+
+    assert session.get(SyncState, "stage1_bootstrap_vo2max") is None
+    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary").value == f"{today.isoformat()}|47.2"

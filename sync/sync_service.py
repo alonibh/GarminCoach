@@ -111,6 +111,12 @@ def _set_state(session, key: str, value: str) -> None:
         session.add(SyncState(key=key, value=value))
 
 
+def _clear_state(session, key: str) -> None:
+    row = session.get(SyncState, key)
+    if row:
+        session.delete(row)
+
+
 def _parse_state_date(value: Optional[str]) -> Optional[date]:
     if not value:
         return None
@@ -526,7 +532,8 @@ def _sync_activities(
             strength_ids.append((when, act_id))
         if vo2_values is not None and raw.get("vO2MaxValue") is not None:
             try:
-                vo2_values.append(((raw.get("startTimeLocal") or "")[:10], round(float(raw["vO2MaxValue"]), 1)))
+                value_date = date.fromisoformat((raw.get("startTimeLocal") or "")[:10]).isoformat()
+                vo2_values.append((value_date, round(float(raw["vO2MaxValue"]), 1)))
             except (TypeError, ValueError):
                 pass
         count += 1
@@ -756,6 +763,14 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                 session, today - timedelta(days=29), today, strength_limit=0,
                 enrich=False, vo2_values=vo2_values,
             )
+            # Keep the newest activity-summary VO2 value across later Stage 1
+            # failures.  "none" is an intentional resolved absence, not a gap.
+            latest_vo2 = max(vo2_values) if vo2_values else None
+            _set_state(
+                session,
+                _stage1_key("vo2max_summary"),
+                f"{latest_vo2[0]}|{latest_vo2[1]}" if latest_vo2 else "none",
+            )
             _advance_resource_cursor(session, "activities", today)
             mark("activities")
 
@@ -781,9 +796,12 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                 _upsert_snapshot(session, "fitness_age", [((fitness_age.get("lastUpdated") or today.isoformat())[:10], round(float(value), 1))])
             mark("fitness_age")
         if not done("vo2max"):
-            if vo2_values:
-                _upsert_snapshot(session, "vo2max", [max(vo2_values)])
+            saved_vo2 = _get_state(session, _stage1_key("vo2max_summary"))
+            if saved_vo2 and saved_vo2 != "none":
+                value_date, value = saved_vo2.split("|", 1)
+                _upsert_snapshot(session, "vo2max", [(value_date, float(value))])
             mark("vo2max")
+            _clear_state(session, _stage1_key("vo2max_summary"))
 
         # 9. Status has no inferred capability: unknown and unsupported are
         # resolved without a request; supported accounts fetch today's value.
