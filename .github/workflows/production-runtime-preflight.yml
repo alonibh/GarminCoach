@@ -1,0 +1,33 @@
+name: Production Runtime Preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Inspect production runtime
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -Eeuo pipefail
+            cd /home/ubuntu/garmincoach
+            echo "DEPLOYED_SHA=$(git rev-parse HEAD)"
+            .venv/bin/python scripts/garmin_compat_probe.py
+            echo "PYTHON_312_PATH=$(command -v python3.12 || true)"
+            python3.12 --version || true
+            echo "VENV_PYTHON=$(readlink -f .venv/bin/python)"
+            sudo systemctl show garmincoach \
+              -p ActiveState \
+              -p SubState \
+              -p ExecStart \
+              --no-pager
+            apt-cache policy python3.12 python3.12-venv || true
