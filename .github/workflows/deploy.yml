@@ -55,9 +55,23 @@ jobs:
           envs: TARGET_SHA
           script: |
             set -Eeuo pipefail
-            cd ~/garmincoach
+            project_dir=/home/ubuntu/garmincoach
+            cd "$project_dir"
             previous_sha=$(git rev-parse HEAD)
-            previous_env="$PWD/.venv"
+            original_env="$project_dir/.venv"
+            previous_exec_start=$(sudo systemctl show garmincoach -p ExecStart --value)
+            previous_env=$(printf '%s\n' "$previous_exec_start" | grep -oE '/home/ubuntu/garmincoach/\.venv[^/[:space:]]*/bin/' | head -n 1 | sed 's#/bin/$##' || true)
+            if [ -z "$previous_env" ] || [ ! -d "$previous_env" ]; then
+              echo "Could not determine the currently active virtual environment from systemd ExecStart"
+              exit 1
+            fi
+            case "$previous_env" in
+              "$project_dir"/.venv|"$project_dir"/.venv-garminconnect-037-*) ;;
+              *)
+                echo "Refusing deployment: active virtual environment is outside the approved project paths: $previous_env"
+                exit 1
+                ;;
+            esac
             candidate_env="$PWD/.venv-garminconnect-037-${TARGET_SHA}"
             runtime_override=/etc/systemd/system/garmincoach.service.d/runtime.conf
             previous_override=$(mktemp)
@@ -89,7 +103,7 @@ jobs:
 
             git fetch origin "$TARGET_SHA"
             git reset --hard "$TARGET_SHA"
-            if [ ! -x "$previous_env/bin/python" ]; then
+            if [ ! -x "$original_env/bin/python" ]; then
               echo "Existing production virtual environment is missing"
               exit 1
             fi
@@ -97,7 +111,7 @@ jobs:
               echo "Candidate environment already exists: $candidate_env"
               exit 1
             fi
-            cp -a "$previous_env" "$candidate_env"
+            cp -a "$original_env" "$candidate_env"
             "$candidate_env/bin/python" -c "import sys; assert sys.version_info[:2] == (3, 12)"
             "$candidate_env/bin/python" -m pip install -r requirements.txt
             "$candidate_env/bin/python" -c "from importlib.metadata import version; assert version('garminconnect') == '0.3.7'; import garminconnect.typed"
@@ -134,6 +148,26 @@ jobs:
               sudo journalctl -u garmincoach -n 100 --no-pager || true
               exit 1
             fi
+
+            python_version=$("$candidate_env/bin/python" --version)
+            garminconnect_version=$("$candidate_env/bin/python" -c "from importlib.metadata import version; print(version('garminconnect'))")
+            echo "Deployment details: sha=$TARGET_SHA active_env=$candidate_env python=$python_version garminconnect=$garminconnect_version rollback_env=$previous_env"
+            echo "Pruning obsolete deployment environments; retaining active=$candidate_env rollback=$previous_env original=$original_env"
+            while IFS= read -r -d '' obsolete_env; do
+              case "$obsolete_env" in
+                "$candidate_env"|"$previous_env"|"$original_env")
+                  echo "Retaining environment: $obsolete_env"
+                  ;;
+                "$project_dir"/.venv-garminconnect-037-*)
+                  echo "Deleting obsolete environment: $obsolete_env"
+                  rm -rf -- "$obsolete_env"
+                  ;;
+                *)
+                  echo "Refusing to delete unexpected path: $obsolete_env"
+                  exit 1
+                  ;;
+              esac
+            done < <(find "$project_dir" -mindepth 1 -maxdepth 1 -type d -name '.venv-garminconnect-037-*' -print0)
 
             trap - EXIT
             echo "Deployment of $TARGET_SHA completed successfully"
