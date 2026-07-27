@@ -110,7 +110,7 @@ def test_enriched_activity_sync_fetches_missing_hr_zones(session, monkeypatch):
         def activities_by_date(self, start, end):
             return [{"activityId": 100, "activityType": {"typeKey": "running"}, "duration": 1800,
                      "startTimeLocal": "2026-07-24 10:00:00", "directWorkoutRpe": 5,
-                     "directWorkoutFeel": 3, "workoutId": 77}]
+                     "directWorkoutFeel": 3, "workoutId": 77, "averageHR": 140}]
 
         def hr_zones(self, activity_id):
             calls.append(activity_id)

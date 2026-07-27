@@ -725,6 +725,29 @@ def test_stage2_strength_candidates_are_fixed_ordered_and_exclude_existing_sets(
     assert svc._stage2_strength_candidates(session, anchor) == candidates
 
 
+def test_stage2_strength_fresh_candidates_exclude_completion_markers(session):
+    anchor = _stage2_strength_ready(session)
+    start = datetime.combine(anchor, datetime.min.time())
+    session.add_all([_strength_activity(1, start), _strength_activity(2, start - timedelta(days=1))])
+    _state(session, "activity_strength_sets_checked:1", "complete")
+
+    assert svc._stage2_strength_candidates(session, anchor) == [2]
+
+
+def test_stage2_strength_persisted_candidate_snapshot_is_not_reselected(session, monkeypatch):
+    anchor = _stage2_strength_ready(session)
+    start = datetime.combine(anchor, datetime.min.time())
+    session.add(_strength_activity(1, start))
+    session.commit()
+    assert svc._stage2_strength_candidates(session, anchor) == [1]
+    _state(session, "activity_strength_sets_checked:1", "complete")
+    calls = []
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda activity_id: calls.append(activity_id) or {"exerciseSets": []})
+
+    svc._run_stage2_strength_backfill(session, anchor, {"errors": []})
+    assert calls == []
+
+
 def test_stage2_strength_one_successful_request_per_run_and_completion(session, monkeypatch):
     anchor = _stage2_strength_ready(session)
     session.add_all([_strength_activity(2, datetime.combine(anchor, datetime.min.time())), _strength_activity(1, datetime.combine(anchor, datetime.min.time()))])

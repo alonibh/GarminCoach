@@ -65,6 +65,11 @@ _STAGE2_ACTIVITY_DAYS = 90
 _STAGE2_ACTIVITY_CHUNK_DAYS = 30
 
 
+def _activity_completion_key(kind: str, activity_id: int) -> str:
+    """Return a bounded per-activity enrichment completion key."""
+    return f"activity_{kind}_checked:{activity_id}"
+
+
 # --- small helpers --------------------------------------------------------
 def _g(d: Any, *keys, default=None):
     """Safe nested get: _g(d, 'a', 'b') == d['a']['b'] or default."""
@@ -360,17 +365,15 @@ def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int
     if new_workout_id is not None:
         act.provenance_checked = True
 
-    # The activities_by_date endpoint doesn't actually include RPE/Feel for historical
-    # workouts. We need to fetch the full activity details to reliably get them.
-    # To avoid N+1 HTTP calls on every sync, we only fetch if we don't already have it.
-    if enrich and (
-        ((new_rpe is None or new_feel is None) and (act.rpe is None or act.feel is None))
-        or not act.provenance_checked
-    ):
+    # Full details resolve workout provenance plus Garmin-recorded RPE and Feel.
+    # A valid response settles that question even when those optional fields are absent.
+    if enrich and not act.provenance_checked:
         try:
             full_act = client.api.get_activity(act_id)
-            if full_act:
+            if isinstance(full_act, dict):
                 summary_dto = full_act.get("summaryDTO", {})
+                if not isinstance(summary_dto, dict):
+                    summary_dto = {}
                 new_rpe = summary_dto.get("directWorkoutRpe", new_rpe)
                 new_feel = summary_dto.get("directWorkoutFeel", new_feel)
                 new_workout_id = _workout_id(full_act) or new_workout_id
@@ -378,6 +381,8 @@ def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int
         except GarminConnectTooManyRequestsError:
             raise
         except Exception as e:
+            if _is_auth_error(e):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from e
             logger.warning("Failed to fetch full activity %s for RPE/provenance extraction: %s", act_id, e)
 
     # Only update if we found something new, otherwise preserve existing
@@ -388,44 +393,79 @@ def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int
     if new_workout_id is not None:
         act.source_workout_id = new_workout_id
         
-    # Summary-only ranges must remain a single Garmin range request.  In
-    # particular, do not fill missing zones from their per-activity endpoint.
-    if enrich and act.hr_zone_seconds is None:
-        try:
-            zones_raw = client.hr_zones(act_id)
-            if zones_raw:
-                import json
-                secs = [0.0] * 5
-                for z in zones_raw:
-                    zn = z.get("zoneNumber")
-                    if zn is not None and 1 <= zn <= 5:
-                        secs[zn - 1] = float(z.get("secsInZone") or 0.0)
-                # Only save if there's actual zone data (sum > 0)
-                if sum(secs) > 0:
-                    act.hr_zone_seconds = json.dumps(secs)
-        except GarminConnectTooManyRequestsError:
-            raise
-        except Exception as e:
-            logger.warning("Failed to fetch hr_zones for %s: %s", act_id, e)
+    # Summary-only ranges must remain a single Garmin range request.
+    if enrich:
+        _sync_hr_zones(session, act)
             
     session.add(act)
     return act_id
 
 
+def _sync_hr_zones(session: Session, activity: Activity) -> bool:
+    """Resolve HR zones once when the summary makes the activity eligible."""
+    key = _activity_completion_key("hr_zones", activity.id)
+    if activity.hr_zone_seconds is not None:
+        _set_state(session, key, "complete")
+        return True
+    if _get_state(session, key) == "complete":
+        return True
+    if not activity.duration_s or activity.duration_s <= 0 or (
+        activity.avg_hr is None and activity.max_hr is None
+    ):
+        return False
+    try:
+        zones_raw = client.hr_zones(activity.id)
+    except GarminConnectTooManyRequestsError:
+        raise
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+        logger.warning("Failed to fetch hr_zones for %s: %s", activity.id, exc)
+        return False
+    if not isinstance(zones_raw, list):
+        logger.warning("Garmin returned an invalid HR-zone response for activity %s", activity.id)
+        return False
+
+    secs = [0.0] * 5
+    for zone in zones_raw:
+        if not isinstance(zone, dict):
+            logger.warning("Garmin returned an invalid HR-zone item for activity %s", activity.id)
+            return False
+        zone_number = zone.get("zoneNumber")
+        if zone_number is not None and 1 <= zone_number <= 5:
+            secs[zone_number - 1] = float(zone.get("secsInZone") or 0.0)
+    if zones_raw and sum(secs) > 0:
+        activity.hr_zone_seconds = json.dumps(secs)
+    _set_state(session, key, "complete")
+    return True
+
+
 def _sync_exercise_sets(session, activity_id: int) -> bool:
     """Replace non-edited sets and report whether Garmin resolved the activity."""
+    key = _activity_completion_key("strength_sets", activity_id)
+    if session.query(ExerciseSet.id).filter(ExerciseSet.activity_id == activity_id).first():
+        _set_state(session, key, "complete")
+        return True
+    if _get_state(session, key) == "complete":
+        return True
     try:
         data = client.exercise_sets(activity_id)
     except GarminConnectTooManyRequestsError:
         raise  # let the circuit breaker handle rate limits
-    except Exception:
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Exercise-sets fetch failed for activity %s", activity_id, exc_info=True)
         return False  # normal-sync callers intentionally treat this as non-fatal
     if not isinstance(data, dict):
         logger.warning("Garmin returned an invalid exercise-set response for activity %s", activity_id)
         return False
-    sets = _g(data, "exerciseSets", default=[]) or []
+    sets = _g(data, "exerciseSets", default=[])
+    if not isinstance(sets, list):
+        logger.warning("Garmin returned invalid exercise sets for activity %s", activity_id)
+        return False
     if not sets:
+        _set_state(session, key, "complete")
         return True
 
     existing = (
@@ -457,6 +497,7 @@ def _sync_exercise_sets(session, activity_id: int) -> bool:
                 edited=False,
             )
         )
+    _set_state(session, key, "complete")
     return True
 
 
@@ -1217,11 +1258,20 @@ def _stage2_strength_candidates(session: Session, anchor: date) -> list[int]:
 
     start = datetime.combine(anchor - timedelta(days=_STAGE2_ACTIVITY_DAYS - 1), datetime.min.time())
     end = datetime.combine(anchor + timedelta(days=1), datetime.min.time())
+    completion_prefix = "activity_strength_sets_checked:"
+    resolved_ids = {
+        int(row.key.removeprefix(completion_prefix))
+        for row in session.query(SyncState).filter(
+            SyncState.key.like(f"{completion_prefix}%"), SyncState.value == "complete"
+        )
+        if row.key.removeprefix(completion_prefix).isdigit()
+    }
     activities = (
         session.query(Activity.id)
         .filter(Activity.activity_type.ilike("%strength%") | Activity.activity_type.ilike("%weight%"))
         .filter(Activity.start_time >= start, Activity.start_time < end)
         .filter(~Activity.sets.any())
+        .filter(~Activity.id.in_(resolved_ids) if resolved_ids else True)
         .order_by(Activity.start_time.desc(), Activity.id.desc())
         .limit(20)
         .all()

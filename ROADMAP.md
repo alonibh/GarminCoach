@@ -51,7 +51,7 @@ shapes are covered by fixtures.
 - [ ] Prefer combined/range endpoints over per-day duplicate requests.
 - [ ] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.
-- [ ] Make general activity enrichment explicit and new/incomplete-activity only.
+- [x] Make general activity enrichment explicit and new/incomplete-activity only.
 - [ ] Remove all ordinary UI-triggered Garmin calls.
 - [ ] Make manual sync current/incremental rather than a full rebuild.
 
