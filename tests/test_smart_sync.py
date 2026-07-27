@@ -512,29 +512,87 @@ def test_stage2_is_scheduled_only_and_runs_one_no_change_wellness_unit(session, 
 
     summary = svc.run_sync(allow_backfill=True)
     assert summary["skipped"] is True
-    assert calls == [("sleep", today), ("health", today, False)]
+    assert calls == [("sleep", today - timedelta(days=7)), ("health", today - timedelta(days=7), False)]
     assert session.get(SyncState, "stage2_backfill_anchor_day").value == today.isoformat()
 
 
-def test_stage2_anchor_targets_and_activity_chunks_are_fixed(session, monkeypatch):
+def test_stage2_fresh_journals_start_after_stage1_windows(session, monkeypatch):
     today = date.today()
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
-    _state(session, "stage2_sleep_next_gap", "complete")
-    _state(session, "stage2_daily_health_next_gap", "complete")
-    ranges = []
-    monkeypatch.setattr(svc, "_sync_activities", lambda _s, start, end, **kwargs: ranges.append((start, end, kwargs)) or 0)
+    calls = []
+    monkeypatch.setattr(svc, "_sync_sleep", lambda _s, day: calls.append(("sleep", day)) or True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda _s, day, **_kwargs: calls.append(("health", day)) or True)
 
     svc._run_stage2_summary_backfill(session, today, {"errors": [], "skipped": False})
-    assert ranges == [(anchor - timedelta(days=29), anchor, {"enrich": False})]
-    assert session.get(SyncState, "stage2_backfill_anchor_day").value == anchor.isoformat()
+
+    assert calls == [("sleep", anchor - timedelta(days=7)), ("health", anchor - timedelta(days=7))]
     assert session.get(SyncState, "stage2_activity_summary_next_gap").value == (anchor - timedelta(days=30)).isoformat()
 
-    svc._set_state(session, "stage2_activity_summary_next_gap", (anchor - timedelta(days=60)).isoformat())
-    svc._run_stage2_summary_backfill(session, today + timedelta(days=10), {"errors": [], "skipped": False})
-    assert ranges[-1] == (anchor - timedelta(days=89), anchor - timedelta(days=60), {"enrich": False})
+
+def test_stage2_only_fetches_older_combined_coverage(session, monkeypatch):
+    today = date.today()
+    anchor = today - timedelta(days=3)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    wellness_days, ranges = [], []
+    monkeypatch.setattr(svc, "_sync_sleep", lambda _s, day: wellness_days.append(day) or True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda _s, day, **_kwargs: True)
+    monkeypatch.setattr(svc, "_sync_activities", lambda _s, start, end, **kwargs: ranges.append((start, end, kwargs)) or 0)
+
+    for _ in range(23):
+        svc._run_stage2_summary_backfill(session, today, {"errors": [], "skipped": False})
+
+    assert wellness_days == [anchor - timedelta(days=offset) for offset in range(7, 28)]
+    assert ranges == [
+        (anchor - timedelta(days=59), anchor - timedelta(days=30), {"enrich": False}),
+        (anchor - timedelta(days=89), anchor - timedelta(days=60), {"enrich": False}),
+    ]
+    assert len(wellness_days) == 21
+    assert sum((end - start).days + 1 for start, end, _ in ranges) == 60
+    assert min(wellness_days) == anchor - timedelta(days=27)
+    assert max(wellness_days) == anchor - timedelta(days=7)
     assert session.get(SyncState, "stage2_summary_backfill_complete").value == "complete"
+
+
+def test_stage2_normalizes_overlap_journals_before_one_actual_unit(session, monkeypatch):
+    today = date.today()
+    anchor = today - timedelta(days=3)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    _state(session, "stage2_sleep_next_gap", (anchor - timedelta(days=2)).isoformat())
+    _state(session, "stage2_daily_health_next_gap", anchor.isoformat())
+    _state(session, "stage2_activity_summary_next_gap", (anchor - timedelta(days=10)).isoformat())
+    calls = []
+    monkeypatch.setattr(svc, "_sync_sleep", lambda _s, day: calls.append(("sleep", day)) or True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda _s, day, **_kwargs: calls.append(("health", day)) or True)
+    monkeypatch.setattr(svc, "_sync_activities", lambda *_args, **_kwargs: calls.append(("activities",)) or 0)
+
+    svc._run_stage2_summary_backfill(session, today, {"errors": [], "skipped": False})
+
+    assert calls == [("sleep", anchor - timedelta(days=7)), ("health", anchor - timedelta(days=7))]
+    assert session.get(SyncState, "stage2_sleep_next_gap").value == (anchor - timedelta(days=8)).isoformat()
+    assert session.get(SyncState, "stage2_daily_health_next_gap").value == (anchor - timedelta(days=8)).isoformat()
+    assert session.get(SyncState, "stage2_activity_summary_next_gap").value == (anchor - timedelta(days=30)).isoformat()
+
+
+def test_stage2_preserves_older_and_complete_journals(session, monkeypatch):
+    today = date.today()
+    anchor = today - timedelta(days=3)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    _state(session, "stage2_sleep_next_gap", (anchor - timedelta(days=12)).isoformat())
+    _state(session, "stage2_daily_health_next_gap", "complete")
+    _state(session, "stage2_activity_summary_next_gap", (anchor - timedelta(days=45)).isoformat())
+    sleep_calls = []
+    monkeypatch.setattr(svc, "_sync_sleep", lambda _s, day: sleep_calls.append(day) or True)
+
+    svc._run_stage2_summary_backfill(session, today, {"errors": [], "skipped": False})
+
+    assert sleep_calls == [anchor - timedelta(days=12)]
+    assert session.get(SyncState, "stage2_daily_health_next_gap").value == "complete"
+    assert session.get(SyncState, "stage2_activity_summary_next_gap").value == (anchor - timedelta(days=45)).isoformat()
 
 
 def test_stage2_429_preserves_independent_wellness_progress(session, monkeypatch):
@@ -549,7 +607,7 @@ def test_stage2_429_preserves_independent_wellness_progress(session, monkeypatch
     summary = {"errors": [], "skipped": False}
     svc._run_stage2_summary_backfill(session, today, summary)
 
-    assert session.get(SyncState, "stage2_sleep_next_gap").value == (today - timedelta(days=1)).isoformat()
-    assert session.get(SyncState, "stage2_daily_health_next_gap").value == today.isoformat()
+    assert session.get(SyncState, "stage2_sleep_next_gap").value == (today - timedelta(days=8)).isoformat()
+    assert session.get(SyncState, "stage2_daily_health_next_gap").value == (today - timedelta(days=7)).isoformat()
     assert session.get(SyncState, "garmin_cooldown_until").value
     assert session.get(SyncState, "stage2_summary_backfill_complete") is None

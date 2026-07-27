@@ -1094,15 +1094,23 @@ def _sync_resource_days(
     return completed
 
 
-def _stage2_gap(session: Session, key: str, anchor: date) -> Optional[date]:
-    """Return a Stage 2 next-gap day, seeding its independent journal once."""
+def _stage2_gap(session: Session, key: str, anchor: date, first_day: date) -> Optional[date]:
+    """Return a normalized Stage 2 next-gap day, seeding its journal once.
+
+    Stage 1 already owns the recent window, so deployed journals that still
+    point into that overlap are fast-forwarded without making a Garmin call.
+    """
     value = _get_state(session, key)
     if value == "complete":
         return None
     if value:
-        return _parse_state_date(value)
-    _set_state(session, key, anchor.isoformat())
-    return anchor
+        gap = _parse_state_date(value)
+        if first_day < gap <= anchor:
+            _set_state(session, key, first_day.isoformat())
+            return first_day
+        return gap
+    _set_state(session, key, first_day.isoformat())
+    return first_day
 
 
 def _advance_stage2_gap(session: Session, key: str, day: date, target: date) -> None:
@@ -1128,8 +1136,11 @@ def _run_stage2_summary_backfill(session: Session, today: date, summary: dict) -
         _set_state(session, _STAGE2_ANCHOR, anchor.isoformat())
     wellness_target = anchor - timedelta(days=_STAGE2_WELLNESS_DAYS - 1)
     activity_target = anchor - timedelta(days=_STAGE2_ACTIVITY_DAYS - 1)
-    sleep_gap = _stage2_gap(session, _STAGE2_SLEEP_GAP, anchor)
-    health_gap = _stage2_gap(session, _STAGE2_DAILY_HEALTH_GAP, anchor)
+    wellness_first_day = anchor - timedelta(days=7)
+    activity_first_day = anchor - timedelta(days=30)
+    sleep_gap = _stage2_gap(session, _STAGE2_SLEEP_GAP, anchor, wellness_first_day)
+    health_gap = _stage2_gap(session, _STAGE2_DAILY_HEALTH_GAP, anchor, wellness_first_day)
+    activity_gap = _stage2_gap(session, _STAGE2_ACTIVITY_GAP, anchor, activity_first_day)
 
     # Wellness is newest-first across both resources.  A newer unresolved
     # health gap must be retried before sleep is allowed to move further back.
@@ -1158,7 +1169,6 @@ def _run_stage2_summary_backfill(session: Session, today: date, summary: dict) -
             summary["errors"].append(f"Stage 2 wellness failed at {day}: {exc}")
         return True
 
-    activity_gap = _stage2_gap(session, _STAGE2_ACTIVITY_GAP, anchor)
     if activity_gap is not None:
         start = max(activity_target, activity_gap - timedelta(days=_STAGE2_ACTIVITY_CHUNK_DAYS - 1))
         try:
