@@ -39,10 +39,13 @@ shapes are covered by fixtures.
 ## Phase 2B: Resource-aware sync foundation
 
 - [x] Replace the global sync cursor with per-resource cursors.
-- [ ] Track per-resource gaps.
+- [x] Track bounded Stage 2 summary gaps (sleep, daily health, and activity
+  summaries); strength-detail completion and the remaining Phase 2B work remain.
 - [x] Implement the bounded Stage 1 usable bootstrap (device/capability,
   current recovery facts, seven wellness days, 30 activity days, ten strength
-  details, and current slow metrics); Stage 2 backfill remains unimplemented.
+  details, and current slow metrics).
+- [x] Complete bounded scheduled Stage 2 summary backfill (28 wellness days and
+  90 activity-summary days); strength-detail completion and other Phase 2B work remain.
 - [ ] Prefer combined/range endpoints over per-day duplicate requests.
 - [ ] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.

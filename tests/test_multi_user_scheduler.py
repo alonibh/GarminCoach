@@ -40,10 +40,10 @@ def test_scheduled_sync_runs_inside_the_selected_users_tenant(monkeypatch, tmp_p
     monkeypatch.setattr(
         scheduler_module.sync_runner,
         "try_start_sync",
-        lambda *, full: seen.append(("sync", require_tenant().user_id, full)),
+        lambda *, full, allow_backfill=False: seen.append(("sync", require_tenant().user_id, full, allow_backfill)),
     )
     scheduler_module._run_for_user(user_id)
-    assert seen == [("client", user_id), ("sync", user_id, False)]
+    assert seen == [("client", user_id), ("sync", user_id, False, True)]
     engine.dispose()
 
 

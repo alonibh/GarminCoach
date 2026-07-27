@@ -90,7 +90,7 @@ def is_running() -> bool:
     return True
 
 
-def try_start_sync(full: bool, force: bool = False) -> bool:
+def try_start_sync(full: bool, force: bool = False, allow_backfill: bool = False) -> bool:
     """Start a background sync iff none is running. Returns True if started."""
     if is_running():
         return False
@@ -102,7 +102,7 @@ def try_start_sync(full: bool, force: bool = False) -> bool:
     status["started_at"] = now
     
     context = copy_context()
-    threading.Thread(target=context.run, args=(_run, full, force), daemon=True).start()
+    threading.Thread(target=context.run, args=(_run, full, force, allow_backfill), daemon=True).start()
     return True
 
 
@@ -140,9 +140,9 @@ def _checkpoint_current_tenant() -> None:
         log.exception("Failed to checkpoint Garmin tokens")
 
 
-def _run(full: bool, force: bool = False) -> None:
+def _run(full: bool, force: bool = False, allow_backfill: bool = False) -> None:
     try:
-        status["summary"] = run_sync(full=full, force=force)
+        status["summary"] = run_sync(full=full, force=force, allow_backfill=allow_backfill)
     except Exception as e:
         log.exception("Sync failed with unhandled exception")
         status["summary"] = {"errors": [str(e)]}

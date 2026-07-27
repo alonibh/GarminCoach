@@ -489,3 +489,67 @@ def test_stage1_vo2_marker_waits_for_snapshot_handling(session, monkeypatch):
 
     assert session.get(SyncState, "stage1_bootstrap_vo2max") is None
     assert session.get(SyncState, "stage1_bootstrap_vo2max_summary").value == f"{today.isoformat()}|47.2"
+
+
+def test_stage2_is_scheduled_only_and_runs_one_no_change_wellness_unit(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
+    _state(session, "stage1_bootstrap_complete", "complete")
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        _state(session, key, today.isoformat())
+    _state(session, "last_processed_device_upload", upload)
+    _state(session, "last_seen_activity_id", "101")
+    _state(session, "last_seen_activity_start", "2026-07-03 18:00:00")
+    monkeypatch.setattr(svc.client, "device_last_used", lambda: _device_payload(datetime.fromisoformat(upload)))
+    monkeypatch.setattr(svc.client, "recent_activities", lambda limit=1: [{"activityId": 101, "startTimeLocal": "2026-07-03 18:00:00"}])
+    calls = []
+    monkeypatch.setattr(svc, "_sync_sleep", lambda _s, day: calls.append(("sleep", day)) or True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda _s, day, *, current_optional: calls.append(("health", day, current_optional)) or True)
+
+    svc.run_sync()
+    assert calls == []
+
+    summary = svc.run_sync(allow_backfill=True)
+    assert summary["skipped"] is True
+    assert calls == [("sleep", today), ("health", today, False)]
+    assert session.get(SyncState, "stage2_backfill_anchor_day").value == today.isoformat()
+
+
+def test_stage2_anchor_targets_and_activity_chunks_are_fixed(session, monkeypatch):
+    today = date.today()
+    anchor = today - timedelta(days=3)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    _state(session, "stage2_sleep_next_gap", "complete")
+    _state(session, "stage2_daily_health_next_gap", "complete")
+    ranges = []
+    monkeypatch.setattr(svc, "_sync_activities", lambda _s, start, end, **kwargs: ranges.append((start, end, kwargs)) or 0)
+
+    svc._run_stage2_summary_backfill(session, today, {"errors": [], "skipped": False})
+    assert ranges == [(anchor - timedelta(days=29), anchor, {"enrich": False})]
+    assert session.get(SyncState, "stage2_backfill_anchor_day").value == anchor.isoformat()
+    assert session.get(SyncState, "stage2_activity_summary_next_gap").value == (anchor - timedelta(days=30)).isoformat()
+
+    svc._set_state(session, "stage2_activity_summary_next_gap", (anchor - timedelta(days=60)).isoformat())
+    svc._run_stage2_summary_backfill(session, today + timedelta(days=10), {"errors": [], "skipped": False})
+    assert ranges[-1] == (anchor - timedelta(days=89), anchor - timedelta(days=60), {"enrich": False})
+    assert session.get(SyncState, "stage2_summary_backfill_complete").value == "complete"
+
+
+def test_stage2_429_preserves_independent_wellness_progress(session, monkeypatch):
+    today = date.today()
+    _state(session, "stage1_bootstrap_complete", "complete")
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *_: True)
+    monkeypatch.setattr(
+        svc, "_sync_daily_health",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(GarminConnectTooManyRequestsError("too many")),
+    )
+
+    summary = {"errors": [], "skipped": False}
+    svc._run_stage2_summary_backfill(session, today, summary)
+
+    assert session.get(SyncState, "stage2_sleep_next_gap").value == (today - timedelta(days=1)).isoformat()
+    assert session.get(SyncState, "stage2_daily_health_next_gap").value == today.isoformat()
+    assert session.get(SyncState, "garmin_cooldown_until").value
+    assert session.get(SyncState, "stage2_summary_backfill_complete") is None

@@ -51,6 +51,14 @@ _RESOURCE_CURSOR_KEYS = {
 
 _STAGE1_COMPLETE = "stage1_bootstrap_complete"
 _STAGE1_PREFIX = "stage1_bootstrap_"
+_STAGE2_ANCHOR = "stage2_backfill_anchor_day"
+_STAGE2_SLEEP_GAP = "stage2_sleep_next_gap"
+_STAGE2_DAILY_HEALTH_GAP = "stage2_daily_health_next_gap"
+_STAGE2_ACTIVITY_GAP = "stage2_activity_summary_next_gap"
+_STAGE2_SUMMARY_COMPLETE = "stage2_summary_backfill_complete"
+_STAGE2_WELLNESS_DAYS = 28
+_STAGE2_ACTIVITY_DAYS = 90
+_STAGE2_ACTIVITY_CHUNK_DAYS = 30
 
 
 # --- small helpers --------------------------------------------------------
@@ -517,6 +525,10 @@ def _sync_activities(
         raw_list = client.activities_by_date(start, end)
     except GarminConnectTooManyRequestsError:
         raise
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+        raise
         
     count = 0
     strength_ids: list[tuple[datetime, int]] = []
@@ -537,8 +549,9 @@ def _sync_activities(
             except (TypeError, ValueError):
                 pass
         count += 1
-    for _, act_id in sorted(strength_ids, reverse=True)[:strength_limit]:
-        _sync_exercise_sets(session, act_id)
+    if enrich:
+        for _, act_id in sorted(strength_ids, reverse=True)[:strength_limit]:
+            _sync_exercise_sets(session, act_id)
     return count
 
 
@@ -1081,7 +1094,95 @@ def _sync_resource_days(
     return completed
 
 
-def run_sync(full: bool = False, force: bool = False) -> dict:
+def _stage2_gap(session: Session, key: str, anchor: date) -> Optional[date]:
+    """Return a Stage 2 next-gap day, seeding its independent journal once."""
+    value = _get_state(session, key)
+    if value == "complete":
+        return None
+    if value:
+        return _parse_state_date(value)
+    _set_state(session, key, anchor.isoformat())
+    return anchor
+
+
+def _advance_stage2_gap(session: Session, key: str, day: date, target: date) -> None:
+    next_day = day - timedelta(days=1)
+    _set_state(session, key, "complete" if next_day < target else next_day.isoformat())
+
+
+def _run_stage2_summary_backfill(session: Session, today: date, summary: dict) -> bool:
+    """Run exactly one resumable, summary-only Stage 2 unit.
+
+    This journal intentionally does not inspect stored rows: a successful call is
+    recorded per resource, which makes resume behavior deterministic after partial
+    failures and keeps this separate from normal incremental cursors.
+    """
+    if _get_state(session, _STAGE1_COMPLETE) != "complete":
+        return False
+    if _get_state(session, _STAGE2_SUMMARY_COMPLETE) == "complete":
+        return False
+
+    anchor = _parse_state_date(_get_state(session, _STAGE2_ANCHOR))
+    if anchor is None:
+        anchor = today
+        _set_state(session, _STAGE2_ANCHOR, anchor.isoformat())
+    wellness_target = anchor - timedelta(days=_STAGE2_WELLNESS_DAYS - 1)
+    activity_target = anchor - timedelta(days=_STAGE2_ACTIVITY_DAYS - 1)
+    sleep_gap = _stage2_gap(session, _STAGE2_SLEEP_GAP, anchor)
+    health_gap = _stage2_gap(session, _STAGE2_DAILY_HEALTH_GAP, anchor)
+
+    # Wellness is newest-first across both resources.  A newer unresolved
+    # health gap must be retried before sleep is allowed to move further back.
+    if sleep_gap is not None or health_gap is not None:
+        day = max(d for d in (sleep_gap, health_gap) if d is not None)
+        try:
+            if sleep_gap == day:
+                if _sync_sleep(session, day) is False:
+                    summary["errors"].append(f"Stage 2 sleep failed at {day}; it will retry.")
+                else:
+                    _advance_stage2_gap(session, _STAGE2_SLEEP_GAP, day, wellness_target)
+            if health_gap == day:
+                if _sync_daily_health(session, day, current_optional=False) is False:
+                    summary["errors"].append(f"Stage 2 daily health failed at {day}; it will retry.")
+                else:
+                    _advance_stage2_gap(session, _STAGE2_DAILY_HEALTH_GAP, day, wellness_target)
+        except GarminConnectTooManyRequestsError as exc:
+            until = _note_rate_limited(session)
+            summary["errors"].append(f"Rate limited on Stage 2 wellness at {day}: {exc}")
+            summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+        except GarminConnectAuthenticationError:
+            summary["skipped"] = True
+            summary["code"] = "authentication_required"
+            summary["errors"].append("Garmin Connect session expired. Please re-authenticate your Garmin account.")
+        except Exception as exc:
+            summary["errors"].append(f"Stage 2 wellness failed at {day}: {exc}")
+        return True
+
+    activity_gap = _stage2_gap(session, _STAGE2_ACTIVITY_GAP, anchor)
+    if activity_gap is not None:
+        start = max(activity_target, activity_gap - timedelta(days=_STAGE2_ACTIVITY_CHUNK_DAYS - 1))
+        try:
+            _sync_activities(session, start, activity_gap, enrich=False)
+            _advance_stage2_gap(session, _STAGE2_ACTIVITY_GAP, start, activity_target)
+            if _get_state(session, _STAGE2_ACTIVITY_GAP) == "complete":
+                _set_state(session, _STAGE2_SUMMARY_COMPLETE, "complete")
+        except GarminConnectTooManyRequestsError as exc:
+            until = _note_rate_limited(session)
+            summary["errors"].append(f"Rate limited on Stage 2 activities: {exc}")
+            summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+        except GarminConnectAuthenticationError:
+            summary["skipped"] = True
+            summary["code"] = "authentication_required"
+            summary["errors"].append("Garmin Connect session expired. Please re-authenticate your Garmin account.")
+        except Exception as exc:
+            summary["errors"].append(f"Stage 2 activities failed: {exc}")
+        return True
+
+    _set_state(session, _STAGE2_SUMMARY_COMPLETE, "complete")
+    return True
+
+
+def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 
     Returns a summary dict for display in the UI.
@@ -1125,6 +1226,8 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 if has_prior_progress and not preflight["device_changed"] and not preflight["activity_changed"]:
                     summary["skipped"] = True
                     summary["reason"] = "No new Garmin device upload or activity since the last sync."
+                    if allow_backfill:
+                        _run_stage2_summary_backfill(session, today, summary)
                     return summary
             except GarminConnectTooManyRequestsError as e:
                 until = _note_rate_limited(session)
@@ -1132,6 +1235,13 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 summary["errors"].append(
                     "Rate limited during Garmin preflight. Cooling down until "
                     f"{until.isoformat(timespec='seconds')}: {e}"
+                )
+                return summary
+            except GarminConnectAuthenticationError:
+                summary["skipped"] = True
+                summary["code"] = "authentication_required"
+                summary["errors"].append(
+                    "Garmin Connect session expired. Please re-authenticate your Garmin account."
                 )
                 return summary
             except Exception as e:
@@ -1151,6 +1261,10 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
             return summary
         except Exception as e:
             summary["errors"].append(f"Activities: {e}")
+            if _is_auth_error(e):
+                summary["skipped"] = True
+                summary["code"] = "authentication_required"
+                return summary
 
         try:
             from coach.program_state import reconcile_active_program
@@ -1198,6 +1312,13 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 "Garmin Connect session expired. Please re-authenticate your Garmin account."
             )
             return summary
+
+        # Stage 2 is scheduled-only and always follows current work.  Full and
+        # forced requests deliberately retain their existing semantics.
+        if allow_backfill and not full and not force:
+            _run_stage2_summary_backfill(session, today, summary)
+            if _is_in_cooldown(session)[0] or summary.get("code") == "authentication_required":
+                return summary
 
         # Only stamp "last synced" if real data came through, so a sync that
         # failed immediately doesn't look successful in the UI.

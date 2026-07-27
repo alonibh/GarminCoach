@@ -27,7 +27,7 @@ def _run_for_user(user_id: str) -> None:
             return
         if not authenticated:
             return
-        sync_runner.try_start_sync(full=False)
+        sync_runner.try_start_sync(full=False, allow_backfill=True)
 
 
 def _run_user_notification_job(user_id: str, job: str) -> None:
@@ -124,7 +124,7 @@ def _scheduled_sync() -> None:
             return
     # Go through the shared guard so a scheduled sync never collides with a
     # manual one (and vice versa).
-    sync_runner.try_start_sync(full=False)
+    sync_runner.try_start_sync(full=False, allow_backfill=True)
 
 
 def _morning_brief_sent_today() -> bool:
