@@ -251,12 +251,5 @@ def render_calendar(
         if source != current_source:
             lines.append(source + ":")
             current_source = source
-        lines.append(f"â€¢ {text}")
-    return "\n".join(lines)
-    lines = ["Next 7 days:"]
-    for event in upcoming[:10]:
-        lines.append(
-            f"• {event.get('date')} {event.get('start_time', '')} "
-            f"{event.get('title', 'Workout')}".strip()
-        )
+        lines.append(f"• {text}")
     return "\n".join(lines)

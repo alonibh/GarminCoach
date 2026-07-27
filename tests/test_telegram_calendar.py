@@ -22,6 +22,8 @@ def test_telegram_calendar_shows_timed_icloud_event(monkeypatch):
     )
     assert "Personal calendar:" in rendered
     assert "Mon 27 Jul 10:30: Dentist" in rendered
+    assert "• " in rendered
+    assert "â€¢" not in rendered
 
 
 def test_telegram_calendar_shows_all_day_private_event(monkeypatch):
@@ -88,17 +90,41 @@ def test_advisory_snapshot_uses_tenant_scoped_cached_private_calendar(monkeypatc
         calendar._store_schedule_cache({"state": "fresh", "error": None, "events": [{
             "title": "Own private", "start": f"{today.isoformat()} 09:00",
             "end": "10:00", "all_day": False,
-        }]})
+        }]}, days=14)
         own = build_advisory_snapshot(session)["calendar_next_7_days"]["items"]
     with tenant_scope(TenantIdentity(user_two, timezone="UTC")):
         calendar._store_schedule_cache({"state": "fresh", "error": None, "events": [{
             "title": "Other private", "start": f"{today.isoformat()} 09:00",
             "end": "10:00", "all_day": False,
-        }]})
+        }]}, days=14)
         other = build_advisory_snapshot(session)["calendar_next_7_days"]["items"]
     assert {entry["title"] for entry in own} == {"Own private", "Own workout"}
     assert "Other private" not in {entry["title"] for entry in own}
     assert "Other private" in {entry["title"] for entry in other}
+
+
+def test_calendar_cache_requires_coverage(monkeypatch):
+    import coach.calendar as calendar
+
+    user_id = str(uuid4())
+    with tenant_scope(TenantIdentity(user_id, timezone="UTC")):
+        result = {"state": "fresh", "error": None, "events": []}
+        calendar._store_schedule_cache(result, days=3)
+        assert calendar.get_cached_upcoming_schedule_result(days=7) is None
+        calendar._store_schedule_cache(result, days=14)
+        assert calendar.get_cached_upcoming_schedule_result(days=7) == result
+
+
+def test_advisory_snapshot_never_fetches_calendar_network(monkeypatch, session):
+    import coach.calendar as calendar
+
+    monkeypatch.setattr(
+        calendar,
+        "get_upcoming_schedule_result",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("network I/O")),
+    )
+    snapshot = build_advisory_snapshot(session)
+    assert snapshot["calendar_next_7_days"]["items"] == []
 
 
 def test_private_calendar_url_is_never_logged(monkeypatch, caplog):
