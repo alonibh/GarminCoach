@@ -1313,40 +1313,38 @@ def _cardio_stats(act: Activity) -> list[dict]:
     return [{"label": k, "value": v, "hint": _METRIC_HINTS.get(k)} for k, v in rows]
 
 
-def _hr_zones(activity_id: int, duration_s: float | None = None) -> list[dict]:
-    """Time-in-HR-zone bars for a workout. Live (cached) fetch; returns [] on
-    any failure so the page still renders. Each row: zone, low BPM, minutes,
-    and pct of the activity's in-zone time (for the bar width)."""
-    if not client.is_authenticated():
-        return []
+def _stored_hr_zones(zone_json: str | None, duration_s: float | None = None) -> list[dict]:
+    """Render locally stored Z1-Z5 seconds without fetching Garmin data."""
     try:
-        raw = client.hr_zones(activity_id) or []
-    except Exception:
+        raw = json.loads(zone_json) if zone_json else None
+        if not isinstance(raw, list) or len(raw) != 5:
+            return []
+        seconds = [float(value) for value in raw]
+    except (TypeError, ValueError, json.JSONDecodeError):
         return []
-    total_z = sum((z.get("secsInZone") or 0) for z in raw)
-    
-    # Use total activity duration if it's larger than the sum of Z1-Z5.
-    base_total = duration_s if duration_s and duration_s > total_z else total_z
-    if base_total <= 0:
+    if any(value < 0 or value != value or value in (float("inf"), float("-inf")) for value in seconds):
         return []
 
+    total_z = sum(seconds)
+    if total_z <= 0:
+        return []
+    duration = float(duration_s) if duration_s and duration_s > 0 else None
+    base_total = duration if duration and duration > total_z else total_z
     out = []
-    
-    # Add a "Below Z1" pseudo-zone for any remaining time
-    if duration_s and duration_s > total_z + 60:
-        below_secs = duration_s - total_z
+
+    # Garmin zone boundaries are not stored locally. Keep the row, but omit BPM.
+    if duration and duration > total_z + 60:
+        below_secs = duration - total_z
         out.append({
             "zone": 0,
             "low_bpm": None,
             "minutes": round(below_secs / 60),
             "pct": round(below_secs / base_total * 100),
         })
-
-    for z in raw:
-        secs = z.get("secsInZone") or 0
+    for zone, secs in enumerate(seconds, start=1):
         out.append({
-            "zone": z.get("zoneNumber"),
-            "low_bpm": round(z.get("zoneLowBoundary")) if z.get("zoneLowBoundary") else None,
+            "zone": zone,
+            "low_bpm": None,
             "minutes": round(secs / 60),
             "pct": round(secs / base_total * 100),
         })
@@ -1484,7 +1482,7 @@ def workout_detail(request: Request, activity_id: int):
             "activity": activity,
             "exercises": exercises,
             "cardio": cardio,
-            "hr_zones": _hr_zones(activity_id, act.duration_s),
+            "hr_zones": _stored_hr_zones(act.hr_zone_seconds, act.duration_s),
         },
     )
 
@@ -1516,7 +1514,7 @@ def edit_set(
 
 
 @app.post("/sync")
-def sync_now(request: Request, full: bool = Form(False)):
+def sync_now(request: Request):
     wants_json = "application/json" in request.headers.get("accept", "")
     if config.MULTI_USER_ENABLED:
         user = getattr(request.state, "user", None)
@@ -1531,7 +1529,7 @@ def sync_now(request: Request, full: bool = Form(False)):
             return JSONResponse({"error": "Garmin authentication required"}, status_code=401)
         redirect_url = "/onboarding" if config.MULTI_USER_ENABLED else "/login"
         return RedirectResponse(redirect_url, status_code=303)
-    started = sync_runner.try_start_sync(full, force=not full)
+    started = sync_runner.try_start_sync(full=False, force=True, allow_backfill=False)
     if wants_json:
         return JSONResponse({"started": started, "running": sync_runner.is_running()})
     return RedirectResponse("/", status_code=303)

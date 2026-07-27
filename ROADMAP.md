@@ -52,8 +52,8 @@ shapes are covered by fixtures.
 - [ ] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.
 - [x] Make general activity enrichment explicit and new/incomplete-activity only.
-- [ ] Remove all ordinary UI-triggered Garmin calls.
-- [ ] Make manual sync current/incremental rather than a full rebuild.
+- [x] Remove all ordinary UI-triggered Garmin calls.
+- [x] Make manual sync current/incremental rather than a full rebuild.
 
 **Gate:** a fresh database becomes usable quickly, resumes safely after failure,
 and never restarts a monolithic 90-day health crawl.

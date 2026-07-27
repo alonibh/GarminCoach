@@ -113,7 +113,7 @@ def test_safe_next_blocks_open_redirect(client):
     assert app_module._safe_next("/\\evil") == "/"
 
 
-def test_manual_sync_forces_recent_fetch(client, monkeypatch):
+def test_manual_sync_forces_recent_fetch_without_backfill(client, monkeypatch):
     c, _ = client
     import app as app_module
 
@@ -121,13 +121,34 @@ def test_manual_sync_forces_recent_fetch(client, monkeypatch):
     monkeypatch.setattr(
         app_module.sync_runner,
         "try_start_sync",
-        lambda full, force=False: captured.update({"full": full, "force": force}) or True,
+        lambda full, force=False, allow_backfill=False: captured.update(
+            {"full": full, "force": force, "allow_backfill": allow_backfill}
+        ) or True,
     )
 
     resp = c.post("/sync", follow_redirects=False)
 
     assert resp.status_code == 303
-    assert captured == {"full": False, "force": True}
+    assert captured == {"full": False, "force": True, "allow_backfill": False}
+
+
+def test_manual_sync_ignores_full_form_field(client, monkeypatch):
+    c, _ = client
+    import app as app_module
+
+    captured = {}
+    monkeypatch.setattr(
+        app_module.sync_runner,
+        "try_start_sync",
+        lambda full, force=False, allow_backfill=False: captured.update(
+            {"full": full, "force": force, "allow_backfill": allow_backfill}
+        ) or True,
+    )
+
+    response = c.post("/sync", data={"full": "true"}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert captured == {"full": False, "force": True, "allow_backfill": False}
 
 
 def test_manual_sync_json_response_stays_on_dashboard(client, monkeypatch):
@@ -138,7 +159,9 @@ def test_manual_sync_json_response_stays_on_dashboard(client, monkeypatch):
     monkeypatch.setattr(
         app_module.sync_runner,
         "try_start_sync",
-        lambda full, force=False: captured.update({"full": full, "force": force}) or True,
+        lambda full, force=False, allow_backfill=False: captured.update(
+            {"full": full, "force": force, "allow_backfill": allow_backfill}
+        ) or True,
     )
     monkeypatch.setattr(app_module.sync_runner, "is_running", lambda: True)
 
@@ -146,7 +169,7 @@ def test_manual_sync_json_response_stays_on_dashboard(client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"started": True, "running": True}
-    assert captured == {"full": False, "force": True}
+    assert captured == {"full": False, "force": True, "allow_backfill": False}
 
 
 def test_sync_status_returns_fresh_chart_data_when_idle(client, monkeypatch):
@@ -187,6 +210,81 @@ def test_dashboard_sync_updates_charts_without_page_reload(client):
     assert 'id="sync-form"' in response.text
     ui_css = (Path(__file__).resolve().parents[1] / "static" / "ui.css").read_text(encoding="utf-8")
     assert ".dashboard-actions [hidden] { display: none !important; }" in ui_css
+
+
+def test_workout_detail_renders_stored_hr_zones_without_garmin(client, monkeypatch):
+    c, db_module = client
+    from datetime import datetime
+    from db import Activity
+    import app as app_module
+
+    from sync.garmin_client import GarminClient
+    monkeypatch.setattr(
+        GarminClient,
+        "hr_zones",
+        lambda *_: (_ for _ in ()).throw(AssertionError("page must stay local")),
+    )
+    with db_module.get_session() as s:
+        s.add(Activity(
+            id=8201, activity_type="running", start_time=datetime.now(), duration_s=900,
+            hr_zone_seconds="[60, 120, 180, 240, 300]",
+        ))
+
+    response = c.get("/workout/8201")
+
+    assert response.status_code == 200
+    assert "Z1" in response.text
+    assert "1m" in response.text
+    assert "7%" in response.text
+    assert "Z5" in response.text
+    assert "5m" in response.text
+    assert "33%" in response.text
+
+
+def test_stored_hr_zones_calculate_below_z1_locally_and_reject_bad_json():
+    import app as app_module
+
+    zones = app_module._stored_hr_zones("[60, 60, 60, 60, 60]", duration_s=600)
+
+    assert zones[0] == {"zone": 0, "low_bpm": None, "minutes": 5, "pct": 50}
+    assert zones[1:] == [
+        {"zone": 1, "low_bpm": None, "minutes": 1, "pct": 10},
+        {"zone": 2, "low_bpm": None, "minutes": 1, "pct": 10},
+        {"zone": 3, "low_bpm": None, "minutes": 1, "pct": 10},
+        {"zone": 4, "low_bpm": None, "minutes": 1, "pct": 10},
+        {"zone": 5, "low_bpm": None, "minutes": 1, "pct": 10},
+    ]
+    assert app_module._stored_hr_zones(None, duration_s=600) == []
+    assert app_module._stored_hr_zones("not json", duration_s=600) == []
+    assert app_module._stored_hr_zones("[0, 0, 0, 0, 0]", duration_s=600) == []
+
+
+def test_dashboard_and_workout_gets_only_use_local_data(client, monkeypatch):
+    c, db_module = client
+    from datetime import datetime
+    from db import Activity
+    import app as app_module
+
+    class NoGarminReads:
+        def is_authenticated(self):
+            return True
+
+        def __getattr__(self, name):
+            raise AssertionError(f"unexpected Garmin read: {name}")
+
+    no_reads = NoGarminReads()
+    monkeypatch.setattr(app_module, "client", no_reads)
+    monkeypatch.setattr(
+        "sync.garmin_registry.GarminClientRegistry.get", lambda self, uid: no_reads
+    )
+    with db_module.get_session() as s:
+        s.add(Activity(
+            id=8202, activity_type="running", start_time=datetime.now(), duration_s=60,
+            hr_zone_seconds="[60, 0, 0, 0, 0]",
+        ))
+
+    assert c.get("/").status_code == 200
+    assert c.get("/workout/8202").status_code == 200
 
 
 def test_onboarding_renders_history_defaults(client):
@@ -812,9 +910,6 @@ def test_completed_multi_user_onboarding_renders_questionnaire(monkeypatch, tmp_
         response = get_onboarding(request)
         assert response.status_code == 200
         assert "onboarding.html" in response.template.name
-
-
-
 
 
 
