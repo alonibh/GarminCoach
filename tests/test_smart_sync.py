@@ -355,6 +355,23 @@ def test_stage1_order_windows_and_strength_limit(session, monkeypatch):
     assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["activities"]).value == today.isoformat()
 
 
+def test_stage1_activity_summary_window_makes_no_hr_zone_calls(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    events = []
+    _stage1_client(monkeypatch, events)
+    monkeypatch.setattr(
+        svc.client, "activities_by_date",
+        lambda *_: [{"activityId": 1, "duration": 1200, "startTimeLocal": "2026-07-24 08:00:00",
+                     "activityType": {"typeKey": "running"}}],
+    )
+    monkeypatch.setattr(svc.client, "hr_zones", lambda *_: (_ for _ in ()).throw(AssertionError("no HR zones")))
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
+
+    svc.run_sync()
+
+    assert session.get(SyncState, "stage1_bootstrap_activities").value == "complete"
+
+
 def test_stage1_skips_existing_progress_and_resumes_partial(session, monkeypatch):
     _wire_common(monkeypatch, session)
     _state(session, "last_sync_through", (date.today() - timedelta(days=1)).isoformat())
@@ -554,6 +571,52 @@ def test_stage2_only_fetches_older_combined_coverage(session, monkeypatch):
     assert min(wellness_days) == anchor - timedelta(days=27)
     assert max(wellness_days) == anchor - timedelta(days=7)
     assert session.get(SyncState, "stage2_summary_backfill_complete").value == "complete"
+
+
+def test_stage2_activity_summary_range_makes_no_hr_zone_calls(session, monkeypatch):
+    today = date.today()
+    anchor = today - timedelta(days=3)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    _state(session, "stage2_sleep_next_gap", "complete")
+    _state(session, "stage2_daily_health_next_gap", "complete")
+    _state(session, "stage2_activity_summary_next_gap", (anchor - timedelta(days=30)).isoformat())
+    calls = []
+    monkeypatch.setattr(
+        svc.client, "activities_by_date",
+        lambda start, end: calls.append((start, end)) or [{
+            "activityId": 1, "duration": 1200, "startTimeLocal": "2026-06-24 08:00:00",
+            "activityType": {"typeKey": "strength_training"},
+        }],
+    )
+    monkeypatch.setattr(svc.client, "hr_zones", lambda *_: (_ for _ in ()).throw(AssertionError("no HR zones")))
+    monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: (_ for _ in ()).throw(AssertionError("no sets")))
+
+    svc._run_stage2_summary_backfill(session, today, {"errors": [], "skipped": False})
+
+    assert len(calls) == 1
+
+
+def test_stage2_activity_summary_range_429_sets_circuit_breaker(session, monkeypatch):
+    today = date.today()
+    anchor = today - timedelta(days=3)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
+    _state(session, "stage2_sleep_next_gap", "complete")
+    _state(session, "stage2_daily_health_next_gap", "complete")
+    activity_gap = anchor - timedelta(days=30)
+    _state(session, "stage2_activity_summary_next_gap", activity_gap.isoformat())
+    monkeypatch.setattr(
+        svc.client, "activities_by_date",
+        lambda *_: (_ for _ in ()).throw(GarminConnectTooManyRequestsError("too many")),
+    )
+    summary = {"errors": [], "skipped": False}
+
+    svc._run_stage2_summary_backfill(session, today, summary)
+
+    assert session.get(SyncState, "garmin_cooldown_until").value
+    assert session.get(SyncState, "stage2_activity_summary_next_gap").value == activity_gap.isoformat()
+    assert any("Rate limited on Stage 2 activities" in error for error in summary["errors"])
 
 
 def test_stage2_normalizes_overlap_journals_before_one_actual_unit(session, monkeypatch):

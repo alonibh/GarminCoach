@@ -384,7 +384,9 @@ def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int
     if new_workout_id is not None:
         act.source_workout_id = new_workout_id
         
-    if act.hr_zone_seconds is None:
+    # Summary-only ranges must remain a single Garmin range request.  In
+    # particular, do not fill missing zones from their per-activity endpoint.
+    if enrich and act.hr_zone_seconds is None:
         try:
             zones_raw = client.hr_zones(act_id)
             if zones_raw:
