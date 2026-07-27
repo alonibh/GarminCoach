@@ -1,0 +1,18 @@
+{
+  "userProfilePK": 1001,
+  "hrvSummary": {
+    "calendarDate": "2026-07-25",
+    "weeklyAvg": 45,
+    "lastNightAvg": 46,
+    "lastNight5MinHigh": 71,
+    "status": "BALANCED",
+    "feedbackPhrase": "SYNTHETIC_BALANCED",
+    "baseline": {
+      "lowUpper": 37,
+      "balancedLow": 38,
+      "balancedUpper": 58,
+      "markerValue": 46
+    }
+  },
+  "hrvReadings": []
+}

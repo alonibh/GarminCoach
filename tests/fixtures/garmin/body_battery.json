@@ -1,0 +1,17 @@
+[
+  {
+    "date": "2026-07-25",
+    "charged": 48,
+    "drained": 31,
+    "startTimestampGMT": "2026-07-24T21:00:00.000",
+    "endTimestampGMT": "2026-07-25T18:00:00.000",
+    "startTimestampLocal": "2026-07-25T00:00:00.000",
+    "endTimestampLocal": "2026-07-25T21:00:00.000",
+    "bodyBatteryValuesArray": [
+      [1784934000000, 36],
+      [1784960100000, 74],
+      [1785006000000, 61]
+    ],
+    "bodyBatteryValueDescriptorDTOList": []
+  }
+]

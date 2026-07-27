@@ -1,0 +1,24 @@
+{
+  "dailySleepDTO": {
+    "userProfilePK": 1001,
+    "calendarDate": "2026-07-25",
+    "sleepTimeSeconds": 26100,
+    "deepSleepSeconds": 5400,
+    "lightSleepSeconds": 13200,
+    "remSleepSeconds": 6000,
+    "awakeSleepSeconds": 1500,
+    "sleepStartTimestampGMT": 1784923200000,
+    "sleepEndTimestampGMT": 1784949300000,
+    "sleepStartTimestampLocal": 1784934000000,
+    "sleepEndTimestampLocal": 1784960100000,
+    "avgSleepHRV": 46,
+    "avgRespirationValue": 14.2,
+    "avgSleepStress": 18,
+    "sleepScores": {
+      "overall": {
+        "value": 82,
+        "qualifierKey": "GOOD"
+      }
+    }
+  }
+}

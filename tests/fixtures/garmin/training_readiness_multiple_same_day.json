@@ -1,0 +1,20 @@
+[
+  {
+    "userProfilePK": 1001,
+    "calendarDate": "2026-07-25",
+    "timestamp": "2026-07-25T03:30:00.000Z",
+    "timestampLocal": "2026-07-25T06:30:00.000",
+    "deviceId": 10001,
+    "score": 58,
+    "level": "MODERATE"
+  },
+  {
+    "userProfilePK": 1001,
+    "calendarDate": "2026-07-25",
+    "timestamp": "2026-07-25T07:45:00.000Z",
+    "timestampLocal": "2026-07-25T10:45:00.000",
+    "deviceId": 10001,
+    "score": 82,
+    "level": "HIGH"
+  }
+]

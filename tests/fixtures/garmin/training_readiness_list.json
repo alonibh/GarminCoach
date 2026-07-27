@@ -1,0 +1,15 @@
+[
+  {
+    "userProfilePK": 1001,
+    "calendarDate": "2026-07-25",
+    "timestamp": "2026-07-25T05:10:00.000Z",
+    "timestampLocal": "2026-07-25T08:10:00.000",
+    "deviceId": 10001,
+    "score": 71,
+    "level": "MODERATE",
+    "feedbackLong": "Synthetic readiness fixture",
+    "feedbackShort": "Synthetic",
+    "sleepScore": 82,
+    "recoveryTime": 120
+  }
+]

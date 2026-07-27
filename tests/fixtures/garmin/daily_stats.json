@@ -1,0 +1,19 @@
+{
+  "userProfileId": 1001,
+  "calendarDate": "2026-07-25",
+  "totalSteps": 6543,
+  "dailyStepGoal": 10000,
+  "totalDistanceMeters": 5123.4,
+  "totalKilocalories": 2180,
+  "activeKilocalories": 480,
+  "bmrKilocalories": 1700,
+  "restingHeartRate": 54,
+  "moderateIntensityMinutes": 22,
+  "vigorousIntensityMinutes": 8,
+  "averageStressLevel": 24,
+  "bodyBatteryChargedValue": 48,
+  "bodyBatteryDrainedValue": 31,
+  "bodyBatteryHighestValue": 74,
+  "bodyBatteryLowestValue": 36,
+  "privacyProtected": false
+}

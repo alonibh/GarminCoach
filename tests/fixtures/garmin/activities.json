@@ -1,0 +1,25 @@
+[
+  {
+    "activityId": 987654321,
+    "activityName": "Synthetic Strength Session",
+    "activityType": {
+      "typeId": 13,
+      "typeKey": "strength_training",
+      "parentTypeId": 4,
+      "isHidden": false
+    },
+    "startTimeLocal": "2026-07-25 18:00:00",
+    "startTimeGMT": "2026-07-25 15:00:00",
+    "duration": 2700.0,
+    "movingDuration": 2400.0,
+    "elapsedDuration": 2850.0,
+    "distance": 0.0,
+    "calories": 310,
+    "averageHR": 118,
+    "maxHR": 156,
+    "trainingEffectLabel": "MAINTAINING",
+    "directWorkoutRpe": 6,
+    "directWorkoutFeel": 3,
+    "workoutId": 24680
+  }
+]
