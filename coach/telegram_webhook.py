@@ -22,6 +22,8 @@ from coach.ask_coach_session import (
 )
 from coach.privacy_logger import log_sanitized_error
 from coach.telegram_menu import (
+    ASK_COACH_BACK_LABEL,
+    MAIN_MENU_ACTIONS,
     ask_coach_back_markup,
     ask_coach_retry_markup,
     consent_disclosure_markup,
@@ -315,32 +317,29 @@ def _load_calendar_for_user(identity: TenantIdentity) -> tuple[dict, list[dict]]
         reset_tenant(tenant_token)
 
 
-async def run_calendar_menu(
-    *, identity: TenantIdentity, chat_id: str, message_id: int
-) -> None:
-    """Load private calendars off the webhook loop and replace its placeholder."""
+async def run_calendar_menu(*, identity: TenantIdentity, chat_id: str) -> None:
+    """Load private calendars off the webhook loop and append its result."""
     tenant_token = bind_tenant(identity)
     try:
+        await _send_plain(
+            "Loading calendar…", chat_id=chat_id, reply_markup=main_menu_markup()
+        )
         private_calendar, workouts = await asyncio.to_thread(
             _load_calendar_for_user, identity
         )
         from coach import renderers
 
         text = renderers.render_calendar(private_calendar, workouts)
-        await asyncio.to_thread(
-            _edit, text, chat_id, message_id, main_menu_markup()
-        )
+        await _send_plain(text, chat_id=chat_id, reply_markup=main_menu_markup())
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
         # Do not reveal a feed URL or exception details in either output/logs.
-        await asyncio.to_thread(
-            _edit,
+        await _send_plain(
             "Calendar temporarily unavailable. Please try again.",
-            chat_id,
-            message_id,
-            main_menu_markup(),
+            chat_id=chat_id,
+            reply_markup=main_menu_markup(),
         )
     finally:
         reset_tenant(tenant_token)
@@ -490,6 +489,64 @@ def _operational_callback(
     return "This button is no longer available.", main_menu_markup()
 
 
+async def _send_main_menu_action(
+    callback_data: str,
+    *,
+    identity: TenantIdentity,
+    chat_id: str,
+) -> None:
+    """Append a top-level menu result without changing historic messages."""
+    from notify import telegram
+    from sync.scheduler import refresh_user_jobs
+    from telegram_link import unlink_user
+
+    if callback_data == "menu:ask_coach":
+        if _valid_consent(identity.user_id):
+            await session_manager.create_session(identity.user_id, chat_id)
+            await _send_plain(
+                ASK_COACH_ACTIVE,
+                chat_id=chat_id,
+                reply_markup=ask_coach_back_markup(),
+            )
+        else:
+            await _send_plain(
+                DISCLOSURE,
+                chat_id=chat_id,
+                reply_markup=consent_disclosure_markup(),
+            )
+        return
+    if callback_data == "menu:privacy":
+        consent = get_ask_coach_consent(identity.user_id)
+        await _send_plain(
+            _privacy_text(),
+            chat_id=chat_id,
+            reply_markup=privacy_markup(is_consent_valid(consent)),
+        )
+        return
+    if callback_data == "menu:unlink":
+        await _send_plain(
+            "Unlink this Telegram chat from GarminCoach?",
+            chat_id=chat_id,
+            reply_markup={"inline_keyboard": [[
+                {"text": "Unlink", "callback_data": "menu:unlink_confirm"},
+            ], [{"text": "Cancel", "callback_data": "menu:home"}]]},
+        )
+        return
+    if callback_data == "menu:unlink_confirm":
+        await session_manager.close_session(identity.user_id)
+        unlink_user(identity.user_id)
+        refresh_user_jobs(identity.user_id)
+        telegram.send_link_message("Telegram was unlinked from GarminCoach.", chat_id)
+        return
+    if callback_data == "menu:calendar":
+        _register_task(run_calendar_menu(identity=identity, chat_id=chat_id))
+        return
+    text_out, markup = _operational_callback(
+        callback_data, identity=identity, chat_id=chat_id
+    )
+    await _send_plain(text_out, chat_id=chat_id, reply_markup=markup)
+
+
 async def handle_telegram_update(data: dict) -> dict:
     if not update_deduplicator.accept(data.get("update_id")):
         return {"status": "ok"}
@@ -571,22 +628,29 @@ async def handle_telegram_update(data: dict) -> dict:
                 identity.user_id, chat_id
             )
             if active and not callback_data.startswith("ask:"):
-                _edit(
+                await _send_plain(
                     "Ask Coach is active. Return to the menu before using "
                     "other controls.",
-                    chat_id,
-                    message_id,
-                    ask_coach_back_markup(),
+                    chat_id=chat_id,
+                    reply_markup=ask_coach_back_markup(),
                 )
                 return {"status": "ok"}
 
             if callback_data == "ask:exit":
                 await session_manager.close_session(identity.user_id)
-                _edit("GarminCoach menu", chat_id, message_id, main_menu_markup())
+                await _send_plain(
+                    "GarminCoach menu",
+                    chat_id=chat_id,
+                    reply_markup=main_menu_markup(),
+                )
                 return {"status": "ok"}
             if callback_data == "ask:consent_cancel":
                 await session_manager.close_session(identity.user_id)
-                _edit("GarminCoach menu", chat_id, message_id, main_menu_markup())
+                await _send_plain(
+                    "GarminCoach menu",
+                    chat_id=chat_id,
+                    reply_markup=main_menu_markup(),
+                )
                 return {"status": "ok"}
             if callback_data == "ask:consent_details":
                 _edit(
@@ -606,10 +670,15 @@ async def handle_telegram_update(data: dict) -> dict:
                 )
                 await session_manager.create_session(identity.user_id, chat_id)
                 _edit(
-                    ASK_COACH_ACTIVE,
+                    "Ask Coach consent saved.",
                     chat_id,
                     message_id,
-                    ask_coach_back_markup(),
+                    {"inline_keyboard": []},
+                )
+                await _send_plain(
+                    ASK_COACH_ACTIVE,
+                    chat_id=chat_id,
+                    reply_markup=ask_coach_back_markup(),
                 )
                 return {"status": "ok"}
             if callback_data == "ask:consent_revoke":
@@ -654,6 +723,11 @@ async def handle_telegram_update(data: dict) -> dict:
                         generation_token=acquired.generation_token or "",
                         question=question,
                     )
+                )
+                return {"status": "ok"}
+            if callback_data.startswith("menu:"):
+                await _send_main_menu_action(
+                    callback_data, identity=identity, chat_id=chat_id
                 )
                 return {"status": "ok"}
             if callback_data == "menu:ask_coach":
@@ -733,6 +807,14 @@ async def handle_telegram_update(data: dict) -> dict:
             identity.user_id, chat_id
         )
         if active:
+            if text == ASK_COACH_BACK_LABEL:
+                await session_manager.close_session(identity.user_id)
+                await _send_plain(
+                    "GarminCoach menu",
+                    chat_id=chat_id,
+                    reply_markup=main_menu_markup(),
+                )
+                return {"status": "ok"}
             if not text:
                 telegram.send_message(
                     ASK_COACH_TEXT_ONLY,
@@ -779,12 +861,15 @@ async def handle_telegram_update(data: dict) -> dict:
             )
             return {"status": "ok"}
 
-        if text:
-            telegram.send_message(
+        if text and text in MAIN_MENU_ACTIONS:
+            await _send_main_menu_action(
+                MAIN_MENU_ACTIONS[text], identity=identity, chat_id=chat_id
+            )
+        elif text:
+            await _send_plain(
                 OPERATIONAL_TEXT_GUIDANCE,
-                chat_id,
-                main_menu_markup(),
-                parse_mode=None,
+                chat_id=chat_id,
+                reply_markup=main_menu_markup(),
             )
         return {"status": "ok"}
     finally:

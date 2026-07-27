@@ -1,48 +1,54 @@
-"""Inline Telegram controls for GarminCoach's button-only interface."""
+"""Telegram controls for GarminCoach's persistent and dynamic menus."""
 from __future__ import annotations
+
+
+# These labels are both the visible reply-keyboard buttons and the only accepted
+# top-level text commands. Keep their mapping exact and in one place.
+MAIN_MENU_ACTIONS = {
+    "Today's recommendation": "menu:recommendation",
+    "Next workout": "menu:next_workout",
+    "Find a time": "menu:find_time",
+    "Schedule": "menu:schedule",
+    "Reschedule": "menu:reschedule",
+    "Cancel workout": "menu:cancel",
+    "Recovery metrics": "menu:metrics",
+    "Recent activities": "menu:activities",
+    "Training program": "menu:program",
+    "Sync status": "menu:sync_status",
+    "Calendar": "menu:calendar",
+    "Start sync": "menu:start_sync",
+    "Ask Coach": "menu:ask_coach",
+    "Privacy & Ask Coach": "menu:privacy",
+    "Unlink Telegram": "menu:unlink",
+}
+
+ASK_COACH_BACK_LABEL = "Back to menu"
 
 
 def main_menu_markup() -> dict:
     return {
-        "inline_keyboard": [
-            [
-                {"text": "Today's recommendation", "callback_data": "menu:recommendation"},
-                {"text": "Next workout", "callback_data": "menu:next_workout"},
-            ],
-            [
-                {"text": "Find a time", "callback_data": "menu:find_time"},
-                {"text": "Schedule", "callback_data": "menu:schedule"},
-            ],
-            [
-                {"text": "Reschedule", "callback_data": "menu:reschedule"},
-                {"text": "Cancel workout", "callback_data": "menu:cancel"},
-            ],
-            [
-                {"text": "Recovery metrics", "callback_data": "menu:metrics"},
-                {"text": "Recent activities", "callback_data": "menu:activities"},
-            ],
-            [
-                {"text": "Training program", "callback_data": "menu:program"},
-                {"text": "Sync status", "callback_data": "menu:sync_status"},
-            ],
-            [
-                {"text": "Calendar", "callback_data": "menu:calendar"},
-                {"text": "Start sync", "callback_data": "menu:start_sync"},
-            ],
-            [{"text": "Ask Coach", "callback_data": "menu:ask_coach"}],
-            [
-                {"text": "Privacy & Ask Coach", "callback_data": "menu:privacy"},
-                {"text": "Unlink Telegram", "callback_data": "menu:unlink"},
-            ],
-        ]
+        "keyboard": [
+            ["Today's recommendation", "Next workout"],
+            ["Find a time", "Schedule"],
+            ["Reschedule", "Cancel workout"],
+            ["Recovery metrics", "Recent activities"],
+            ["Training program", "Sync status"],
+            ["Calendar", "Start sync"],
+            ["Ask Coach"],
+            ["Privacy & Ask Coach", "Unlink Telegram"],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
 def ask_coach_back_markup() -> dict:
     return {
-        "inline_keyboard": [[
-            {"text": "Back to menu", "callback_data": "ask:exit"}
-        ]]
+        "keyboard": [[ASK_COACH_BACK_LABEL]],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
@@ -50,7 +56,6 @@ def ask_coach_retry_markup(nonce: str) -> dict:
     return {
         "inline_keyboard": [
             [{"text": "Try again", "callback_data": f"ask:retry:{nonce}"}],
-            [{"text": "Back to menu", "callback_data": "ask:exit"}],
         ]
     }
 

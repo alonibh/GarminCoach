@@ -61,7 +61,7 @@ def test_database_closes_before_gemini_and_context_resets(monkeypatch):
     assert not state["database_open"]
     assert view.in_flight_token is None
     assert [message["role"] for message in view.history] == ["user", "assistant"]
-    assert sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "ask:exit"
+    assert sent[-1][1]["reply_markup"]["keyboard"] == [["Back to menu"]]
 
 
 def test_cancellation_always_clears_matching_token(monkeypatch):

@@ -81,7 +81,7 @@ def test_telegram_webhook_payload_too_large():
     assert response.status_code == 413
 
 
-def test_operational_text_receives_inline_menu(monkeypatch):
+def test_operational_text_receives_reply_menu(monkeypatch):
     sent = []
     monkeypatch.setattr(
         "notify.telegram.send_message",
@@ -104,12 +104,8 @@ def test_operational_text_receives_inline_menu(monkeypatch):
 
     assert response.status_code == 200
     assert sent[0][0] == OPERATIONAL_TEXT_GUIDANCE
-    callbacks = {
-        button["callback_data"]
-        for row in sent[0][2]["inline_keyboard"]
-        for button in row
-    }
-    assert {"menu:metrics", "menu:ask_coach", "menu:privacy"} <= callbacks
+    assert sent[0][2]["keyboard"]
+    assert "Recovery metrics" in sent[0][2]["keyboard"][3]
     assert sent[0][3]["parse_mode"] is None
 
 
@@ -153,15 +149,15 @@ def test_update_id_is_accepted_only_once(monkeypatch):
 def test_active_ask_coach_blocks_every_other_callback(
     monkeypatch, callback_data
 ):
-    edited = []
+    sent = []
     asyncio.run(session_manager.create_session(USER_ID, "123"))
     monkeypatch.setattr(
         "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
     )
     monkeypatch.setattr(
-        "notify.telegram.edit_message_text",
-        lambda text, chat_id, message_id, reply_markup=None, **kwargs: (
-            edited.append((text, reply_markup, kwargs)) or True
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup, kwargs)) or True
         ),
     )
 
@@ -182,22 +178,22 @@ def test_active_ask_coach_blocks_every_other_callback(
     )
 
     assert response.status_code == 200
-    assert "Ask Coach is active" in edited[0][0]
-    assert edited[0][1]["inline_keyboard"][0][0]["callback_data"] == "ask:exit"
-    assert edited[0][2]["parse_mode"] is None
+    assert "Ask Coach is active" in sent[0][0]
+    assert sent[0][1]["keyboard"] == [["Back to menu"]]
+    assert sent[0][2]["parse_mode"] is None
 
 
 def test_back_to_menu_closes_session_and_discards_late_delivery(monkeypatch):
     asyncio.run(session_manager.create_session(USER_ID, "123"))
     acquired = asyncio.run(session_manager.try_acquire_in_flight(USER_ID))
-    edited = []
+    sent = []
     monkeypatch.setattr(
         "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
     )
     monkeypatch.setattr(
-        "notify.telegram.edit_message_text",
-        lambda text, chat_id, message_id, reply_markup=None, **kwargs: (
-            edited.append((text, reply_markup)) or True
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup)) or True
         ),
     )
 
@@ -224,7 +220,7 @@ def test_back_to_menu_closes_session_and_discards_late_delivery(monkeypatch):
             USER_ID, "123", acquired.generation_token
         )
     )
-    assert edited[0][1]["inline_keyboard"]
+    assert sent[0][1]["keyboard"]
 
 
 def test_plain_text_split_is_bounded_and_lossless():
@@ -258,15 +254,15 @@ def test_group_chat_is_ignored(monkeypatch):
 def test_calendar_callback_returns_promptly_and_loads_off_event_loop(monkeypatch):
     from coach import telegram_webhook
 
-    edits = []
+    sent = []
     worker_threads = []
     monkeypatch.setattr(
         "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
     )
     monkeypatch.setattr(
-        "notify.telegram.edit_message_text",
-        lambda text, chat_id, message_id, reply_markup=None, **_kwargs: (
-            edits.append(text) or True
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **_kwargs: (
+            sent.append(text) or True
         ),
     )
 
@@ -298,7 +294,162 @@ def test_calendar_callback_returns_promptly_and_loads_off_event_loop(monkeypatch
     result, elapsed = asyncio.run(exercise())
     assert result == {"status": "ok"}
     assert elapsed < 0.05
-    assert edits[0] == "Loading calendar…"
-    assert "No private calendar connected" in edits[-1]
+    assert sent[0] == "Loading calendar…"
+    assert "No private calendar connected" in sent[-1]
     assert worker_threads == [(USER_ID, worker_threads[0][1])]
     assert worker_threads[0][1] != threading.get_ident()
+
+
+def test_reply_keyboard_text_routes_and_appends_without_editing(monkeypatch):
+    from coach import telegram_webhook
+
+    sent = []
+    monkeypatch.setattr(
+        telegram_webhook,
+        "_operational_callback",
+        lambda action, **_kwargs: (
+            f"handled {action}", telegram_webhook.main_menu_markup()
+        ),
+    )
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup, kwargs)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda *_args, **_kwargs: pytest.fail("main menu must not edit history"),
+    )
+
+    response = client.post(
+        "/telegram/webhook",
+        headers=_headers(),
+        json={"update_id": 1001, "message": {
+            "chat": {"id": 123, "type": "private"},
+            "text": "Recovery metrics",
+        }},
+    )
+
+    assert response.status_code == 200
+    assert sent[0][0] == "handled menu:metrics"
+    assert sent[0][1]["keyboard"]
+    assert sent[0][2]["parse_mode"] is None
+
+
+def test_start_sends_reply_keyboard(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup, kwargs)) or True
+        ),
+    )
+    response = client.post(
+        "/telegram/webhook", headers=_headers(), json={
+            "update_id": 1002,
+            "message": {"chat": {"id": 123, "type": "private"}, "text": "/start"},
+        }
+    )
+    assert response.status_code == 200
+    assert sent[0][0] == "GarminCoach menu"
+    assert sent[0][2] == {"parse_mode": None}
+    assert sent[0][1]["keyboard"]
+
+
+def test_back_to_menu_text_never_reaches_gemini(monkeypatch):
+    from coach import telegram_webhook
+
+    sent = []
+    asyncio.run(session_manager.create_session(USER_ID, "123"))
+    monkeypatch.setattr(
+        telegram_webhook,
+        "_register_task",
+        lambda *_args: pytest.fail("Back to menu must not invoke Gemini"),
+    )
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup)) or True
+        ),
+    )
+    response = client.post(
+        "/telegram/webhook", headers=_headers(), json={
+            "update_id": 1003,
+            "message": {"chat": {"id": 123, "type": "private"}, "text": "Back to menu"},
+        }
+    )
+    assert response.status_code == 200
+    assert not asyncio.run(session_manager.has_active_session(USER_ID))
+    assert sent[0][0] == "GarminCoach menu"
+    assert sent[0][1]["keyboard"]
+
+
+def test_legacy_menu_callback_appends_without_editing(monkeypatch):
+    from coach import telegram_webhook
+
+    sent = []
+    monkeypatch.setattr(
+        telegram_webhook,
+        "_operational_callback",
+        lambda action, **_kwargs: (f"handled {action}", None),
+    )
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append(text) or True
+        ),
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda *_args, **_kwargs: pytest.fail("legacy menu must append"),
+    )
+    response = client.post(
+        "/telegram/webhook", headers=_headers(), json={
+            "update_id": 1004,
+            "callback_query": {"id": "old", "data": "menu:metrics", "message": {
+                "message_id": 1, "chat": {"id": 123, "type": "private"},
+            }},
+        }
+    )
+    assert response.status_code == 200
+    assert sent == ["handled menu:metrics"]
+
+
+def test_consent_acceptance_appends_ask_coach_reply_keyboard(monkeypatch):
+    sent = []
+    edits = []
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        "coach.telegram_webhook.record_ask_coach_consent",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda text, chat_id, message_id, reply_markup=None, **kwargs: (
+            edits.append((text, reply_markup, kwargs)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup, kwargs)) or True
+        ),
+    )
+    response = client.post(
+        "/telegram/webhook", headers=_headers(), json={
+            "update_id": 1005,
+            "callback_query": {"id": "consent", "data": "ask:consent_agree", "message": {
+                "message_id": 1, "chat": {"id": 123, "type": "private"},
+            }},
+        }
+    )
+    assert response.status_code == 200
+    assert edits[0][1] == {"inline_keyboard": []}
+    assert sent[0][0].startswith("Ask Coach is active")
+    assert sent[0][1]["keyboard"] == [["Back to menu"]]
