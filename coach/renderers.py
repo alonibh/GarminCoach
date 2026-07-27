@@ -171,20 +171,88 @@ def render_sync_status(session: Session) -> str:
     return f"Last Garmin sync: {row.value}."
 
 
-def render_calendar(session: Session) -> str:
-    row = session.get(SyncState, "coach_calendar_events")
-    events = _json(row.value if row else None, [])
+def upcoming_planned_sessions(session: Session, days: int = 7) -> list[dict]:
     today = get_local_now().date()
-    upcoming = []
-    for event in events if isinstance(events, list) else []:
+    rows = (
+        session.query(PlannedSession)
+        .filter(
+            PlannedSession.target_date >= today,
+            PlannedSession.target_date < today + timedelta(days=days),
+            PlannedSession.status.in_(("approved", "scheduled", "planned")),
+        )
+        .order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id)
+        .all()
+    )
+    return [
+        {
+            "title": row.title or "Workout",
+            "date": row.target_date.isoformat(),
+            "start_time": row.suggested_time or "",
+            "duration_min": row.duration_min,
+        }
+        for row in rows
+    ]
+
+
+def render_calendar(
+    private_calendar: dict | None, workouts: list[dict], *, days: int = 7
+) -> str:
+    """Render private and GarminCoach events without reading legacy SyncState."""
+    state = (private_calendar or {}).get("state", "unconfigured")
+    personal = (private_calendar or {}).get("events", [])
+    today = get_local_now().date()
+    entries: list[tuple[str, str, str]] = []
+    for event in personal if isinstance(personal, list) else []:
+        if not isinstance(event, dict):
+            continue
+        start = str(event.get("start") or "")
         try:
-            event_day = datetime.fromisoformat(str(event.get("date"))).date()
+            event_day = datetime.fromisoformat(start[:10]).date()
+        except ValueError:
+            continue
+        if not today <= event_day < today + timedelta(days=days):
+            continue
+        when = event_day.strftime("%a %d %b")
+        if event.get("all_day"):
+            when += " (all day)"
+        elif len(start) >= 16:
+            when += f" {start[11:16]}"
+        entries.append(
+            (start, "Personal calendar", f"{when}: {event.get('title') or 'Event'}")
+        )
+    for workout in workouts:
+        start = f"{workout.get('date', '')} {workout.get('start_time', '')}".strip()
+        try:
+            workout_day = datetime.fromisoformat(str(workout.get("date"))).date()
         except (TypeError, ValueError):
             continue
-        if today <= event_day < today + timedelta(days=7):
-            upcoming.append(event)
-    if not upcoming:
-        return "No GarminCoach calendar events are scheduled in the next 7 days."
+        when = workout_day.strftime("%a %d %b")
+        if workout.get("start_time"):
+            when += f" {workout['start_time']}"
+        entries.append(
+            (
+                start or workout_day.isoformat(),
+                "GarminCoach workouts",
+                f"{when}: {workout.get('title') or 'Workout'}",
+            )
+        )
+    entries.sort(key=lambda item: item[0])
+
+    lines = [f"Next {days} days:"]
+    if state == "unconfigured":
+        lines.append("Personal calendar: No private calendar connected.")
+    elif state == "error":
+        lines.append("Personal calendar: Calendar temporarily unavailable.")
+    if not entries:
+        lines.append("No events in the next 7 days.")
+        return "\n".join(lines)
+    current_source = None
+    for _, source, text in entries:
+        if source != current_source:
+            lines.append(source + ":")
+            current_source = source
+        lines.append(f"â€¢ {text}")
+    return "\n".join(lines)
     lines = ["Next 7 days:"]
     for event in upcoming[:10]:
         lines.append(

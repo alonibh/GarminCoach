@@ -298,6 +298,54 @@ async def run_ask_coach_question(
             reset_tenant(tenant_token)
 
 
+def _load_calendar_for_user(identity: TenantIdentity) -> tuple[dict, list[dict]]:
+    """Blocking calendar/ORM work, called only from a registered task thread."""
+    from coach.calendar import get_upcoming_schedule_result
+    from coach.renderers import upcoming_planned_sessions
+
+    # asyncio.to_thread propagates context today, but binding again makes this
+    # trust boundary explicit if that implementation detail ever changes.
+    tenant_token = bind_tenant(identity)
+    try:
+        private_calendar = get_upcoming_schedule_result(days=7)
+        with get_user_session(identity.user_id) as database:
+            workouts = upcoming_planned_sessions(database, days=7)
+        return private_calendar, workouts
+    finally:
+        reset_tenant(tenant_token)
+
+
+async def run_calendar_menu(
+    *, identity: TenantIdentity, chat_id: str, message_id: int
+) -> None:
+    """Load private calendars off the webhook loop and replace its placeholder."""
+    tenant_token = bind_tenant(identity)
+    try:
+        private_calendar, workouts = await asyncio.to_thread(
+            _load_calendar_for_user, identity
+        )
+        from coach import renderers
+
+        text = renderers.render_calendar(private_calendar, workouts)
+        await asyncio.to_thread(
+            _edit, text, chat_id, message_id, main_menu_markup()
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
+        # Do not reveal a feed URL or exception details in either output/logs.
+        await asyncio.to_thread(
+            _edit,
+            "Calendar temporarily unavailable. Please try again.",
+            chat_id,
+            message_id,
+            main_menu_markup(),
+        )
+    finally:
+        reset_tenant(tenant_token)
+
+
 def _privacy_text() -> str:
     categories = "\n".join(
         f"• {category}"
@@ -412,8 +460,6 @@ def _operational_callback(
             return renderers.render_program(database), main_menu_markup()
         if callback_data == "menu:sync_status":
             return renderers.render_sync_status(database), main_menu_markup()
-        if callback_data == "menu:calendar":
-            return renderers.render_calendar(database), main_menu_markup()
         if callback_data == "menu:start_sync":
             turn = stage_sync_confirmation(database)
             return turn.text, turn.reply_markup or main_menu_markup()
@@ -663,6 +709,18 @@ async def handle_telegram_update(data: dict) -> dict:
                 refresh_user_jobs(identity.user_id)
                 telegram.send_link_message(
                     "Telegram was unlinked from GarminCoach.", chat_id
+                )
+                return {"status": "ok"}
+            if callback_data == "menu:calendar":
+                _edit(
+                    "Loading calendar…", chat_id, message_id, main_menu_markup()
+                )
+                _register_task(
+                    run_calendar_menu(
+                        identity=identity,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    )
                 )
                 return {"status": "ok"}
             text_out, markup = _operational_callback(

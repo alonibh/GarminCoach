@@ -1,4 +1,6 @@
 import asyncio
+import threading
+import time
 
 from fastapi.testclient import TestClient
 import pytest
@@ -251,3 +253,52 @@ def test_group_chat_is_ignored(monkeypatch):
     )
     assert response.status_code == 200
     assert sent == []
+
+
+def test_calendar_callback_returns_promptly_and_loads_off_event_loop(monkeypatch):
+    from coach import telegram_webhook
+
+    edits = []
+    worker_threads = []
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda text, chat_id, message_id, reply_markup=None, **_kwargs: (
+            edits.append(text) or True
+        ),
+    )
+
+    def load(identity):
+        worker_threads.append((identity.user_id, threading.get_ident()))
+        time.sleep(0.1)
+        return {"state": "unconfigured", "events": []}, []
+
+    monkeypatch.setattr(telegram_webhook, "_load_calendar_for_user", load)
+    payload = {
+        "update_id": 998,
+        "callback_query": {
+            "id": "calendar",
+            "data": "menu:calendar",
+            "message": {
+                "message_id": 8,
+                "chat": {"id": 123, "type": "private"},
+            },
+        },
+    }
+
+    async def exercise():
+        started = time.monotonic()
+        result = await telegram_webhook.handle_telegram_update(payload)
+        elapsed = time.monotonic() - started
+        await asyncio.sleep(0.16)
+        return result, elapsed
+
+    result, elapsed = asyncio.run(exercise())
+    assert result == {"status": "ok"}
+    assert elapsed < 0.05
+    assert edits[0] == "Loading calendar…"
+    assert "No private calendar connected" in edits[-1]
+    assert worker_threads == [(USER_ID, worker_threads[0][1])]
+    assert worker_threads[0][1] != threading.get_ident()

@@ -371,30 +371,71 @@ def _planned_sessions(session: Session, today: date) -> dict:
 
 
 def _calendar(session: Session, today: date, tz: ZoneInfo) -> dict:
-    raw_events = _json(_state(session, "coach_calendar_events"), [])
     items: list[dict] = []
     end_day = today + timedelta(days=7)
-    for event in raw_events if isinstance(raw_events, list) else []:
+    rows = (
+        session.query(PlannedSession)
+        .filter(
+            PlannedSession.target_date >= today,
+            PlannedSession.target_date < end_day,
+            PlannedSession.status.in_(("approved", "scheduled", "planned")),
+        )
+        .order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id)
+        .all()
+    )
+    for row in rows:
+        start_text = str(row.suggested_time or "00:00")[:5]
+        try:
+            start_clock = time.fromisoformat(start_text)
+        except ValueError:
+            start_clock = time.min
+        start = datetime.combine(row.target_date, start_clock, tzinfo=tz)
+        duration = int(row.duration_min or 0)
+        items.append(
+            {
+                "title": str(row.title or "Workout")[:255],
+                "start_time": start.isoformat(),
+                "end_time": (start + timedelta(minutes=duration)).isoformat(),
+                "source": "garmincoach_workout",
+            }
+        )
+
+    # Private feeds are only included from the short-lived cache populated by
+    # interactive calendar loads.  Ask Coach snapshots remain local DB reads.
+    from coach.calendar import get_cached_upcoming_schedule_result
+
+    cached = get_cached_upcoming_schedule_result(days=7)
+    for event in (cached or {}).get("events", []):
         if not isinstance(event, dict):
             continue
         try:
-            event_day = date.fromisoformat(str(event.get("date", ""))[:10])
+            event_day = date.fromisoformat(str(event.get("start", ""))[:10])
         except ValueError:
             continue
         if not today <= event_day < end_day:
             continue
-        start_text = str(event.get("start_time") or "00:00")[:5]
-        try:
-            start_clock = time.fromisoformat(start_text)
-        except ValueError:
-            continue
-        start = datetime.combine(event_day, start_clock, tzinfo=tz)
-        duration = int(event.get("duration_min") or 0)
+        all_day = bool(event.get("all_day"))
+        if all_day:
+            start = datetime.combine(event_day, time.min, tzinfo=tz)
+            end = start + timedelta(days=1)
+        else:
+            try:
+                start = datetime.strptime(
+                    str(event.get("start")), "%Y-%m-%d %H:%M"
+                ).replace(tzinfo=tz)
+                end_clock = time.fromisoformat(str(event.get("end") or "00:00"))
+                end = datetime.combine(event_day, end_clock, tzinfo=tz)
+                if end <= start:
+                    end += timedelta(days=1)
+            except ValueError:
+                continue
         items.append(
             {
-                "title": str(event.get("title") or "Workout")[:255],
+                "title": str(event.get("title") or "Event")[:255],
                 "start_time": start.isoformat(),
-                "end_time": (start + timedelta(minutes=duration)).isoformat(),
+                "end_time": end.isoformat(),
+                "all_day": all_day,
+                "source": "personal_calendar",
             }
         )
     items.sort(key=lambda item: item["start_time"])
