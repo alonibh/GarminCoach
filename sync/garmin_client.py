@@ -20,6 +20,7 @@ from garminconnect import (
 )
 
 import config
+from sync.endpoint_telemetry import instrument_read
 
 
 def _readiness_score(snapshot: dict[str, Any]) -> int | None:
@@ -258,63 +259,78 @@ class GarminClient:
 
     def is_authenticated(self) -> bool:
         return self._api is not None and not self._session_expired
+
+    def _read(self, endpoint: str, call: Callable[[], Any]) -> Any:
+        return instrument_read(endpoint, call)
     # Thin wrappers; names mirror the plan's verified method list.
 
     def activities_by_date(self, start: date, end: date) -> list[dict]:
-        return self.api.get_activities_by_date(start.isoformat(), end.isoformat())
+        return self._read("activities_by_date", lambda: self.api.get_activities_by_date(start.isoformat(), end.isoformat()))
 
     def recent_activities(self, limit: int = 1) -> list[dict]:
-        return self.api.get_activities(0, limit) or []
+        return self._read("recent_activities", lambda: self.api.get_activities(0, limit) or [])
 
     def activity_count(self) -> int:
-        return self.api.count_activities()
+        return self._read("activity_count", self.api.count_activities)
+
+    def activity_detail(self, activity_id: int) -> dict:
+        return self._read("activity_detail", lambda: self.api.get_activity(activity_id))
 
     def exercise_sets(self, activity_id: int) -> dict:
         """Per-set strength detail: exercise name/category, reps, weight, rest."""
-        return self.api.get_activity_exercise_sets(activity_id)
+        return self._read("activity_strength_sets", lambda: self.api.get_activity_exercise_sets(activity_id))
 
     def hr_zones(self, activity_id: int) -> list:
         """Time-in-HR-zone for an activity. Cached in-memory: a past activity's
         zones never change, so we fetch each at most once per process."""
         if activity_id not in self._hr_zone_cache:
             self._hr_zone_cache[activity_id] = (
-                self.api.get_activity_hr_in_timezones(activity_id) or []
+                self._read("activity_hr_zones", lambda: self.api.get_activity_hr_in_timezones(activity_id) or [])
             )
         return self._hr_zone_cache[activity_id]
 
     def sleep(self, day: date) -> dict:
-        return self.api.get_sleep_data(day.isoformat())
+        return self._read("sleep", lambda: self.api.get_sleep_data(day.isoformat()))
 
     def hrv(self, day: date) -> dict:
-        return self.api.get_hrv_data(day.isoformat())
+        return self._read("hrv", lambda: self.api.get_hrv_data(day.isoformat()))
 
     def body_battery(self, start: date, end: date) -> list[dict]:
-        return self.api.get_body_battery(start.isoformat(), end.isoformat())
+        return self._read("body_battery", lambda: self.api.get_body_battery(start.isoformat(), end.isoformat()))
 
     def stress(self, day: date) -> dict:
-        return self.api.get_all_day_stress(day.isoformat())
+        return self._read("stress", lambda: self.api.get_all_day_stress(day.isoformat()))
 
     def resting_hr(self, day: date) -> dict:
-        return self.api.get_rhr_day(day.isoformat())
+        return self._read("resting_hr", lambda: self.api.get_rhr_day(day.isoformat()))
 
     def daily_steps(self, start: date, end: date) -> list[dict]:
-        return self.api.get_daily_steps(start.isoformat(), end.isoformat())
+        return self._read("daily_steps", lambda: self.api.get_daily_steps(start.isoformat(), end.isoformat()))
 
     def user_summary(self, day: date) -> dict:
-        return self.api.get_stats(day.isoformat())
+        return self._read("daily_summary", lambda: self.api.get_stats(day.isoformat()))
 
     def device_last_used(self) -> dict:
-        return self.api.get_device_last_used()
+        return self._read("device_last_used", self.api.get_device_last_used)
 
     def training_readiness(self, day: date) -> dict | list[dict]:
-        return self.api.get_training_readiness(day.isoformat())
+        return self._read("training_readiness", lambda: self.api.get_training_readiness(day.isoformat()))
 
     def training_status(self, day: date) -> dict:
-        return self.api.get_training_status(day.isoformat())
+        return self._read("training_status", lambda: self.api.get_training_status(day.isoformat()))
 
     def fitness_age(self, day: date) -> dict:
         """Current Fitness Age only; callers must not turn this into a scan."""
-        return self.api.get_fitnessage_data(day.isoformat())
+        return self._read("fitness_age", lambda: self.api.get_fitnessage_data(day.isoformat()))
+
+    def workout_list(self) -> list[dict] | None:
+        return self._read("workout_list", self.api.get_workouts)
+
+    def workout_detail(self, workout_id: int) -> dict:
+        return self._read("workout_detail", lambda: self.api.get_workout_by_id(workout_id))
+
+    def user_profile(self) -> dict:
+        return self._read("user_profile", self.api.get_user_profile)
 
 
 _legacy_client = GarminClient()

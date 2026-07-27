@@ -108,6 +108,8 @@ def test_activity_sync_captures_provenance_once(session, monkeypatch):
             pass
         def hr_zones(self, activity_id):
             return []
+        def activity_detail(self, activity_id):
+            return self._api.get_activity(activity_id)
         @property
         def api(self):
             return self._api

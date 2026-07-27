@@ -29,17 +29,15 @@ from db import (
     Workout,
     get_session,
 )
+from sync.endpoint_telemetry import is_auth_error, telemetry_scope
 from sync.garmin_client import client, normalize_training_readiness
 from time_utils import get_local_tz
 
 logger = logging.getLogger(__name__)
 
-def _is_auth_error(exc: Exception) -> bool:
-    if isinstance(exc, GarminConnectAuthenticationError):
-        return True
-    msg = str(exc).lower()
-    err_type = type(exc).__name__.lower()
-    return "401" in msg or "authentication" in msg or "unauthorized" in msg or "authentication" in err_type
+# Kept as a local name for existing sync error paths; implementation is shared
+# with wrapper telemetry so both classifications stay identical.
+_is_auth_error = is_auth_error
 
 # Activity type substrings that carry per-set strength detail.
 _STRENGTH_HINTS = ("strength", "weight")
@@ -369,7 +367,7 @@ def _upsert_activity(session, raw: dict, *, enrich: bool = True) -> Optional[int
     # A valid response settles that question even when those optional fields are absent.
     if enrich and not act.provenance_checked:
         try:
-            full_act = client.api.get_activity(act_id)
+            full_act = client.activity_detail(act_id)
             if isinstance(full_act, dict):
                 summary_dto = full_act.get("summaryDTO", {})
                 if not isinstance(summary_dto, dict):
@@ -510,7 +508,7 @@ def _sync_workouts(session: Session) -> None:
     every workout the user has ever created).
     """
     try:
-        workouts = client.api.get_workouts()
+        workouts = client.workout_list()
     except GarminConnectTooManyRequestsError:
         raise
     except Exception:
@@ -537,7 +535,7 @@ def _sync_workouts(session: Session) -> None:
 
         # We only really care about strength, running, cycling, etc., but we can save all
         try:
-            full_w = client.api.get_workout_by_id(wid)
+            full_w = client.workout_detail(wid)
             steps_json = json.dumps(full_w.get("workoutSegments", []))
         except GarminConnectTooManyRequestsError:
             raise
@@ -1003,7 +1001,7 @@ def _record_full_sync_freshness(
         )
 
 
-def run_priority_sync() -> dict:
+def _run_priority_sync() -> dict:
     """Fetch and commit only facts needed by today's morning decision."""
     from metrics.freshness import (
         ERROR,
@@ -1117,6 +1115,28 @@ def run_priority_sync() -> dict:
         _set_state(session, "overnight_facts_updated_at", fetched_at.isoformat())
         summary.update(morning_freshness(session, target))
     return summary
+
+
+def _persist_endpoint_telemetry(payload: dict) -> None:
+    try:
+        with get_session() as session:
+            _set_state(session, "last_garmin_endpoint_telemetry", json.dumps(payload, separators=(",", ":")))
+    except Exception:
+        logger.warning("Unable to persist Garmin endpoint telemetry")
+
+
+def run_priority_sync() -> dict:
+    summary: dict | None = None
+    with telemetry_scope("priority") as collector:
+        try:
+            summary = _run_priority_sync()
+            return summary
+        finally:
+            payload = collector.finish()
+            if summary is not None:
+                summary["endpoint_telemetry"] = payload
+            _persist_endpoint_telemetry(payload)
+            logger.info("garmin_endpoint_telemetry %s", json.dumps(payload, separators=(",", ":")))
 
 
 def _sync_resource_days(
@@ -1328,7 +1348,7 @@ def _run_stage2_strength_backfill(session: Session, today: date, summary: dict) 
     return True
 
 
-def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = False) -> dict:
+def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 
     Returns a summary dict for display in the UI.
@@ -1545,6 +1565,21 @@ def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fal
     return summary
 
 
+def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = False) -> dict:
+    run_kind = "full" if full else "manual" if force else "scheduled" if allow_backfill else "incremental"
+    summary: dict | None = None
+    with telemetry_scope(run_kind) as collector:
+        try:
+            summary = _run_sync(full=full, force=force, allow_backfill=allow_backfill)
+            return summary
+        finally:
+            payload = collector.finish()
+            if summary is not None:
+                summary["endpoint_telemetry"] = payload
+            _persist_endpoint_telemetry(payload)
+            logger.info("garmin_endpoint_telemetry %s", json.dumps(payload, separators=(",", ":")))
+
+
 def _last_different(history: list[tuple]) -> tuple:
     """history = (date, value) newest first. Returns (current_date, current,
     prev_date, prev_value) where prev is the most recent value that differs
@@ -1566,7 +1601,7 @@ def _fitness_age_history(weeks: int = 16) -> list[tuple]:
     for i in range(0, weeks * 7, 7):
         d = (date.today() - timedelta(days=i)).isoformat()
         try:
-            fa = client.api.get_fitnessage_data(d) or {}
+            fa = client.fitness_age(date.fromisoformat(d)) or {}
         except Exception:
             continue
         val, upd = fa.get("fitnessAge"), (fa.get("lastUpdated") or "")[:10]
@@ -1582,10 +1617,7 @@ def _vo2max_history(days: int = 365) -> list[tuple]:
     """(date, vo2max) from running activities carrying vO2MaxValue, newest
     first. Garmin attaches VO2 max to qualifying GPS runs, not daily endpoints."""
     try:
-        acts = client.api.get_activities_by_date(
-            (date.today() - timedelta(days=days)).isoformat(),
-            date.today().isoformat(),
-        )
+        acts = client.activities_by_date(date.today() - timedelta(days=days), date.today())
     except Exception:
         return []
     out = [
@@ -1609,7 +1641,7 @@ def _upsert_snapshot(session, metric: str, history: list[tuple]) -> None:
 
 def _target_fitness_age() -> Optional[float]:
     try:
-        fa = client.api.get_fitnessage_data(date.today().isoformat()) or {}
+        fa = client.fitness_age(date.today()) or {}
         val = fa.get("achievableFitnessAge")
         return round(float(val), 1) if val is not None else None
     except Exception:
@@ -1618,7 +1650,7 @@ def _target_fitness_age() -> Optional[float]:
 
 def _snapshot_user_profile(session) -> None:
     try:
-        prof = client.api.get_user_profile() or {}
+        prof = client.user_profile() or {}
         ud = prof.get("userData", {})
         if ud.get("gender"):
             _set_state(session, "user_gender", ud.get("gender"))

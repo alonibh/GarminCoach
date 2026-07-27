@@ -30,6 +30,8 @@ def test_full_detail_empty_valid_response_is_not_repeated(session, monkeypatch):
     class Fake:
         def activities_by_date(self, *_): return [_running()]
         def hr_zones(self, *_): return []
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(activity_id): calls.append(activity_id); return {"summaryDTO": {}}
@@ -46,6 +48,8 @@ def test_invalid_full_detail_response_remains_retryable(session, monkeypatch, re
     class Fake:
         def activities_by_date(self, *_): return [_running()]
         def hr_zones(self, *_): return []
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(activity_id): calls.append(activity_id); return response
@@ -61,6 +65,8 @@ def test_failed_full_detail_response_remains_retryable(session, monkeypatch):
     class Fake:
         def activities_by_date(self, *_): return [_running()]
         def hr_zones(self, *_): return []
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(activity_id):
@@ -77,6 +83,8 @@ def test_summary_workout_provenance_skips_full_detail(session, monkeypatch):
     class Fake:
         def activities_by_date(self, *_): return [_running(workoutId=8)]
         def hr_zones(self, *_): return []
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(_): raise AssertionError("already resolved by summary")
@@ -89,6 +97,8 @@ def test_hr_zone_successes_are_persisted_and_not_repeated(session, monkeypatch):
     class Fake:
         def activities_by_date(self, *_): return [_running()]
         def hr_zones(self, activity_id): calls.append(activity_id); return [{"zoneNumber": 1, "secsInZone": 60}]
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(_): return {}
@@ -107,6 +117,8 @@ def test_empty_or_failed_hr_zones_completion_behavior(session, monkeypatch):
         def hr_zones(self, activity_id):
             calls.append(activity_id)
             return [] if len(calls) == 1 else None
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(_): return {}
@@ -125,6 +137,8 @@ def test_no_hr_data_makes_no_zone_request(session, monkeypatch):
     class Fake:
         def activities_by_date(self, *_): return [_running(averageHR=None, maximumHR=None)]
         def hr_zones(self, *_): raise AssertionError("no HR makes zones ineligible")
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(_): return {}
@@ -175,6 +189,8 @@ def test_first_429_stops_later_enrichment(session, monkeypatch):
     class Fake:
         def activities_by_date(self, *_): return [_running(1), _running(2)]
         def hr_zones(self, activity_id): calls.append(activity_id); raise GarminConnectTooManyRequestsError("limit")
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
+        def activity_detail(self, activity_id): return self.api.get_activity(activity_id)
         class api:
             @staticmethod
             def get_activity(_): return {}

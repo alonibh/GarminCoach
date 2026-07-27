@@ -49,7 +49,7 @@ shapes are covered by fixtures.
 - [x] Complete bounded scheduled Stage 2 strength-detail backfill (fixed latest
   20 eligible strength activities within the Stage 2 90-day window).
 - [ ] Prefer combined/range endpoints over per-day duplicate requests.
-- [ ] Add endpoint telemetry.
+- [x] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.
 - [x] Make general activity enrichment explicit and new/incomplete-activity only.
 - [x] Remove all ordinary UI-triggered Garmin calls.
