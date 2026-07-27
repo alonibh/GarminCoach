@@ -226,3 +226,81 @@ def test_cooldown_skips_before_garmin_calls(session, monkeypatch):
     summary = svc.run_sync(full=False)
 
     assert summary["skipped"] is True
+
+
+def test_resource_cursors_fall_back_to_legacy_cursor(session):
+    legacy = date.today() - timedelta(days=7)
+    _state(session, "last_sync_through", legacy.isoformat())
+
+    cursors = {resource: svc._resource_cursor(session, resource) for resource in svc._RESOURCE_CURSOR_KEYS}
+    session.commit()
+
+    assert cursors == {resource: legacy for resource in svc._RESOURCE_CURSOR_KEYS}
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        assert session.get(SyncState, key).value == legacy.isoformat()
+    assert session.get(SyncState, "last_sync_through").value == legacy.isoformat()
+
+
+def test_successful_resources_advance_independent_cursors(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        _state(session, key, (today - timedelta(days=3)).isoformat())
+    _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    monkeypatch.setattr(svc, "_sync_activities", lambda *args: 2)
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *args: True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda *args: True)
+
+    summary = svc.run_sync(force=True)
+
+    assert summary["activities"] == 2
+    assert summary["days"] > 0
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        assert session.get(SyncState, key).value == today.isoformat()
+
+
+def test_activity_failure_does_not_block_sleep_or_health_cursors(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    activity_cursor = today - timedelta(days=3)
+    for resource, key in svc._RESOURCE_CURSOR_KEYS.items():
+        _state(session, key, activity_cursor.isoformat())
+    _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    monkeypatch.setattr(svc, "_sync_activities", lambda *args: (_ for _ in ()).throw(RuntimeError("activity failed")))
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *args: True)
+    monkeypatch.setattr(svc, "_sync_daily_health", lambda *args: True)
+
+    svc.run_sync(force=True)
+
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["activities"]).value == activity_cursor.isoformat()
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["sleep"]).value == today.isoformat()
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["daily_health"]).value == today.isoformat()
+
+
+def test_first_429_stops_remaining_calls_and_preserves_partial_resource_progress(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    today = date.today()
+    cursor = today - timedelta(days=3)
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        _state(session, key, cursor.isoformat())
+    _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    monkeypatch.setattr(svc, "_sync_activities", lambda *args: 4)
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *args: True)
+    health_calls = []
+
+    def fail_on_first_new_health_day(_session, day):
+        health_calls.append(day)
+        if day == today - timedelta(days=1):
+            raise GarminConnectTooManyRequestsError("too many")
+        return True
+
+    monkeypatch.setattr(svc, "_sync_daily_health", fail_on_first_new_health_day)
+
+    summary = svc.run_sync(force=True)
+
+    assert health_calls[-1] == today - timedelta(days=1)
+    assert summary["activities"] == 4
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["activities"]).value == today.isoformat()
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["sleep"]).value == today.isoformat()
+    assert session.get(SyncState, svc._RESOURCE_CURSOR_KEYS["daily_health"]).value == (today - timedelta(days=2)).isoformat()
+    assert session.get(SyncState, "garmin_cooldown_until").value

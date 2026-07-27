@@ -38,10 +38,12 @@ shapes are covered by fixtures.
 
 ## Phase 2B: Resource-aware sync foundation
 
-- [ ] Replace the global sync cursor with per-resource cursors and gaps.
+- [x] Replace the global sync cursor with per-resource cursors.
+- [ ] Track per-resource gaps.
 - [ ] Implement Stage 1 usable bootstrap and bounded Stage 2 backfill.
 - [ ] Prefer combined/range endpoints over per-day duplicate requests.
-- [ ] Add endpoint telemetry and immediate low-priority circuit break on first 429.
+- [ ] Add endpoint telemetry.
+- [x] Immediately circuit-break low-priority Garmin work on the first 429.
 - [ ] Make activity enrichment explicit and new/incomplete-activity only.
 - [ ] Remove all ordinary UI-triggered Garmin calls.
 - [ ] Make manual sync current/incremental rather than a full rebuild.

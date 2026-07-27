@@ -7,7 +7,6 @@ activity is logged and skipped; the sync continues.
 from __future__ import annotations
 
 import logging
-import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from sqlalchemy.orm import Session
@@ -43,6 +42,12 @@ def _is_auth_error(exc: Exception) -> bool:
 
 # Activity type substrings that carry per-set strength detail.
 _STRENGTH_HINTS = ("strength", "weight")
+
+_RESOURCE_CURSOR_KEYS = {
+    "activities": "last_activities_sync_through",
+    "sleep": "last_sleep_sync_through",
+    "daily_health": "last_daily_health_sync_through",
+}
 
 
 # --- small helpers --------------------------------------------------------
@@ -101,6 +106,46 @@ def _set_state(session, key: str, value: str) -> None:
         row.value = value
     else:
         session.add(SyncState(key=key, value=value))
+
+
+def _parse_state_date(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _resource_cursor(session: Session, resource: str) -> Optional[date]:
+    """Return a resource cursor, lazily seeding it from the legacy cursor."""
+    key = _RESOURCE_CURSOR_KEYS[resource]
+    value = _get_state(session, key)
+    if value is not None:
+        return _parse_state_date(value)
+
+    legacy = _get_state(session, "last_sync_through")
+    cursor = _parse_state_date(legacy)
+    if cursor:
+        # Keep the legacy key for compatibility, but avoid reusing it as normal
+        # sync progress once this resource has its own cursor.
+        _set_state(session, key, cursor.isoformat())
+    return cursor
+
+
+def _advance_resource_cursor(session: Session, resource: str, through: date) -> None:
+    """Move a resource cursor forward only; overlap retries must not rewind it."""
+    current = _resource_cursor(session, resource)
+    if current is None or through > current:
+        _set_state(session, _RESOURCE_CURSOR_KEYS[resource], through.isoformat())
+
+
+def _resource_start(session: Session, resource: str, today: date, full: bool) -> date:
+    cursor = _resource_cursor(session, resource)
+    if full or cursor is None:
+        return today - timedelta(days=config.INITIAL_BACKFILL_DAYS)
+    # Re-sync the last few days too (data settles after the day ends).
+    return cursor - timedelta(days=3)
 
 
 def _utc_now() -> datetime:
@@ -288,6 +333,8 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
                 new_feel = summary_dto.get("directWorkoutFeel", new_feel)
                 new_workout_id = _workout_id(full_act) or new_workout_id
                 act.provenance_checked = True
+        except GarminConnectTooManyRequestsError:
+            raise
         except Exception as e:
             logger.warning("Failed to fetch full activity %s for RPE/provenance extraction: %s", act_id, e)
 
@@ -312,6 +359,8 @@ def _upsert_activity(session, raw: dict) -> Optional[int]:
                 # Only save if there's actual zone data (sum > 0)
                 if sum(secs) > 0:
                     act.hr_zone_seconds = json.dumps(secs)
+        except GarminConnectTooManyRequestsError:
+            raise
         except Exception as e:
             logger.warning("Failed to fetch hr_zones for %s: %s", act_id, e)
             
@@ -373,6 +422,8 @@ def _sync_workouts(session: Session) -> None:
     """
     try:
         workouts = client.api.get_workouts()
+    except GarminConnectTooManyRequestsError:
+        raise
     except Exception:
         logger.warning("Failed to fetch workout list from Garmin", exc_info=True)
         return
@@ -399,6 +450,8 @@ def _sync_workouts(session: Session) -> None:
         try:
             full_w = client.api.get_workout_by_id(wid)
             steps_json = json.dumps(full_w.get("workoutSegments", []))
+        except GarminConnectTooManyRequestsError:
+            raise
         except Exception:
             logger.warning("Failed to fetch workout detail for id=%s ('%s')", wid, name, exc_info=True)
             steps_json = "[]"
@@ -433,7 +486,6 @@ def _sync_activities(session: Session, start: date, end: date) -> int:
         raise
         
     count = 0
-    consecutive_429 = 0
     for raw in raw_list or []:
         raw_dur = raw.get("duration")
         if raw_dur is None or float(raw_dur) <= 0:
@@ -442,16 +494,7 @@ def _sync_activities(session: Session, start: date, end: date) -> int:
         if act_id is None:
             continue
         if _is_strength(_g(raw, "activityType", "typeKey", default="") or ""):
-            while True:
-                try:
-                    _sync_exercise_sets(session, act_id)
-                    consecutive_429 = 0
-                    break
-                except GarminConnectTooManyRequestsError:
-                    consecutive_429 += 1
-                    if consecutive_429 >= 5:
-                        raise
-                    time.sleep(2)
+            _sync_exercise_sets(session, act_id)
         count += 1
     return count
 
@@ -497,8 +540,9 @@ def _sync_sleep(session, day: date) -> bool:
     return True
 
 
-def _sync_daily_health(session, day: date) -> None:
+def _sync_daily_health(session, day: date) -> bool:
     row = session.get(DailyHealth, day) or DailyHealth(day=day)
+    complete = True
 
     try:
         hrv = client.hrv(day)
@@ -511,6 +555,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("HRV fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         rhr = client.resting_hr(day)
@@ -523,6 +568,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Resting HR fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         stress = client.stress(day)
@@ -533,6 +579,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Stress fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         bb = client.body_battery(day, day)
@@ -552,6 +599,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Body battery fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         steps = client.daily_steps(day, day)
@@ -564,6 +612,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Steps fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         summary = client.user_summary(day)
@@ -577,6 +626,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         readiness_data = normalize_training_readiness(
@@ -591,6 +641,7 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Training readiness fetch failed for %s", day, exc_info=True)
+        complete = False
 
     try:
         status_data = client.training_status(day)
@@ -602,8 +653,10 @@ def _sync_daily_health(session, day: date) -> None:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Training status fetch failed for %s", day, exc_info=True)
+        complete = False
 
     session.add(row)
+    return complete
 
 
 # --- orchestration --------------------------------------------------------
@@ -837,6 +890,33 @@ def run_priority_sync() -> dict:
     return summary
 
 
+def _sync_resource_days(
+    session: Session, resource: str, start: date, today: date, sync_day, summary: dict
+) -> Optional[int]:
+    """Sync one daily resource in order, preserving its cursor at the first gap."""
+    completed = 0
+    day = start
+    while day <= today:
+        try:
+            if sync_day(session, day) is False:
+                summary["errors"].append(f"{resource} failed at {day}; it will retry from there.")
+                break
+            _advance_resource_cursor(session, resource, day)
+            completed += 1
+        except GarminConnectAuthenticationError:
+            raise
+        except GarminConnectTooManyRequestsError as exc:
+            until = _note_rate_limited(session)
+            summary["errors"].append(f"Rate limited on {resource} at {day}: {exc}")
+            summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+            return None
+        except Exception as exc:
+            summary["errors"].append(f"{resource} failed at {day}: {exc}")
+            break
+        day += timedelta(days=1)
+    return completed
+
+
 def run_sync(full: bool = False, force: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 
@@ -856,11 +936,15 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
             )
             return summary
 
-        last = _get_state(session, "last_sync_through")
+        resource_cursors = {
+            resource: _resource_cursor(session, resource)
+            for resource in _RESOURCE_CURSOR_KEYS
+        }
+        has_prior_progress = any(resource_cursors.values())
         if not full and not force:
             try:
                 preflight = _preflight(session)
-                if last and not preflight["device_changed"] and not preflight["activity_changed"]:
+                if has_prior_progress and not preflight["device_changed"] and not preflight["activity_changed"]:
                     summary["skipped"] = True
                     summary["reason"] = "No new Garmin device upload or activity since the last sync."
                     return summary
@@ -875,14 +959,13 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
             except Exception as e:
                 summary["errors"].append(f"Preflight: {e}")
 
-        if full or not last:
-            start = today - timedelta(days=config.INITIAL_BACKFILL_DAYS)
-        else:
-            # Re-sync the last few days too (data settles after the day ends).
-            start = datetime.strptime(last, "%Y-%m-%d").date() - timedelta(days=3)
+        activity_start = _resource_start(session, "activities", today, full)
+        sleep_start = _resource_start(session, "sleep", today, full)
+        health_start = _resource_start(session, "daily_health", today, full)
 
         try:
-            summary["activities"] = _sync_activities(session, start, today)
+            summary["activities"] = _sync_activities(session, activity_start, today)
+            _advance_resource_cursor(session, "activities", today)
         except GarminConnectTooManyRequestsError as e:
             until = _note_rate_limited(session)
             summary["errors"].append(f"Rate limited on activities: {e}")
@@ -909,60 +992,35 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
             except Exception as e:
                 summary["errors"].append(f"Workouts: {e}")
 
-        # Circuit breaker: if Garmin is rate-limiting, don't grind through 90
-        # days of doomed calls — abort fast with a clear message.
-        consecutive_429 = 0
-        aborted = False
-        last_completed_day = None
-        day = start
-        while day <= today:
-            try:
-                _sync_sleep(session, day)
-                _sync_daily_health(session, day)
-                summary["days"] += 1
-                consecutive_429 = 0
-                last_completed_day = day
-            except GarminConnectAuthenticationError as e:
-                if config.MULTI_USER_ENABLED:
-                    try:
-                        from tenant_context import current_tenant
-                        from sync.garmin_registry import get_garmin_registry
-                        tenant = current_tenant()
-                        if tenant:
-                            get_garmin_registry().evict(tenant.user_id)
-                    except Exception:
-                        pass
-                summary["skipped"] = True
-                summary["code"] = "authentication_required"
-                summary["errors"].append(
-                    "Garmin Connect session expired. Please re-authenticate your Garmin account."
-                )
+        try:
+            sleep_days = _sync_resource_days(
+                session, "sleep", sleep_start, today, _sync_sleep, summary
+            )
+            if sleep_days is None:
                 return summary
-            except GarminConnectTooManyRequestsError as e:
-                consecutive_429 += 1
-                summary["errors"].append(f"Rate limited at {day}: {e}")
-                if consecutive_429 >= 5:
-                    _note_rate_limited(session)
-                    summary["errors"].append(
-                        "Aborted: Garmin is rate-limiting your IP (429). Wait "
-                        "15–60 min, then click Sync now again. Already-synced "
-                        "days are saved; sync resumes where it left off."
-                    )
-                    aborted = True
-                    break
-                time.sleep(2)
-            except Exception as e:
-                # A real error on this day: record it but DON'T advance the
-                # high-water mark, so the day is retried on the next sync.
-                summary["errors"].append(f"{day}: {e}")
-            day += timedelta(days=1)
+            health_days = _sync_resource_days(
+                session, "daily_health", health_start, today, _sync_daily_health, summary
+            )
+            if health_days is None:
+                return summary
+            summary["days"] = max(sleep_days, health_days)
+        except GarminConnectAuthenticationError:
+            if config.MULTI_USER_ENABLED:
+                try:
+                    from tenant_context import current_tenant
+                    from sync.garmin_registry import get_garmin_registry
+                    tenant = current_tenant()
+                    if tenant:
+                        get_garmin_registry().evict(tenant.user_id)
+                except Exception:
+                    pass
+            summary["skipped"] = True
+            summary["code"] = "authentication_required"
+            summary["errors"].append(
+                "Garmin Connect session expired. Please re-authenticate your Garmin account."
+            )
+            return summary
 
-        # Only advance the high-water mark to what we actually synced, so an
-        # aborted sync resumes from the right place next time.
-        if aborted and last_completed_day:
-            _set_state(session, "last_sync_through", last_completed_day.isoformat())
-        elif not aborted:
-            _set_state(session, "last_sync_through", today.isoformat())
         # Only stamp "last synced" if real data came through, so a sync that
         # failed immediately doesn't look successful in the UI.
         if summary["activities"] or summary["days"]:
@@ -978,14 +1036,20 @@ def run_sync(full: bool = False, force: bool = False) -> dict:
                 preflight = _preflight(session)
             if summary["activities"] or summary["days"]:
                 _store_preflight_markers(session, preflight)
-            if last_completed_day == today:
+            if (
+                _resource_cursor(session, "sleep") == today
+                and _resource_cursor(session, "daily_health") == today
+            ):
                 _record_full_sync_freshness(
                     session,
                     today,
                     preflight.get("device_upload") if preflight else _get_state(session, "device_last_upload"),
                 )
-        except GarminConnectTooManyRequestsError:
-            _note_rate_limited(session)
+        except GarminConnectTooManyRequestsError as exc:
+            until = _note_rate_limited(session)
+            summary["errors"].append(f"Rate limited during Garmin preflight: {exc}")
+            summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+            return summary
         except Exception:
             pass
 
