@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import inspect
 import json
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytz
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -60,10 +60,13 @@ from account_routes import router as account_router
 from setup_routes import CONSENT_VERSION, router as setup_router
 from auth_service import resolve_web_session
 from control_db import (
+    IntegrationRoute,
     User,
+    calendar_feed_token_hash,
     canonicalize_categories,
     get_control_session,
     init_control_db,
+    valid_calendar_feed_token,
 )
 from tenant_context import TenantIdentity, tenant_scope
 
@@ -398,8 +401,8 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if config.MULTI_USER_ENABLED:
             path = request.url.path
-            public = ("/static", "/auth", "/invite", "/favicon", "/telegram/webhook")
-            if path.startswith(public):
+            public = ("/static", "/auth", "/invite", "/favicon", "/telegram/webhook", "/calendar/feed/")
+            if path == "/calendar/coach.ics" or path.startswith(public):
                 return await call_next(request)
             raw_session = request.cookies.get(MULTI_USER_SESSION_COOKIE, "")
             with get_control_session() as control_session:
@@ -2702,6 +2705,14 @@ def sysinfo():
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():
     """Serve an ICS calendar feed with all scheduled workout events."""
+    if config.MULTI_USER_ENABLED:
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(
+            "This calendar URL is no longer available. Generate a private subscription URL in Account settings.",
+            status_code=410,
+        )
+
     import pytz
     from fastapi.responses import Response
     from icalendar import Calendar, Event
@@ -2766,6 +2777,113 @@ def coach_calendar_feed():
             "Pragma": "no-cache",
             "Expires": "0"
         }
+    )
+
+
+def _planned_session_calendar(
+    sessions: list[PlannedSession], *, timezone_name: str | None
+) -> str:
+    """Render stable ICS events from the authoritative planned-session store."""
+    from icalendar import Calendar, Event
+
+    from time_utils import get_local_tz
+
+    local_tz = get_local_tz()
+    if timezone_name:
+        try:
+            local_tz = pytz.timezone(timezone_name)
+        except pytz.UnknownTimeZoneError:
+            pass
+    tz_name = getattr(local_tz, "zone", str(local_tz))
+    cal = Calendar()
+    cal.add("prodid", "-//GarminCoach//AI Workout//EN")
+    cal.add("version", "2.0")
+    cal.add("calscale", "GREGORIAN")
+    cal.add("method", "PUBLISH")
+    cal.add("x-wr-calname", "GarminCoach Workouts")
+    cal.add("x-wr-timezone", tz_name)
+
+    for planned in sessions:
+        try:
+            clock = datetime.strptime(planned.suggested_time or "18:30", "%H:%M").time()
+        except (TypeError, ValueError):
+            clock = time(18, 30)
+        start = local_tz.localize(datetime.combine(planned.target_date, clock))
+        duration = planned.duration_min if isinstance(planned.duration_min, int) else 60
+        end = start + timedelta(minutes=max(0, duration))
+        timestamp = planned.updated_at or planned.created_at
+        if timestamp is None:
+            timestamp = datetime.combine(planned.target_date, time.min)
+        if timestamp.tzinfo is None:
+            timestamp = pytz.utc.localize(timestamp)
+        else:
+            timestamp = timestamp.astimezone(pytz.utc)
+        uid_digest = hashlib.sha256(
+            f"garmincoach-planned-session-v1:{planned.id}".encode("ascii")
+        ).hexdigest()
+
+        event = Event()
+        event.add("summary", planned.title or "Workout")
+        event.add("description", "Scheduled by GarminCoach AI")
+        event.add("dtstart", start.astimezone(pytz.utc))
+        event.add("dtend", end.astimezone(pytz.utc))
+        event.add("dtstamp", timestamp)
+        event.add("uid", f"{uid_digest}@garmincoach")
+        event.add("status", "CONFIRMED")
+        cal.add_component(event)
+    return cal.to_ical().decode("utf-8")
+
+
+@app.get("/calendar/feed/{token}.ics")
+def private_coach_calendar_feed(token: str):
+    """Serve an unauthenticated, opaque-token calendar subscription."""
+    if not valid_calendar_feed_token(token):
+        raise HTTPException(status_code=404)
+    token_hash = calendar_feed_token_hash(token)
+    with get_control_session() as control_session:
+        resolved = (
+            control_session.query(User, IntegrationRoute)
+            .join(IntegrationRoute, IntegrationRoute.user_id == User.id)
+            .filter(IntegrationRoute.calendar_feed_token_hash == token_hash)
+            .filter(User.status == "active")
+            .one_or_none()
+        )
+        if resolved is None:
+            raise HTTPException(status_code=404)
+        user, route = resolved
+        if not hmac.compare_digest(route.calendar_feed_token_hash or "", token_hash):
+            raise HTTPException(status_code=404)
+        tenant = TenantIdentity(user.id, role=user.role, timezone=user.timezone)
+
+    with tenant_scope(tenant):
+        from time_utils import get_local_date
+
+        today = get_local_date()
+        with get_session() as session:
+            planned_sessions = (
+                session.query(PlannedSession)
+                .filter(PlannedSession.status == "approved")
+                .filter(PlannedSession.target_date >= today - timedelta(days=7))
+                .filter(PlannedSession.target_date <= today + timedelta(days=90))
+                .order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id)
+                .all()
+            )
+        ics_content = _planned_session_calendar(
+            planned_sessions, timezone_name=tenant.timezone
+        )
+
+    from fastapi.responses import Response
+
+    return Response(
+        content=ics_content,
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": "inline; filename=coach.ics",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Referrer-Policy": "no-referrer",
+        },
     )
 
 

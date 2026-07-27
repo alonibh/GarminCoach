@@ -14,7 +14,16 @@ import config
 from auth_routes import SESSION_COOKIE
 from auth_service import issue_invitation
 from coach.calendar import calendar_feed_record, test_calendar_url
-from control_db import AuditEvent, Invitation, User, get_control_session, utcnow
+from control_db import (
+    AuditEvent,
+    IntegrationRoute,
+    Invitation,
+    User,
+    calendar_feed_token_hash,
+    generate_calendar_feed_token,
+    get_control_session,
+    utcnow,
+)
 from secret_vault import UserSecretVault
 from sync.garmin_registry import get_garmin_registry
 from sync.scheduler import refresh_user_jobs
@@ -49,6 +58,7 @@ def _settings_context(
     telegram_command: str | None = None,
     error: str | None = None,
     success: str | None = None,
+    outbound_calendar_url: str | None = None,
 ):
     with get_control_session() as session:
         users = session.query(User).order_by(User.created_at).all() if user.role == "owner" and config.MULTI_USER_ENABLED else []
@@ -56,6 +66,7 @@ def _settings_context(
             session.query(Invitation).order_by(Invitation.created_at.desc()).all()
             if user.role == "owner" and config.MULTI_USER_ENABLED else []
         )
+        route = session.get(IntegrationRoute, user.id) if config.MULTI_USER_ENABLED else None
     try:
         vault_values = UserSecretVault().read(user.id)
     except Exception:
@@ -87,6 +98,10 @@ def _settings_context(
         "success": success,
         "max_invited_users": config.MAX_INVITED_USERS,
         "telegram_bot_username": config.TELEGRAM_BOT_USERNAME,
+        "has_outbound_calendar_subscription": bool(
+            route and route.calendar_feed_token_hash
+        ),
+        "outbound_calendar_url": outbound_calendar_url,
     }
 
 
@@ -94,6 +109,8 @@ def _settings_context(
 def account_settings(request: Request):
     status = request.query_params.get("calendar_status", "")
     success = "Calendar removed successfully." if status == "removed" else None
+    if status == "subscription_revoked":
+        success = "Your private calendar subscription URL was revoked."
     if status == "added":
         try:
             event_count = max(0, min(999, int(request.query_params.get("events", "0"))))
@@ -110,6 +127,55 @@ def account_settings(request: Request):
         ),
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _outbound_calendar_url(token: str) -> str:
+    """Build a subscription URL from trusted server configuration, not Host."""
+    parsed = urlsplit(config.GOOGLE_REDIRECT_URI)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise RuntimeError("GOOGLE_REDIRECT_URI must use an HTTPS public origin")
+    return f"{parsed.scheme}://{parsed.netloc}/calendar/feed/{token}.ics"
+
+
+@router.post("/calendar-subscription/generate", response_class=HTMLResponse)
+def generate_calendar_subscription(request: Request):
+    if disabled := _disabled():
+        return disabled
+    user = _current_user(request)
+    token = generate_calendar_feed_token()
+    with get_control_session() as session:
+        route = session.get(IntegrationRoute, user.id)
+        if route is None:
+            route = IntegrationRoute(user_id=user.id)
+            session.add(route)
+        route.calendar_feed_token_hash = calendar_feed_token_hash(token)
+        route.updated_at = utcnow()
+    return templates.TemplateResponse(
+        request,
+        "account.html",
+        _settings_context(
+            user,
+            success=(
+                "Your private calendar subscription URL is ready. Store it now; "
+                "it cannot be shown again."
+            ),
+            outbound_calendar_url=_outbound_calendar_url(token),
+        ),
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@router.post("/calendar-subscription/revoke")
+def revoke_calendar_subscription(request: Request):
+    if disabled := _disabled():
+        return disabled
+    user = _current_user(request)
+    with get_control_session() as session:
+        route = session.get(IntegrationRoute, user.id)
+        if route is not None:
+            route.calendar_feed_token_hash = None
+            route.updated_at = utcnow()
+    return RedirectResponse("/account?calendar_status=subscription_revoked", status_code=303)
 
 
 @router.post("/calendar")

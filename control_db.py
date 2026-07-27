@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import re
+import secrets
 from pathlib import Path
 from typing import Iterator, Optional
 from uuid import uuid4
@@ -147,6 +149,24 @@ class IntegrationRoute(ControlBase):
     )
 
 
+_CALENDAR_FEED_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{43}")
+
+
+def generate_calendar_feed_token() -> str:
+    """Return an opaque 256-bit token suitable for an outbound ICS URL."""
+    return secrets.token_urlsafe(32)
+
+
+def valid_calendar_feed_token(token: str) -> bool:
+    """Accept only the exact URL-safe encoding generated for feed tokens."""
+    return bool(isinstance(token, str) and _CALENDAR_FEED_TOKEN_RE.fullmatch(token))
+
+
+def calendar_feed_token_hash(token: str) -> str:
+    """Return the persisted representation of an outbound ICS token."""
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
 class TelegramLinkTicket(ControlBase):
     __tablename__ = "telegram_link_tickets"
 
@@ -221,7 +241,11 @@ def get_control_engine() -> Engine:
 
 
 def init_control_db(engine: Engine | None = None) -> None:
-    ControlBase.metadata.create_all(engine or get_control_engine())
+    target = engine or get_control_engine()
+    ControlBase.metadata.create_all(target)
+    from control_db_migration import run_control_migrations
+
+    run_control_migrations(target)
 
 
 def dispose_control_engine() -> None:
