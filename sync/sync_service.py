@@ -645,6 +645,29 @@ def _sync_sleep(session, day: date) -> bool:
     return True
 
 
+def _parse_daily_summary(payload: object) -> tuple[dict[str, float | int], set[str]] | None:
+    """Return verified daily-summary values plus represented metric families."""
+    if not isinstance(payload, dict):
+        return None
+    values: dict[str, float | int] = {}
+    families: set[str] = set()
+    groups = {
+        "resting_hr": (("restingHeartRate", "resting_hr"),),
+        "stress": (("averageStressLevel", "stress_avg"),),
+        "steps": (("totalSteps", "steps"), ("dailyStepGoal", "step_goal")),
+        "body_battery": (("bodyBatteryHighestValue", "body_battery_high"), ("bodyBatteryLowestValue", "body_battery_low")),
+        "calories": (("totalKilocalories", "total_kcal"), ("activeKilocalories", "active_kcal"), ("bmrKilocalories", "bmr_kcal")),
+    }
+    for family, pairs in groups.items():
+        if any(key in payload for key, _ in pairs):
+            families.add(family)
+        for key, field in pairs:
+            value = payload.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values[field] = value
+    return values, families
+
+
 def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> bool:
     row = session.get(DailyHealth, day) or DailyHealth(day=day)
     complete = True
@@ -662,75 +685,49 @@ def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> 
         logger.warning("HRV fetch failed for %s", day, exc_info=True)
         complete = False
 
-    try:
-        rhr = client.resting_hr(day)
-        vals = _g(rhr, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE", default=[])
-        if vals:
-            row.resting_hr = vals[0].get("value")
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Resting HR fetch failed for %s", day, exc_info=True)
-        complete = False
-
-    try:
-        stress = client.stress(day)
-        row.stress_avg = stress.get("avgStressLevel")
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Stress fetch failed for %s", day, exc_info=True)
-        complete = False
-
-    try:
-        bb = client.body_battery(day, day)
-        if bb:
-            levels = [
-                v[1]
-                for v in (_g(bb[0], "bodyBatteryValuesArray", default=[]) or [])
-                if isinstance(v, list) and len(v) > 1 and v[1] is not None
-            ]
-            if levels:
-                row.body_battery_high = max(levels)
-                row.body_battery_low = min(levels)
-                row.body_battery_current = levels[-1]  # most recent reading
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Body battery fetch failed for %s", day, exc_info=True)
-        complete = False
-
-    try:
-        steps = client.daily_steps(day, day)
-        if steps:
-            row.steps = steps[0].get("totalSteps")
-            row.step_goal = steps[0].get("stepGoal")
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Steps fetch failed for %s", day, exc_info=True)
-        complete = False
-
+    represented: set[str] = set()
     try:
         summary = client.user_summary(day)
-        if summary:
-            row.total_kcal = summary.get("totalKilocalories")
-            row.active_kcal = summary.get("activeKilocalories")
-            row.bmr_kcal = summary.get("bmrKilocalories")
+        parsed = _parse_daily_summary(summary)
+        if parsed is None:
+            complete = False
+        else:
+            values, represented = parsed
+            for field, value in values.items():
+                setattr(row, field, value)
     except GarminConnectTooManyRequestsError:
         raise
     except Exception as exc:
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
+        complete = False
+
+    try:
+        if "resting_hr" not in represented:
+            rhr = client.resting_hr(day)
+            vals = _g(rhr, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE", default=[])
+            if vals:
+                row.resting_hr = vals[0].get("value")
+        if "stress" not in represented:
+            stress = client.stress(day)
+            row.stress_avg = stress.get("avgStressLevel")
+        if "body_battery" not in represented:
+            bb = client.body_battery(day, day)
+            if bb:
+                levels = [v[1] for v in (_g(bb[0], "bodyBatteryValuesArray", default=[]) or []) if isinstance(v, list) and len(v) > 1 and v[1] is not None]
+                if levels:
+                    row.body_battery_high, row.body_battery_low, row.body_battery_current = max(levels), min(levels), levels[-1]
+        if "steps" not in represented:
+            steps = client.daily_steps(day, day)
+            if steps:
+                row.steps, row.step_goal = steps[0].get("totalSteps"), steps[0].get("stepGoal")
+    except GarminConnectTooManyRequestsError:
+        raise
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+        logger.warning("Daily health fallback failed for %s", day, exc_info=True)
         complete = False
 
     # Readiness and status are current-only facts.  Historical wellness sync

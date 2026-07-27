@@ -88,12 +88,24 @@ def test_daily_stats_hrv_and_body_battery_contracts_parse(session, monkeypatch):
     assert health.stress_avg == 24
     assert health.body_battery_low == 36
     assert health.body_battery_high == 74
-    assert health.body_battery_current == 61
+    assert health.body_battery_current is None
     assert health.steps == 6543
     assert health.step_goal == 10000
     assert health.total_kcal == 2180
     assert health.active_kcal == 480
     assert health.bmr_kcal == 1700
+
+
+def test_daily_summary_parser_uses_key_presence_and_preserves_nulls():
+    parsed = sync_service._parse_daily_summary({
+        "restingHeartRate": None, "averageStressLevel": 0,
+        "totalSteps": 0, "dailyStepGoal": None,
+        "bodyBatteryHighestValue": 0, "bodyBatteryLowestValue": None,
+    })
+    assert parsed is not None
+    values, families = parsed
+    assert families == {"resting_hr", "stress", "steps", "body_battery"}
+    assert values == {"stress_avg": 0, "steps": 0, "body_battery_high": 0}
 
 
 def test_sleep_contract_parses(session, monkeypatch):
