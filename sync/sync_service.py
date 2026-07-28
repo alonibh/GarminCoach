@@ -1552,7 +1552,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
 
     Returns a summary dict for display in the UI.
     """
-    today = date.today()
+    today = _local_today()
     summary = {"activities": 0, "program_matches": 0, "days": 0, "errors": [], "skipped": False}
     preflight = None
 
@@ -1755,7 +1755,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
     try:
         with get_session() as session:
             from db import DailyMetrics
-            metrics = session.query(DailyMetrics).filter_by(day=date.today()).first()
+            metrics = session.query(DailyMetrics).filter_by(day=_local_today()).first()
             if metrics:
                 from notify.rules import check_and_notify_rules
                 check_and_notify_rules(metrics)

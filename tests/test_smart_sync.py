@@ -843,3 +843,76 @@ def test_exercise_set_sync_protects_edited_rows_and_returns_success(session, mon
 
     assert svc._sync_exercise_sets(session, 1) is True
     assert session.query(ExerciseSet).filter_by(activity_id=1, set_index=0).one().exercise_name == "Edited"
+
+
+def test_run_sync_uses_local_today_for_regular_resource_windows(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    local_today = date(2026, 7, 5)
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        _state(session, key, (local_today - timedelta(days=3)).isoformat())
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    monkeypatch.setattr(svc, "_local_today", lambda: local_today)
+    activity_windows, sleep_days, health_days = [], [], []
+    monkeypatch.setattr(svc, "_sync_activities", lambda _s, start, end: activity_windows.append((start, end)) or 0)
+    monkeypatch.setattr(svc, "_sync_sleep", lambda _s, day: sleep_days.append(day) or True)
+    monkeypatch.setattr(svc, "_sync_daily_health_core", lambda _s, day, **_k: health_days.append(day) or (True, False, False))
+    monkeypatch.setattr(svc, "_workouts_due", lambda *_: False)
+
+    svc.run_sync(force=True)
+
+    # The existing three-day overlap is retained; only the window endpoint
+    # changes from the machine date to the athlete-local date.
+    assert activity_windows == [(local_today - timedelta(days=6), local_today)]
+    assert sleep_days[-1] == local_today
+    assert health_days[-1] == local_today
+
+
+def test_daily_health_current_optional_is_limited_to_local_today(session, monkeypatch):
+    local_today = date(2026, 7, 5)
+    monkeypatch.setattr(svc, "_local_today", lambda: local_today)
+    monkeypatch.setattr(svc.client, "hrv", lambda _day: {})
+    monkeypatch.setattr(svc.client, "user_summary", lambda _day: {
+        "restingHeartRate": 50, "averageStressLevel": 20, "totalSteps": 1,
+        "dailyStepGoal": 1000, "bodyBatteryHighestValue": 80, "bodyBatteryLowestValue": 20,
+    })
+    optional_days = []
+    monkeypatch.setattr(svc, "_sync_current_optional_health", lambda _s, day, _row: optional_days.append(day))
+
+    assert svc._sync_daily_health_window(
+        session, local_today - timedelta(days=1), local_today, current_optional=True,
+    ) == (2, None)
+    assert optional_days == [local_today]
+
+
+def test_scheduled_weekly_slow_metrics_uses_local_sync_anchor(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    local_today = date(2026, 7, 5)
+    monkeypatch.setattr(svc, "_local_today", lambda: local_today)
+    _state(session, "stage1_bootstrap_complete", "complete")
+    _state(session, "last_weekly_slow_metrics_at", (local_today - timedelta(days=7)).isoformat())
+    for key in svc._RESOURCE_CURSOR_KEYS.values():
+        _state(session, key, local_today.isoformat())
+    monkeypatch.setattr(svc, "_preflight", lambda *_: {"device_changed": False, "activity_changed": False, "device_upload": None})
+    monkeypatch.setattr(svc, "_run_stage2_summary_backfill", lambda *_: False)
+    calls = []
+    monkeypatch.setattr(svc, "_run_weekly_slow_metrics", lambda _s, day: calls.append(day))
+
+    summary = svc.run_sync(allow_backfill=True)
+
+    assert summary["skipped"] is True
+    assert calls == [local_today]
+
+
+def test_stage1_local_window_remains_exactly_seven_days(session, monkeypatch):
+    local_today = date(2026, 7, 5)
+    monkeypatch.setattr(svc.client, "device_last_used", lambda: {})
+    monkeypatch.setattr(svc, "_sync_sleep", lambda *_: True)
+    monkeypatch.setattr(svc.client, "training_readiness", lambda *_: {})
+    windows = []
+    monkeypatch.setattr(svc, "_sync_daily_health_window", lambda _s, start, end, **_k: windows.append((start, end)) or (7, None))
+    monkeypatch.setattr(svc, "_sync_activities", lambda *_a, **_k: 0)
+    monkeypatch.setattr(svc.client, "fitness_age", lambda *_: {})
+
+    assert svc._sync_stage1(session, local_today, {"activities": 0, "days": 0, "errors": []}) is True
+    assert windows == [(local_today - timedelta(days=6), local_today)]
