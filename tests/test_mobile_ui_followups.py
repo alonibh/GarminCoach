@@ -78,12 +78,17 @@ def test_mobile_exercise_and_program_state_contracts_are_explicit():
 
 def test_final_mobile_target_and_warmup_controls_are_flexible():
     css = (ROOT / "static" / "ui.css").read_text(encoding="utf-8")
-    final_mobile = css[css.rfind("/* Keep target controls shrinkable") :]
+    final_mobile = css[css.rfind("/* Final authoritative mobile Target-control rendering rules.") :]
 
-    assert ".target-field .target-control { display: grid !important" in final_mobile
-    assert "minmax(3.4rem, .72fr)" in final_mobile
-    assert ".target-field .target-select, .exercise-row .target-field .ex-target { width: 100% !important; min-width: 0 !important" in final_mobile
+    assert ".exercise-row:not(.is-timed) .target-field .target-control" in final_mobile
+    assert "grid-template-columns: minmax(0, 1fr) minmax(3rem, .65fr) !important" in final_mobile
+    assert ".exercise-row.is-timed .target-field .target-control" in final_mobile
+    assert "minmax(5rem, 1fr) minmax(3.5rem, .7fr) auto !important" in final_mobile
+    assert ".target-field .target-control select { box-sizing: border-box; width: 100% !important; min-width: 0 !important" in final_mobile
+    assert "padding-right: 1.2rem !important" in final_mobile
     assert "grid-template-columns: minmax(0, 1.45fr) minmax(5.25rem, .75fr)" in final_mobile
     assert "column-gap: 1rem" in final_mobile
-    assert "warmup-target .target-control { display: grid !important" in final_mobile
-    assert "minmax(3.4rem, .7fr)" in final_mobile
+    assert ".exercise-row:not(.warmup-is-timed) .warmup-target .target-control" in final_mobile
+    assert ".exercise-row.warmup-is-timed .warmup-target .target-control" in final_mobile
+    assert ".warmup-target .target-control select { box-sizing: border-box; width: 100% !important; min-width: 0 !important" in final_mobile
+    assert "flex: none !important" in final_mobile

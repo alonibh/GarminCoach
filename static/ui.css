@@ -970,13 +970,18 @@ textarea { min-height: 110px; }
   .exercise-row.warmup-is-timed .warmup-weight { display: none; }
 }
 
-/* Keep target controls shrinkable inside their final mobile grid areas. */
+/* Final authoritative mobile Target-control rendering rules. */
 @media (max-width: 640px) {
   .exercise-row .target-field { min-width: 0; max-width: 100%; align-items: stretch; }
-  .exercise-row .target-field .target-control { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(3.4rem, .72fr) auto; gap: .35rem !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
-  .exercise-row .target-field .target-select, .exercise-row .target-field .ex-target { width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; }
+  .exercise-row:not(.is-timed) .target-field .target-control { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(3rem, .65fr) !important; column-gap: .35rem !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  .exercise-row:not(.is-timed) .target-field .target-unit:empty { display: none; }
+  .exercise-row.is-timed .target-field .target-control { grid-template-columns: minmax(5rem, 1fr) minmax(3.5rem, .7fr) auto !important; }
+  .exercise-row .target-field .target-control select { box-sizing: border-box; width: 100% !important; min-width: 0 !important; max-width: 100% !important; padding-left: .45rem !important; padding-right: 1.2rem !important; font-size: .8rem; white-space: nowrap; }
   .exercise-row .warmup-inputs { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(5.25rem, .75fr); column-gap: 1rem; row-gap: .65rem; align-items: end; min-width: 0; width: 100%; }
   .exercise-row .warmup-target, .exercise-row .warmup-weight { min-width: 0; max-width: 100%; }
-  .exercise-row .warmup-target .target-control { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(3.4rem, .7fr) auto; gap: .35rem !important; width: 100% !important; min-width: 0 !important; }
-  .exercise-row .warmup-target .target-select, .exercise-row .warmup-target .ex-warmup-target, .exercise-row .warmup-weight .ex-warmup-weight { width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; }
+  .exercise-row:not(.warmup-is-timed) .warmup-target .target-control { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(3rem, .65fr) !important; column-gap: .4rem !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  .exercise-row:not(.warmup-is-timed) .warmup-target-unit:empty { display: none; }
+  .exercise-row.warmup-is-timed .warmup-target .target-control { grid-template-columns: minmax(5rem, 1fr) minmax(3.5rem, .7fr) auto !important; }
+  .exercise-row .warmup-target .target-control select { box-sizing: border-box; width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; padding-left: .45rem !important; padding-right: 1.2rem !important; font-size: .8rem !important; white-space: nowrap; }
+  .exercise-row .warmup-target .ex-warmup-target { box-sizing: border-box; width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
 }
