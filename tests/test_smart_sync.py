@@ -261,7 +261,7 @@ def test_successful_resources_advance_independent_cursors(session, monkeypatch):
     _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     monkeypatch.setattr(svc, "_sync_activities", lambda *args: 2)
     monkeypatch.setattr(svc, "_sync_sleep", lambda *args: True)
-    monkeypatch.setattr(svc, "_sync_daily_health", lambda *args: True)
+    monkeypatch.setattr(svc, "_sync_daily_health_core", lambda *args, **kwargs: (True, False, False))
 
     summary = svc.run_sync(force=True)
 
@@ -280,7 +280,7 @@ def test_activity_failure_does_not_block_sleep_or_health_cursors(session, monkey
     _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     monkeypatch.setattr(svc, "_sync_activities", lambda *args: (_ for _ in ()).throw(RuntimeError("activity failed")))
     monkeypatch.setattr(svc, "_sync_sleep", lambda *args: True)
-    monkeypatch.setattr(svc, "_sync_daily_health", lambda *args: True)
+    monkeypatch.setattr(svc, "_sync_daily_health_core", lambda *args, **kwargs: (True, False, False))
 
     svc.run_sync(force=True)
 
@@ -300,13 +300,13 @@ def test_first_429_stops_remaining_calls_and_preserves_partial_resource_progress
     monkeypatch.setattr(svc, "_sync_sleep", lambda *args: True)
     health_calls = []
 
-    def fail_on_first_new_health_day(_session, day):
+    def fail_on_first_new_health_day(_session, day, **_kwargs):
         health_calls.append(day)
         if day == today - timedelta(days=1):
             raise GarminConnectTooManyRequestsError("too many")
-        return True
+        return True, False, False
 
-    monkeypatch.setattr(svc, "_sync_daily_health", fail_on_first_new_health_day)
+    monkeypatch.setattr(svc, "_sync_daily_health_core", fail_on_first_new_health_day)
 
     summary = svc.run_sync(force=True)
 

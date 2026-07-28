@@ -16,31 +16,31 @@ Updated 2026-07-27. The approved target metric and sync policy is
 - [x] Retired custom readiness and limited ACWR to descriptive UI use.
 - [x] Approved Phase 1 metric authority, sync windows, and product surfaces.
 
-## Next — Phase 2A: Garmin compatibility and contract safety
+## Phase 2A: Garmin compatibility and contract safety — complete
 
-This is the next Codex task. It must not refactor sync or alter coaching behavior.
+Compatibility/runtime closure is complete; Phase 3 product work remains intentionally unstarted.
 
-- [ ] Record production Python and installed `garminconnect` versions.
-- [ ] Move the supported runtime to Python 3.12.
-- [ ] Pin and test `garminconnect[typed]==0.3.7`.
-- [ ] Verify encrypted token restore, fresh login, MFA resume, token refresh, and
-  the expected one-time reauthentication for pre-0.3 tokens.
-- [ ] Add sanitized fixtures/contract tests for daily stats, sleep, HRV, Body
-  Battery, Training Readiness, Recovery Time, activities, body composition,
-  Fitness Age, VO2 max, and Training Status.
-- [ ] Fix Training Readiness snapshot selection behind a stable GarminCoach adapter.
-- [ ] Evaluate upstream strength helpers, exercise catalog, and `update_workout`
-  without replacing curated GarminCoach program policy.
-- [ ] Run the complete test suite and provide a compatibility report before deployment.
+- [x] Supported runtime is Python 3.12 and requirements pin
+  `garminconnect[typed]==0.3.7`.
+- [x] Encrypted token restore, fresh login, MFA resume, token refresh, and the
+  one-time reauthentication path for pre-0.3 tokens are covered by code and tests.
+- [x] Sanitized contract fixtures cover implemented daily stats, sleep, HRV,
+  Body Battery, Training Readiness, activities, Fitness Age, VO2 max, and
+  Training Status adapters; Training Readiness selection is normalized behind the
+  GarminCoach adapter.
+- [x] Upstream strength/workout compatibility was evaluated without replacing
+  curated GarminCoach program policy.
+- [x] Compatibility and regression suites cover the supported runtime contracts.
 
-**Gate:** existing production behavior remains unchanged and all required payload
-shapes are covered by fixtures.
+Account-specific Recovery Time and body-composition payload capability remains
+unknown and is intentionally not claimed as product support. Their product work
+remains in Phase 3.
 
 ## Phase 2B: Resource-aware sync foundation
 
 - [x] Replace the global sync cursor with per-resource cursors.
 - [x] Track bounded Stage 2 summary gaps (sleep, daily health, and activity
-  summaries); strength-detail completion and the remaining Phase 2B work remain.
+  summaries), including the bounded strength-detail completion journal.
 - [x] Implement the bounded Stage 1 usable bootstrap (device/capability,
   current recovery facts, seven wellness days, 30 activity days, ten strength
   details, and current slow metrics).
@@ -48,15 +48,15 @@ shapes are covered by fixtures.
   90 activity-summary days).
 - [x] Complete bounded scheduled Stage 2 strength-detail backfill (fixed latest
   20 eligible strength activities within the Stage 2 90-day window).
-- [ ] Prefer combined/range endpoints over per-day duplicate requests.
+- [x] Prefer combined/range endpoints over per-day duplicate requests.
 - [x] Add endpoint telemetry.
 - [x] Immediately circuit-break low-priority Garmin work on the first 429.
 - [x] Make general activity enrichment explicit and new/incomplete-activity only.
 - [x] Remove all ordinary UI-triggered Garmin calls.
 - [x] Make manual sync current/incremental rather than a full rebuild.
 
-**Gate:** a fresh database becomes usable quickly, resumes safely after failure,
-and never restarts a monolithic 90-day health crawl.
+**Complete:** Phase 2 is complete. A fresh database becomes usable quickly,
+resumes safely after failure, and never restarts a monolithic 90-day health crawl.
 
 ## Phase 3: Approved metrics and recovery flow
 

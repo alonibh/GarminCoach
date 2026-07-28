@@ -1,6 +1,6 @@
 # GarminCoach Metric and Sync Policy
 
-**Status:** Approved Phase 1 target policy  
+**Status:** Approved policy; Phase 2 sync foundation complete
 **Approved:** 2026-07-27  
 **Scope:** Product behavior and synchronization target. Runtime code may still differ until later phases are implemented.
 
@@ -219,7 +219,7 @@ Garmin consumer endpoints are unofficial and have no dependable published quota.
 
 ## 9. Garmin package target
 
-The next implementation phase should test and then pin `garminconnect[typed]==0.3.7` with Python 3.12.
+Phase 2 tested and pinned `garminconnect[typed]==0.3.7` with Python 3.12.
 
 Useful capabilities include typed responses for core read endpoints, stronger authentication/token refresh, transient-error retries, strength-workout helpers, an exercise catalog, workout updates, and explicit device push support.
 

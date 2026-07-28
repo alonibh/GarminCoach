@@ -62,6 +62,7 @@ _STAGE2_STRENGTH_COMPLETE = "stage2_strength_backfill_complete"
 _STAGE2_WELLNESS_DAYS = 28
 _STAGE2_ACTIVITY_DAYS = 90
 _STAGE2_ACTIVITY_CHUNK_DAYS = 30
+_WEEKLY_SLOW_METRICS = "last_weekly_slow_metrics_at"
 
 
 def _activity_completion_key(kind: str, activity_id: int) -> str:
@@ -140,6 +141,10 @@ def _parse_state_date(value: Optional[str]) -> Optional[date]:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _local_today() -> date:
+    return datetime.now(get_local_tz()).date()
 
 
 def _resource_cursor(session: Session, resource: str) -> Optional[date]:
@@ -582,6 +587,7 @@ def _sync_activities(
         
     count = 0
     strength_ids: list[tuple[datetime, int]] = []
+    observed_vo2: list[tuple[str, float]] = []
     for raw in raw_list or []:
         raw_dur = raw.get("duration")
         if raw_dur is None or float(raw_dur) <= 0:
@@ -592,16 +598,24 @@ def _sync_activities(
         if _is_strength(_g(raw, "activityType", "typeKey", default="") or ""):
             when = _parse_dt(raw.get("startTimeLocal") or raw.get("startTimeGMT")) or datetime.min
             strength_ids.append((when, act_id))
-        if vo2_values is not None and raw.get("vO2MaxValue") is not None:
-            try:
-                value_date = date.fromisoformat((raw.get("startTimeLocal") or "")[:10]).isoformat()
-                vo2_values.append((value_date, round(float(raw["vO2MaxValue"]), 1)))
-            except (TypeError, ValueError):
-                pass
+        value = _finite_number(raw.get("vO2MaxValue"))
+        try:
+            value_date = date.fromisoformat((raw.get("startTimeLocal") or "")[:10]).isoformat()
+        except (TypeError, ValueError):
+            value_date = None
+        if value is not None and value_date is not None:
+            observed_vo2.append((value_date, float(value)))
+            if vo2_values is not None:
+                vo2_values.append((value_date, float(value)))
         count += 1
     if enrich:
         for _, act_id in sorted(strength_ids, reverse=True)[:strength_limit]:
             _sync_exercise_sets(session, act_id)
+    # Stage 1 records its resumable activity marker separately.  Every other
+    # normal activity window updates the local snapshot without another Garmin
+    # read, and forward-only history rejects older overlap observations.
+    if vo2_values is None and observed_vo2:
+        _record_snapshot(session, "vo2max", *max(observed_vo2))
     return count
 
 
@@ -671,7 +685,21 @@ def _parse_daily_summary(payload: object) -> tuple[dict[str, float | int], set[s
     return values, families
 
 
-def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> bool:
+def _finite_number(value: object) -> float | int | None:
+    """Return a Garmin numeric value without accepting booleans or coercions."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return None
+
+
+def _sync_daily_health_core(session, day: date, *, current_optional: bool = True) -> tuple[bool, bool, bool]:
+    """Run the mandatory per-day work and report range fallback requirements.
+
+    Range reads deliberately live outside this core so a multi-day window never
+    spends one request per day for steps or Body Battery.
+    """
     row = session.get(DailyHealth, day) or DailyHealth(day=day)
     complete = True
 
@@ -730,40 +758,164 @@ def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> 
                 raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
             logger.warning("Stress fallback failed for %s", day, exc_info=True)
             complete = False
-    if "body_battery" not in represented:
-        try:
-            bb = client.body_battery(day, day)
-            if bb:
-                levels = [v[1] for v in (_g(bb[0], "bodyBatteryValuesArray", default=[]) or []) if isinstance(v, list) and len(v) > 1 and v[1] is not None]
-                if levels:
-                    row.body_battery_high, row.body_battery_low, row.body_battery_current = max(levels), min(levels), levels[-1]
-        except GarminConnectTooManyRequestsError:
-            raise
-        except Exception as exc:
-            if _is_auth_error(exc):
-                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-            logger.warning("Body battery fallback failed for %s", day, exc_info=True)
-            complete = False
-    if "steps" not in represented:
-        try:
-            steps = client.daily_steps(day, day)
-            if steps:
-                row.steps, row.step_goal = steps[0].get("totalSteps"), steps[0].get("stepGoal")
-        except GarminConnectTooManyRequestsError:
-            raise
-        except Exception as exc:
-            if _is_auth_error(exc):
-                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-            logger.warning("Steps fallback failed for %s", day, exc_info=True)
-            complete = False
-
     # Readiness and status are current-only facts.  Historical wellness sync
     # deliberately never calls either endpoint.
-    if current_optional:
+    if current_optional and day == _local_today():
         _sync_current_optional_health(session, day, row)
 
     session.add(row)
-    return complete
+    return complete, "steps" not in represented, "body_battery" not in represented
+
+
+def _range_chunks(days: list[date]) -> list[tuple[date, date]]:
+    """Return de-duplicated contiguous Garmin ranges, capped at 28 days."""
+    ordered = sorted(set(days))
+    if not ordered:
+        return []
+    chunks: list[tuple[date, date]] = []
+    start = end = ordered[0]
+    for day in ordered[1:]:
+        if day != end + timedelta(days=1) or (day - start).days >= 28:
+            chunks.append((start, end))
+            start = day
+        end = day
+    chunks.append((start, end))
+    return chunks
+
+
+def _range_entries(payload: object, requested: set[date], key: str) -> dict[date, dict]:
+    """Map a valid list response to requested dates; last duplicate wins.
+
+    The upstream service occasionally repeats a day while a record settles.
+    Selecting the final response-order entry is deterministic and ensures the
+    latest returned representation is used without assigning malformed rows.
+    """
+    if not isinstance(payload, list):
+        raise ValueError("invalid range response shape")
+    mapped: dict[date, dict] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        raw_day = item.get(key)
+        if not isinstance(raw_day, str):
+            continue
+        try:
+            item_day = date.fromisoformat(raw_day[:10])
+        except ValueError:
+            continue
+        if item_day in requested:
+            mapped[item_day] = item
+    return mapped
+
+
+def _apply_steps_range(session: Session, days: list[date]) -> set[date]:
+    """Resolve every requested day on a valid response, including no-data."""
+    resolved: set[date] = set()
+    for start, end in _range_chunks(days):
+        requested = {start + timedelta(days=n) for n in range((end - start).days + 1)}
+        try:
+            entries = _range_entries(client.daily_steps(start, end), requested, "calendarDate")
+        except GarminConnectTooManyRequestsError:
+            raise
+        except Exception as exc:
+            if _is_auth_error(exc):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+            logger.warning("Steps range fallback failed for %s through %s", start, end, exc_info=True)
+            continue
+        for day in requested:
+            item = entries.get(day)
+            if item is not None:
+                row = session.get(DailyHealth, day) or DailyHealth(day=day)
+                steps, goal = _finite_number(item.get("totalSteps")), _finite_number(item.get("stepGoal"))
+                if steps is not None:
+                    row.steps = steps
+                if goal is not None:
+                    row.step_goal = goal
+                session.add(row)
+            resolved.add(day)
+    return resolved
+
+
+def _apply_body_battery_range(session: Session, days: list[date]) -> set[date]:
+    """Resolve every requested day on a valid response, preserving no-data."""
+    resolved: set[date] = set()
+    for start, end in _range_chunks(days):
+        requested = {start + timedelta(days=n) for n in range((end - start).days + 1)}
+        try:
+            entries = _range_entries(client.body_battery(start, end), requested, "date")
+        except GarminConnectTooManyRequestsError:
+            raise
+        except Exception as exc:
+            if _is_auth_error(exc):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+            logger.warning("Body Battery range fallback failed for %s through %s", start, end, exc_info=True)
+            continue
+        for day in requested:
+            item = entries.get(day)
+            if item is not None:
+                samples = item.get("bodyBatteryValuesArray")
+                values = [
+                    value for sample in samples if isinstance(sample, list) and len(sample) > 1
+                    if (value := _finite_number(sample[1])) is not None
+                ] if isinstance(samples, list) else []
+                if values:
+                    row = session.get(DailyHealth, day) or DailyHealth(day=day)
+                    row.body_battery_high = max(values)
+                    row.body_battery_low = min(values)
+                    row.body_battery_current = values[-1]
+                    session.add(row)
+            resolved.add(day)
+    return resolved
+
+
+def _sync_daily_health_window(
+    session: Session, start: date, end: date, *, current_optional: bool = True,
+) -> tuple[int, date | None]:
+    """Sync a daily-health window and advance only its resolved prefix."""
+    candidates: list[tuple[date, bool, bool]] = []
+    day = start
+    try:
+        while day <= end:
+            mandatory, needs_steps, needs_battery = _sync_daily_health_core(
+                session, day, current_optional=current_optional,
+            )
+            if not mandatory:
+                break
+            candidates.append((day, needs_steps, needs_battery))
+            day += timedelta(days=1)
+    except GarminConnectTooManyRequestsError:
+        # A 429 must stop immediately, but already complete no-fallback days
+        # are safe to retain as progress.  Days awaiting a range response are
+        # deliberately left behind for a complete retry.
+        for candidate_day, needs_steps, needs_battery in candidates:
+            if not needs_steps and not needs_battery:
+                _advance_resource_cursor(session, "daily_health", candidate_day)
+            else:
+                break
+        raise
+    mandatory_gap = day if day <= end else None
+
+    steps_ok = _apply_steps_range(session, [day for day, needs, _ in candidates if needs])
+    battery_ok = _apply_body_battery_range(session, [day for day, _, needs in candidates if needs])
+    completed = 0
+    first_gap: date | None = None
+    for candidate_day, needs_steps, needs_battery in candidates:
+        if (needs_steps and candidate_day not in steps_ok) or (needs_battery and candidate_day not in battery_ok):
+            first_gap = candidate_day
+            break
+        _advance_resource_cursor(session, "daily_health", candidate_day)
+        completed += 1
+    if first_gap is None:
+        first_gap = mandatory_gap
+    return completed, first_gap
+
+
+def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> bool:
+    """One-day compatibility wrapper used by Stage 2 and direct callers."""
+    completed, _ = _sync_daily_health_window(
+        session, day, day, current_optional=current_optional,
+    )
+    return completed == 1
 
 
 def _sync_current_optional_health(session: Session, day: date, row: DailyHealth | None = None) -> None:
@@ -835,12 +987,14 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
             _advance_resource_cursor(session, "sleep", today)
             mark("sleep")
         if not done("daily_health"):
-            for day in (window_start + timedelta(days=n) for n in range(7)):
-                if _sync_daily_health(session, day, current_optional=False) is False:
-                    return False
-                _advance_resource_cursor(session, "daily_health", day)
+            completed, first_gap = _sync_daily_health_window(
+                session, window_start, today, current_optional=False,
+            )
+            if first_gap is not None:
+                summary["errors"].append(f"daily_health failed at {first_gap}; it will retry from there.")
+                return False
             mark("daily_health")
-            summary["days"] = 7
+            summary["days"] = completed
 
         # 5. 30 days of summaries; no per-activity enrichment in Stage 1.
         vo2_values: list[tuple[str, float]] = []
@@ -877,10 +1031,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
 
         # 7-8. Current-only slow values.  Never call the historical helpers.
         if not done("fitness_age"):
-            fitness_age = client.fitness_age(today) or {}
-            value = fitness_age.get("fitnessAge")
-            if value is not None:
-                _upsert_snapshot(session, "fitness_age", [((fitness_age.get("lastUpdated") or today.isoformat())[:10], round(float(value), 1))])
+            _sync_current_fitness_age(session, today)
             mark("fitness_age")
         if not done("vo2max"):
             saved_vo2 = _get_state(session, _stage1_key("vo2max_summary"))
@@ -907,6 +1058,11 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
         until = _note_rate_limited(session)
         summary["errors"].append(f"Rate limited during Stage 1: {exc}")
         summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+        return False
+    except GarminConnectAuthenticationError:
+        summary["skipped"] = True
+        summary["code"] = "authentication_required"
+        summary["errors"].append("Garmin Connect session expired. Please re-authenticate your Garmin account.")
         return False
 
 
@@ -1372,6 +1528,25 @@ def _run_stage2_strength_backfill(session: Session, today: date, summary: dict) 
     return True
 
 
+def _maybe_run_weekly_slow_metrics(
+    session: Session, today: date, summary: dict, *, full: bool, force: bool, allow_backfill: bool,
+) -> bool:
+    if not _slow_metrics_due(session, today, full, force, allow_backfill):
+        return True
+    try:
+        _run_weekly_slow_metrics(session, today)
+        return True
+    except GarminConnectTooManyRequestsError as exc:
+        until = _note_rate_limited(session)
+        summary["errors"].append(f"Rate limited on weekly slow metrics: {exc}")
+        summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+    except GarminConnectAuthenticationError:
+        summary["skipped"] = True
+        summary["code"] = "authentication_required"
+        summary["errors"].append("Garmin Connect session expired. Please re-authenticate your Garmin account.")
+    return False
+
+
 def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = False) -> dict:
     """Sync new data since last run (or backfill on first run / full=True).
 
@@ -1421,6 +1596,12 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
                             _run_stage2_strength_backfill(session, today, summary)
                         else:
                             _run_stage2_summary_backfill(session, today, summary)
+                        if _is_in_cooldown(session)[0] or summary.get("code") == "authentication_required":
+                            return summary
+                    if not _maybe_run_weekly_slow_metrics(
+                        session, today, summary, full=full, force=force, allow_backfill=allow_backfill,
+                    ):
+                        return summary
                     return summary
             except GarminConnectTooManyRequestsError as e:
                 until = _note_rate_limited(session)
@@ -1483,12 +1664,17 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
             )
             if sleep_days is None:
                 return summary
-            health_days = _sync_resource_days(
-                session, "daily_health", health_start, today, _sync_daily_health, summary
+            health_days, health_gap = _sync_daily_health_window(
+                session, health_start, today, current_optional=True,
             )
-            if health_days is None:
-                return summary
+            if health_gap is not None:
+                summary["errors"].append(f"daily_health failed at {health_gap}; it will retry from there.")
             summary["days"] = max(sleep_days, health_days)
+        except GarminConnectTooManyRequestsError as exc:
+            until = _note_rate_limited(session)
+            summary["errors"].append(f"Rate limited on daily_health: {exc}")
+            summary["errors"].append(f"Cooling down until {until.isoformat(timespec='seconds')}.")
+            return summary
         except GarminConnectAuthenticationError:
             if config.MULTI_USER_ENABLED:
                 try:
@@ -1515,6 +1701,11 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
                 _run_stage2_summary_backfill(session, today, summary)
             if _is_in_cooldown(session)[0] or summary.get("code") == "authentication_required":
                 return summary
+
+        if not _maybe_run_weekly_slow_metrics(
+            session, today, summary, full=full, force=force, allow_backfill=allow_backfill,
+        ):
+            return summary
 
         # Only stamp "last synced" if real data came through, so a sync that
         # failed immediately doesn't look successful in the UI.
@@ -1548,20 +1739,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
         except Exception:
             pass
 
-    # Snapshot summary metrics (fitness age, VO2 max) so the dashboard reads
-    # them instantly without live Garmin calls. Safe to fail.
-    try:
-        _snapshot_summary_metrics()
-    except GarminConnectTooManyRequestsError as e:
-        with get_session() as session:
-            until = _note_rate_limited(session)
-        summary["errors"].append(
-            f"Rate limited on metric snapshot; cooling down until {until.isoformat(timespec='seconds')}: {e}"
-        )
-    except Exception as e:
-        summary["errors"].append(f"metric snapshot: {e}")
-
-    # Recompute metrics after every sync (no-op until Phase 2 lands).
+    # Recompute local derived metrics after every sync.
     try:
         from metrics.engine import recompute_all
 
@@ -1604,75 +1782,61 @@ def run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fal
             logger.info("garmin_endpoint_telemetry %s", json.dumps(payload, separators=(",", ":")))
 
 
-def _last_different(history: list[tuple]) -> tuple:
-    """history = (date, value) newest first. Returns (current_date, current,
-    prev_date, prev_value) where prev is the most recent value that differs
-    from current (or (None, None) if it never changed)."""
-    if not history:
-        return None, None, None, None
-    cur_date, cur = history[0]
-    for d, v in history[1:]:
-        if v != cur:
-            return cur_date, cur, d, v
-    return cur_date, cur, None, None
+def _record_snapshot(session: Session, metric: str, observed_date: str, value: object) -> None:
+    """Persist a current metric observation without rewriting local history.
 
-
-def _fitness_age_history(weeks: int = 16) -> list[tuple]:
-    """Weekly (lastUpdated, fitnessAge) snapshots, newest first, de-duped by
-    day. get_fitnessage_data accepts any date and returns that day's value."""
-    out: list[tuple] = []
-    seen: set[str] = set()
-    for i in range(0, weeks * 7, 7):
-        d = (date.today() - timedelta(days=i)).isoformat()
-        try:
-            fa = client.fitness_age(date.fromisoformat(d)) or {}
-        except Exception:
-            continue
-        val, upd = fa.get("fitnessAge"), (fa.get("lastUpdated") or "")[:10]
-        if val is None or not upd or upd in seen:
-            continue
-        seen.add(upd)
-        out.append((upd, round(float(val), 1)))
-    out.sort(reverse=True)
-    return out
-
-
-def _vo2max_history(days: int = 365) -> list[tuple]:
-    """(date, vo2max) from running activities carrying vO2MaxValue, newest
-    first. Garmin attaches VO2 max to qualifying GPS runs, not daily endpoints."""
+    A sync overlap is often older than the stored observation.  Those rows must
+    not replace newer data or manufacture a historical scan; changed newer
+    values promote the old current observation to the existing previous slot.
+    """
+    numeric = _finite_number(value)
     try:
-        acts = client.activities_by_date(date.today() - timedelta(days=days), date.today())
-    except Exception:
-        return []
-    out = [
-        ((a.get("startTimeLocal") or "")[:10], round(float(a["vO2MaxValue"]), 1))
-        for a in (acts or [])
-        if a.get("vO2MaxValue")
-    ]
-    out.sort(reverse=True)
-    return out
-
-
-def _upsert_snapshot(session, metric: str, history: list[tuple]) -> None:
-    cur_date, cur, prev_date, prev = _last_different(history)
-    if cur is None:
-        return  # nothing to store; leave any prior snapshot intact
+        observed = date.fromisoformat(observed_date[:10]).isoformat()
+    except (AttributeError, TypeError, ValueError):
+        return
+    if numeric is None:
+        return
     row = session.get(MetricSnapshot, metric) or MetricSnapshot(metric=metric)
-    row.value, row.value_date = cur, cur_date
-    row.prev_value, row.prev_date = prev, prev_date
+    existing = _parse_state_date(row.value_date)
+    incoming = date.fromisoformat(observed)
+    if existing is not None and incoming < existing:
+        return
+    if existing is None:
+        row.value, row.value_date = float(numeric), observed
+    elif incoming == existing:
+        # Same-day observations settle the current fact but retain history.
+        row.value, row.value_date = float(numeric), observed
+    elif row.value == float(numeric):
+        row.value_date = observed
+    else:
+        row.prev_value, row.prev_date = row.value, row.value_date
+        row.value, row.value_date = float(numeric), observed
     row.updated_at = datetime.now()
     session.add(row)
 
-def _target_fitness_age() -> Optional[float]:
-    try:
-        fa = client.fitness_age(date.today()) or {}
-        val = fa.get("achievableFitnessAge")
-        return round(float(val), 1) if val is not None else None
-    except Exception:
-        return None
+
+def _upsert_snapshot(session: Session, metric: str, history: list[tuple]) -> None:
+    """Compatibility entry point for existing Stage 1 callers and tests."""
+    if not history:
+        return
+    for observed_date, value in sorted(history):
+        _record_snapshot(session, metric, observed_date, value)
 
 
-def _snapshot_user_profile(session) -> None:
+def _sync_current_fitness_age(session: Session, today: date) -> bool:
+    """Read one current Fitness Age payload and use both supported values."""
+    payload = client.fitness_age(today)
+    if not isinstance(payload, dict):
+        return True  # valid empty/current response settles a weekly attempt
+    observed = payload.get("lastUpdated")
+    if not isinstance(observed, str) or _parse_state_date(observed[:10]) is None:
+        observed = today.isoformat()
+    _record_snapshot(session, "fitness_age", observed, payload.get("fitnessAge"))
+    _record_snapshot(session, "target_fitness_age", observed, payload.get("achievableFitnessAge"))
+    return True
+
+
+def _snapshot_user_profile(session) -> bool:
     try:
         prof = client.user_profile() or {}
         ud = prof.get("userData", {})
@@ -1684,24 +1848,41 @@ def _snapshot_user_profile(session) -> None:
             _set_state(session, "user_birth_date", ud.get("birthDate"))
     except GarminConnectTooManyRequestsError:
         raise
-    except Exception:
-        pass
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+        logger.warning("Weekly user-profile refresh failed", exc_info=True)
+        return False
+    return True
+
+
+def _slow_metrics_due(session: Session, today: date, full: bool, force: bool, allow_backfill: bool) -> bool:
+    if force:
+        return False
+    if full:
+        return True
+    if not allow_backfill:
+        return False
+    previous = _parse_state_date(_get_state(session, _WEEKLY_SLOW_METRICS))
+    return previous is None or (today - previous).days >= 7
+
+
+def _run_weekly_slow_metrics(session: Session, today: date) -> None:
+    """Bounded weekly current-value work: one Fitness Age and one profile read."""
+    try:
+        _sync_current_fitness_age(session, today)
+        if not _snapshot_user_profile(session):
+            return
+    except GarminConnectTooManyRequestsError:
+        raise
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+        logger.warning("Weekly slow metric refresh failed", exc_info=True)
+        return
+    _set_state(session, _WEEKLY_SLOW_METRICS, today.isoformat())
 
 
 def _snapshot_summary_metrics() -> None:
-    """Compute + store fitness age and VO2 max snapshots (runs during sync)."""
-    if not client.is_authenticated():
-        return
-    fa_hist = _fitness_age_history()
-    vo2_hist = _vo2max_history()
-    tfa = _target_fitness_age()
-    with get_session() as session:
-        _upsert_snapshot(session, "fitness_age", fa_hist)
-        _upsert_snapshot(session, "vo2max", vo2_hist)
-        _snapshot_user_profile(session)
-        if tfa is not None:
-            row = session.get(MetricSnapshot, "target_fitness_age") or MetricSnapshot(metric="target_fitness_age")
-            row.value = tfa
-            row.value_date = date.today().isoformat()
-            row.updated_at = datetime.now()
-            session.add(row)
+    """Retired compatibility shim: slow metrics are no longer historical scans."""
+    return None
