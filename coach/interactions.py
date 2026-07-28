@@ -888,7 +888,29 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
         if not 0 <= index < len(offered):
             return FlowTurn("This choice is invalid.", None)
         payload["target_date"] = offered[index]
-        payload["offered_times"] = ["06:00", "07:00", "18:00", "19:00"]
+        target_day = date.fromisoformat(payload["target_date"])
+        if payload.get("flow_type") == "reschedule":
+            planned = session.get(PlannedSession, int(payload["planned_session_id"]))
+            duration_min = planned.duration_min if planned else None
+        else:
+            program_session = session.get(ProgramSession, int(payload["program_session_id"]))
+            duration_min = (program_session.duration_min or 60) if program_session else None
+        if not duration_min:
+            return FlowTurn("That workout is no longer current.", None)
+        from coach.calendar import get_upcoming_schedule_result
+        from coach.scheduling import available_start_times
+        days = max(2, (target_day - now.date()).days + 1)
+        calendar = get_upcoming_schedule_result(days=days)
+        if calendar["state"] != "fresh":
+            return FlowTurn("Times cannot safely be checked right now. Choose another date or Cancel.", _flow_markup(row, [date.fromisoformat(value).strftime("%a %d %b") for value in offered], "date"))
+        starts = available_start_times(
+            session, now=now, schedule=calendar["events"], target_day=target_day,
+            duration_min=duration_min, limit=8,
+        )
+        payload["offered_times"] = [value.strftime("%H:%M") for value in starts]
+        if not payload["offered_times"]:
+            row.payload_json = json.dumps(payload, sort_keys=True)
+            return FlowTurn("No available time fits on that date. Choose another date or Cancel.", _flow_markup(row, [date.fromisoformat(value).strftime("%a %d %b") for value in offered], "date"))
         payload["flow_step"] = "choose_time"
         row.payload_json = json.dumps(payload, sort_keys=True)
         return FlowTurn(

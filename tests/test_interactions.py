@@ -86,6 +86,7 @@ def test_interaction_revalidates_and_schedules_once(session, monkeypatch):
 
 def test_button_only_schedule_flow_uses_pending_payload(session, monkeypatch):
     _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
     _, sessions = _add_program(session)
     session.commit()
     monkeypatch.setattr(
@@ -107,7 +108,7 @@ def test_button_only_schedule_flow_uses_pending_payload(session, monkeypatch):
     assert row.action_type == "schedule_original_session"
     final_payload = json.loads(row.payload_json)
     assert final_payload["flow_step"] == "confirm"
-    assert final_payload["suggested_time"] == "06:00"
+    assert final_payload["suggested_time"] == "18:00"
     assert (
         confirm.reply_markup["inline_keyboard"][0][0]["text"]
         == "Approve and schedule"
@@ -116,6 +117,7 @@ def test_button_only_schedule_flow_uses_pending_payload(session, monkeypatch):
 
 def test_button_only_reschedule_stores_all_flow_state(session, monkeypatch):
     _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
     monkeypatch.setattr(
         "coach.interactions.calendar_version", lambda _session: "calendar-v1"
     )
@@ -144,7 +146,7 @@ def test_button_only_reschedule_stores_all_flow_state(session, monkeypatch):
     assert payload["flow_step"] == "confirm"
     assert payload["planned_session_id"] == planned.id
     assert payload["target_date"] == "2026-07-06"
-    assert payload["suggested_time"] == "06:00"
+    assert payload["suggested_time"] == "18:00"
     assert payload["page"] == 0
 
 

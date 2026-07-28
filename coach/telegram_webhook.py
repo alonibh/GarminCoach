@@ -386,6 +386,24 @@ def _clear_inline_markup(chat_id: str, message_id: int) -> bool:
     return telegram.edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": []})
 
 
+def _deliver_callback_result(
+    text: str, *, chat_id: str, message_id: int, reply_markup: dict | None
+) -> bool:
+    """Deliver a callback result without sending reply keyboards to editMessageText."""
+    from notify import telegram
+
+    inline = reply_markup if reply_markup and "inline_keyboard" in reply_markup else None
+    if inline is not None:
+        if _edit(text, chat_id, message_id, inline):
+            return True
+        return telegram.send_message(text, chat_id, inline, parse_mode=None)
+    # Terminal actions clear the old inline buttons.  The persistent menu is
+    # supplied only on fallback because Telegram edits accept inline markup.
+    if _edit(text, chat_id, message_id, {"inline_keyboard": []}):
+        return True
+    return telegram.send_message(text, chat_id, main_menu_markup(), parse_mode=None)
+
+
 def _operational_callback(
     callback_data: str,
     *,
@@ -801,7 +819,9 @@ async def handle_telegram_update(data: dict) -> dict:
             text_out, markup = _operational_callback(
                 callback_data, identity=identity, chat_id=chat_id
             )
-            _edit(text_out, chat_id, message_id, markup)
+            _deliver_callback_result(
+                text_out, chat_id=chat_id, message_id=message_id, reply_markup=markup
+            )
             return {"status": "ok"}
 
         active = await session_manager.has_active_session(

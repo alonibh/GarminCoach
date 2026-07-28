@@ -194,42 +194,18 @@
   <div class="activity-mobile-list">
     {% for a in activities %}<a class="activity-card-link activity-mobile-item" href="/workout/{{ a.id }}"><span class="activity-mobile-icon">{{ icon('activity') }}</span><span class="activity-mobile-copy"><b>{{ a.name|clean_name if a.type == 'strength_training' else a.type|humanize }}</b><small>{{ a.start.strftime('%a, %b %d · %H:%M') if a.start else 'Date unavailable' }}</small></span><span class="activity-mobile-value"><b>{{ a.duration_min }}m</b><small>{% if a.load %}{{ a.load }} load{% elif a.avg_hr %}{{ a.avg_hr|round|int }} bpm{% endif %}</small></span></a>{% else %}<div class="activity-mobile-item muted">No workouts yet.</div>{% endfor %}
   </div>
-  <div id="pagination-controls" class="text-center"></div>
+  {% if activity_total_pages|default(1) > 1 %}
+  <nav class="activity-pagination" aria-label="Activity pages">
+    {% if activity_has_previous %}<a class="btn small" href="{{ activity_previous_url }}">Previous</a>{% endif %}
+    <span class="muted" aria-live="polite">Page {{ activity_page }} of {{ activity_total_pages }}</span>
+    {% if activity_has_next %}<a class="btn small" href="{{ activity_next_url }}">Next</a>{% endif %}
+  </nav>
+  {% endif %}
 </section>
 </div>
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const tbody = document.getElementById("activities-body");
-  if (!tbody) return;
-  const rows = Array.from(tbody.querySelectorAll("tr"));
-  if (rows.length <= 1 && rows[0].innerText.includes("No workouts yet")) return;
-  
-  const rowsPerPage = 10;
-  let currentPage = 1;
-  const totalPages = Math.ceil(rows.length / rowsPerPage);
-  const controls = document.getElementById("pagination-controls");
-
-  function renderPage(page) {
-    currentPage = page;
-    rows.forEach((row, index) => {
-      row.style.display = (index >= (page - 1) * rowsPerPage && index < page * rowsPerPage) ? "" : "none";
-    });
-    if (totalPages > 1) {
-      controls.innerHTML = `
-        <button class="btn small" onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Prev</button>
-        <span class="muted" style="margin: 0 15px; font-size: 0.9rem;">Page ${currentPage} of ${totalPages}</span>
-        <button class="btn small" onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>
-      `;
-    }
-  }
-
-  window.changePage = function(page) {
-    if (page >= 1 && page <= totalPages) renderPage(page);
-  };
-
-  renderPage(1);
-
   // Dismiss tooltips on mobile when tapping outside
   document.addEventListener('touchstart', (e) => {
     // 1. Dismiss CSS info popups.

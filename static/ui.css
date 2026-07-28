@@ -711,6 +711,39 @@ textarea { min-height: 110px; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
+/* Final mobile containment rules.  These intentionally follow legacy grids. */
+@media (max-width: 640px) {
+  html, body { overflow-x: clip; }
+  .app-main, .dashboard-page, .calendar-page, .workout-page, .workout-section,
+  .card, .exercise, .exercise-head, .set-pills, .plan-template-card,
+  .exercise-row, .availability-section, .availability-row {
+    min-width: 0; max-width: 100%; box-sizing: border-box;
+  }
+  .today-heading, .page-heading, .calendar-header { position: static; }
+  .hero-metrics { grid-template-columns: minmax(0, 1fr); gap: .9rem; padding: .9rem; }
+  .hero-recovery-signals, .hero-metric.sleep { grid-column: auto; width: 100%; }
+  .hero-metric.sleep { border-top: 1px solid rgba(255,255,255,.14); padding-top: 1rem; justify-items: center; }
+  .hero-metric.sleep .hero-metric-detail { white-space: nowrap; }
+  .calendar-header { grid-template-columns: auto minmax(0, 1fr) auto; margin: 0; padding: .5rem 0; }
+  .calendar-header .btn-secondary { min-width: 0; }
+  .exercise-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+  .exercise-name { min-width: 0; overflow-wrap: anywhere; }
+  .exercise-meta { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .35rem; white-space: nowrap; }
+  .set-pills { display: flex; flex-wrap: wrap; min-width: 0; }
+  .set-pill { max-width: 100%; overflow-wrap: anywhere; }
+  .exercise-row { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: .7rem !important; }
+  .exercise-row .exercise-identity, .exercise-row .target-field, .exercise-row .exercise-warmup, .exercise-row .exercise-actions { grid-column: 1 / -1; min-width: 0; }
+  .exercise-row .exercise-field, .exercise-row .warmup-inputs, .exercise-row .warmup-inputs > label { min-width: 0; max-width: 100%; }
+  .exercise-row.has-warmup .exercise-warmup, .exercise-row .warmup-inputs { display: grid; grid-template-columns: 1fr; gap: .65rem; }
+  .exercise-row .warmup-inputs.is-hidden { display: none; }
+  .activity-pagination { display: flex; justify-content: center; align-items: center; gap: .75rem; padding-top: 1rem; }
+}
+
+@media (max-width: 360px) {
+  .hero-metric.sleep .hero-metric-detail { white-space: normal; }
+  .exercise-head { align-items: flex-start; flex-direction: column; }
+}
+
 /* Single Inline Row Weekly Availability - High Specificity Override */
 .availability-section .availability-rows-container {
   display: flex !important;
@@ -841,9 +874,19 @@ textarea { min-height: 110px; }
 
 @media (max-width: 640px) {
   .availability-section .availability-row {
-    flex-wrap: wrap !important;
-    gap: 0.6rem !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: .65rem !important;
+    align-items: center !important;
   }
+  .availability-section .avail-day-name { width: auto !important; min-width: 0 !important; }
+  .availability-section label.avail-rest-label { width: auto !important; min-width: 0 !important; }
+  .availability-section .avail-time-pickers {
+    grid-column: 1 / -1;
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) !important;
+    gap: .4rem !important;
+    min-width: 0 !important;
+  }
+  .availability-section .avail-time-pickers input[type="time"] { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
 }
-
-

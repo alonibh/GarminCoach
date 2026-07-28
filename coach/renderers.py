@@ -1,7 +1,7 @@
 """Deterministic, read-only Telegram text renderers."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 from sqlalchemy.orm import Session
@@ -18,7 +18,7 @@ from db import (
     Sleep,
     SyncState,
 )
-from time_utils import get_local_now
+from time_utils import format_chat_datetime, get_local_now
 
 
 def _json(value: str | None, fallback):
@@ -168,7 +168,17 @@ def render_sync_status(session: Session) -> str:
     row = session.get(SyncState, "last_sync_at")
     if not row or not row.value:
         return "Garmin data has not been synchronized yet."
-    return f"Last Garmin sync: {row.value}."
+    try:
+        value = datetime.fromisoformat(row.value.replace("Z", "+00:00"))
+        # Historical values were stored as UTC without an offset.
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        formatted = format_chat_datetime(value)
+    except (AttributeError, TypeError, ValueError):
+        formatted = None
+    if not formatted:
+        return "Last Garmin sync time is unavailable."
+    return f"Last Garmin sync: {formatted[:10]} at {formatted[11:]}."
 
 
 def upcoming_planned_sessions(session: Session, days: int = 7) -> list[dict]:

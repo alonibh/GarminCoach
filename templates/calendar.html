@@ -3,7 +3,7 @@
 {% block title %}Calendar · GarminCoach{% endblock %}
 {% block content %}
 <div class="calendar-page">
-  <header class="calendar-header page-heading">
+  <header class="calendar-header">
     <a href="/calendar?year={{ prev_y }}&month={{ prev_m }}" class="btn-secondary" aria-label="Previous month">{{ icon('back') }} Previous</a>
     <div class="calendar-title"><span class="eyebrow">Training calendar</span><h1>{{ month_name }} {{ year }}</h1></div>
     <a href="/calendar?year={{ next_y }}&month={{ next_m }}" class="btn-secondary" aria-label="Next month">Next {{ icon('chevron') }}</a>

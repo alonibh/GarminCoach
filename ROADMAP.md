@@ -1,5 +1,7 @@
 # GarminCoach Roadmap
 
+- [ ] Phase 3 foundation: capability registry for one Garmin watch per user, with normalized model detection and versioned, officially sourced mappings. Track Training Readiness, Training Status, Recovery Time, HRV Status, Body Battery, Fitness Age, and VO₂ max independently as supported, unsupported, or unknown; successful observations may promote support, while empty results do not prove unsupported. Use bounded low-frequency probing only for unknown capabilities and skip verified unsupported endpoints.
+
 Updated 2026-07-27. The approved target metric and sync policy is
 [`docs/METRIC_SYNC_POLICY.md`](docs/METRIC_SYNC_POLICY.md).
 

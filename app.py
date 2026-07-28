@@ -1144,7 +1144,7 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
     }
 # --- routes ---------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(request: Request, activity_page: int = 1):
     if config.MULTI_USER_ENABLED:
         user = getattr(request.state, "user", None)
         from sync.garmin_registry import get_garmin_registry
@@ -1162,17 +1162,21 @@ def dashboard(request: Request):
         profile = s.get(AthleteProfile, 1) or AthleteProfile(id=1)
         current_program = active_program(s)
         
-        # All workouts in the past month (no row cap).
-        activities = (
+        activity_query = (
             s.query(Activity)
             .filter(
                 Activity.start_time >= datetime.combine(since, datetime.min.time()),
                 Activity.duration_s.isnot(None),
                 Activity.duration_s > 0,
             )
-            .order_by(Activity.start_time.desc())
-            .all()
         )
+        activity_page_size = 5
+        activity_count = activity_query.count()
+        total_activity_pages = max(1, (activity_count + activity_page_size - 1) // activity_page_size)
+        activity_page = max(1, min(activity_page, total_activity_pages))
+        activities = activity_query.order_by(Activity.start_time.desc()).offset(
+            (activity_page - 1) * activity_page_size
+        ).limit(activity_page_size).all()
         chart_data = _dashboard_chart_data(s)
         # Detach for template use
         activities = [
@@ -1197,6 +1201,12 @@ def dashboard(request: Request):
         {
             "needs_login": needs_login,
             "activities": activities,
+            "activity_page": activity_page,
+            "activity_total_pages": total_activity_pages,
+            "activity_has_previous": activity_page > 1,
+            "activity_has_next": activity_page < total_activity_pages,
+            "activity_previous_url": f"/?activity_page={activity_page - 1}",
+            "activity_next_url": f"/?activity_page={activity_page + 1}",
             **chart_data,
             "fitness_tiles": fitness_tiles,
             "readiness_tiles": readiness_tiles,
@@ -1356,6 +1366,25 @@ def _stored_hr_zones(zone_json: str | None, duration_s: float | None = None) -> 
     return out
 
 
+def _format_set_display(weight_kg, reps, duration_s) -> str:
+    """Format stored strength-set data without inventing a timed value."""
+    if reps is not None:
+        prefix = f"{weight_kg:g}kg" if weight_kg else "BW"
+        return f"{prefix} × {reps}"
+    try:
+        seconds = int(duration_s)
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds > 0:
+        minutes, remainder = divmod(seconds, 60)
+        if minutes and remainder:
+            return f"{minutes}m {remainder}s"
+        if minutes:
+            return f"{minutes} min"
+        return f"{seconds} sec"
+    return "BW × —"
+
+
 @app.get("/workout/{activity_id}", response_class=HTMLResponse)
 def workout_detail(request: Request, activity_id: int):
     with get_session() as s:
@@ -1396,8 +1425,12 @@ def workout_detail(request: Request, activity_id: int):
                     exercises.append({"name": st.exercise_name, "sets": []})
                 exercises[-1]["sets"].append({
                     "id": st.id, "index": st.set_index,
-                    "reps": st.reps, "weight_kg": st.weight_kg, "edited": st.edited,
+                    "reps": st.reps, "weight_kg": st.weight_kg, "duration_s": st.duration_s,
+                    "edited": st.edited,
                 })
+                exercises[-1]["sets"][-1]["display"] = _format_set_display(
+                    st.weight_kg, st.reps, st.duration_s
+                )
             for ex in exercises:
                 # Volume load (tonnage) = Σ(reps × weight) — the standard
                 # strength-science "volume load" (Schoenfeld et al. 2021).
