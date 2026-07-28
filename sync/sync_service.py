@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from sqlalchemy.orm import Session
@@ -663,7 +664,9 @@ def _parse_daily_summary(payload: object) -> tuple[dict[str, float | int], set[s
             families.add(family)
         for key, field in pairs:
             value = payload.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if isinstance(value, int) and not isinstance(value, bool):
+                values[field] = value
+            elif isinstance(value, float) and math.isfinite(value):
                 values[field] = value
     return values, families
 
@@ -703,32 +706,56 @@ def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> 
         logger.warning("Daily summary fetch failed for %s", day, exc_info=True)
         complete = False
 
-    try:
-        if "resting_hr" not in represented:
+    if "resting_hr" not in represented:
+        try:
             rhr = client.resting_hr(day)
             vals = _g(rhr, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE", default=[])
             if vals:
                 row.resting_hr = vals[0].get("value")
-        if "stress" not in represented:
+        except GarminConnectTooManyRequestsError:
+            raise
+        except Exception as exc:
+            if _is_auth_error(exc):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+            logger.warning("Resting HR fallback failed for %s", day, exc_info=True)
+            complete = False
+    if "stress" not in represented:
+        try:
             stress = client.stress(day)
             row.stress_avg = stress.get("avgStressLevel")
-        if "body_battery" not in represented:
+        except GarminConnectTooManyRequestsError:
+            raise
+        except Exception as exc:
+            if _is_auth_error(exc):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+            logger.warning("Stress fallback failed for %s", day, exc_info=True)
+            complete = False
+    if "body_battery" not in represented:
+        try:
             bb = client.body_battery(day, day)
             if bb:
                 levels = [v[1] for v in (_g(bb[0], "bodyBatteryValuesArray", default=[]) or []) if isinstance(v, list) and len(v) > 1 and v[1] is not None]
                 if levels:
                     row.body_battery_high, row.body_battery_low, row.body_battery_current = max(levels), min(levels), levels[-1]
-        if "steps" not in represented:
+        except GarminConnectTooManyRequestsError:
+            raise
+        except Exception as exc:
+            if _is_auth_error(exc):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+            logger.warning("Body battery fallback failed for %s", day, exc_info=True)
+            complete = False
+    if "steps" not in represented:
+        try:
             steps = client.daily_steps(day, day)
             if steps:
                 row.steps, row.step_goal = steps[0].get("totalSteps"), steps[0].get("stepGoal")
-    except GarminConnectTooManyRequestsError:
-        raise
-    except Exception as exc:
-        if _is_auth_error(exc):
-            raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
-        logger.warning("Daily health fallback failed for %s", day, exc_info=True)
-        complete = False
+        except GarminConnectTooManyRequestsError:
+            raise
+        except Exception as exc:
+            if _is_auth_error(exc):
+                raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
+            logger.warning("Steps fallback failed for %s", day, exc_info=True)
+            complete = False
 
     # Readiness and status are current-only facts.  Historical wellness sync
     # deliberately never calls either endpoint.

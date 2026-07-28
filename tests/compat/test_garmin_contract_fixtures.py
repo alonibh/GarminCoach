@@ -108,6 +108,20 @@ def test_daily_summary_parser_uses_key_presence_and_preserves_nulls():
     assert values == {"stress_avg": 0, "steps": 0, "body_battery_high": 0}
 
 
+def test_daily_summary_parser_rejects_non_finite_and_boolean_values():
+    parsed = sync_service._parse_daily_summary({
+        "restingHeartRate": True,
+        "averageStressLevel": float("nan"),
+        "totalSteps": float("inf"),
+        "dailyStepGoal": float("-inf"),
+        "bodyBatteryHighestValue": "bad",
+    })
+    assert parsed is not None
+    values, families = parsed
+    assert families == {"resting_hr", "stress", "steps", "body_battery"}
+    assert values == {}
+
+
 def test_sleep_contract_parses(session, monkeypatch):
     monkeypatch.setattr(
         sync_service,
