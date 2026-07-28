@@ -738,13 +738,16 @@ textarea { min-height: 110px; }
   .exercise-meta { grid-row: 2; display: inline-flex; align-items: center; flex-wrap: nowrap; gap: .3rem; min-width: 0; max-width: 100%; white-space: nowrap; font-size: .78rem; }
   .exercise-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .exercise-row .exercise-identity { grid-column: 1 / -1; }
-  .exercise-row .sets-field { grid-column: 1; }
-  .exercise-row .rest-field { grid-column: 2; }
-  .exercise-row .target-field { grid-column: 1; }
-  .exercise-row .load-field { grid-column: 2; }
-  .exercise-row.is-timed .target-field { grid-column: 1 / -1; }
+  .exercise-row { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; grid-template-areas: "identity identity" "sets rest" "target load" "actions actions" "warmup warmup"; }
+  .exercise-row .exercise-identity { grid-area: identity; }
+  .exercise-row .sets-field { grid-area: sets; }
+  .exercise-row .rest-field { grid-area: rest; }
+  .exercise-row .target-field { grid-area: target; }
+  .exercise-row .load-field { grid-area: load; }
+  .exercise-row .exercise-actions { grid-area: actions; }
+  .exercise-row .exercise-warmup { grid-area: warmup; }
+  .exercise-row.is-timed { grid-template-areas: "identity identity" "sets rest" "target target" "actions actions" "warmup warmup"; }
   .exercise-row.is-timed .load-field { display: none; }
-  .exercise-row .exercise-actions, .exercise-row .exercise-warmup { grid-column: 1 / -1; }
   .exercise-row .warmup-inputs { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: .65rem; }
   .exercise-row.warmup-is-timed .warmup-target { grid-column: 1 / -1; }
   .exercise-row.warmup-is-timed .warmup-weight { display: none; }
@@ -945,13 +948,16 @@ textarea { min-height: 110px; }
   .exercise-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: .35rem; }
   .exercise-name { grid-row: 1; min-width: 0; max-width: 100%; }
   .exercise-meta { grid-row: 2; display: inline-flex; align-items: center; flex-wrap: nowrap; gap: .3rem; min-width: 0; max-width: 100%; white-space: nowrap; font-size: .78rem; }
-  .exercise-row .sets-field { grid-column: 1; }
-  .exercise-row .rest-field { grid-column: 2; }
-  .exercise-row .target-field { grid-column: 1; }
-  .exercise-row .load-field { grid-column: 2; }
-  .exercise-row.is-timed .target-field { grid-column: 1 / -1; }
+  .exercise-row { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; grid-template-areas: "identity identity" "sets rest" "target load" "actions actions" "warmup warmup"; }
+  .exercise-row .exercise-identity { grid-area: identity; }
+  .exercise-row .sets-field { grid-area: sets; }
+  .exercise-row .rest-field { grid-area: rest; }
+  .exercise-row .target-field { grid-area: target; }
+  .exercise-row .load-field { grid-area: load; }
+  .exercise-row .exercise-actions { grid-area: actions; }
+  .exercise-row .exercise-warmup { grid-area: warmup; }
+  .exercise-row.is-timed { grid-template-areas: "identity identity" "sets rest" "target target" "actions actions" "warmup warmup"; }
   .exercise-row.is-timed .load-field { display: none; }
-  .exercise-row .exercise-actions, .exercise-row .exercise-warmup { grid-column: 1 / -1; }
   .exercise-row .warmup-inputs { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: .65rem; }
   .exercise-row.warmup-is-timed .warmup-target { grid-column: 1 / -1; }
   .exercise-row.warmup-is-timed .warmup-weight { display: none; }

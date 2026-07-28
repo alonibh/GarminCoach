@@ -41,5 +41,18 @@ def test_mobile_exercise_and_program_state_contracts_are_explicit():
     assert "row.classList.toggle('is-timed',timed)" in program
     assert "row.classList.toggle('warmup-is-timed',timed)" in program
     assert ".exercise-meta { grid-row: 2" in css
-    assert ".exercise-row.is-timed .target-field { grid-column: 1 / -1; }" in css
+    final_mobile = css[css.rfind("/* Keep these mobile layout contracts last") :]
+    assert 'grid-template-areas: "identity identity" "sets rest" "target load" "actions actions" "warmup warmup"' in final_mobile
+    assert 'grid-template-areas: "identity identity" "sets rest" "target target" "actions actions" "warmup warmup"' in final_mobile
+    for selector, area in (
+        (".exercise-identity", "identity"),
+        (".sets-field", "sets"),
+        (".rest-field", "rest"),
+        (".target-field", "target"),
+        (".load-field", "load"),
+        (".exercise-actions", "actions"),
+        (".exercise-warmup", "warmup"),
+    ):
+        assert f"{selector} {{ grid-area: {area}; }}" in final_mobile
+    assert "grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr)" in final_mobile
     assert ".exercise-row.warmup-is-timed .warmup-weight { display: none; }" in css
