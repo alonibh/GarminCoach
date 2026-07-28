@@ -47,6 +47,8 @@ def _patch_api(monkeypatch, api):
             pass
         def is_authenticated(self):
             return True
+        def workout_list(self):
+            return self.api.get_workouts()
         @property
         def api(self):
             return self._api

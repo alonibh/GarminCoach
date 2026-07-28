@@ -8,9 +8,12 @@ import pytest
 import tenant_context
 import sync.sync_service as svc
 
+TEST_LOCAL_TODAY = date(2026, 7, 29)
+
 
 @pytest.fixture(autouse=True)
-def bind_test_tenant():
+def bind_test_tenant(monkeypatch):
+    monkeypatch.setattr(svc, "_local_today", lambda: TEST_LOCAL_TODAY)
     with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
         yield
 
@@ -31,10 +34,19 @@ def _wire_common(monkeypatch, session):
     monkeypatch.setattr(svc, "_snapshot_summary_metrics", lambda: None)
     monkeypatch.setattr("metrics.engine.recompute_all", lambda: None)
     monkeypatch.setattr(svc.coach, "generate_daily_suggestion", lambda session: None)
+    monkeypatch.setattr(svc, "_workouts_due", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        svc,
+        "_sync_workouts",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unexpected workout synchronization")
+        ),
+    )
+    monkeypatch.setattr(svc, "_run_weekly_slow_metrics", lambda *_args, **_kwargs: None)
 
 
 def _stage2_strength_ready(session, anchor=None):
-    anchor = anchor or date.today()
+    anchor = anchor or TEST_LOCAL_TODAY
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_summary_backfill_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -87,7 +99,7 @@ def test_sync_sleep_accepts_numeric_sleep_timestamps(session, monkeypatch):
 def test_delta_sync_skips_when_device_and_activity_unchanged(session, monkeypatch):
     _wire_common(monkeypatch, session)
     upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
-    _state(session, "last_sync_through", date.today().isoformat())
+    _state(session, "last_sync_through", TEST_LOCAL_TODAY.isoformat())
     _state(session, "last_processed_device_upload", upload)
     _state(session, "last_seen_activity_id", "101")
     _state(session, "last_seen_activity_start", "2026-07-03 18:00:00")
@@ -110,7 +122,7 @@ def test_delta_sync_skips_when_device_and_activity_unchanged(session, monkeypatc
 
 def test_forced_sync_bypasses_delta_skip_but_not_full_backfill(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
     _state(session, "last_sync_through", today.isoformat())
     _state(session, "last_processed_device_upload", upload)
@@ -141,7 +153,7 @@ def test_new_device_upload_triggers_normal_sync(session, monkeypatch):
     _wire_common(monkeypatch, session)
     old_upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
     new_upload_dt = datetime(2026, 7, 4, 7, 30, tzinfo=timezone.utc)
-    _state(session, "last_sync_through", date.today().isoformat())
+    _state(session, "last_sync_through", TEST_LOCAL_TODAY.isoformat())
     _state(session, "last_processed_device_upload", old_upload)
     _state(session, "last_seen_activity_id", "101")
     _state(session, "last_seen_activity_start", "2026-07-03 18:00:00")
@@ -169,7 +181,7 @@ def test_new_device_upload_triggers_normal_sync(session, monkeypatch):
 def test_new_latest_activity_triggers_activity_sync(session, monkeypatch):
     _wire_common(monkeypatch, session)
     upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
-    _state(session, "last_sync_through", date.today().isoformat())
+    _state(session, "last_sync_through", TEST_LOCAL_TODAY.isoformat())
     _state(session, "last_processed_device_upload", upload)
     _state(session, "last_seen_activity_id", "101")
     _state(session, "last_seen_activity_start", "2026-07-03 18:00:00")
@@ -216,7 +228,7 @@ def test_full_sync_bypasses_delta_preflight(session, monkeypatch):
 
 def test_preflight_429_sets_cooldown(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    _state(session, "last_sync_through", date.today().isoformat())
+    _state(session, "last_sync_through", TEST_LOCAL_TODAY.isoformat())
     monkeypatch.setattr(
         svc.client,
         "device_last_used",
@@ -241,7 +253,7 @@ def test_cooldown_skips_before_garmin_calls(session, monkeypatch):
 
 
 def test_resource_cursors_fall_back_to_legacy_cursor(session):
-    legacy = date.today() - timedelta(days=7)
+    legacy = TEST_LOCAL_TODAY - timedelta(days=7)
     _state(session, "last_sync_through", legacy.isoformat())
 
     cursors = {resource: svc._resource_cursor(session, resource) for resource in svc._RESOURCE_CURSOR_KEYS}
@@ -255,7 +267,7 @@ def test_resource_cursors_fall_back_to_legacy_cursor(session):
 
 def test_successful_resources_advance_independent_cursors(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     for key in svc._RESOURCE_CURSOR_KEYS.values():
         _state(session, key, (today - timedelta(days=3)).isoformat())
     _state(session, "last_workouts_sync_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -273,7 +285,7 @@ def test_successful_resources_advance_independent_cursors(session, monkeypatch):
 
 def test_activity_failure_does_not_block_sleep_or_health_cursors(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     activity_cursor = today - timedelta(days=3)
     for resource, key in svc._RESOURCE_CURSOR_KEYS.items():
         _state(session, key, activity_cursor.isoformat())
@@ -291,7 +303,7 @@ def test_activity_failure_does_not_block_sleep_or_health_cursors(session, monkey
 
 def test_first_429_stops_remaining_calls_and_preserves_partial_resource_progress(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     cursor = today - timedelta(days=3)
     for key in svc._RESOURCE_CURSOR_KEYS.values():
         _state(session, key, cursor.isoformat())
@@ -335,7 +347,7 @@ def _stage1_client(monkeypatch, events):
 
 def test_stage1_order_windows_and_strength_limit(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     events = []
     _stage1_client(monkeypatch, events)
     activities = [
@@ -386,7 +398,7 @@ def test_stage1_activity_summary_window_makes_no_hr_zone_calls(session, monkeypa
 
 def test_stage1_skips_existing_progress_and_resumes_partial(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    _state(session, "last_sync_through", (date.today() - timedelta(days=1)).isoformat())
+    _state(session, "last_sync_through", (TEST_LOCAL_TODAY - timedelta(days=1)).isoformat())
     starts = []
     monkeypatch.setattr(svc.client, "device_last_used", lambda: {})
     monkeypatch.setattr(svc.client, "recent_activities", lambda *_: [])
@@ -394,7 +406,7 @@ def test_stage1_skips_existing_progress_and_resumes_partial(session, monkeypatch
     monkeypatch.setattr(svc, "_sync_sleep", lambda *_: True)
     monkeypatch.setattr(svc, "_sync_daily_health", lambda *_, **__: True)
     svc.run_sync(force=True)
-    assert starts != [date.today() - timedelta(days=29)]
+    assert starts != [TEST_LOCAL_TODAY - timedelta(days=29)]
 
     session.query(SyncState).delete()
     session.commit()
@@ -407,7 +419,7 @@ def test_stage1_skips_existing_progress_and_resumes_partial(session, monkeypatch
     monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
     svc.run_sync()
     assert "device" not in events
-    assert ("sleep", date.today()) not in events
+    assert ("sleep", TEST_LOCAL_TODAY) not in events
     assert session.get(SyncState, "stage1_bootstrap_complete").value == "complete"
 
 
@@ -446,7 +458,7 @@ def test_stage1_unsupported_optional_metrics_complete_without_calls(session, mon
 
 def test_stage1_resume_persists_activity_summary_vo2_without_refetch(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     events = []
     _stage1_client(monkeypatch, events)
     activity_calls = []
@@ -501,7 +513,7 @@ def test_stage1_no_activity_summary_vo2_resolves_without_extra_request(session, 
 
 def test_stage1_vo2_marker_waits_for_snapshot_handling(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     _state(session, "stage1_bootstrap_device", "complete")
     _state(session, "stage1_bootstrap_today_sleep", "complete")
     _state(session, "stage1_bootstrap_training_readiness", "complete")
@@ -522,7 +534,7 @@ def test_stage1_vo2_marker_waits_for_snapshot_handling(session, monkeypatch):
 
 def test_stage2_is_scheduled_only_and_runs_one_no_change_wellness_unit(session, monkeypatch):
     _wire_common(monkeypatch, session)
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
     _state(session, "stage1_bootstrap_complete", "complete")
     for key in svc._RESOURCE_CURSOR_KEYS.values():
@@ -546,7 +558,7 @@ def test_stage2_is_scheduled_only_and_runs_one_no_change_wellness_unit(session, 
 
 
 def test_stage2_fresh_journals_start_after_stage1_windows(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -561,7 +573,7 @@ def test_stage2_fresh_journals_start_after_stage1_windows(session, monkeypatch):
 
 
 def test_stage2_only_fetches_older_combined_coverage(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -586,7 +598,7 @@ def test_stage2_only_fetches_older_combined_coverage(session, monkeypatch):
 
 
 def test_stage2_activity_summary_range_makes_no_hr_zone_calls(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -610,7 +622,7 @@ def test_stage2_activity_summary_range_makes_no_hr_zone_calls(session, monkeypat
 
 
 def test_stage2_activity_summary_range_429_sets_circuit_breaker(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -632,7 +644,7 @@ def test_stage2_activity_summary_range_429_sets_circuit_breaker(session, monkeyp
 
 
 def test_stage2_normalizes_overlap_journals_before_one_actual_unit(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -653,7 +665,7 @@ def test_stage2_normalizes_overlap_journals_before_one_actual_unit(session, monk
 
 
 def test_stage2_preserves_older_and_complete_journals(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     anchor = today - timedelta(days=3)
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", anchor.isoformat())
@@ -671,7 +683,7 @@ def test_stage2_preserves_older_and_complete_journals(session, monkeypatch):
 
 
 def test_stage2_429_preserves_independent_wellness_progress(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     _state(session, "stage1_bootstrap_complete", "complete")
     monkeypatch.setattr(svc, "_sync_sleep", lambda *_: True)
     monkeypatch.setattr(
@@ -689,7 +701,7 @@ def test_stage2_429_preserves_independent_wellness_progress(session, monkeypatch
 
 
 def test_stage2_strength_waits_for_summary_completion(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     _state(session, "stage1_bootstrap_complete", "complete")
     _state(session, "stage2_backfill_anchor_day", today.isoformat())
     session.add(_strength_activity(1, datetime.combine(today, datetime.min.time())))
@@ -822,7 +834,7 @@ def test_stage2_strength_is_excluded_from_manual_priority_force_and_full(session
 
 
 def test_stage1_strength_marker_waits_for_set_request_success(session, monkeypatch):
-    today = date.today()
+    today = TEST_LOCAL_TODAY
     for name in ("device", "today_sleep", "training_readiness", "sleep", "daily_health", "activities"):
         _state(session, f"stage1_bootstrap_{name}", "complete")
     session.add(_strength_activity(1, datetime.combine(today, datetime.min.time())))
