@@ -23,6 +23,13 @@ class AcquireResult:
 
 
 @dataclass(frozen=True)
+class RetryAcquireResult:
+    status: AcquireStatus
+    generation_token: str | None = None
+    question: str | None = None
+
+
+@dataclass(frozen=True)
 class AskCoachSessionView:
     user_id: str
     chat_id: str
@@ -210,8 +217,29 @@ class AskCoachSessionManager:
             nonce = uuid4().hex[:16]
             session.pending_retry_question = question
             session.pending_retry_nonce = nonce
+            session.in_flight_token = None
             session.last_activity_at = datetime.now(timezone.utc)
             return nonce
+
+    async def acquire_pending_retry(self, user_id: str, chat_id: str, nonce: str) -> RetryAcquireResult:
+        """Atomically consume a retry nonce and acquire its generation."""
+        async with self._lock:
+            session = self._sessions.get(user_id)
+            if session is None or self._expired(session):
+                self._sessions.pop(user_id, None)
+                return RetryAcquireResult(AcquireStatus.NO_ACTIVE_SESSION)
+            if (session.chat_id != str(chat_id) or session.pending_retry_nonce != nonce
+                    or session.pending_retry_question is None):
+                return RetryAcquireResult(AcquireStatus.NO_ACTIVE_SESSION)
+            if session.in_flight_token is not None:
+                return RetryAcquireResult(AcquireStatus.BUSY)
+            question = session.pending_retry_question
+            session.pending_retry_question = None
+            session.pending_retry_nonce = None
+            token = uuid4().hex
+            session.in_flight_token = token
+            session.last_activity_at = datetime.now(timezone.utc)
+            return RetryAcquireResult(AcquireStatus.ACQUIRED, token, question)
 
     async def pending_retry(
         self, user_id: str, chat_id: str, nonce: str

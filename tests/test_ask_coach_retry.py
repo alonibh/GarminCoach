@@ -48,3 +48,19 @@ def test_retry_does_not_duplicate_question_in_history():
     view = asyncio.run(scenario())
     assert [item["content"] for item in view.history] == ["question", "answer"]
     assert view.pending_retry_question is None
+
+
+def test_retry_is_immediately_available_and_consumed_once():
+    async def scenario():
+        manager = AskCoachSessionManager()
+        await manager.create_session("user", "chat")
+        first = await manager.try_acquire_in_flight("user")
+        nonce = await manager.set_pending_retry("user", first.generation_token, "question")
+        first_retry = await manager.acquire_pending_retry("user", "chat", nonce)
+        second_retry = await manager.acquire_pending_retry("user", "chat", nonce)
+        return first_retry, second_retry
+
+    first_retry, second_retry = asyncio.run(scenario())
+    assert first_retry.status == AcquireStatus.ACQUIRED
+    assert first_retry.question == "question"
+    assert second_retry.status == AcquireStatus.NO_ACTIVE_SESSION

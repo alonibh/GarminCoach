@@ -377,6 +377,11 @@ def _edit(
     )
 
 
+def _clear_inline_markup(chat_id: str, message_id: int) -> bool:
+    from notify import telegram
+    return telegram.edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": []})
+
+
 def _operational_callback(
     callback_data: str,
     *,
@@ -694,34 +699,26 @@ async def handle_telegram_update(data: dict) -> dict:
                 return {"status": "ok"}
             if callback_data.startswith("ask:retry:"):
                 nonce = callback_data.removeprefix("ask:retry:")
-                question = await session_manager.pending_retry(
-                    identity.user_id, chat_id, nonce
-                )
-                if question is None or not _valid_consent(identity.user_id):
-                    _edit(
-                        "This retry is no longer available.",
-                        chat_id,
-                        message_id,
-                        ask_coach_back_markup(),
-                    )
+                if not _valid_consent(identity.user_id):
+                    _clear_inline_markup(chat_id, message_id)
+                    await _send_plain("This retry is no longer available.", chat_id=chat_id, reply_markup=ask_coach_back_markup())
                     return {"status": "ok"}
-                acquired = await session_manager.try_acquire_in_flight(
-                    identity.user_id
-                )
-                if acquired.status != AcquireStatus.ACQUIRED:
-                    _edit(
-                        "Ask Coach is already working on a question.",
-                        chat_id,
-                        message_id,
-                        ask_coach_back_markup(),
-                    )
+                acquired = await session_manager.acquire_pending_retry(identity.user_id, chat_id, nonce)
+                if acquired.status == AcquireStatus.NO_ACTIVE_SESSION:
+                    _clear_inline_markup(chat_id, message_id)
+                    await _send_plain("This retry is no longer available.", chat_id=chat_id, reply_markup=ask_coach_back_markup())
                     return {"status": "ok"}
+                if acquired.status == AcquireStatus.BUSY:
+                    await _send_plain("Ask Coach is already working on a question.", chat_id=chat_id, reply_markup=ask_coach_back_markup())
+                    return {"status": "ok"}
+                _clear_inline_markup(chat_id, message_id)
+                await _send_plain("Trying again…", chat_id=chat_id, reply_markup=ask_coach_back_markup())
                 _register_task(
                     run_ask_coach_question(
                         identity=identity,
                         chat_id=chat_id,
                         generation_token=acquired.generation_token or "",
-                        question=question,
+                        question=acquired.question or "",
                     )
                 )
                 return {"status": "ok"}

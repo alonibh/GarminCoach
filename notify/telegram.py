@@ -110,6 +110,20 @@ def edit_message_text(
         logger.error(f"Failed to edit Telegram message: {e}")
         return False
 
+def edit_message_reply_markup(chat_id: str, message_id: int, reply_markup: dict | None = None) -> bool:
+    """Update only inline markup on an existing Telegram message."""
+    bot_token = config.TELEGRAM_BOT_TOKEN
+    target_chat_id = _tenant_chat_id(chat_id)
+    if not bot_token or not target_chat_id: return False
+    payload = {"chat_id": target_chat_id, "message_id": message_id}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    try:
+        return _make_request(f"https://api.telegram.org/bot{bot_token}/editMessageReplyMarkup", payload)
+    except urllib.error.URLError as e:
+        logger.error(f"Failed to edit Telegram markup: {e}")
+        return False
+
 def send_chat_action(chat_id: str, action: str = "typing") -> bool:
     """Send a chat action (like 'typing') to indicate activity."""
     bot_token = config.TELEGRAM_BOT_TOKEN
