@@ -80,7 +80,7 @@
   <div class="tile{% if t.color %} tile-{{ t.color }}{% endif %}">
     <div class="tile-label">{{ t.label }}{% if t.hint %}<span class="info" tabindex="0" data-tip="{{ t.hint }}">i</span>{% endif %}</div>
     <div class="tile-value">
-      {% if t.value is not none %}{{ t.value }}{% if t.unit %}<span class="tile-unit">{{ t.unit }}</span>{% endif %}
+      {% if t.value is not none %}{{ t.display_value if t.display_value is defined else t.value }}{% if t.unit %}<span class="tile-unit">{{ t.unit }}</span>{% endif %}
         {% if t.trend is not none %}
           {% if t.trend == 'up' %}<span class="trend up" title="Improved">Up</span>
           {% elif t.trend == 'down' %}<span class="trend down" title="Worsened">Down</span>
@@ -195,11 +195,11 @@
     {% for a in activities %}<a class="activity-card-link activity-mobile-item" href="/workout/{{ a.id }}"><span class="activity-mobile-icon">{{ icon('activity') }}</span><span class="activity-mobile-copy"><b>{{ a.name|clean_name if a.type == 'strength_training' else a.type|humanize }}</b><small>{{ a.start.strftime('%a, %b %d · %H:%M') if a.start else 'Date unavailable' }}</small></span><span class="activity-mobile-value"><b>{{ a.duration_min }}m</b><small>{% if a.load %}{{ a.load }} load{% elif a.avg_hr %}{{ a.avg_hr|round|int }} bpm{% endif %}</small></span></a>{% else %}<div class="activity-mobile-item muted">No workouts yet.</div>{% endfor %}
   </div>
   {% if activity_total_pages|default(1) > 1 %}
-  <nav class="activity-pagination" aria-label="Activity pages">
-    {% if activity_has_previous %}<a class="btn small" href="{{ activity_previous_url }}">Previous</a>{% endif %}
+  <div class="activity-pagination" role="navigation" aria-label="Activity pages">
+    {% if activity_has_previous %}<a class="btn small" href="{{ activity_previous_url }}">Previous</a>{% else %}<span class="btn small pager-placeholder" aria-disabled="true">Previous</span>{% endif %}
     <span class="muted" aria-live="polite">Page {{ activity_page }} of {{ activity_total_pages }}</span>
-    {% if activity_has_next %}<a class="btn small" href="{{ activity_next_url }}">Next</a>{% endif %}
-  </nav>
+    {% if activity_has_next %}<a class="btn small" href="{{ activity_next_url }}">Next</a>{% else %}<span class="btn small pager-placeholder" aria-disabled="true">Next</span>{% endif %}
+  </div>
   {% endif %}
 </section>
 </div>

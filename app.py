@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import inspect
 import json
+import math
 import threading
 from datetime import date, datetime, time, timedelta
 
@@ -588,9 +589,22 @@ def _age_label(value_date: str | None) -> str | None:
     return f"{age} days ago"
 
 
+def _format_metric_decimal(value: object, places: int = 1) -> str | None:
+    """Return a finite numeric metric with a stable display precision."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    return f"{value:.{places}f}"
+
+
 def _tile(row, *, key, label, unit, lower_is_better):
     """Build a tile dict from a stored MetricSnapshot row (or None)."""
     if row is None or row.value is None:
+        return {"key": key, "label": label, "value": None, "unit": unit,
+                "prev": None, "age": None, "trend": "flat"}
+    value = row.value
+    if key == "fitness_age" and _format_metric_decimal(value) is None:
         return {"key": key, "label": label, "value": None, "unit": unit,
                 "prev": None, "age": None, "trend": "flat"}
     return {
@@ -706,9 +720,12 @@ def _fitness_tiles() -> list[dict]:
                 pass
         
         fa_tile = _tile(fa, key="fitness_age", label="Fitness Age", unit="yrs", lower_is_better=True)
+        if fa_tile["value"] is not None:
+            fa_tile["display_value"] = _format_metric_decimal(fa_tile["value"])
         fa_tile["prev"] = None  # Hide 'from X' text but keep trend arrow
-        if tfa and tfa.value:
-            fa_tile["age"] = f"Target: {tfa.value}"
+        target_display = _format_metric_decimal(tfa.value) if tfa else None
+        if target_display is not None:
+            fa_tile["age"] = f"Target: {target_display}"
         if fa and fa.value_date:
             try:
                 lbl = _age_label(fa.value_date[:10])

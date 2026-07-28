@@ -707,6 +707,49 @@ textarea { min-height: 110px; }
   .danger-form .field, .danger-form .btn-danger-outline { width: 100% !important; flex: none; }
 }
 
+/* Mobile follow-up: isolate the activity pager from the global site nav. */
+.activity-pagination {
+  position: static;
+  inset: auto;
+  top: auto;
+  right: auto;
+  left: auto;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: .75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  overflow: visible;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  box-shadow: none;
+}
+.activity-pagination > :first-child { justify-self: start; width: auto; }
+.activity-pagination > :nth-child(2) { justify-self: center; white-space: nowrap; }
+.activity-pagination > :last-child { justify-self: end; width: auto; }
+.activity-pagination .pager-placeholder { opacity: .55; cursor: default; }
+
+@media (max-width: 640px) {
+  .exercise-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: .35rem; }
+  .exercise-name { grid-row: 1; min-width: 0; max-width: 100%; }
+  .exercise-meta { grid-row: 2; display: inline-flex; align-items: center; flex-wrap: nowrap; gap: .3rem; min-width: 0; max-width: 100%; white-space: nowrap; font-size: .78rem; }
+  .exercise-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .exercise-row .exercise-identity { grid-column: 1 / -1; }
+  .exercise-row .sets-field { grid-column: 1; }
+  .exercise-row .rest-field { grid-column: 2; }
+  .exercise-row .target-field { grid-column: 1; }
+  .exercise-row .load-field { grid-column: 2; }
+  .exercise-row.is-timed .target-field { grid-column: 1 / -1; }
+  .exercise-row.is-timed .load-field { display: none; }
+  .exercise-row .exercise-actions, .exercise-row .exercise-warmup { grid-column: 1 / -1; }
+  .exercise-row .warmup-inputs { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: .65rem; }
+  .exercise-row.warmup-is-timed .warmup-target { grid-column: 1 / -1; }
+  .exercise-row.warmup-is-timed .warmup-weight { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
@@ -891,4 +934,25 @@ textarea { min-height: 110px; }
     min-width: 0 !important;
   }
   .availability-section .avail-time-pickers input[type="time"] { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+}
+
+/* Keep these mobile layout contracts last, after legacy dashboard/program rules. */
+@media (max-width: 640px) {
+  .activity-pagination { position: static; inset: auto; top: auto; right: auto; left: auto; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); background: transparent; box-shadow: none; overflow: visible; }
+  .activity-pagination > :first-child { justify-self: start; width: auto; }
+  .activity-pagination > :nth-child(2) { justify-self: center; white-space: nowrap; }
+  .activity-pagination > :last-child { justify-self: end; width: auto; }
+  .exercise-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: .35rem; }
+  .exercise-name { grid-row: 1; min-width: 0; max-width: 100%; }
+  .exercise-meta { grid-row: 2; display: inline-flex; align-items: center; flex-wrap: nowrap; gap: .3rem; min-width: 0; max-width: 100%; white-space: nowrap; font-size: .78rem; }
+  .exercise-row .sets-field { grid-column: 1; }
+  .exercise-row .rest-field { grid-column: 2; }
+  .exercise-row .target-field { grid-column: 1; }
+  .exercise-row .load-field { grid-column: 2; }
+  .exercise-row.is-timed .target-field { grid-column: 1 / -1; }
+  .exercise-row.is-timed .load-field { display: none; }
+  .exercise-row .exercise-actions, .exercise-row .exercise-warmup { grid-column: 1 / -1; }
+  .exercise-row .warmup-inputs { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: .65rem; }
+  .exercise-row.warmup-is-timed .warmup-target { grid-column: 1 / -1; }
+  .exercise-row.warmup-is-timed .warmup-weight { display: none; }
 }

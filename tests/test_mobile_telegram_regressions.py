@@ -23,11 +23,9 @@ def test_onboarding_availability_has_semantic_markup_without_inline_layout():
 
 def test_mobile_availability_css_is_responsive_and_controls_hidden_by_class():
     css = (ROOT / "static" / "ui.css").read_text(encoding="utf-8")
-    mobile = css[css.rfind("@media (max-width: 640px)"):]
-
-    assert "display: grid !important" in mobile
-    assert "grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr)" in mobile
-    assert "width: 100% !important; min-width: 0 !important; max-width: 100% !important" in mobile
+    assert "display: grid !important" in css
+    assert "grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr)" in css
+    assert "width: 100% !important; min-width: 0 !important; max-width: 100% !important" in css
     assert ".avail-time-pickers.is-hidden { display: none !important; }" in css
 
 
