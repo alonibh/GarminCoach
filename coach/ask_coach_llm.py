@@ -176,7 +176,7 @@ async def _create(
     *,
     request_input: str,
     system_instruction: str | None,
-) -> tuple[str, int]:
+) -> tuple[str, int, str, int | None, int | None]:
     client = _client or init_gemini_client()
     retries = 0
     while True:
@@ -194,8 +194,20 @@ async def _create(
             if system_instruction is not None:
                 kwargs["system_instruction"] = system_instruction
             interaction = await client.aio.interactions.create(**kwargs)
-            return (getattr(interaction, "output_text", None) or "").strip(), retries
+            status = getattr(interaction, "status", None)
+            status = getattr(status, "value", status)
+            status = str(status).lower() if status is not None else "unknown"
+            usage = getattr(interaction, "usage_metadata", None) or getattr(interaction, "usage", None)
+            output_tokens = getattr(usage, "total_output_tokens", None) if usage else None
+            thought_tokens = getattr(usage, "total_thought_tokens", None) if usage else None
+            if status in {"incomplete", "budget_exceeded"}:
+                raise AskCoachLLMError("truncated_output")
+            if status != "completed":
+                raise AskCoachLLMError("service")
+            return (getattr(interaction, "output_text", None) or "").strip(), retries, status, output_tokens, thought_tokens
         except asyncio.CancelledError:
+            raise
+        except AskCoachLLMError:
             raise
         except Exception as exc:
             category, status = categorize_gemini_error(exc)
@@ -221,9 +233,12 @@ async def generate_ask_coach_response(
     raw = ""
     retry_count = 0
     validation_result = "not_run"
+    interaction_status = None
+    total_output_tokens = None
+    total_thought_tokens = None
     response: AskCoachResponse | None = None
     try:
-        raw, retry_count = await _create(
+        raw, retry_count, interaction_status, total_output_tokens, total_thought_tokens = await _create(
             request_input=request_input,
             system_instruction=SYSTEM_INSTRUCTION,
         )
@@ -231,6 +246,9 @@ async def generate_ask_coach_response(
             raise AskCoachLLMError("empty_output")
         try:
             response = AskCoachResponse.model_validate_json(raw)
+            if response.response_type == "answer" and response.answer.rstrip(".").lower() in {"based on facts stored in garmin", "based on facts stored in garmincoach"}:
+                validation_result = "insufficient"
+                raise AskCoachLLMError("insufficient_output")
             validation_result = "valid"
         except ValidationError:
             validation_result = "invalid"
@@ -245,7 +263,7 @@ async def generate_ask_coach_response(
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-            corrected, correction_retries = await _create(
+            corrected, correction_retries, interaction_status, total_output_tokens, total_thought_tokens = await _create(
                 request_input=correction_input,
                 system_instruction=None,
             )
@@ -270,4 +288,7 @@ async def generate_ask_coach_response(
             output_chars=len(raw),
             retry_count=retry_count,
             validation_result=validation_result,
+            interaction_status=interaction_status,
+            total_output_tokens=total_output_tokens,
+            total_thought_tokens=total_thought_tokens,
         )

@@ -17,7 +17,7 @@ class FakeInteractions:
     async def create(self, **kwargs):
         self.calls.append(kwargs)
         output = self.outputs.pop(0)
-        return SimpleNamespace(output_text=output)
+        return SimpleNamespace(output_text=output, status="completed")
 
 
 class FakeClient:

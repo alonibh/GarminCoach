@@ -17,11 +17,14 @@ def log_generation_metadata(
     output_chars: int,
     retry_count: int,
     validation_result: str,
+    interaction_status: str | None = None,
+    total_output_tokens: int | None = None,
+    total_thought_tokens: int | None = None,
 ) -> None:
     logger.info(
         "ask_coach_generation user_id=%s model=%s response_type=%s "
         "latency_ms=%d http_status=%s input_chars=%d output_chars=%d "
-        "retry_count=%d validation_result=%s",
+        "retry_count=%d validation_result=%s interaction_status=%s total_output_tokens=%s total_thought_tokens=%s",
         user_id,
         model,
         response_type or "none",
@@ -31,6 +34,9 @@ def log_generation_metadata(
         output_chars,
         retry_count,
         validation_result,
+        interaction_status or "none",
+        total_output_tokens if total_output_tokens is not None else "none",
+        total_thought_tokens if total_thought_tokens is not None else "none",
     )
 
 

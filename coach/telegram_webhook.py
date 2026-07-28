@@ -204,7 +204,11 @@ async def _send_error(
     )
     if nonce is None:
         return
-    if error.category == "rate_limited":
+    if error.category == "truncated_output":
+        text = "Ask Coach's response was cut off. Please try again."
+    elif error.category == "insufficient_output":
+        text = "Ask Coach couldn't complete that response. Please try again."
+    elif error.category == "rate_limited":
         text = "Ask Coach is temporarily rate-limited. Please try again."
     elif error.category == "timeout":
         text = "Ask Coach timed out. Please try again."
