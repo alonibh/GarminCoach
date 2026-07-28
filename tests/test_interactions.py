@@ -1,5 +1,7 @@
 from datetime import date, datetime
+from contextlib import contextmanager
 import json
+from uuid import uuid4
 
 from coach.decision_engine import evaluate_morning_decision
 from coach.interactions import (
@@ -7,6 +9,9 @@ from coach.interactions import (
     apply_interaction,
     begin_reschedule_flow,
     begin_schedule_flow,
+    calendar_version,
+    program_version,
+    stage_cancel_choices,
     stage_decision_actions,
 )
 from coach.renderer import render_morning
@@ -167,3 +172,129 @@ def test_stale_flow_nonce_does_not_advance(session, monkeypatch):
 
     assert "no longer current" in stale.text
     assert row.payload_json == before
+
+
+class _OccurrenceApi:
+    def __init__(self):
+        self.scheduled = []
+        self.unscheduled = []
+
+    def get_scheduled_workouts(self, _year, _month):
+        return [
+            {
+                "workoutId": 55,
+                "scheduledWorkoutId": 900,
+                "date": "2026-07-07",
+            }
+        ]
+
+    def schedule_workout(self, workout_id, target_date):
+        self.scheduled.append((workout_id, target_date))
+
+    def unschedule_workout(self, occurrence_id):
+        self.unscheduled.append(occurrence_id)
+
+
+class _AuthenticatedMutationClient:
+    def __init__(self):
+        self.api = _OccurrenceApi()
+        self.ensure_calls = 0
+        self.login_calls = 0
+
+    def ensure_authenticated(self):
+        self.ensure_calls += 1
+
+    def login(self):
+        self.login_calls += 1
+        raise AssertionError("an authenticated tenant client must be reused")
+
+
+def _install_mutation_client(monkeypatch, fake):
+    @contextmanager
+    def current():
+        yield fake
+
+    monkeypatch.setattr(
+        "sync.garmin_registry.current_garmin_client", current
+    )
+
+
+def test_cancel_reuses_authenticated_tenant_client(session, monkeypatch):
+    _fixed_now(monkeypatch)
+    planned = PlannedSession(
+        title="Full Body 2",
+        activity_type="strength_training",
+        target_date=date(2026, 7, 7),
+        suggested_time="18:00",
+        duration_min=60,
+        status="approved",
+        garmin_workout_id=55,
+        source="coach",
+    )
+    session.add(planned)
+    session.commit()
+    stage_cancel_choices(session)
+    row = (
+        session.query(PendingInteraction)
+        .filter_by(action_type="cancel_planned_session")
+        .one()
+    )
+    fake = _AuthenticatedMutationClient()
+    _install_mutation_client(monkeypatch, fake)
+
+    result = apply_interaction(session, row.interaction_id)
+
+    assert result[0] == "applied"
+    assert fake.ensure_calls == 1
+    assert fake.login_calls == 0
+    assert fake.api.unscheduled == [900]
+    assert planned.status == "cancelled"
+
+
+def test_reschedule_reuses_authenticated_tenant_client(session, monkeypatch):
+    _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
+    planned = PlannedSession(
+        title="Full Body 2",
+        activity_type="strength_training",
+        target_date=date(2026, 7, 7),
+        suggested_time="18:00",
+        duration_min=60,
+        status="approved",
+        garmin_workout_id=55,
+        source="coach",
+    )
+    session.add(planned)
+    session.flush()
+    row = PendingInteraction(
+        interaction_id=str(uuid4()),
+        action_type="reschedule_planned_time",
+        target_type="planned_session",
+        target_id=planned.id,
+        payload_json=json.dumps(
+            {"target_date": "2026-07-08", "suggested_time": "18:30"}
+        ),
+        program_version=program_version(session),
+        sync_version="",
+        calendar_version=calendar_version(session),
+        created_at=datetime(2026, 7, 6, 8),
+        expires_at=datetime(2026, 7, 6, 10),
+        status="pending",
+    )
+    session.add(row)
+    session.commit()
+    monkeypatch.setattr(
+        "coach.scheduling.available_start_times",
+        lambda *_args, **_kwargs: [datetime.strptime("18:30", "%H:%M").time()],
+    )
+    fake = _AuthenticatedMutationClient()
+    _install_mutation_client(monkeypatch, fake)
+
+    result = apply_interaction(session, row.interaction_id)
+
+    assert result[0] == "applied"
+    assert fake.ensure_calls == 1
+    assert fake.login_calls == 0
+    assert fake.api.scheduled == [(55, "2026-07-08")]
+    assert fake.api.unscheduled == [900]
+    assert planned.target_date == date(2026, 7, 8)

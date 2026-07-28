@@ -194,6 +194,25 @@ class GarminClient:
         self._api = api
         self._session_expired = False
 
+    def ensure_authenticated(
+        self,
+        password: Optional[str] = None,
+        mfa_prompt: Optional[Callable[[], str]] = None,
+    ) -> None:
+        """Reuse a live session, restoring legacy cached tokens only if needed.
+
+        Multi-user clients are restored from the encrypted per-user vault into
+        memory. Calling ``login()`` on those clients would replace that valid
+        API object and look in the unrelated legacy filesystem token store.
+        """
+        if self.is_authenticated():
+            return
+        self.login(password=password, mfa_prompt=mfa_prompt)
+
+    def mark_session_expired(self) -> None:
+        """Prevent further mutations after Garmin rejects the live session."""
+        self._session_expired = True
+
     def begin_login(self, email: str, password: str) -> str:
         """Start a fresh per-user login without persisting the password.
 

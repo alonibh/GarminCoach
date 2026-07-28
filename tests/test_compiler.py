@@ -1,5 +1,13 @@
+from contextlib import contextmanager
+
 import pytest
-from coach.garmin_compiler import _get_step_weight, build_generic_step
+from garminconnect import GarminConnectAuthenticationError
+from coach.garmin_compiler import (
+    GarminFailureKind,
+    _get_step_weight,
+    build_generic_step,
+    compile_and_schedule_result,
+)
 from db import PlannedSession, ProgramSession, SessionExercise, SyncState, TrainingProgram
 
 def test_get_step_weight_with_none_weight():
@@ -126,3 +134,133 @@ def test_program_telegram_approval_uploads_verifies_schedules_and_is_idempotent(
         assert api.uploads[0]["workoutName"] == "Workout A @ 18:00"
         assert api.scheduled == [(77, "2026-07-20")]
     assert session.query(PlannedSession).one().garmin_workout_id == 77
+
+
+def _program_action(routine):
+    return {
+        "action": "schedule_session",
+        "program_session_id": routine.id,
+        "title": routine.name,
+        "activity_type": "strength_training",
+        "target_date": "2026-07-20",
+        "suggested_time": "18:00",
+        "duration_min": 60,
+        "intensity": "normal",
+    }
+
+
+class _MutationApi:
+    def __init__(self, *, verify=True, schedule_error=None):
+        self.verify = verify
+        self.schedule_error = schedule_error
+        self.uploads = []
+        self.reads = []
+        self.scheduled = []
+        self.deleted = []
+
+    def upload_workout(self, payload):
+        self.uploads.append(payload)
+        return {"workoutId": 91}
+
+    def get_workout_by_id(self, workout_id):
+        self.reads.append(workout_id)
+        if self.verify:
+            return self.uploads[-1]
+        return {"workoutSegments": []}
+
+    def schedule_workout(self, workout_id, day):
+        self.scheduled.append((workout_id, day))
+        if self.schedule_error:
+            raise self.schedule_error
+
+    def delete_workout(self, workout_id):
+        self.deleted.append(workout_id)
+
+
+class _MutationClient:
+    def __init__(self, api, auth_error=None):
+        self.api = api
+        self.auth_error = auth_error
+        self.ensure_calls = 0
+        self.login_calls = 0
+
+    def ensure_authenticated(self):
+        self.ensure_calls += 1
+        if self.auth_error:
+            raise self.auth_error
+
+    def login(self):
+        self.login_calls += 1
+        raise AssertionError("destructive login must not be used")
+
+    def mark_session_expired(self):
+        pass
+
+
+def _use_client(monkeypatch, fake_client):
+    @contextmanager
+    def current():
+        yield fake_client
+
+    monkeypatch.setattr(
+        "coach.garmin_compiler.current_garmin_client", current
+    )
+
+
+def test_expired_client_returns_reconnect_required_without_local_changes(
+    session, monkeypatch
+):
+    routine = _active_session(session)
+    api = _MutationApi()
+    fake = _MutationClient(
+        api,
+        GarminConnectAuthenticationError("expired"),
+    )
+    _use_client(monkeypatch, fake)
+
+    result = compile_and_schedule_result(session, _program_action(routine))
+
+    assert result.failure == GarminFailureKind.RECONNECT_REQUIRED
+    assert result.stage == "authenticate"
+    assert "Reconnect Garmin" in result.user_message
+    assert fake.login_calls == 0
+    assert api.uploads == []
+    assert session.query(PlannedSession).count() == 0
+    assert session.get(SyncState, "coach_calendar_events") is None
+
+
+def test_verification_failure_deletes_upload_and_persists_nothing(
+    session, monkeypatch
+):
+    routine = _active_session(session)
+    api = _MutationApi(verify=False)
+    fake = _MutationClient(api)
+    _use_client(monkeypatch, fake)
+
+    result = compile_and_schedule_result(session, _program_action(routine))
+
+    assert result.failure == GarminFailureKind.VERIFY_REJECTED
+    assert result.stage == "verify"
+    assert api.deleted == [91]
+    assert api.scheduled == []
+    assert session.query(PlannedSession).count() == 0
+    assert session.get(SyncState, "coach_calendar_events") is None
+
+
+def test_schedule_failure_deletes_upload_and_persists_nothing(
+    session, monkeypatch
+):
+    routine = _active_session(session)
+    api = _MutationApi(schedule_error=RuntimeError("rejected"))
+    fake = _MutationClient(api)
+    _use_client(monkeypatch, fake)
+
+    result = compile_and_schedule_result(session, _program_action(routine))
+
+    assert result.failure == GarminFailureKind.SCHEDULE_FAILED
+    assert result.stage == "schedule"
+    assert api.deleted == [91]
+    assert api.uploads and api.reads == [91]
+    assert len(api.scheduled) == 1
+    assert session.query(PlannedSession).count() == 0
+    assert session.get(SyncState, "coach_calendar_events") is None

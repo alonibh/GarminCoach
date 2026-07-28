@@ -1,14 +1,86 @@
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from enum import Enum
+from contextvars import ContextVar
 import os
 from sqlalchemy.orm import Session
+from garminconnect import GarminConnectAuthenticationError
 
 from db import PlannedSession, ProgramSession, SessionExercise, SyncState, Workout
-from sync.garmin_client import client
+from sync.garmin_registry import current_garmin_client
 from coach.actions import parse_action
 
 logger = logging.getLogger(__name__)
+
+
+class GarminFailureKind(str, Enum):
+    RECONNECT_REQUIRED = "reconnect_required"
+    VERIFY_REJECTED = "verify_rejected"
+    SCHEDULE_FAILED = "schedule_failed"
+    SERVICE_FAILED = "service_failed"
+
+
+@dataclass(frozen=True)
+class GarminScheduleResult:
+    ok: bool
+    failure: GarminFailureKind | None = None
+    stage: str | None = None
+    exception_type: str | None = None
+
+    @property
+    def user_message(self) -> str:
+        if self.failure == GarminFailureKind.RECONNECT_REQUIRED:
+            return "Garmin is no longer connected. Reconnect Garmin and try again."
+        if self.failure == GarminFailureKind.VERIFY_REJECTED:
+            return "Garmin could not verify the uploaded workout. Nothing was scheduled."
+        if self.failure == GarminFailureKind.SCHEDULE_FAILED:
+            return "Garmin could not schedule the workout. Nothing was changed locally."
+        return "Garmin scheduling failed. No session was scheduled."
+
+
+_last_schedule_result: ContextVar[GarminScheduleResult | None] = ContextVar(
+    "last_garmin_schedule_result",
+    default=None,
+)
+
+
+def _ensure_authenticated(garmin_client) -> None:
+    ensure = getattr(garmin_client, "ensure_authenticated", None)
+    if ensure is not None:
+        ensure()
+    else:
+        # Compatibility for old single-user adapters and deterministic fakes.
+        garmin_client.login()
+
+
+def _failed_result(
+    stage: str,
+    exc: Exception,
+    *,
+    operation: str = "schedule_program_session",
+) -> GarminScheduleResult:
+    if isinstance(exc, GarminConnectAuthenticationError):
+        failure = GarminFailureKind.RECONNECT_REQUIRED
+    elif stage in {"read_back", "verify"}:
+        failure = GarminFailureKind.VERIFY_REJECTED
+    elif stage == "schedule":
+        failure = GarminFailureKind.SCHEDULE_FAILED
+    else:
+        failure = GarminFailureKind.SERVICE_FAILED
+    logger.error(
+        "garmin_mutation_failed operation=%s stage=%s exception_type=%s",
+        operation,
+        stage,
+        type(exc).__name__,
+    )
+    return GarminScheduleResult(
+        ok=False,
+        failure=failure,
+        stage=stage,
+        exception_type=type(exc).__name__,
+    )
 
 def build_generic_step(description: str, reps: int | None, weight_kg: float | None, exercise_name: str = None, category: str = None, duration_seconds: int | None = None, step_type: str = "interval") -> dict:
     """Build a generic interval step."""
@@ -263,48 +335,77 @@ def _verify_uploaded_workout(expected: dict, uploaded: dict) -> None:
         raise ValueError("Garmin read-back workout details do not match the approved session")
 
 
-def _schedule_program_session(session: Session, meta: dict) -> bool:
+def _schedule_program_session_result(
+    session: Session, meta: dict
+) -> GarminScheduleResult:
     target_day = date.fromisoformat(meta["target_date"])
     duplicate = session.query(PlannedSession).filter_by(
         program_session_id=meta["program_session_id"], target_date=target_day,
         status="approved",
     ).first()
     if duplicate and duplicate.garmin_workout_id:
-        return True
+        return GarminScheduleResult(ok=True)
     workout = build_program_workout(session, meta["program_session_id"], meta["suggested_time"])
     new_id = None
+    garmin_client = None
+    stage = "authenticate"
     try:
-        client.login()
-        result = client.api.upload_workout(workout)
-        new_id = result.get("workoutId")
-        if not new_id:
-            raise ValueError("Garmin upload returned no workout ID")
-        reader = getattr(client.api, "get_workout_by_id", None) or getattr(client.api, "get_workout", None)
-        if not reader:
-            raise ValueError("Installed Garmin client cannot read a workout back")
-        _verify_uploaded_workout(workout, reader(new_id))
-        client.api.schedule_workout(new_id, meta["target_date"])
-        session.add(PlannedSession(
-            program_session_id=meta["program_session_id"], activity_type=meta["activity_type"],
-            title=meta["title"], target_date=target_day, suggested_time=meta["suggested_time"],
-            duration_min=meta["duration_min"], intensity=meta["intensity"], status="approved",
-            garmin_workout_id=new_id, source="coach", created_at=datetime.now(), updated_at=datetime.now(),
-        ))
-        events_row = session.get(SyncState, "coach_calendar_events")
-        events = json.loads(events_row.value) if events_row and events_row.value else []
-        events.append({"title": meta["title"], "date": meta["target_date"], "start_time": meta["suggested_time"] or "18:30", "duration_min": meta["duration_min"]})
-        session.merge(SyncState(key="coach_calendar_events", value=json.dumps(events)))
-        session.commit()
-        return True
+        with current_garmin_client() as garmin_client:
+            _ensure_authenticated(garmin_client)
+            stage = "upload"
+            result = garmin_client.api.upload_workout(workout)
+            new_id = result.get("workoutId")
+            if not new_id:
+                raise ValueError("Garmin upload returned no workout ID")
+            stage = "read_back"
+            reader = (
+                getattr(garmin_client.api, "get_workout_by_id", None)
+                or getattr(garmin_client.api, "get_workout", None)
+            )
+            if not reader:
+                raise ValueError("Installed Garmin client cannot read a workout back")
+            uploaded = reader(new_id)
+            stage = "verify"
+            _verify_uploaded_workout(workout, uploaded)
+            stage = "schedule"
+            garmin_client.api.schedule_workout(new_id, meta["target_date"])
+            stage = "persist"
+            session.add(PlannedSession(
+                program_session_id=meta["program_session_id"], activity_type=meta["activity_type"],
+                title=meta["title"], target_date=target_day, suggested_time=meta["suggested_time"],
+                duration_min=meta["duration_min"], intensity=meta["intensity"], status="approved",
+                garmin_workout_id=new_id, source="coach", created_at=datetime.now(), updated_at=datetime.now(),
+            ))
+            events_row = session.get(SyncState, "coach_calendar_events")
+            events = json.loads(events_row.value) if events_row and events_row.value else []
+            events.append({"title": meta["title"], "date": meta["target_date"], "start_time": meta["suggested_time"] or "18:30", "duration_min": meta["duration_min"]})
+            session.merge(SyncState(key="coach_calendar_events", value=json.dumps(events)))
+            session.commit()
+        return GarminScheduleResult(ok=True)
     except Exception as exc:
         session.rollback()
-        if new_id:
+        if isinstance(exc, GarminConnectAuthenticationError) and garmin_client is not None:
+            marker = getattr(garmin_client, "mark_session_expired", None)
+            if marker is not None:
+                marker()
+        if new_id and garmin_client is not None:
             try:
-                client.api.delete_workout(new_id)
-            except Exception:
-                pass
-        logger.error("Failed to upload program workout: %s", exc)
-        return False
+                with current_garmin_client() as cleanup_client:
+                    cleanup_client.api.delete_workout(new_id)
+            except Exception as cleanup_exc:
+                logger.error(
+                    "garmin_mutation_failed operation=schedule_program_session "
+                    "stage=cleanup exception_type=%s",
+                    type(cleanup_exc).__name__,
+                )
+        return _failed_result(stage, exc)
+
+
+def _schedule_program_session(session: Session, meta: dict) -> bool:
+    """Compatibility wrapper for callers that still consume a boolean."""
+    result = _schedule_program_session_result(session, meta)
+    _last_schedule_result.set(result)
+    return result.ok
 
 def _get_step_weight(step: dict) -> float:
     """Extract working weight from a step."""
@@ -326,6 +427,67 @@ def _get_step_description(step: dict) -> str:
             if child.get("stepType", {}).get("stepTypeKey") == "interval":
                 return child.get("description") or ""
     return step.get("description") or ""
+
+
+def compile_and_schedule_result(
+    session: Session, payload: dict
+) -> GarminScheduleResult:
+    """Return a classified result for user-confirmed scheduling operations."""
+    try:
+        action = parse_action(payload)
+    except Exception as exc:
+        logger.error(
+            "garmin_mutation_failed operation=compile_and_schedule stage=validate "
+            "exception_type=%s",
+            type(exc).__name__,
+        )
+        return GarminScheduleResult(
+            ok=False,
+            failure=GarminFailureKind.SERVICE_FAILED,
+            stage="validate",
+            exception_type=type(exc).__name__,
+        )
+    parsed = action.model_dump()
+    if (
+        parsed.get("action") == "schedule_session"
+        and parsed.get("program_session_id")
+        and not parsed.get("base_workout_id")
+    ):
+        return _schedule_program_session_result(
+            session,
+            {
+                "program_session_id": parsed["program_session_id"],
+                "activity_type": parsed.get("activity_type") or "general",
+                "title": parsed.get("title") or "Workout",
+                "target_date": parsed.get("target_date"),
+                "suggested_time": parsed.get("suggested_time") or "",
+                "duration_min": parsed.get("duration_min") or 60,
+                "intensity": parsed.get("intensity") or "normal",
+            },
+        )
+    if compile_and_schedule(session, parsed):
+        return GarminScheduleResult(ok=True)
+    return GarminScheduleResult(
+        ok=False,
+        failure=GarminFailureKind.SERVICE_FAILED,
+        stage="service",
+        exception_type="GarminOperationError",
+    )
+
+
+def compile_and_schedule_for_interaction(
+    session: Session, payload: dict
+) -> GarminScheduleResult:
+    """Classify the legacy boolean API while keeping monkeypatch compatibility."""
+    _last_schedule_result.set(None)
+    if compile_and_schedule(session, payload):
+        return GarminScheduleResult(ok=True)
+    return _last_schedule_result.get() or GarminScheduleResult(
+        ok=False,
+        failure=GarminFailureKind.SERVICE_FAILED,
+        stage="service",
+        exception_type="GarminOperationError",
+    )
 
 
 def compile_and_schedule(session: Session, payload: dict) -> bool:
@@ -516,88 +678,122 @@ def compile_and_schedule(session: Session, payload: dict) -> bool:
         ]
     }
     
+    new_id = None
+    garmin_client = None
+    stage = "authenticate"
     try:
-        client.login()
-        
-        # 1. Delete previous coach-created workout by ID directly (much faster).
-        last_workout_row = session.get(SyncState, "last_coach_workout_id")
-        if last_workout_row and last_workout_row.value:
-            try:
-                client.api.delete_workout(int(last_workout_row.value))
-                logger.info("Deleted previous coach workout ID: %s", last_workout_row.value)
-            except Exception as e:
-                logger.warning("Failed to delete previous workout ID %s: %s", last_workout_row.value, e)
-                
-        # 2. Upload
-        res = client.api.upload_workout(garmin_payload)
-        new_id = res.get("workoutId")
-        if not new_id:
-            logger.error("Upload succeeded but no workoutId returned.")
-            return False
-            
-        # 3. Schedule for target_date (or today/tomorrow if not provided)
-        target_date_str = payload.get("target_date")
-        if target_date_str:
-            target_str = target_date_str
-        else:
-            from time_utils import get_local_now, get_local_date
-            if get_local_now().hour >= 17:
-                target_date = get_local_date() + timedelta(days=1)
-            else:
-                target_date = get_local_date()
-            target_str = target_date.isoformat()
-            
-        client.api.schedule_workout(new_id, target_str)
-        logger.info("Scheduled workout '%s' for %s (ID: %s)", workout_name, target_str, new_id)
-        
-        # 4. Save the new ID so we can delete it next time
-        session.merge(SyncState(key="last_coach_workout_id", value=str(new_id)))
+        with current_garmin_client() as garmin_client:
+            _ensure_authenticated(garmin_client)
+            last_workout_row = session.get(SyncState, "last_coach_workout_id")
 
-        # 5. Append event to the ICS calendar feed list so each workout
-        #    appears on iCloud/Google calendar with the correct time.
-        #    Estimate ~60 min for a typical strength session.
-        existing_row = session.get(SyncState, "coach_calendar_events")
-        existing_events = []
-        if existing_row and existing_row.value:
-            try:
-                existing_events = json.loads(existing_row.value)
-            except Exception:
-                existing_events = []
+            stage = "upload"
+            res = garmin_client.api.upload_workout(garmin_payload)
+            new_id = res.get("workoutId")
+            if not new_id:
+                raise ValueError("Garmin upload returned no workout ID")
 
-        # Clean up events older than 7 days
-        cutoff = (date.today() - timedelta(days=7)).isoformat()
-        existing_events = [e for e in existing_events if e.get("date", "") >= cutoff]
-
-        # Add the new event
-        existing_events.append({
-            "title": workout_name,
-            "date": target_str,
-            "start_time": suggested_time or "18:30",
-            "duration_min": planned_meta["duration_min"] if planned_meta else 60,
-        })
-        session.merge(SyncState(key="coach_calendar_events", value=json.dumps(existing_events)))
-
-        if planned_meta:
-            session.add(
-                PlannedSession(
-                    program_session_id=planned_meta["program_session_id"],
-                    activity_type=planned_meta["activity_type"],
-                    title=planned_meta["title"] or base_name,
-                    target_date=date.fromisoformat(target_str),
-                    suggested_time=suggested_time or "18:30",
-                    duration_min=planned_meta["duration_min"],
-                    intensity=planned_meta["intensity"],
-                    status="approved",
-                    garmin_workout_id=new_id,
-                    source="coach",
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                )
+            stage = "read_back"
+            reader = (
+                getattr(garmin_client.api, "get_workout_by_id", None)
+                or getattr(garmin_client.api, "get_workout", None)
             )
-        session.commit()
-        
+            if not reader:
+                raise ValueError("Installed Garmin client cannot read a workout back")
+            uploaded = reader(new_id)
+            stage = "verify"
+            _verify_uploaded_workout(garmin_payload, uploaded)
+
+            target_date_str = payload.get("target_date")
+            if target_date_str:
+                target_str = target_date_str
+            else:
+                from time_utils import get_local_now, get_local_date
+                if get_local_now().hour >= 17:
+                    target_date = get_local_date() + timedelta(days=1)
+                else:
+                    target_date = get_local_date()
+                target_str = target_date.isoformat()
+
+            stage = "schedule"
+            garmin_client.api.schedule_workout(new_id, target_str)
+
+            # Retire the previous coach workout only after its replacement is
+            # verified and scheduled, so a failed replacement cannot erase it.
+            if last_workout_row and last_workout_row.value:
+                try:
+                    old_id = int(last_workout_row.value)
+                    if old_id != new_id:
+                        garmin_client.api.delete_workout(old_id)
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "garmin_mutation_failed operation=schedule_modified_workout "
+                        "stage=cleanup_previous exception_type=%s",
+                        type(cleanup_exc).__name__,
+                    )
+
+            stage = "persist"
+            session.merge(SyncState(key="last_coach_workout_id", value=str(new_id)))
+
+            existing_row = session.get(SyncState, "coach_calendar_events")
+            existing_events = []
+            if existing_row and existing_row.value:
+                try:
+                    existing_events = json.loads(existing_row.value)
+                except Exception:
+                    existing_events = []
+
+            cutoff = (date.today() - timedelta(days=7)).isoformat()
+            existing_events = [e for e in existing_events if e.get("date", "") >= cutoff]
+
+            existing_events.append({
+                "title": workout_name,
+                "date": target_str,
+                "start_time": suggested_time or "18:30",
+                "duration_min": planned_meta["duration_min"] if planned_meta else 60,
+            })
+            session.merge(SyncState(key="coach_calendar_events", value=json.dumps(existing_events)))
+
+            if planned_meta:
+                session.add(
+                    PlannedSession(
+                        program_session_id=planned_meta["program_session_id"],
+                        activity_type=planned_meta["activity_type"],
+                        title=planned_meta["title"] or base_name,
+                        target_date=date.fromisoformat(target_str),
+                        suggested_time=suggested_time or "18:30",
+                        duration_min=planned_meta["duration_min"],
+                        intensity=planned_meta["intensity"],
+                        status="approved",
+                        garmin_workout_id=new_id,
+                        source="coach",
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
+                    )
+                )
+            session.commit()
         return True
-        
-    except Exception as e:
-        logger.error(f"Failed to push workout to Garmin: {e}")
+
+    except Exception as exc:
+        session.rollback()
+        if isinstance(exc, GarminConnectAuthenticationError) and garmin_client is not None:
+            marker = getattr(garmin_client, "mark_session_expired", None)
+            if marker is not None:
+                marker()
+        if new_id and garmin_client is not None:
+            try:
+                with current_garmin_client() as cleanup_client:
+                    cleanup_client.api.delete_workout(new_id)
+            except Exception as cleanup_exc:
+                logger.error(
+                    "garmin_mutation_failed operation=schedule_modified_workout "
+                    "stage=cleanup exception_type=%s",
+                    type(cleanup_exc).__name__,
+                )
+        _last_schedule_result.set(
+            _failed_result(
+                stage,
+                exc,
+                operation="schedule_modified_workout",
+            )
+        )
         return False

@@ -119,7 +119,7 @@ def _scheduled_sync() -> None:
     # Only auto-sync if we already have a valid cached session.
     if not client.is_authenticated():
         try:
-            client.login()  # resume from cached token only
+            client.ensure_authenticated()  # resume from cached token only
         except Exception:
             return
     # Go through the shared guard so a scheduled sync never collides with a
@@ -149,7 +149,7 @@ def _morning_watch() -> None:
     """Poll lightly until the watch upload has produced usable overnight data."""
     if not client.is_authenticated():
         try:
-            client.login()
+            client.ensure_authenticated()
         except Exception:
             return
 

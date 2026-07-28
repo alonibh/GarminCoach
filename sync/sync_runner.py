@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from contextvars import copy_context
 
 import config
@@ -140,9 +141,24 @@ def _checkpoint_current_tenant() -> None:
         log.exception("Failed to checkpoint Garmin tokens")
 
 
+def _current_garmin_lock():
+    if not config.MULTI_USER_ENABLED:
+        return nullcontext()
+    from sync.garmin_registry import get_garmin_registry
+    from tenant_context import current_tenant
+
+    tenant = current_tenant()
+    if tenant is None:
+        return nullcontext()
+    return get_garmin_registry().lock_for(tenant.user_id)
+
+
 def _run(full: bool, force: bool = False, allow_backfill: bool = False) -> None:
     try:
-        status["summary"] = run_sync(full=full, force=force, allow_backfill=allow_backfill)
+        with _current_garmin_lock():
+            status["summary"] = run_sync(
+                full=full, force=force, allow_backfill=allow_backfill
+            )
     except Exception as e:
         log.exception("Sync failed with unhandled exception")
         status["summary"] = {"errors": [str(e)]}
@@ -155,7 +171,8 @@ def _run(full: bool, force: bool = False, allow_backfill: bool = False) -> None:
 
 def _run_priority() -> None:
     try:
-        status["summary"] = run_priority_sync()
+        with _current_garmin_lock():
+            status["summary"] = run_priority_sync()
     except Exception as e:
         log.exception("Priority sync failed with unhandled exception")
         status["summary"] = {"priority": True, "errors": [str(e)]}

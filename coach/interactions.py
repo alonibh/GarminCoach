@@ -5,9 +5,12 @@ from datetime import date, datetime, timedelta
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from uuid import uuid4
 
 import config
+from garminconnect import GarminConnectAuthenticationError
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from coach.decision_engine import DecisionResult, evaluate_morning_decision
@@ -21,6 +24,43 @@ from db import (
     SyncState,
 )
 from time_utils import get_local_now
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_authenticated(garmin_client) -> None:
+    ensure = getattr(garmin_client, "ensure_authenticated", None)
+    if ensure is not None:
+        ensure()
+    else:
+        garmin_client.login()
+
+
+def _record_garmin_failure(
+    row: PendingInteraction,
+    *,
+    operation: str,
+    stage: str,
+    exc: Exception,
+    garmin_client=None,
+) -> str | None:
+    if isinstance(exc, GarminConnectAuthenticationError):
+        marker = getattr(garmin_client, "mark_session_expired", None)
+        if marker is not None:
+            marker()
+    row.status = "failed"
+    row.failure_reason = (
+        f"garmin_{operation}_failed:{stage}:{type(exc).__name__}"
+    )
+    logger.error(
+        "garmin_mutation_failed operation=%s stage=%s exception_type=%s",
+        operation,
+        stage,
+        type(exc).__name__,
+    )
+    if isinstance(exc, GarminConnectAuthenticationError):
+        return "Garmin is no longer connected. Reconnect Garmin and try again."
+    return None
 
 
 def _hash(payload) -> str:
@@ -307,7 +347,7 @@ def _scheduled_occurrence_id(raw, workout_id: int, target_day: date) -> int | No
 def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
     row = session.get(PendingInteraction, interaction_id)
     now = get_local_now().replace(tzinfo=None)
-    if not row or row.status != "pending":
+    if not row or row.status != "processing":
         return "stale", "This action is no longer available."
     if row.expires_at < now:
         row.status = "expired"
@@ -349,20 +389,37 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             row.failure_reason = "program_or_calendar_changed"
             return "stale", "Program or calendar data changed. Ask again."
         if planned.garmin_workout_id:
+            garmin_client = None
+            stage = "authenticate"
             try:
-                from sync.garmin_client import client
-                client.login()
-                scheduled = client.api.get_scheduled_workouts(planned.target_date.year, planned.target_date.month)
-                occurrence_id = _scheduled_occurrence_id(
-                    scheduled, planned.garmin_workout_id, planned.target_date,
-                )
-                if occurrence_id is None:
-                    raise ValueError("Garmin scheduled occurrence could not be verified")
-                client.api.unschedule_workout(occurrence_id)
+                from sync.garmin_registry import current_garmin_client
+
+                with current_garmin_client() as garmin_client:
+                    _ensure_authenticated(garmin_client)
+                    stage = "read_back"
+                    scheduled = garmin_client.api.get_scheduled_workouts(
+                        planned.target_date.year, planned.target_date.month
+                    )
+                    occurrence_id = _scheduled_occurrence_id(
+                        scheduled, planned.garmin_workout_id, planned.target_date,
+                    )
+                    if occurrence_id is None:
+                        raise ValueError("Garmin scheduled occurrence could not be verified")
+                    stage = "schedule"
+                    garmin_client.api.unschedule_workout(occurrence_id)
             except Exception as exc:
-                row.status = "failed"
-                row.failure_reason = f"garmin_unschedule_failed:{type(exc).__name__}"
-                return "failed", "Garmin could not verify the scheduled occurrence. Nothing was cancelled."
+                auth_message = _record_garmin_failure(
+                    row,
+                    operation="cancel",
+                    stage=stage,
+                    exc=exc,
+                    garmin_client=garmin_client,
+                )
+                return (
+                    "failed",
+                    auth_message
+                    or "Garmin could not verify the scheduled occurrence. Nothing was cancelled.",
+                )
         planned.status = "cancelled"
         planned.updated_at = now
         events_row = session.get(SyncState, "coach_calendar_events")
@@ -440,36 +497,54 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             row.failure_reason = "schedule_slot_changed"
             return "stale", "That workout time is no longer available. Choose a new date and time."
         if planned.garmin_workout_id and target_day != planned.target_date:
+            garmin_client = None
+            stage = "authenticate"
             try:
-                from sync.garmin_client import client
-                client.login()
-                scheduled = client.api.get_scheduled_workouts(
-                    planned.target_date.year, planned.target_date.month,
-                )
-                old_occurrence_id = _scheduled_occurrence_id(
-                    scheduled, planned.garmin_workout_id, planned.target_date,
-                )
-                if old_occurrence_id is None:
-                    raise ValueError("old Garmin occurrence could not be verified")
-                client.api.schedule_workout(planned.garmin_workout_id, target_day.isoformat())
-                try:
-                    client.api.unschedule_workout(old_occurrence_id)
-                except Exception:
-                    # Compensate by removing the newly-created occurrence so a
-                    # failed move does not leave two Garmin calendar entries.
-                    newly_scheduled = client.api.get_scheduled_workouts(
-                        target_day.year, target_day.month,
+                from sync.garmin_registry import current_garmin_client
+
+                with current_garmin_client() as garmin_client:
+                    _ensure_authenticated(garmin_client)
+                    stage = "read_back"
+                    scheduled = garmin_client.api.get_scheduled_workouts(
+                        planned.target_date.year, planned.target_date.month,
                     )
-                    new_occurrence_id = _scheduled_occurrence_id(
-                        newly_scheduled, planned.garmin_workout_id, target_day,
+                    old_occurrence_id = _scheduled_occurrence_id(
+                        scheduled, planned.garmin_workout_id, planned.target_date,
                     )
-                    if new_occurrence_id is not None:
-                        client.api.unschedule_workout(new_occurrence_id)
-                    raise
+                    if old_occurrence_id is None:
+                        raise ValueError("old Garmin occurrence could not be verified")
+                    stage = "schedule"
+                    garmin_client.api.schedule_workout(
+                        planned.garmin_workout_id, target_day.isoformat()
+                    )
+                    try:
+                        garmin_client.api.unschedule_workout(old_occurrence_id)
+                    except Exception:
+                        stage = "cleanup"
+                        # Remove the new occurrence so a failed move cannot
+                        # leave both the old and new Garmin calendar entries.
+                        newly_scheduled = garmin_client.api.get_scheduled_workouts(
+                            target_day.year, target_day.month,
+                        )
+                        new_occurrence_id = _scheduled_occurrence_id(
+                            newly_scheduled, planned.garmin_workout_id, target_day,
+                        )
+                        if new_occurrence_id is not None:
+                            garmin_client.api.unschedule_workout(new_occurrence_id)
+                        raise
             except Exception as exc:
-                row.status = "failed"
-                row.failure_reason = f"garmin_reschedule_failed:{type(exc).__name__}"
-                return "failed", "Garmin could not safely move the workout. Nothing was changed locally."
+                auth_message = _record_garmin_failure(
+                    row,
+                    operation="reschedule",
+                    stage=stage,
+                    exc=exc,
+                    garmin_client=garmin_client,
+                )
+                return (
+                    "failed",
+                    auth_message
+                    or "Garmin could not safely move the workout. Nothing was changed locally.",
+                )
         old_day = planned.target_date
         planned.target_date = target_day
         planned.suggested_time = payload["suggested_time"]
@@ -531,12 +606,16 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             row.status = "superseded"
             row.failure_reason = "schedule_slot_changed"
             return "stale", "The available workout time changed. Ask again."
-        from coach.garmin_compiler import compile_and_schedule
+        from coach.garmin_compiler import compile_and_schedule_for_interaction
 
-        if not compile_and_schedule(session, payload):
+        result = compile_and_schedule_for_interaction(session, payload)
+        if not result.ok:
             row.status = "failed"
-            row.failure_reason = "garmin_schedule_failed"
-            return "failed", "Garmin scheduling failed. No session was scheduled."
+            row.failure_reason = (
+                f"garmin_schedule_failed:{result.stage}:"
+                f"{result.exception_type}"
+            )
+            return "failed", result.user_message
         planned = (
             session.query(PlannedSession)
             .filter_by(program_session_id=payload["program_session_id"], target_date=target_day)
@@ -583,11 +662,15 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             row.status = "failed"
             row.failure_reason = "workout_modification_forbidden"
             return "failed", "Workout modifications are not permitted by this action."
-        from coach.garmin_compiler import compile_and_schedule
-        if not compile_and_schedule(session, payload):
+        from coach.garmin_compiler import compile_and_schedule_for_interaction
+        result = compile_and_schedule_for_interaction(session, payload)
+        if not result.ok:
             row.status = "failed"
-            row.failure_reason = "garmin_schedule_failed"
-            return "failed", "Garmin scheduling failed. The original program session was not changed."
+            row.failure_reason = (
+                f"garmin_schedule_failed:{result.stage}:"
+                f"{result.exception_type}"
+            )
+            return "failed", result.user_message
         planned = (
             session.query(PlannedSession)
             .filter_by(
@@ -606,8 +689,90 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
     return "applied", "Original program session scheduled."
 
 
+@dataclass(frozen=True)
+class GarminInteractionClaim:
+    interaction_id: str
+    action_type: str
+    title: str
+    claimed: bool
+
+    @property
+    def progress_text(self) -> str:
+        verb = {
+            "schedule_original_session": "Scheduling",
+            "reschedule_planned_time": "Moving",
+            "cancel_planned_session": "Cancelling",
+        }[self.action_type]
+        return f"{verb} {self.title}…"
+
+
+def claim_garmin_interaction(
+    session: Session, interaction_id: str
+) -> GarminInteractionClaim | None:
+    """Durably claim one user-confirmed Garmin mutation before dispatch."""
+    row = session.get(PendingInteraction, interaction_id)
+    if row is None or row.action_type not in {
+        "schedule_original_session",
+        "reschedule_planned_time",
+        "cancel_planned_session",
+    }:
+        return None
+    payload = json.loads(row.payload_json)
+    planned = (
+        session.get(PlannedSession, row.target_id)
+        if row.action_type in {"reschedule_planned_time", "cancel_planned_session"}
+        else None
+    )
+    title = (
+        planned.title
+        if planned is not None
+        else payload.get("title") or "workout"
+    )
+    if row.status != "pending":
+        return GarminInteractionClaim(
+            interaction_id=interaction_id,
+            action_type=row.action_type,
+            title=title,
+            claimed=False,
+        )
+    claimed = (
+        session.execute(
+            update(PendingInteraction)
+            .where(
+                PendingInteraction.interaction_id == interaction_id,
+                PendingInteraction.status == "pending",
+            )
+            .values(status="processing")
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        == 1
+    )
+    if claimed:
+        row.status = "processing"
+    return GarminInteractionClaim(
+        interaction_id=interaction_id,
+        action_type=row.action_type,
+        title=title,
+        claimed=claimed,
+    )
+
+
+def apply_claimed_interaction(
+    session: Session, interaction_id: str
+) -> tuple[str, str]:
+    row = session.get(PendingInteraction, interaction_id)
+    if row is None or row.status != "processing":
+        return "stale", "This action is no longer available."
+    return _apply_interaction(session, interaction_id)
+
+
 def apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]:
-    """Apply the final outcome of a validated confirmation button."""
+    """Claim and apply an interaction for non-webhook compatibility callers."""
+    row = session.get(PendingInteraction, interaction_id)
+    if row is None or row.status != "pending":
+        return "stale", "This action is no longer available."
+    row.status = "processing"
+    session.flush()
     return _apply_interaction(session, interaction_id)
 
 

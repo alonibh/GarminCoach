@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from contextvars import Context
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+import json
 from typing import Awaitable
 
 import config
@@ -54,6 +55,7 @@ DISCLOSURE = (
 )
 
 _active_tasks: set[asyncio.Task] = set()
+_protected_tasks: set[asyncio.Task] = set()
 _shutting_down = False
 
 
@@ -90,6 +92,7 @@ update_deduplicator = UpdateDeduplicator()
 
 def _consume_task_result(task: asyncio.Task) -> None:
     _active_tasks.discard(task)
+    _protected_tasks.discard(task)
     try:
         task.exception()
     except asyncio.CancelledError:
@@ -98,7 +101,9 @@ def _consume_task_result(task: asyncio.Task) -> None:
         log_sanitized_error(type(exc).__name__)
 
 
-def _register_task(coro: Awaitable) -> asyncio.Task | None:
+def _register_task(
+    coro: Awaitable, *, complete_on_shutdown: bool = False
+) -> asyncio.Task | None:
     if _shutting_down:
         if hasattr(coro, "close"):
             coro.close()
@@ -107,6 +112,8 @@ def _register_task(coro: Awaitable) -> asyncio.Task | None:
     # identity explicitly and resets that binding in its own finally block.
     task = asyncio.create_task(coro, context=Context())
     _active_tasks.add(task)
+    if complete_on_shutdown:
+        _protected_tasks.add(task)
     task.add_done_callback(_consume_task_result)
     return task
 
@@ -124,10 +131,12 @@ def clear_shutting_down_flag() -> None:
 async def cancel_active_gemini_tasks() -> None:
     tasks = list(_active_tasks)
     for task in tasks:
-        task.cancel()
+        if task not in _protected_tasks:
+            task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     _active_tasks.clear()
+    _protected_tasks.clear()
 
 
 def _valid_consent(user_id: str) -> bool:
@@ -321,30 +330,58 @@ def _load_calendar_for_user(identity: TenantIdentity) -> tuple[dict, list[dict]]
         reset_tenant(tenant_token)
 
 
-async def run_calendar_menu(*, identity: TenantIdentity, chat_id: str) -> None:
+async def run_calendar_menu(
+    *,
+    identity: TenantIdentity,
+    chat_id: str,
+    message_id: int | None = None,
+) -> None:
     """Load private calendars off the webhook loop and append its result."""
     tenant_token = bind_tenant(identity)
     try:
-        await _send_plain(
-            "Loading calendar…", chat_id=chat_id, reply_markup=main_menu_markup()
-        )
+        if message_id is None:
+            await _send_plain(
+                "Loading calendar…",
+                chat_id=chat_id,
+                reply_markup=main_menu_markup(),
+            )
         private_calendar, workouts = await asyncio.to_thread(
             _load_calendar_for_user, identity
         )
         from coach import renderers
 
         text = renderers.render_calendar(private_calendar, workouts)
-        await _send_plain(text, chat_id=chat_id, reply_markup=main_menu_markup())
+        if message_id is not None:
+            await asyncio.to_thread(
+                _deliver_callback_result,
+                text,
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=main_menu_markup(),
+            )
+        else:
+            await _send_plain(
+                text, chat_id=chat_id, reply_markup=main_menu_markup()
+            )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
         # Do not reveal a feed URL or exception details in either output/logs.
-        await _send_plain(
-            "Calendar temporarily unavailable. Please try again.",
-            chat_id=chat_id,
-            reply_markup=main_menu_markup(),
-        )
+        if message_id is not None:
+            await asyncio.to_thread(
+                _deliver_callback_result,
+                "Calendar temporarily unavailable. Please try again.",
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=main_menu_markup(),
+            )
+        else:
+            await _send_plain(
+                "Calendar temporarily unavailable. Please try again.",
+                chat_id=chat_id,
+                reply_markup=main_menu_markup(),
+            )
     finally:
         reset_tenant(tenant_token)
 
@@ -402,6 +439,165 @@ def _deliver_callback_result(
     if _edit(text, chat_id, message_id, {"inline_keyboard": []}):
         return True
     return telegram.send_message(text, chat_id, main_menu_markup(), parse_mode=None)
+
+
+def _run_operational_for_user(
+    identity: TenantIdentity, callback_data: str, chat_id: str
+) -> tuple[str, dict | None]:
+    tenant_token = bind_tenant(identity)
+    try:
+        return _operational_callback(
+            callback_data,
+            identity=identity,
+            chat_id=chat_id,
+        )
+    finally:
+        reset_tenant(tenant_token)
+
+
+def _date_retry_markup(
+    identity: TenantIdentity, callback_data: str
+) -> dict | None:
+    parts = callback_data.split(":")
+    if len(parts) != 5:
+        return None
+    tenant_token = bind_tenant(identity)
+    try:
+        from coach.interactions import _flow_markup
+
+        with get_user_session(identity.user_id) as database:
+            row = database.get(PendingInteraction, parts[1])
+            if row is None or row.status != "pending":
+                return None
+            payload = json.loads(row.payload_json)
+            offered = payload.get("offered_dates") or []
+            labels = [
+                date.fromisoformat(value).strftime("%a %d %b")
+                for value in offered
+            ]
+            return _flow_markup(row, labels, "date")
+    finally:
+        reset_tenant(tenant_token)
+
+
+def _claim_garmin_callback(
+    identity: TenantIdentity, callback_data: str
+):
+    if not callback_data.startswith("decision_action_"):
+        return None
+    interaction_id = callback_data.removeprefix("decision_action_")
+    tenant_token = bind_tenant(identity)
+    try:
+        from coach.interactions import claim_garmin_interaction
+
+        with get_user_session(identity.user_id) as database:
+            return claim_garmin_interaction(database, interaction_id)
+    finally:
+        reset_tenant(tenant_token)
+
+
+def _apply_claimed_for_user(
+    identity: TenantIdentity, interaction_id: str
+) -> tuple[str, str]:
+    tenant_token = bind_tenant(identity)
+    try:
+        from coach.interactions import apply_claimed_interaction
+
+        try:
+            with get_user_session(identity.user_id) as database:
+                return apply_claimed_interaction(database, interaction_id)
+        except Exception as exc:
+            log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
+            with get_user_session(identity.user_id) as database:
+                row = database.get(PendingInteraction, interaction_id)
+                if row is not None and row.status == "processing":
+                    row.status = "failed"
+                    row.failure_reason = (
+                        f"service_failed:{type(exc).__name__}"
+                    )
+            return "failed", "Garmin scheduling failed. No session was scheduled."
+    finally:
+        reset_tenant(tenant_token)
+
+
+async def run_operational_callback(
+    *,
+    identity: TenantIdentity,
+    callback_data: str,
+    chat_id: str,
+    message_id: int,
+) -> None:
+    """Run calendar/ORM callback work off-loop and edit its source message."""
+    tenant_token = bind_tenant(identity)
+    try:
+        text, markup = await asyncio.to_thread(
+            _run_operational_for_user,
+            identity,
+            callback_data,
+            chat_id,
+        )
+        await asyncio.to_thread(
+            _deliver_callback_result,
+            text,
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=markup,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
+        retry_markup = await asyncio.to_thread(
+            _date_retry_markup,
+            identity,
+            callback_data,
+        )
+        await asyncio.to_thread(
+            _deliver_callback_result,
+            "Times cannot safely be checked right now. Choose another date or Cancel.",
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=retry_markup or main_menu_markup(),
+        )
+    finally:
+        reset_tenant(tenant_token)
+
+
+async def run_garmin_interaction(
+    *,
+    identity: TenantIdentity,
+    interaction_id: str,
+    chat_id: str,
+    message_id: int,
+) -> None:
+    """Complete one durably claimed Garmin mutation outside the webhook."""
+    tenant_token = bind_tenant(identity)
+    try:
+        _, text = await asyncio.to_thread(
+            _apply_claimed_for_user,
+            identity,
+            interaction_id,
+        )
+        await asyncio.to_thread(
+            _deliver_callback_result,
+            text,
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=main_menu_markup(),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
+        await asyncio.to_thread(
+            _deliver_callback_result,
+            "Garmin scheduling failed. No session was scheduled.",
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=main_menu_markup(),
+        )
+    finally:
+        reset_tenant(tenant_token)
 
 
 def _operational_callback(
@@ -806,7 +1002,10 @@ async def handle_telegram_update(data: dict) -> dict:
                 return {"status": "ok"}
             if callback_data == "menu:calendar":
                 _edit(
-                    "Loading calendar…", chat_id, message_id, main_menu_markup()
+                    "Loading calendar…",
+                    chat_id,
+                    message_id,
+                    {"inline_keyboard": []},
                 )
                 _register_task(
                     run_calendar_menu(
@@ -815,6 +1014,58 @@ async def handle_telegram_update(data: dict) -> dict:
                         message_id=message_id,
                     )
                 )
+                return {"status": "ok"}
+            flow_parts = callback_data.split(":")
+            if (
+                len(flow_parts) == 5
+                and flow_parts[0] == "flow"
+                and flow_parts[3] == "date"
+            ):
+                _deliver_callback_result(
+                    "Checking available times…",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reply_markup=None,
+                )
+                _register_task(
+                    run_operational_callback(
+                        identity=identity,
+                        callback_data=callback_data,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    )
+                )
+                return {"status": "ok"}
+            claim = await asyncio.to_thread(
+                _claim_garmin_callback,
+                identity,
+                callback_data,
+            )
+            if claim is not None:
+                if not claim.claimed:
+                    return {"status": "ok"}
+                _deliver_callback_result(
+                    claim.progress_text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reply_markup=None,
+                )
+                task = _register_task(
+                    run_garmin_interaction(
+                        identity=identity,
+                        interaction_id=claim.interaction_id,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    ),
+                    complete_on_shutdown=True,
+                )
+                if task is None:
+                    _deliver_callback_result(
+                        "GarminCoach is restarting. Please try again shortly.",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        reply_markup=main_menu_markup(),
+                    )
                 return {"status": "ok"}
             text_out, markup = _operational_callback(
                 callback_data, identity=identity, chat_id=chat_id

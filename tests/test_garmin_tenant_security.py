@@ -7,7 +7,10 @@ from cryptography.fernet import Fernet
 import sync.garmin_client as garmin_client_module
 from secret_vault import UserSecretVault, VaultError
 from sync.garmin_client import GarminClient
-from sync.garmin_registry import GarminClientRegistry
+from sync.garmin_registry import (
+    GarminClientRegistry,
+    set_garmin_registry_for_testing,
+)
 
 
 class FakeGarminClient:
@@ -75,6 +78,23 @@ def test_restore_tokens_raises_auth_error_when_validation_fails(monkeypatch):
         client.restore_tokens('{"token":"expired"}')
 
 
+def test_ensure_authenticated_reuses_live_in_memory_api(monkeypatch, tmp_path):
+    client = GarminClient(email="test@example.com", token_store=tmp_path)
+    live_api = object()
+    client._api = live_api
+    monkeypatch.setattr(
+        client,
+        "login",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a live in-memory API must not be replaced"
+        ),
+    )
+
+    client.ensure_authenticated()
+
+    assert client.api is live_api
+
+
 
 def test_registry_checkpoints_only_to_the_matching_user(tmp_path):
     data_root = tmp_path / "users"
@@ -133,3 +153,122 @@ def test_mfa_continuation_state_is_kept_in_memory_and_reused(monkeypatch, tmp_pa
     assert pending_api.resumed_with == (continuation, "123456")
     assert client.is_authenticated()
     assert client._pending_state is None
+
+
+def test_registry_restored_client_schedules_without_destructive_login(
+    session, tmp_path
+):
+    from coach.garmin_compiler import compile_and_schedule_result
+    from db import PlannedSession, ProgramSession, SessionExercise, TrainingProgram
+    from tenant_context import TenantIdentity, tenant_scope
+
+    class MutationApi:
+        def __init__(self):
+            self.payload = None
+            self.scheduled = []
+
+        def upload_workout(self, payload):
+            self.payload = payload
+            return {"workoutId": 808}
+
+        def get_workout_by_id(self, _workout_id):
+            return self.payload
+
+        def schedule_workout(self, workout_id, target_date):
+            self.scheduled.append((workout_id, target_date))
+
+        def delete_workout(self, _workout_id):
+            pass
+
+    class RestoredClient:
+        instances = []
+
+        def __init__(self, *, email, token_store):
+            self.email = email
+            self.token_store = token_store
+            self.api = MutationApi()
+            self.authenticated = False
+            self.ensure_calls = 0
+            self.login_calls = 0
+            self.__class__.instances.append(self)
+
+        def restore_tokens(self, token_json):
+            assert token_json == '{"session":"encrypted-at-rest"}'
+            self.authenticated = True
+
+        def is_authenticated(self):
+            return self.authenticated
+
+        def ensure_authenticated(self):
+            self.ensure_calls += 1
+            assert self.authenticated
+
+        def login(self):
+            self.login_calls += 1
+            raise AssertionError("registry-restored clients must not log in again")
+
+    user_id = str(uuid4())
+    data_root = tmp_path / "users"
+    vault = UserSecretVault(Fernet.generate_key())
+    vault.write(
+        user_id,
+        {
+            "garmin_email": "athlete@example.com",
+            "garmin_tokens": '{"session":"encrypted-at-rest"}',
+        },
+        root=data_root,
+    )
+    registry = GarminClientRegistry(
+        vault=vault,
+        data_root=data_root,
+        client_factory=RestoredClient,
+    )
+    set_garmin_registry_for_testing(registry)
+    program = TrainingProgram(name="Program", active=True, status="active")
+    session.add(program)
+    session.flush()
+    routine = ProgramSession(
+        program_id=program.id,
+        name="Full Body 2",
+        sport_type="strength_training",
+        sequence_order=1,
+        duration_min=60,
+    )
+    session.add(routine)
+    session.flush()
+    session.add(
+        SessionExercise(
+            program_session_id=routine.id,
+            exercise_name="Squat",
+            movement_pattern="squat",
+            sets=3,
+            reps=5,
+            rest_seconds=90,
+            order_index=0,
+        )
+    )
+    session.commit()
+    try:
+        with tenant_scope(TenantIdentity(user_id)):
+            result = compile_and_schedule_result(
+                session,
+                {
+                    "action": "schedule_session",
+                    "program_session_id": routine.id,
+                    "title": routine.name,
+                    "activity_type": "strength_training",
+                    "target_date": "2026-07-30",
+                    "suggested_time": "18:00",
+                    "duration_min": 60,
+                    "intensity": "normal",
+                },
+            )
+    finally:
+        set_garmin_registry_for_testing(None)
+
+    restored = RestoredClient.instances[-1]
+    assert result.ok
+    assert restored.ensure_calls == 1
+    assert restored.login_calls == 0
+    assert restored.api.scheduled == [(808, "2026-07-30")]
+    assert session.query(PlannedSession).count() == 1

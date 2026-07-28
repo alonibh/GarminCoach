@@ -453,3 +453,170 @@ def test_consent_acceptance_appends_ask_coach_reply_keyboard(monkeypatch):
     assert edits[0][1] == {"inline_keyboard": []}
     assert sent[0][0].startswith("Ask Coach is active")
     assert sent[0][1]["keyboard"] == [["Back to menu"]]
+
+
+def test_date_selection_edits_progress_before_blocking_calendar_work(
+    monkeypatch
+):
+    from coach import telegram_webhook
+
+    edits = []
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda text, *_args, **_kwargs: edits.append(text) or True,
+    )
+
+    def slow_operational(_identity, _callback_data, _chat_id):
+        started.set()
+        release.wait(timeout=2)
+        return "Choose a time.", {"inline_keyboard": []}
+
+    monkeypatch.setattr(
+        telegram_webhook, "_run_operational_for_user", slow_operational
+    )
+    payload = {
+        "update_id": 2001,
+        "callback_query": {
+            "id": "date",
+            "data": "flow:interaction:nonce:date:0",
+            "message": {
+                "message_id": 77,
+                "chat": {"id": 123, "type": "private"},
+            },
+        },
+    }
+
+    async def exercise():
+        before = time.monotonic()
+        response = await telegram_webhook.handle_telegram_update(payload)
+        elapsed = time.monotonic() - before
+        assert await asyncio.to_thread(started.wait, 1)
+        assert edits == ["Checking available times…"]
+        release.set()
+        while telegram_webhook._active_tasks:
+            await asyncio.sleep(0.01)
+        return response, elapsed
+
+    response, elapsed = asyncio.run(exercise())
+
+    assert response == {"status": "ok"}
+    assert elapsed < 0.1
+    assert edits == ["Checking available times…", "Choose a time."]
+
+
+def test_confirm_progress_is_prompt_and_duplicate_taps_mutate_once(
+    monkeypatch
+):
+    from coach import telegram_webhook
+    from coach.interactions import GarminInteractionClaim
+
+    edits = []
+    started = threading.Event()
+    release = threading.Event()
+    apply_calls = []
+    claimed = False
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        "notify.telegram.edit_message_text",
+        lambda text, *_args, **_kwargs: edits.append(text) or True,
+    )
+
+    def claim(_identity, _callback_data):
+        nonlocal claimed
+        accepted = not claimed
+        claimed = True
+        return GarminInteractionClaim(
+            interaction_id="interaction",
+            action_type="schedule_original_session",
+            title="Full Body 2",
+            claimed=accepted,
+        )
+
+    def slow_apply(identity, interaction_id):
+        from tenant_context import current_tenant
+
+        apply_calls.append(
+            (identity.user_id, interaction_id, current_tenant())
+        )
+        started.set()
+        release.wait(timeout=2)
+        return "applied", "Full Body 2 scheduled."
+
+    monkeypatch.setattr(telegram_webhook, "_claim_garmin_callback", claim)
+    monkeypatch.setattr(
+        telegram_webhook, "_apply_claimed_for_user", slow_apply
+    )
+
+    def payload(update_id):
+        return {
+            "update_id": update_id,
+            "callback_query": {
+                "id": f"confirm-{update_id}",
+                "data": "decision_action_interaction",
+                "message": {
+                    "message_id": 78,
+                    "chat": {"id": 123, "type": "private"},
+                },
+            },
+        }
+
+    async def exercise():
+        before = time.monotonic()
+        first = await telegram_webhook.handle_telegram_update(payload(2002))
+        elapsed = time.monotonic() - before
+        assert await asyncio.to_thread(started.wait, 1)
+        assert edits == ["Scheduling Full Body 2…"]
+        second = await telegram_webhook.handle_telegram_update(payload(2003))
+        release.set()
+        while telegram_webhook._active_tasks:
+            await asyncio.sleep(0.01)
+        return first, second, elapsed
+
+    first, second, elapsed = asyncio.run(exercise())
+
+    assert first == second == {"status": "ok"}
+    assert elapsed < 0.1
+    assert len(apply_calls) == 1
+    assert apply_calls[0][0:2] == (USER_ID, "interaction")
+    assert apply_calls[0][2].user_id == USER_ID
+    assert edits == [
+        "Scheduling Full Body 2…",
+        "Full Body 2 scheduled.",
+    ]
+
+
+def test_worker_thread_binds_and_resets_immutable_tenant(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from coach import telegram_webhook
+    from tenant_context import TenantIdentity, current_tenant
+
+    observed = []
+    identity = TenantIdentity(USER_ID, role="owner", timezone="UTC")
+
+    def operational(_callback_data, *, identity, chat_id):
+        observed.append((current_tenant(), identity, chat_id))
+        return "done", None
+
+    monkeypatch.setattr(
+        telegram_webhook, "_operational_callback", operational
+    )
+
+    def invoke():
+        result = telegram_webhook._run_operational_for_user(
+            identity, "flow:id:nonce:date:0", "123"
+        )
+        return result, current_tenant()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result, after = executor.submit(invoke).result(timeout=2)
+
+    assert result == ("done", None)
+    assert observed == [(identity, identity, "123")]
+    assert after is None
