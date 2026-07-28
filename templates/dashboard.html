@@ -169,7 +169,7 @@
 </div>
 </section>
 
-<section class="card activities-card" aria-labelledby="activities-title">
+<section id="recent-workouts" class="card activities-card" aria-labelledby="activities-title">
   <div class="activities-head"><div><span class="eyebrow">Training history</span><h2 id="activities-title">Recent workouts</h2></div><span class="muted">Last 90 days</span></div>
   <div class="table-scroll">
     <table id="activities-table" class="activities-table">
@@ -196,9 +196,9 @@
   </div>
   {% if activity_total_pages|default(1) > 1 %}
   <div class="activity-pagination" role="navigation" aria-label="Activity pages">
-    {% if activity_has_previous %}<a class="btn small" href="{{ activity_previous_url }}">Previous</a>{% else %}<span class="btn small pager-placeholder" aria-disabled="true">Previous</span>{% endif %}
+    {% if activity_has_previous %}<a class="btn small" data-activity-page-link href="{{ activity_previous_url }}">Previous</a>{% else %}<span class="btn small pager-placeholder" aria-disabled="true">Previous</span>{% endif %}
     <span class="muted" aria-live="polite">Page {{ activity_page }} of {{ activity_total_pages }}</span>
-    {% if activity_has_next %}<a class="btn small" href="{{ activity_next_url }}">Next</a>{% else %}<span class="btn small pager-placeholder" aria-disabled="true">Next</span>{% endif %}
+    {% if activity_has_next %}<a class="btn small" data-activity-page-link href="{{ activity_next_url }}">Next</a>{% else %}<span class="btn small pager-placeholder" aria-disabled="true">Next</span>{% endif %}
   </div>
   {% endif %}
 </section>
@@ -702,6 +702,43 @@ document.querySelectorAll('.local-time-only').forEach(el => {
   const d = new Date(isoStr);
   if (isNaN(d)) return;
   el.textContent = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
+});
+
+let activityPageRequest = null;
+async function loadActivityPage(url, { pushHistory = true } = {}) {
+  const current = document.getElementById('recent-workouts');
+  if (!current) return;
+  const oldTop = current.getBoundingClientRect().top;
+  current.setAttribute('aria-busy', 'true');
+  if (activityPageRequest) activityPageRequest.abort();
+  activityPageRequest = new AbortController();
+  try {
+    const response = await fetch(url, { signal: activityPageRequest.signal, credentials: 'same-origin' });
+    if (!response.ok) throw new Error('Activity page request failed');
+    const documentPage = new DOMParser().parseFromString(await response.text(), 'text/html');
+    const replacement = documentPage.getElementById('recent-workouts');
+    if (!replacement) throw new Error('Activity page section missing');
+    current.replaceWith(replacement);
+    const newTop = replacement.getBoundingClientRect().top;
+    window.scrollBy(0, newTop - oldTop);
+    if (pushHistory) history.pushState({ activityPage: true }, '', url);
+  } catch (error) {
+    if (error.name !== 'AbortError') window.location.assign(url);
+  } finally {
+    activityPageRequest = null;
+  }
+}
+
+document.addEventListener('click', event => {
+  const link = event.target.closest('#recent-workouts [data-activity-page-link]');
+  if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  loadActivityPage(link.href);
+});
+
+window.addEventListener('popstate', () => {
+  const url = new URL(window.location.href);
+  if (url.pathname === '/') loadActivityPage(url.href, { pushHistory: false });
 });
 
 if ({{ sync_running|tojson }}) {
