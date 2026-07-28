@@ -835,6 +835,7 @@ textarea { min-height: 110px; }
   margin: 0 !important;
   padding: 0 !important;
 }
+.availability-section .avail-time-pickers.is-hidden { display: none !important; }
 
 .availability-section .avail-time-pickers .time-label {
   font-size: 0.8rem !important;
@@ -880,6 +881,7 @@ textarea { min-height: 110px; }
     align-items: center !important;
   }
   .availability-section .avail-day-name { width: auto !important; min-width: 0 !important; }
+  .availability-section .avail-rest-control { justify-self: end; min-width: 0; }
   .availability-section label.avail-rest-label { width: auto !important; min-width: 0 !important; }
   .availability-section .avail-time-pickers {
     grid-column: 1 / -1;

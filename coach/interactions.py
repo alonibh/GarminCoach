@@ -413,20 +413,32 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             return "stale", "Program or calendar data changed. Ask again."
         payload = json.loads(row.payload_json)
         target_day = date.fromisoformat(payload.get("target_date") or planned.target_date.isoformat())
-        from coach.calendar import find_calendar_conflict, get_upcoming_schedule_result
+        from coach.calendar import get_upcoming_schedule_result
+        from coach.scheduling import available_start_times
         days = max(2, (target_day - now.date()).days + 1)
         calendar = get_upcoming_schedule_result(days=days)
-        if calendar["state"] == "error":
+        if calendar["state"] != "fresh":
             row.status = "superseded"
             row.failure_reason = "calendar_access_error"
             return "stale", "Calendar could not be checked. No time change was made."
-        conflict = find_calendar_conflict(
-            calendar["events"], target_day, payload["suggested_time"], planned.duration_min
-        )
-        if conflict:
+        try:
+            selected_time = datetime.strptime(payload["suggested_time"], "%H:%M").time()
+        except (KeyError, TypeError, ValueError):
             row.status = "superseded"
-            row.failure_reason = "calendar_conflict"
-            return "stale", f"That time overlaps {conflict.get('title', 'another event')}. No change was made."
+            row.failure_reason = "schedule_slot_changed"
+            return "stale", "That workout time is no longer available. Choose a new date and time."
+        valid_starts = available_start_times(
+            session,
+            now=now,
+            schedule=calendar["events"],
+            target_day=target_day,
+            duration_min=planned.duration_min or 60,
+            limit=96,
+        )
+        if selected_time not in valid_starts:
+            row.status = "superseded"
+            row.failure_reason = "schedule_slot_changed"
+            return "stale", "That workout time is no longer available. Choose a new date and time."
         if planned.garmin_workout_id and target_day != planned.target_date:
             try:
                 from sync.garmin_client import client
