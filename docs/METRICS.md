@@ -186,3 +186,26 @@ stored as source data. The displayed `N/7 nights` value is only local stored
 overnight-HRV completeness. Recovery Time is stored in minutes from the
 selected current Training Readiness snapshot; `REACHED_ZERO` means effective
 zero while retaining source minutes. No separate Recovery Time endpoint exists.
+
+### Daily intensity minutes
+
+Daily intensity minutes are read only from the existing `get_stats` daily
+summary: `moderateIntensityMinutes` and `vigorousIntensityMinutes` in
+`garminconnect==0.3.7`'s typed `DailyStats`. They are stored separately as
+`DailyHealth.daily_moderate_intensity_minutes` and
+`DailyHealth.daily_vigorous_intensity_minutes`; these are not the similarly
+named per-activity fields.
+
+Values must be finite, numeric, and non-negative. Zero is an observed value;
+missing or malformed values remain `NULL`. Local 7-day and 28-day views sum
+only stored values and disclose the number of days with either observed value,
+so missing days are never treated as zero. They are informational only: they
+do not enter readiness, workout, Telegram, injury-risk, or Ask Coach logic.
+
+## Body composition gate
+
+Body composition remains intentionally gated. See
+[`BODY_COMPOSITION_CONTRACT.md`](BODY_COMPOSITION_CONTRACT.md): the pinned
+client confirms a range-capable public method but not the response shape,
+date/timestamp fields, read units, or empty-account behavior required for safe
+storage and sync policy.

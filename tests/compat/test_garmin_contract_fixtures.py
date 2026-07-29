@@ -94,6 +94,10 @@ def test_daily_stats_hrv_and_body_battery_contracts_parse(session, monkeypatch):
     assert health.total_kcal == 2180
     assert health.active_kcal == 480
     assert health.bmr_kcal == 1700
+    # DailyStats in the pinned client verifies these are daily-summary fields,
+    # distinct from the per-activity intensity values.
+    assert health.daily_moderate_intensity_minutes == 22
+    assert health.daily_vigorous_intensity_minutes == 8
 
 
 def test_daily_summary_parser_uses_key_presence_and_preserves_nulls():

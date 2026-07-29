@@ -66,6 +66,9 @@ resumes safely after failure, and never restarts a monolithic 90-day health craw
 - [x] Store HRV Status, Garmin seven-day average, and local seven-night coverage.
 - [x] Store Recovery Time and richer Body Battery summaries.
 - [ ] Next: Add intensity minutes and conditional body-composition support.
+  Daily intensity minutes are implemented from the verified daily summary.
+  Body composition remains gated pending a pinned response/units fixture; see
+  [`docs/BODY_COMPOSITION_CONTRACT.md`](docs/BODY_COMPOSITION_CONTRACT.md).
 - [ ] Make capability device/account/scale/activity scoped.
 - [ ] Evaluate recovery only after a workout is selected in the website.
 - [ ] Use Training Readiness as the only biometric with direct V1 authority.

@@ -686,13 +686,26 @@ def _parse_daily_summary(payload: object) -> tuple[dict[str, float | int], set[s
             ("bodyBatteryDrainedValue", "body_battery_drained"),
         ),
         "calories": (("totalKilocalories", "total_kcal"), ("activeKilocalories", "active_kcal"), ("bmrKilocalories", "bmr_kcal")),
+        # DailyStats in garminconnect==0.3.7 explicitly models these exact
+        # daily-summary keys.  Do not conflate them with activity detail.
+        "intensity_minutes": (
+            ("moderateIntensityMinutes", "daily_moderate_intensity_minutes"),
+            ("vigorousIntensityMinutes", "daily_vigorous_intensity_minutes"),
+        ),
     }
     for family, pairs in groups.items():
         if any(key in payload for key, _ in pairs):
             families.add(family)
         for key, field in pairs:
             value = payload.get(key)
-            if isinstance(value, int) and not isinstance(value, bool):
+            if family == "intensity_minutes":
+                # Garmin's daily counts may legitimately be zero.  Missing or
+                # invalid values stay NULL; they must never become zero.
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    values[field] = value
+                elif isinstance(value, float) and math.isfinite(value) and value >= 0:
+                    values[field] = value
+            elif isinstance(value, int) and not isinstance(value, bool):
                 values[field] = value
             elif isinstance(value, float) and math.isfinite(value):
                 values[field] = value

@@ -1149,6 +1149,31 @@ def _dashboard_chart_data(session) -> dict:
     }
 
 
+def _intensity_minutes_summary(session, end_day: date, days: int) -> dict:
+    """Aggregate stored daily Garmin intensity values without imputing gaps."""
+    start_day = end_day - timedelta(days=days - 1)
+    rows = (
+        session.query(DailyHealth)
+        .filter(DailyHealth.day >= start_day, DailyHealth.day <= end_day)
+        .all()
+    )
+    moderate_values = [r.daily_moderate_intensity_minutes for r in rows
+                       if r.daily_moderate_intensity_minutes is not None]
+    vigorous_values = [r.daily_vigorous_intensity_minutes for r in rows
+                       if r.daily_vigorous_intensity_minutes is not None]
+    observed_days = {
+        r.day for r in rows
+        if r.daily_moderate_intensity_minutes is not None
+        or r.daily_vigorous_intensity_minutes is not None
+    }
+    return {
+        "days": days,
+        "moderate_minutes": sum(moderate_values) if moderate_values else None,
+        "vigorous_minutes": sum(vigorous_values) if vigorous_values else None,
+        "coverage_days": len(observed_days),
+    }
+
+
 def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> dict:
     """Build display-only headline metrics from existing Garmin observations."""
     readiness = next(
@@ -1258,6 +1283,10 @@ def dashboard(request: Request, activity_page: int = 1):
             (activity_page - 1) * activity_page_size
         ).limit(activity_page_size).all()
         chart_data = _dashboard_chart_data(s)
+        intensity_summary = {
+            "seven_day": _intensity_minutes_summary(s, get_local_date(), 7),
+            "twenty_eight_day": _intensity_minutes_summary(s, get_local_date(), 28),
+        }
         # Detach for template use
         activities = [
             {
@@ -1299,6 +1328,7 @@ def dashboard(request: Request, activity_page: int = 1):
             "active_goal": active_goal,
             "profile": profile,
             "active_program": current_program,
+            "intensity_summary": intensity_summary,
         },
     )
 

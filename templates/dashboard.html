@@ -156,6 +156,21 @@
 
 <section aria-labelledby="trends-title"><div class="metric-section-heading"><div><span class="eyebrow">Last seven days</span><h2 id="trends-title">Your trends</h2></div></div>
 
+{% if intensity_summary and (intensity_summary.seven_day.coverage_days or intensity_summary.twenty_eight_day.coverage_days) %}
+<div class="card" style="margin-bottom: 1rem; padding: 1rem 1.25rem;">
+  <div class="chart-head"><h3>Intensity minutes <span class="info" tabindex="0" data-tip="Stored daily Garmin summary minutes. Moderate and vigorous values are shown separately; missing days are not counted as zero.">i</span></h3></div>
+  <div class="muted" style="display:flex; gap:1.25rem; flex-wrap:wrap;">
+    {% for window in [intensity_summary.seven_day, intensity_summary.twenty_eight_day] %}
+    <span><strong>{{ window.days }}d:</strong>
+      moderate {{ window.moderate_minutes if window.moderate_minutes is not none else '—' }} min ·
+      vigorous {{ window.vigorous_minutes if window.vigorous_minutes is not none else '—' }} min ·
+      {{ window.coverage_days }}/{{ window.days }} valid days
+    </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="chart-grid">
   <div class="card chart-card" data-chart="sleep">
     <div class="chart-head"><h3>Sleep (hrs)<span class="info" tabindex="0" data-tip="Total sleep time from your watch. Aim for 7-9 hours consistently. Sleep quality and consistency matter more than occasional long nights.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>

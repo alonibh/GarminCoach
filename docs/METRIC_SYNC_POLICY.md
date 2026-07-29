@@ -126,6 +126,30 @@ Missing never means unsupported. Stale or insufficient observations have no deci
 
 ACWR remains descriptive and must not be used for injury-risk claims or Telegram decisions.
 
+### Implemented intensity-minute detail
+
+The existing per-day `get_stats` request is the sole source. The exact pinned
+`DailyStats` fields are `moderateIntensityMinutes` and
+`vigorousIntensityMinutes`; no extra endpoint is requested. GarminCoach stores
+them separately from activity-level intensity minutes. Stage 1, Stage 2, and
+incremental daily-health windows therefore receive them as part of their
+existing daily-summary work. Morning-priority sync and dashboard reads do not
+add Garmin requests. The local 7-day and 28-day totals report raw moderate and
+vigorous minutes separately plus valid-day coverage; there is no weighted total
+and no missing-day imputation.
+
+### Body-composition gate
+
+Weight/body-fat remains conditional and is not implemented yet. It is
+account/scale scoped rather than watch-model scoped: a watch registry cannot
+establish whether an account has a scale measurement. Although the pinned
+public wrapper supports `get_body_composition(startdate, enddate=None)`, its
+response contract is untyped and lacks a reliable GarminCoach fixture. See
+[`BODY_COMPOSITION_CONTRACT.md`](BODY_COMPOSITION_CONTRACT.md) for the exact
+missing evidence. Once verified, it must use bounded range reads (latest for
+Stage 1, at most 180 days for Stage 2), durable cursors, bounded unknown-account
+probing, and no morning-priority or UI-time request.
+
 ## 6. Metrics not planned for V1
 
 Do not add separate calls or product surfaces for:

@@ -163,6 +163,10 @@ class DailyHealth(Base):
     total_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     active_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     bmr_kcal: Mapped[Optional[int]] = mapped_column(Integer)
+    # Daily Garmin summary values.  These deliberately differ from the
+    # per-activity ``Activity.*_intensity_min`` fields.
+    daily_moderate_intensity_minutes: Mapped[Optional[float]] = mapped_column(Float)
+    daily_vigorous_intensity_minutes: Mapped[Optional[float]] = mapped_column(Float)
     training_readiness: Mapped[Optional[int]] = mapped_column(Integer)
     recovery_time_source_minutes: Mapped[Optional[int]] = mapped_column(Integer)
     recovery_time_minutes: Mapped[Optional[int]] = mapped_column(Integer)
@@ -635,6 +639,8 @@ _DAILY_HEALTH_ADD_COLUMNS = {
     "recovery_time_minutes": "INTEGER",
     "recovery_time_change_phrase": "VARCHAR(64)",
     "recovery_time_observed_at": "DATETIME",
+    "daily_moderate_intensity_minutes": "FLOAT",
+    "daily_vigorous_intensity_minutes": "FLOAT",
 }
 
 
