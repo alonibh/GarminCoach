@@ -76,11 +76,31 @@ def test_recovery_time_missing_and_unsupported_are_distinct(session):
 def test_full_sync_readiness_failure_records_recovery_time_error(session, monkeypatch):
     freshness.note_capability_observed(session)
     freshness.set_capability_override(session, "training_status", "unsupported")
+    session.add(DailyHealth(day=TARGET, training_readiness=75, recovery_time_minutes=120))
     monkeypatch.setattr(svc.client, "training_readiness", lambda _day: (_ for _ in ()).throw(TimeoutError()))
     svc._sync_current_optional_health(session, TARGET, context="full")
     svc._record_full_sync_freshness(session, TARGET, None)
+    readiness = _outcome(session, freshness.TRAINING_READINESS)
     row = _outcome(session, freshness.RECOVERY_TIME)
+    assert (readiness.state, readiness.error_code) == (freshness.ERROR, "timeout")
     assert (row.state, row.error_code) == (freshness.ERROR, "timeout")
+
+
+def test_full_sync_readiness_empty_or_missing_recovery_never_uses_old_score(session, monkeypatch):
+    freshness.note_capability_observed(session)
+    freshness.set_capability_override(session, "training_status", "unsupported")
+    session.add(DailyHealth(day=TARGET, training_readiness=75, recovery_time_minutes=120))
+    monkeypatch.setattr(svc.client, "training_readiness", lambda _day: {})
+    svc._sync_current_optional_health(session, TARGET, context="full")
+    svc._record_full_sync_freshness(session, TARGET, None)
+    assert _outcome(session, freshness.TRAINING_READINESS).state == freshness.MISSING
+    assert _outcome(session, freshness.RECOVERY_TIME).state == freshness.MISSING
+
+    monkeypatch.setattr(svc.client, "training_readiness", lambda _day: {"value": 71})
+    svc._sync_current_optional_health(session, TARGET, context="full")
+    svc._record_full_sync_freshness(session, TARGET, None)
+    assert _outcome(session, freshness.TRAINING_READINESS).state == freshness.FRESH
+    assert _outcome(session, freshness.RECOVERY_TIME).state == freshness.MISSING
 
 
 def test_supported_readiness_hero_shows_only_fresh_supporting_recovery_facts(session, monkeypatch):

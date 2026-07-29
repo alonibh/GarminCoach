@@ -244,6 +244,33 @@ def test_priority_endpoint_error_is_not_classified_as_missing(session, monkeypat
     assert row.error_code == "timeout"
 
 
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (GarminConnectTooManyRequestsError("slow"), "rate_limited"),
+        (GarminConnectAuthenticationError("expired"), "authentication_required"),
+    ],
+)
+def test_priority_readiness_stop_updates_recovery_time_and_stops_hrv(session, monkeypatch, error, code):
+    _wire_priority(monkeypatch, session)
+    freshness.note_capability_observed(session)
+    session.add(DailyHealth(day=date(2026, 7, 4), recovery_time_minutes=120))
+    freshness.record_signal(session, freshness.RECOVERY_TIME, date(2026, 7, 4), freshness.FRESH, "old")
+    session.commit()
+    monkeypatch.setattr(sync_service.client, "training_readiness", lambda _day: (_ for _ in ()).throw(error))
+    monkeypatch.setattr(sync_service.client, "hrv", lambda _day: (_ for _ in ()).throw(AssertionError("HRV called after readiness stop")))
+
+    result = sync_service.run_priority_sync()
+
+    assert session.get(ObservationFreshness, (freshness.TRAINING_READINESS, date(2026, 7, 4))).error_code == code
+    recovery = session.get(ObservationFreshness, (freshness.RECOVERY_TIME, date(2026, 7, 4)))
+    assert (recovery.state, recovery.error_code) == (freshness.ERROR, code)
+    if code == "rate_limited":
+        assert result["errors"]
+    else:
+        assert result["code"] == "authentication_required"
+
+
 @pytest.mark.parametrize("metric, endpoint", [
     ("training_readiness", "training_readiness"),
     ("training_status", "training_status"),
