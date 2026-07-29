@@ -111,7 +111,9 @@ The complete ten-routine audit is in
   replacement score. Until individual-metric rules are separately approved,
   program and calendar rules determine workout eligibility.
 - Source-approved, evidence-reviewed recovery activity may be suggested
-  verbally on a rest day. It is never uploaded to Garmin.
+  verbally on a rest day. The fixed Active Recovery walking template exists as
+  a verified Garmin library primitive, but it is not uploaded automatically,
+  scheduled, or available through Telegram yet.
 - No evening workout is created before the following night's sleep and morning
   observations are available.
 

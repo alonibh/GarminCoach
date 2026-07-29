@@ -75,7 +75,7 @@ resumes safely after failure, and never restarts a monolithic 90-day health craw
 - [x] Use Training Readiness as the only biometric with direct V1 authority.
 - [x] Show unsupported-device sleep/HRV/Recovery Time warnings without inventing
   a replacement score or automatic fallback outcome.
-- [ ] Add the fixed 30-minute Active Recovery Garmin workout.
+- [x] Add the fixed 30-minute Active Recovery Garmin workout.
 - [ ] Add Telegram-only original/walk/rest actions with pending-session semantics.
 
 **Gate:** no biometric except fresh Training Readiness can automatically change

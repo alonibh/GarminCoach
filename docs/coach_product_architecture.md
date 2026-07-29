@@ -65,7 +65,10 @@ refresh.
 - **Rest:** no structured workout that day.
 
 Active Recovery and Rest keep the original program session pending and do not
-advance the program cursor.
+advance the program cursor. The canonical 30-minute Active Recovery walking
+template primitive now exists, but it is not automatically uploaded or
+scheduled. Telegram confirmation and selected-session replacement remain future
+work.
 
 No response leaves the selected workout unchanged.
 
