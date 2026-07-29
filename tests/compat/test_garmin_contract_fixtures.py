@@ -208,7 +208,7 @@ def test_legacy_training_readiness_dictionary_still_parses(session, monkeypatch)
         monkeypatch,
         "training_readiness_legacy_dict.json",
     )
-    sync_service._sync_current_optional_health(session, TARGET, health)
+    sync_service._sync_current_optional_health(session, TARGET, health, context="stage1")
     assert health.training_readiness == 64
 
 
@@ -230,7 +230,7 @@ def test_037_training_readiness_snapshot_list_parses(
         monkeypatch,
         "training_readiness_list.json",
     )
-    sync_service._sync_current_optional_health(session, TARGET, health)
+    sync_service._sync_current_optional_health(session, TARGET, health, context="stage1")
     assert health.training_readiness == 71
 
 
@@ -243,7 +243,7 @@ def test_multiple_same_day_training_readiness_snapshots_select_latest(
         monkeypatch,
         "training_readiness_multiple_same_day.json",
     )
-    sync_service._sync_current_optional_health(session, TARGET, health)
+    sync_service._sync_current_optional_health(session, TARGET, health, context="stage1")
     assert health.training_readiness == 82
 
 

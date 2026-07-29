@@ -605,6 +605,8 @@ def _sync_activities(
             value_date = None
         if value is not None and value_date is not None:
             observed_vo2.append((value_date, float(value)))
+            from metrics.freshness import note_capability_observed
+            note_capability_observed(session, "vo2max")
             if vo2_values is not None:
                 vo2_values.append((value_date, float(value)))
         count += 1
@@ -694,7 +696,9 @@ def _finite_number(value: object) -> float | int | None:
     return None
 
 
-def _sync_daily_health_core(session, day: date, *, current_optional: bool = True) -> tuple[bool, bool, bool]:
+def _sync_daily_health_core(
+    session, day: date, *, current_optional: bool = True, optional_context: str = "incremental",
+) -> tuple[bool, bool, bool]:
     """Run the mandatory per-day work and report range fallback requirements.
 
     Range reads deliberately live outside this core so a multi-day window never
@@ -726,6 +730,11 @@ def _sync_daily_health_core(session, day: date, *, current_optional: bool = True
             values, represented = parsed
             for field, value in values.items():
                 setattr(row, field, value)
+            if "body_battery" in represented and any(
+                field in values for field in ("body_battery_high", "body_battery_low")
+            ):
+                from metrics.freshness import note_capability_observed
+                note_capability_observed(session, "body_battery")
     except GarminConnectTooManyRequestsError:
         raise
     except Exception as exc:
@@ -761,10 +770,14 @@ def _sync_daily_health_core(session, day: date, *, current_optional: bool = True
     # Readiness and status are current-only facts.  Historical wellness sync
     # deliberately never calls either endpoint.
     if current_optional and day == _local_today():
-        _sync_current_optional_health(session, day, row)
+        _sync_current_optional_health(session, day, row, context=optional_context)
 
     session.add(row)
-    return complete, "steps" not in represented, "body_battery" not in represented
+    battery_fallback = "body_battery" not in represented
+    if battery_fallback:
+        from metrics.freshness import capability_state
+        battery_fallback = capability_state(session, "body_battery") != "unsupported"
+    return complete, "steps" not in represented, battery_fallback
 
 
 def _range_chunks(days: list[date]) -> list[tuple[date, date]]:
@@ -864,12 +877,15 @@ def _apply_body_battery_range(session: Session, days: list[date]) -> set[date]:
                     row.body_battery_low = min(values)
                     row.body_battery_current = values[-1]
                     session.add(row)
+                    from metrics.freshness import note_capability_observed
+                    note_capability_observed(session, "body_battery")
             resolved.add(day)
     return resolved
 
 
 def _sync_daily_health_window(
     session: Session, start: date, end: date, *, current_optional: bool = True,
+    optional_context: str = "incremental",
 ) -> tuple[int, date | None]:
     """Sync a daily-health window and advance only its resolved prefix."""
     candidates: list[tuple[date, bool, bool]] = []
@@ -877,7 +893,7 @@ def _sync_daily_health_window(
     try:
         while day <= end:
             mandatory, needs_steps, needs_battery = _sync_daily_health_core(
-                session, day, current_optional=current_optional,
+                session, day, current_optional=current_optional, optional_context=optional_context,
             )
             if not mandatory:
                 break
@@ -910,36 +926,46 @@ def _sync_daily_health_window(
     return completed, first_gap
 
 
-def _sync_daily_health(session, day: date, *, current_optional: bool = True) -> bool:
+def _sync_daily_health(
+    session, day: date, *, current_optional: bool = True, optional_context: str = "incremental",
+) -> bool:
     """One-day compatibility wrapper used by Stage 2 and direct callers."""
     completed, _ = _sync_daily_health_window(
-        session, day, day, current_optional=current_optional,
+        session, day, day, current_optional=current_optional, optional_context=optional_context,
     )
     return completed == 1
 
 
-def _sync_current_optional_health(session: Session, day: date, row: DailyHealth | None = None) -> None:
+def _sync_current_optional_health(
+    session: Session, day: date, row: DailyHealth | None = None, *, context: str = "incremental",
+) -> None:
     """Fetch current-only optional recovery facts, respecting capability."""
-    from metrics.freshness import capability_state, note_capability_observed
+    from metrics.freshness import capability_fetch_decision, note_capability_observed, note_capability_probe
 
     row = row or session.get(DailyHealth, day) or DailyHealth(day=day)
-    readiness_capability = capability_state(session)
-    if readiness_capability != "unsupported":
+    decision = capability_fetch_decision(session, "training_readiness", context)
+    if decision in {"fetch_supported", "probe_unknown"}:
         payload = normalize_training_readiness(client.training_readiness(day), day)
         if payload is not None:
             row.training_readiness = payload["trainingReadiness"]
             note_capability_observed(session)
+            recovery_time = _finite_number(payload.get("recoveryTime"))
+            if recovery_time is not None and recovery_time >= 0:
+                note_capability_observed(session, "recovery_time_connect")
+        elif decision == "probe_unknown":
+            note_capability_probe(session, "training_readiness", "empty")
 
-    if capability_state(session, "training_status") == "supported":
+    status_decision = capability_fetch_decision(session, "training_status", context)
+    if status_decision == "fetch_supported":
         status_data = client.training_status(day)
-        if isinstance(status_data, dict):
+        if isinstance(status_data, dict) and isinstance(status_data.get("mostRecentTrainingStatus"), str):
             row.training_status = status_data.get("mostRecentTrainingStatus")
     session.add(row)
 
 
 def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
     """Fast, resumable first-account bootstrap.  Do not add Stage 2 here."""
-    from metrics.freshness import capability_state, note_capability_from_device, note_capability_observed
+    from metrics.freshness import capability_fetch_decision, note_capability_from_device, note_capability_observed, note_capability_probe
 
     def done(name: str) -> bool:
         return bool(_get_state(session, _stage1_key(name)))
@@ -965,14 +991,20 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                 return False
             mark("today_sleep")
 
-        # 3. Today's Training Readiness, only when supported or unknown.
+        # 3. Today's Training Readiness, supported or one bounded unknown probe.
         if not done("training_readiness"):
-            if capability_state(session) != "unsupported":
+            decision = capability_fetch_decision(session, "training_readiness", "stage1")
+            if decision in {"fetch_supported", "probe_unknown"}:
                 payload = normalize_training_readiness(client.training_readiness(today), today)
                 row = session.get(DailyHealth, today) or DailyHealth(day=today)
                 if payload is not None:
                     row.training_readiness = payload["trainingReadiness"]
                     note_capability_observed(session)
+                    recovery_time = _finite_number(payload.get("recoveryTime"))
+                    if recovery_time is not None and recovery_time >= 0:
+                        note_capability_observed(session, "recovery_time_connect")
+                elif decision == "probe_unknown":
+                    note_capability_probe(session, "training_readiness", "empty")
                 session.add(row)
             mark("training_readiness")  # unsupported and empty current responses are resolved.
 
@@ -1031,7 +1063,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
 
         # 7-8. Current-only slow values.  Never call the historical helpers.
         if not done("fitness_age"):
-            _sync_current_fitness_age(session, today)
+            _sync_current_fitness_age(session, today, context="stage1")
             mark("fitness_age")
         if not done("vo2max"):
             saved_vo2 = _get_state(session, _stage1_key("vo2max_summary"))
@@ -1041,15 +1073,18 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
             mark("vo2max")
             _clear_state(session, _stage1_key("vo2max_summary"))
 
-        # 9. Status has no inferred capability: unknown and unsupported are
-        # resolved without a request; supported accounts fetch today's value.
+        # 9. Training Status can self-discover with one Stage 1 probe.
         if not done("training_status"):
-            if capability_state(session, "training_status") == "supported":
+            decision = capability_fetch_decision(session, "training_status", "stage1")
+            if decision in {"fetch_supported", "probe_unknown"}:
                 status = client.training_status(today)
-                if isinstance(status, dict):
+                if isinstance(status, dict) and isinstance(status.get("mostRecentTrainingStatus"), str):
                     row = session.get(DailyHealth, today) or DailyHealth(day=today)
                     row.training_status = status.get("mostRecentTrainingStatus")
                     session.add(row)
+                    note_capability_observed(session, "training_status")
+                elif decision == "probe_unknown":
+                    note_capability_probe(session, "training_status", "empty")
             mark("training_status")
 
         _set_state(session, _STAGE1_COMPLETE, "complete")
@@ -1193,9 +1228,11 @@ def _run_priority_sync() -> dict:
         TRAINING_READINESS,
         UNSUPPORTED,
         capability_state,
+        capability_fetch_decision,
         morning_freshness,
         note_capability_from_device,
         note_capability_observed,
+        note_capability_probe,
         record_signal,
     )
     from time_utils import get_local_date, get_local_tz
@@ -1256,9 +1293,12 @@ def _run_priority_sync() -> dict:
             )
 
         capability = capability_state(session)
-        if capability == "unsupported":
+        decision = capability_fetch_decision(session, "training_readiness", "priority")
+        if decision in {"skip_unsupported", "skip_unknown_not_due"}:
             record_signal(
-                session, TRAINING_READINESS, target, UNSUPPORTED, "device_capability",
+                session, TRAINING_READINESS, target,
+                UNSUPPORTED if capability == "unsupported" else MISSING,
+                "device_capability" if capability == "unsupported" else "capability_probe_not_due",
                 fetched_at=fetched_at, device_upload_at=device_upload_at,
             )
             _priority_individual_health(session, target, device_upload_at)
@@ -1274,17 +1314,25 @@ def _run_priority_sync() -> dict:
                     health.training_readiness = int(value)
                     session.add(health)
                     note_capability_observed(session, observed_at=fetched_at)
+                    recovery_time = _finite_number(payload.get("recoveryTime"))
+                    if recovery_time is not None and recovery_time >= 0:
+                        note_capability_observed(session, "recovery_time_connect", observed_at=fetched_at)
                     record_signal(
                         session, TRAINING_READINESS, target, FRESH, "get_training_readiness",
                         fetched_at=fetched_at, device_upload_at=device_upload_at,
                     )
                 else:
+                    if decision == "probe_unknown":
+                        note_capability_probe(session, "training_readiness", "empty", observed_at=fetched_at)
                     record_signal(
                         session, TRAINING_READINESS, target, MISSING, "get_training_readiness",
                         fetched_at=fetched_at, device_upload_at=device_upload_at,
                     )
             except Exception as exc:
                 code = _freshness_error_code(exc)
+                if decision == "probe_unknown":
+                    probe_outcome = "rate_limited" if code == "rate_limited" else "authentication_error" if code == "authentication_required" else "ordinary_error"
+                    note_capability_probe(session, "training_readiness", probe_outcome, observed_at=fetched_at)
                 summary["errors"].append(f"training_readiness:{code}")
                 record_signal(
                     session, TRAINING_READINESS, target, ERROR, "get_training_readiness",
@@ -1666,6 +1714,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
                 return summary
             health_days, health_gap = _sync_daily_health_window(
                 session, health_start, today, current_optional=True,
+                optional_context="full" if full else "scheduled" if allow_backfill else "incremental",
             )
             if health_gap is not None:
                 summary["errors"].append(f"daily_health failed at {health_gap}; it will retry from there.")
@@ -1823,17 +1872,44 @@ def _upsert_snapshot(session: Session, metric: str, history: list[tuple]) -> Non
         _record_snapshot(session, metric, observed_date, value)
 
 
-def _sync_current_fitness_age(session: Session, today: date) -> bool:
+def _sync_current_fitness_age(session: Session, today: date, *, context: str = "incremental") -> bool:
     """Read one current Fitness Age payload and use both supported values."""
+    from metrics.freshness import capability_fetch_decision, note_capability_observed, note_capability_probe
+    decision = capability_fetch_decision(session, "fitness_age", context)
+    if decision in {"skip_unsupported", "skip_unknown_not_due"}:
+        return True
     payload = client.fitness_age(today)
     if not isinstance(payload, dict):
+        if decision == "probe_unknown":
+            note_capability_probe(session, "fitness_age", "empty")
         return True  # valid empty/current response settles a weekly attempt
     observed = payload.get("lastUpdated")
     if not isinstance(observed, str) or _parse_state_date(observed[:10]) is None:
         observed = today.isoformat()
     _record_snapshot(session, "fitness_age", observed, payload.get("fitnessAge"))
     _record_snapshot(session, "target_fitness_age", observed, payload.get("achievableFitnessAge"))
+    if _finite_number(payload.get("fitnessAge")) is not None:
+        note_capability_observed(session, "fitness_age")
+    elif decision == "probe_unknown":
+        note_capability_probe(session, "fitness_age", "empty")
     return True
+
+
+def _sync_current_training_status(session: Session, today: date, *, context: str) -> None:
+    """Fetch recognized current status only when supported or due to probe."""
+    from metrics.freshness import capability_fetch_decision, note_capability_observed, note_capability_probe
+    decision = capability_fetch_decision(session, "training_status", context)
+    if decision in {"skip_unsupported", "skip_unknown_not_due"}:
+        return
+    payload = client.training_status(today)
+    status = payload.get("mostRecentTrainingStatus") if isinstance(payload, dict) else None
+    if isinstance(status, str) and status.strip():
+        row = session.get(DailyHealth, today) or DailyHealth(day=today)
+        row.training_status = status
+        session.add(row)
+        note_capability_observed(session, "training_status")
+    elif decision == "probe_unknown":
+        note_capability_probe(session, "training_status", "empty")
 
 
 def _snapshot_user_profile(session) -> bool:
@@ -1867,10 +1943,11 @@ def _slow_metrics_due(session: Session, today: date, full: bool, force: bool, al
     return previous is None or (today - previous).days >= 7
 
 
-def _run_weekly_slow_metrics(session: Session, today: date) -> None:
+def _run_weekly_slow_metrics(session: Session, today: date, *, context: str = "scheduled") -> None:
     """Bounded weekly current-value work: one Fitness Age and one profile read."""
     try:
-        _sync_current_fitness_age(session, today)
+        _sync_current_fitness_age(session, today, context=context)
+        _sync_current_training_status(session, today, context=context)
         if not _snapshot_user_profile(session):
             return
     except GarminConnectTooManyRequestsError:

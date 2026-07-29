@@ -174,7 +174,7 @@ Only when a selected workout or current recovery view needs it:
 
 1. device upload/capability;
 2. current sleep;
-3. current Training Readiness when supported or unknown;
+3. current Training Readiness when supported, or one due bounded probe when unknown;
 4. current HRV Status and Recovery Time when available.
 
 Do not fetch activities, steps, stress, Body Battery history, body composition, Fitness Age, VO2 max, or Training Status in this path.
@@ -189,6 +189,17 @@ Do not fetch activities, steps, stress, Body Battery history, body composition, 
 - fetch strength sets only for strength activities;
 - fetch HR zones only when relevant and not already complete;
 - recompute all derived metrics locally.
+
+### Capability registry and unknown probes
+
+Device capability is resolved by a versioned, offline official-source registry.
+Known unsupported optional endpoints are skipped. Unknown does not mean an
+unconditional daily request: it may be probed only on Stage 1, scheduled
+low-priority sync, or explicit full sync, and no more often than the configured
+seven-day probe interval (priority recovery sync may probe only Training
+Readiness when due). Empty, authentication, rate-limit, and ordinary-error
+responses retain unknown. Recovery Time on the watch and Recovery Time expected
+through Garmin Connect are distinct capabilities.
 
 ### Weekly low-priority sync
 

@@ -428,6 +428,11 @@ class DeviceCapability(Base):
     first_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     override_state: Mapped[Optional[str]] = mapped_column(String(16))
+    device_model_key: Mapped[Optional[str]] = mapped_column(String(96))
+    registry_version: Mapped[Optional[str]] = mapped_column(String(32))
+    source_verified_on: Mapped[Optional[date]] = mapped_column(Date)
+    last_probe_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_probe_outcome: Mapped[Optional[str]] = mapped_column(String(32))
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
@@ -619,6 +624,15 @@ _SLEEP_ADD_COLUMNS = {
 }
 
 
+_DEVICE_CAPABILITY_ADD_COLUMNS = {
+    "device_model_key": "VARCHAR(96)",
+    "registry_version": "VARCHAR(32)",
+    "source_verified_on": "DATE",
+    "last_probe_at": "DATETIME",
+    "last_probe_outcome": "VARCHAR(32)",
+}
+
+
 _ATHLETE_PROFILE_ADD_COLUMNS = {
     "training_type": "VARCHAR(32)",
     "goal_detail": "TEXT NOT NULL DEFAULT ''",
@@ -704,6 +718,12 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
         missing_sleep = {k: v for k, v in _SLEEP_ADD_COLUMNS.items() if k not in existing_sleep}
         for col, sqltype in missing_sleep.items():
             conn.execute(text(f"ALTER TABLE sleep ADD COLUMN {col} {sqltype}"))
+
+        # Device capability registry provenance and bounded-probe journal.
+        existing_capabilities = {c["name"] for c in insp.get_columns("device_capabilities")}
+        for col, sqltype in _DEVICE_CAPABILITY_ADD_COLUMNS.items():
+            if col not in existing_capabilities:
+                conn.execute(text(f"ALTER TABLE device_capabilities ADD COLUMN {col} {sqltype}"))
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}

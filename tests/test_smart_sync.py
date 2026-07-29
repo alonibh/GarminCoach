@@ -889,7 +889,7 @@ def test_daily_health_current_optional_is_limited_to_local_today(session, monkey
         "dailyStepGoal": 1000, "bodyBatteryHighestValue": 80, "bodyBatteryLowestValue": 20,
     })
     optional_days = []
-    monkeypatch.setattr(svc, "_sync_current_optional_health", lambda _s, day, _row: optional_days.append(day))
+    monkeypatch.setattr(svc, "_sync_current_optional_health", lambda _s, day, _row, **_kw: optional_days.append(day))
 
     assert svc._sync_daily_health_window(
         session, local_today - timedelta(days=1), local_today, current_optional=True,

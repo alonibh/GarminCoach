@@ -107,9 +107,12 @@ def test_missing_readiness_does_not_turn_unknown_capability_into_unsupported(ses
 
     result = sync_service.run_priority_sync()
 
-    assert result["ready"] is False
+    # Unknown is bounded-probe state, not a permanent critical morning wait.
+    assert result["ready"] is True
     assert result["capability"] == "unknown"
-    assert session.get(DeviceCapability, freshness.TRAINING_READINESS) is None
+    capability = session.get(DeviceCapability, freshness.TRAINING_READINESS)
+    assert capability.support_state == "unknown"
+    assert capability.last_probe_outcome == "empty"
     assert result["states"][freshness.TRAINING_READINESS] == freshness.MISSING
 
 
@@ -142,7 +145,7 @@ def test_vivoactive_5_device_identity_authoritatively_marks_readiness_unsupporte
     assert result["capability"] == "unsupported"
     assert capability.support_state == "unsupported"
     assert capability.override_state is None
-    assert capability.evidence_source == "garmin_device_model:vivoactive_5"
+    assert capability.evidence_source == "registry:vivoactive_5_specs"
     assert result["states"][freshness.TRAINING_READINESS] == freshness.UNSUPPORTED
 
 
@@ -175,7 +178,7 @@ def test_real_garmin_last_used_payload_identifies_vivoactive_5(session, monkeypa
     capability = session.get(DeviceCapability, freshness.TRAINING_READINESS)
     assert result["capability"] == "unsupported"
     assert capability.support_state == "unsupported"
-    assert capability.evidence_source == "garmin_device_model:vivoactive_5"
+    assert capability.evidence_source == "registry:vivoactive_5_specs"
 
 
 def test_authoritative_unsupported_device_uses_individual_facts_without_score(session, monkeypatch):
@@ -232,7 +235,7 @@ def test_priority_endpoint_error_is_not_classified_as_missing(session, monkeypat
 
     result = sync_service.run_priority_sync()
 
-    assert result["ready"] is False
+    assert result["ready"] is True
     row = session.get(ObservationFreshness, (freshness.TRAINING_READINESS, date(2026, 7, 4)))
     assert row.state == freshness.ERROR
     assert row.error_code == "timeout"
@@ -264,7 +267,7 @@ def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeyp
     assert process_due_notifications(datetime(2026, 7, 4, 11, 30))["sent"] == 1
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
-    assert "Best effort; missing sleep, training readiness" in sent[0][0]
+    assert "Best effort; missing sleep." in sent[0][0]
     assert session.get(MorningBriefState, target).status == "complete"
     assert session.get(MorningBriefState, target).answer_anyway is True
 
