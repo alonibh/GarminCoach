@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from db import (
     CoachMessage,
@@ -12,6 +12,7 @@ from metrics import freshness
 import pytest
 import tenant_context
 from sync import sync_service
+from garminconnect import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
 
 
 @pytest.fixture(autouse=True)
@@ -239,6 +240,55 @@ def test_priority_endpoint_error_is_not_classified_as_missing(session, monkeypat
     row = session.get(ObservationFreshness, (freshness.TRAINING_READINESS, date(2026, 7, 4)))
     assert row.state == freshness.ERROR
     assert row.error_code == "timeout"
+
+
+@pytest.mark.parametrize("metric, endpoint", [
+    ("training_readiness", "training_readiness"),
+    ("training_status", "training_status"),
+])
+def test_optional_probe_current_empty_replaces_prior_ordinary_error(session, monkeypatch, metric, endpoint):
+    other = "training_status" if metric == "training_readiness" else "training_readiness"
+    freshness.set_capability_override(session, other, "unsupported")
+    calls = []
+    def failing_then_empty(_day):
+        calls.append(endpoint)
+        if len(calls) == 1:
+            raise TimeoutError()
+        return {}
+    monkeypatch.setattr(sync_service.client, endpoint, failing_then_empty)
+    target = date(2026, 7, 4)
+    sync_service._sync_current_optional_health(session, target, context="scheduled")
+    row = session.get(DeviceCapability, metric)
+    assert row.last_probe_outcome == "ordinary_error"
+    prior_cadence = datetime.now() - timedelta(days=8)
+    row.last_probe_at = prior_cadence
+    sync_service._sync_current_optional_health(session, target, context="scheduled")
+    assert row.last_probe_outcome == "empty"
+    assert row.last_probe_at > prior_cadence
+    sync_service._sync_current_optional_health(session, target, context="scheduled")
+    assert calls == [endpoint, endpoint]
+
+
+@pytest.mark.parametrize("metric, endpoint, valid", [
+    ("training_readiness", "training_readiness", {"value": 71}),
+    ("training_status", "training_status", {"mostRecentTrainingStatus": "productive"}),
+])
+def test_optional_probe_valid_result_after_ordinary_error_promotes_support(session, monkeypatch, metric, endpoint, valid):
+    other = "training_status" if metric == "training_readiness" else "training_readiness"
+    freshness.set_capability_override(session, other, "unsupported")
+    responses = [TimeoutError(), valid]
+    def endpoint_call(_day):
+        value = responses.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+    monkeypatch.setattr(sync_service.client, endpoint, endpoint_call)
+    target = date(2026, 7, 4)
+    sync_service._sync_current_optional_health(session, target, context="scheduled")
+    row = session.get(DeviceCapability, metric)
+    row.last_probe_at = datetime.now() - timedelta(days=8)
+    sync_service._sync_current_optional_health(session, target, context="scheduled")
+    assert row.support_state == "supported" and row.last_probe_outcome == "observed"
 
 
 def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeypatch):

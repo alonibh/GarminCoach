@@ -946,6 +946,7 @@ def _sync_current_optional_health(
     row = row or session.get(DailyHealth, day) or DailyHealth(day=day)
     decision = capability_fetch_decision(session, "training_readiness", context)
     if decision in {"fetch_supported", "probe_unknown"}:
+        current_probe_outcome: str | None = None
         try:
             payload = normalize_training_readiness(client.training_readiness(day), day)
         except GarminConnectTooManyRequestsError:
@@ -962,7 +963,8 @@ def _sync_current_optional_health(
                     note_capability_probe(session, "training_readiness", "authentication_error")
                 raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
             if decision == "probe_unknown":
-                note_capability_probe(session, "training_readiness", "ordinary_error")
+                current_probe_outcome = "ordinary_error"
+                note_capability_probe(session, "training_readiness", current_probe_outcome)
             logger.warning("Training Readiness capability probe failed")
             payload = None
         if payload is not None:
@@ -971,11 +973,12 @@ def _sync_current_optional_health(
             recovery_time = _finite_number(payload.get("recoveryTime"))
             if recovery_time is not None and recovery_time >= 0:
                 note_capability_observed(session, "recovery_time_connect")
-        elif decision == "probe_unknown" and (not session.get(DeviceCapability, "training_readiness") or session.get(DeviceCapability, "training_readiness").last_probe_outcome != "ordinary_error"):
+        elif decision == "probe_unknown" and current_probe_outcome is None:
             note_capability_probe(session, "training_readiness", "empty")
 
     status_decision = capability_fetch_decision(session, "training_status", context)
     if status_decision in {"fetch_supported", "probe_unknown"}:
+        current_probe_outcome = None
         try:
             status_data = client.training_status(day)
         except GarminConnectTooManyRequestsError:
@@ -992,14 +995,15 @@ def _sync_current_optional_health(
                     note_capability_probe(session, "training_status", "authentication_error")
                 raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
             if status_decision == "probe_unknown":
-                note_capability_probe(session, "training_status", "ordinary_error")
+                current_probe_outcome = "ordinary_error"
+                note_capability_probe(session, "training_status", current_probe_outcome)
             logger.warning("Training Status capability probe failed")
             status_data = None
         if isinstance(status_data, dict) and isinstance(status_data.get("mostRecentTrainingStatus"), str):
             row.training_status = status_data.get("mostRecentTrainingStatus")
             if status_decision == "probe_unknown":
                 note_capability_observed(session, "training_status")
-        elif status_decision == "probe_unknown" and (not session.get(DeviceCapability, "training_status") or session.get(DeviceCapability, "training_status").last_probe_outcome != "ordinary_error"):
+        elif status_decision == "probe_unknown" and current_probe_outcome is None:
             note_capability_probe(session, "training_status", "empty")
     session.add(row)
 
@@ -1036,6 +1040,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
         if not done("training_readiness"):
             decision = capability_fetch_decision(session, "training_readiness", "stage1")
             if decision in {"fetch_supported", "probe_unknown"}:
+                current_probe_outcome: str | None = None
                 try:
                     payload = normalize_training_readiness(client.training_readiness(today), today)
                 except GarminConnectTooManyRequestsError:
@@ -1052,7 +1057,8 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                             note_capability_probe(session, "training_readiness", "authentication_error")
                         raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
                     if decision == "probe_unknown":
-                        note_capability_probe(session, "training_readiness", "ordinary_error")
+                        current_probe_outcome = "ordinary_error"
+                        note_capability_probe(session, "training_readiness", current_probe_outcome)
                     logger.warning("Stage 1 Training Readiness probe failed")
                     payload = None
                 row = session.get(DailyHealth, today) or DailyHealth(day=today)
@@ -1062,7 +1068,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                     recovery_time = _finite_number(payload.get("recoveryTime"))
                     if recovery_time is not None and recovery_time >= 0:
                         note_capability_observed(session, "recovery_time_connect")
-                elif decision == "probe_unknown" and (not session.get(DeviceCapability, "training_readiness") or session.get(DeviceCapability, "training_readiness").last_probe_outcome != "ordinary_error"):
+                elif decision == "probe_unknown" and current_probe_outcome is None:
                     note_capability_probe(session, "training_readiness", "empty")
                 session.add(row)
             mark("training_readiness")  # unsupported and empty current responses are resolved.
@@ -1136,6 +1142,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
         if not done("training_status"):
             decision = capability_fetch_decision(session, "training_status", "stage1")
             if decision in {"fetch_supported", "probe_unknown"}:
+                current_probe_outcome = None
                 try:
                     status = client.training_status(today)
                 except GarminConnectTooManyRequestsError:
@@ -1152,7 +1159,8 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                             note_capability_probe(session, "training_status", "authentication_error")
                         raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
                     if decision == "probe_unknown":
-                        note_capability_probe(session, "training_status", "ordinary_error")
+                        current_probe_outcome = "ordinary_error"
+                        note_capability_probe(session, "training_status", current_probe_outcome)
                     logger.warning("Stage 1 Training Status probe failed")
                     status = None
                 if isinstance(status, dict) and isinstance(status.get("mostRecentTrainingStatus"), str):
@@ -1160,7 +1168,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                     row.training_status = status.get("mostRecentTrainingStatus")
                     session.add(row)
                     note_capability_observed(session, "training_status")
-                elif decision == "probe_unknown" and (not session.get(DeviceCapability, "training_status") or session.get(DeviceCapability, "training_status").last_probe_outcome != "ordinary_error"):
+                elif decision == "probe_unknown" and current_probe_outcome is None:
                     note_capability_probe(session, "training_status", "empty")
             mark("training_status")
 
@@ -1217,8 +1225,10 @@ def _priority_individual_health(session: Session, day: date, device_upload_at: d
             )
         except Exception as exc:
             if isinstance(exc, GarminConnectTooManyRequestsError):
+                record_signal(session, signal, day, ERROR, endpoint, device_upload_at=device_upload_at, error_code="rate_limited")
                 raise
             if isinstance(exc, GarminConnectAuthenticationError) or _is_auth_error(exc):
+                record_signal(session, signal, day, ERROR, endpoint, device_upload_at=device_upload_at, error_code="authentication_required")
                 raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
             record_signal(
                 session, signal, day, ERROR, endpoint,
@@ -1331,7 +1341,7 @@ def _run_priority_sync() -> dict:
             summary.update(morning_freshness(session, target))
             return summary
 
-        def stop(endpoint: str, exc: Exception, *, probe: bool = False) -> dict:
+        def stop(endpoint: str, exc: Exception, *, probe: bool = False, record_freshness: bool = True) -> dict:
             auth = isinstance(exc, GarminConnectAuthenticationError) or _is_auth_error(exc)
             limited = isinstance(exc, GarminConnectTooManyRequestsError)
             code = "authentication_required" if auth else "rate_limited" if limited else _freshness_error_code(exc)
@@ -1347,11 +1357,12 @@ def _run_priority_sync() -> dict:
                 summary["code"] = "authentication_required"
                 summary["skipped"] = True
             summary["errors"].append(f"{endpoint}:{code}")
-            record_signal(
-                session, SLEEP if endpoint == "sleep" else TRAINING_READINESS, target, ERROR,
-                "get_sleep_data" if endpoint == "sleep" else "get_training_readiness",
-                fetched_at=fetched_at, device_upload_at=device_upload_at, error_code=code,
-            )
+            if record_freshness:
+                record_signal(
+                    session, SLEEP if endpoint == "sleep" else TRAINING_READINESS, target, ERROR,
+                    "get_sleep_data" if endpoint == "sleep" else "get_training_readiness",
+                    fetched_at=fetched_at, device_upload_at=device_upload_at, error_code=code,
+                )
             return finalize()
         try:
             device = client.device_last_used() or {}
@@ -1419,7 +1430,7 @@ def _run_priority_sync() -> dict:
             try:
                 _priority_individual_health(session, target, device_upload_at)
             except (GarminConnectTooManyRequestsError, GarminConnectAuthenticationError) as exc:
-                return stop("individual_health", exc)
+                return stop("individual_health", exc, record_freshness=False)
         else:
             try:
                 payload = normalize_training_readiness(
@@ -1450,7 +1461,7 @@ def _run_priority_sync() -> dict:
                         try:
                             _priority_individual_health(session, target, device_upload_at)
                         except (GarminConnectTooManyRequestsError, GarminConnectAuthenticationError) as exc:
-                            return stop("individual_health", exc)
+                            return stop("individual_health", exc, record_freshness=False)
             except Exception as exc:
                 if isinstance(exc, (GarminConnectTooManyRequestsError, GarminConnectAuthenticationError)) or _is_auth_error(exc):
                     return stop("training_readiness", exc, probe=decision == "probe_unknown")
@@ -1467,7 +1478,7 @@ def _run_priority_sync() -> dict:
                     try:
                         _priority_individual_health(session, target, device_upload_at)
                     except (GarminConnectTooManyRequestsError, GarminConnectAuthenticationError) as inner:
-                        return stop("individual_health", inner)
+                        return stop("individual_health", inner, record_freshness=False)
 
         return finalize()
 
