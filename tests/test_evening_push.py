@@ -1,9 +1,17 @@
 from datetime import date, datetime
 import json
+from contextlib import nullcontext
 
 import pytz
 
 from db import CoachMessage, DailyHealth, DailyMetrics, Goal, NotificationOutbox, Sleep, Workout
+
+
+def _drain_notifications(session, monkeypatch, now):
+    from notify.outbox import process_due_notifications
+
+    monkeypatch.setattr("notify.outbox.get_session", lambda: nullcontext(session))
+    return process_due_notifications(now)
 
 
 def _set_evening(monkeypatch):
@@ -113,6 +121,8 @@ def test_morning_workout_proposal_keeps_overnight_facts_and_actions(session, mon
         "sleep 6.2h, score 79 (Fair); Garmin readiness 75 (High).\n"
         "Suggested today: Full Body 1 at 18:00."
     )
+    assert sent == []
+    assert _drain_notifications(session, monkeypatch, datetime(2026, 7, 4, 8, 0))["sent"] == 1
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
     assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Approve and schedule"
@@ -178,6 +188,7 @@ def test_program_becoming_available_corrects_an_existing_no_action_brief(session
     )
 
     assert coach_module.generate_daily_suggestion(session) is True
+    assert _drain_notifications(session, monkeypatch, datetime(2026, 7, 4, 11, 30))["sent"] == 1
     assert "No workout action is available today" in sent[0][0]
 
     _add_program(session)

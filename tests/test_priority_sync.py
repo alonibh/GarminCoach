@@ -251,6 +251,7 @@ def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeyp
         "notify.outbox.send_message",
         lambda text, reply_markup=None: sent.append((text, reply_markup)) or True,
     )
+    monkeypatch.setattr("notify.outbox.get_session", lambda: _bound_session(session))
     freshness.record_signal(session, freshness.SLEEP, target, freshness.MISSING, "get_sleep_data")
     freshness.record_signal(
         session, freshness.TRAINING_READINESS, target, freshness.MISSING, "get_training_readiness"
@@ -259,6 +260,8 @@ def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeyp
 
     assert morning.morning_deadline() is True
     assert morning.morning_deadline() is False
+    from notify.outbox import process_due_notifications
+    assert process_due_notifications(datetime(2026, 7, 4, 11, 30))["sent"] == 1
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
     assert "Best effort; missing sleep, training readiness" in sent[0][0]

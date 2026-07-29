@@ -109,8 +109,7 @@ def priority_sync_finished() -> None:
             row.status = "evaluating"
             sent = generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
             if sent:
-                row.briefing_sent_at = _now_naive()
-                row.status = "complete"
+                row.status = "queued"
             else:
                 row.status = "waiting_for_program"
         else:
@@ -197,8 +196,7 @@ def morning_deadline() -> bool:
         if facts["ready"]:
             sent = generate_daily_suggestion(session)
             if sent:
-                row.briefing_sent_at = _now_naive()
-                row.status = "complete"
+                row.status = "queued"
             else:
                 row.status = "waiting_for_program"
             row.updated_at = _now_naive()
@@ -208,8 +206,7 @@ def morning_deadline() -> bool:
         row.status = "evaluating"
         sent = generate_daily_suggestion(session, allow_incomplete=True)
         if sent:
-            row.briefing_sent_at = _now_naive()
-            row.status = "complete"
+            row.status = "queued"
         else:
             row.status = "waiting_for_program"
         row.updated_at = _now_naive()
@@ -227,8 +224,7 @@ def answer_anyway(day_key: str) -> bool:
         row.status = "evaluating"
         sent = generate_daily_suggestion(session, allow_incomplete=True)
         if sent:
-            row.briefing_sent_at = _now_naive()
-            row.status = "complete"
+            row.status = "queued"
         else:
             row.status = "waiting_for_program"
         row.updated_at = _now_naive()

@@ -513,7 +513,7 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
     session.add(msg)
     session.commit()
     try:
-        from notify.outbox import deliver_notification, enqueue_notification
+        from notify.outbox import enqueue_notification
         now_naive = now.replace(tzinfo=None)
         queued = enqueue_notification(
             session,
@@ -524,8 +524,12 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
             idempotency_key=f"briefing:{result.idempotency_key}",
         )
         session.commit()
-        deliver_notification(session, queued, now_naive)
-        session.commit()
+        logger.info(
+            "Queued notification row_id=%s event_type=%s status=%s",
+            queued.id,
+            queued.event_type,
+            queued.status,
+        )
     except Exception:
         logger.exception("Failed to queue deterministic morning briefing")
     return True

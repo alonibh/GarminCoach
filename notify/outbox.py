@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta
 import json
+import logging
 
+from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
 from db import (
@@ -15,6 +17,10 @@ from db import (
 )
 from notify.telegram import send_message
 from time_utils import get_local_now
+
+
+logger = logging.getLogger(__name__)
+_DELIVERY_LEASE = timedelta(minutes=2)
 
 
 def enqueue_notification(
@@ -206,20 +212,62 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
     return None
 
 
+def _claim_notification(session: Session, row: NotificationOutbox, now: datetime) -> bool:
+    """Atomically lease a due job before making an external delivery call."""
+    claimable = or_(
+        NotificationOutbox.status == "pending",
+        and_(NotificationOutbox.status == "delivering", NotificationOutbox.due_at <= now),
+    )
+    claimed = session.execute(
+        update(NotificationOutbox)
+        .where(
+            NotificationOutbox.id == row.id,
+            NotificationOutbox.due_at <= now,
+            claimable,
+        )
+        .values(status="delivering", due_at=now + _DELIVERY_LEASE)
+    )
+    if claimed.rowcount != 1:
+        return False
+    # Persist the lease before Telegram I/O so another session cannot also send.
+    session.commit()
+    session.refresh(row)
+    logger.info("Claimed notification row_id=%s event_type=%s", row.id, row.event_type)
+    return True
+
+
+def _reconcile_delivered_morning_brief(session: Session, row: NotificationOutbox, now: datetime) -> None:
+    if row.event_type != "morning_briefing":
+        return
+    state = session.get(MorningBriefState, row.due_at.date())
+    if state is None:
+        return
+    state.briefing_sent_at = now
+    state.status = "complete"
+    state.updated_at = now
+
+
 def deliver_notification(session: Session, row: NotificationOutbox, now: datetime) -> str:
     """Deliver one row and return sent/cancelled/failed/deferred/retry."""
     now = now.replace(tzinfo=None)
-    if row.status != "pending" or row.due_at > now:
+    if row.status in {"sent", "cancelled", "failed"} or row.due_at > now:
+        return "retry"
+    if not _claim_notification(session, row, now):
+        logger.info("Skipped unclaimable notification row_id=%s event_type=%s", row.id, row.event_type)
         return "retry"
     if row.quiet_hour_policy == "defer":
         deferred = _quiet_defer(now)
         if deferred:
             row.due_at = deferred
+            row.status = "pending"
+            session.commit()
             return "deferred"
     materialized = _materialize(session, row, now)
     if not materialized:
         row.status = "cancelled"
         row.last_error = "revalidation_failed"
+        session.commit()
+        logger.info("Cancelled notification row_id=%s event_type=%s", row.id, row.event_type)
         return "cancelled"
     text, markup = materialized
     row.attempts += 1
@@ -231,13 +279,21 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
     if delivered:
         row.status = "sent"
         row.sent_at = now
+        _reconcile_delivered_morning_brief(session, row, now)
+        session.commit()
+        logger.info("Sent notification row_id=%s event_type=%s", row.id, row.event_type)
         return "sent"
     if row.attempts >= 5:
         row.status = "failed"
         row.last_error = row.last_error or "telegram_delivery_failed"
+        session.commit()
+        logger.info("Failed notification row_id=%s event_type=%s", row.id, row.event_type)
         return "failed"
     row.due_at = now + timedelta(minutes=5)
+    row.status = "pending"
     row.last_error = row.last_error or "telegram_delivery_failed"
+    session.commit()
+    logger.info("Retrying notification row_id=%s event_type=%s", row.id, row.event_type)
     return "retry"
 
 
@@ -247,7 +303,10 @@ def process_due_notifications(now: datetime | None = None, *, limit: int = 25) -
     with get_session() as session:
         rows = (
             session.query(NotificationOutbox)
-            .filter(NotificationOutbox.status == "pending", NotificationOutbox.due_at <= now)
+            .filter(
+                NotificationOutbox.status.in_(("pending", "delivering")),
+                NotificationOutbox.due_at <= now,
+            )
             .order_by(NotificationOutbox.due_at, NotificationOutbox.id)
             .limit(limit)
             .all()

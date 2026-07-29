@@ -124,6 +124,56 @@ def test_outbox_survives_new_sessions_and_sends_only_once(tmp_path, monkeypatch)
     engine.dispose()
 
 
+def test_overlapping_delivery_attempts_claim_one_row_before_telegram(tmp_path, monkeypatch):
+    db_file = (tmp_path / "claim.sqlite").as_posix()
+    engine = create_engine(f"sqlite:///{db_file}", future=True)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    now = datetime(2026, 7, 6, 12)
+    with TestSession.begin() as seed:
+        enqueue_notification(
+            seed,
+            event_type="calendar_conflict",
+            due_at=now,
+            payload={"text": "Calendar conflict detected."},
+            idempotency_key="atomic-claim",
+        )
+
+    first, second = TestSession(), TestSession()
+    try:
+        first_row = first.query(NotificationOutbox).one()
+        second_row = second.query(NotificationOutbox).one()
+        sent = []
+        monkeypatch.setattr(
+            "notify.outbox.send_message", lambda text, reply_markup=None: sent.append(text) or True
+        )
+
+        assert deliver_notification(first, first_row, now) == "sent"
+        assert deliver_notification(second, second_row, now) == "retry"
+        assert sent == ["Calendar conflict detected."]
+    finally:
+        first.close()
+        second.close()
+        engine.dispose()
+
+
+def test_failed_telegram_delivery_returns_row_to_pending_for_retry(session, monkeypatch):
+    now = datetime(2026, 7, 6, 12)
+    row = enqueue_notification(
+        session,
+        event_type="calendar_conflict",
+        due_at=now,
+        payload={"text": "Calendar conflict detected."},
+        idempotency_key="retry-after-failure",
+    )
+    monkeypatch.setattr("notify.outbox.send_message", lambda *_args, **_kwargs: False)
+
+    assert deliver_notification(session, row, now) == "retry"
+    assert row.status == "pending"
+    assert row.attempts == 1
+    assert row.due_at == now.replace(minute=5)
+
+
 def test_morning_brief_outbox_updates_and_sends_when_data_arrives(session, monkeypatch):
     from coach.decision_engine import evaluate_morning_decision
     from notify.outbox import deliver_notification, enqueue_notification
