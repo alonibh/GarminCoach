@@ -144,9 +144,13 @@ def test_missing_sleep_does_not_block_fresh_readiness(session):
 def test_unsupported_and_unknown_are_distinct(session):
     row = _planned(session)
     freshness.set_capability_override(session, freshness.TRAINING_READINESS, "unsupported")
-    assert "UNSUPPORTED" in _evaluate(session, row.id).reason_codes[0]
+    unsupported = _evaluate(session, row.id)
+    assert "UNSUPPORTED" in unsupported.reason_codes[0]
+    assert "Garmin Training Readiness:" not in render_morning(session, unsupported)[0]
     freshness.set_capability_override(session, freshness.TRAINING_READINESS, None)
-    assert "UNVERIFIED" in _evaluate(session, row.id).reason_codes[0]
+    unknown = _evaluate(session, row.id)
+    assert "UNVERIFIED" in unknown.reason_codes[0]
+    assert "Garmin Training Readiness:" not in render_morning(session, unknown)[0]
 
 
 def test_telegram_uses_canonical_facts_without_private_values(session, monkeypatch):
@@ -173,13 +177,80 @@ def test_telegram_uses_canonical_facts_without_private_values(session, monkeypat
 
 
 @pytest.mark.parametrize(
+    "score,category,outcome,body",
+    [
+        (50, "Moderate", "KEEP_SELECTED_WORKOUT", "Planned: Full Body at 18:00."),
+        (74, "Moderate", "KEEP_SELECTED_WORKOUT", "Planned: Full Body at 18:00."),
+        (75, "High", "KEEP_SELECTED_WORKOUT", "Planned: Full Body at 18:00."),
+        (94, "High", "KEEP_SELECTED_WORKOUT", "Planned: Full Body at 18:00."),
+        (95, "Prime", "KEEP_SELECTED_WORKOUT", "Planned: Full Body at 18:00."),
+        (100, "Prime", "KEEP_SELECTED_WORKOUT", "Planned: Full Body at 18:00."),
+        (25, "Low", "KEEP_SELECTED_WORKOUT_WITH_WARNING", "Garmin Training Readiness is Low; this is a warning only."),
+        (49, "Low", "KEEP_SELECTED_WORKOUT_WITH_WARNING", "Garmin Training Readiness is Low; this is a warning only."),
+        (1, "Poor", "REST_RECOMMENDED", "Garmin Training Readiness is Poor; the selected workout remains pending."),
+        (24, "Poor", "REST_RECOMMENDED", "Garmin Training Readiness is Poor; the selected workout remains pending."),
+    ],
+)
+def test_telegram_shows_only_evaluator_granted_training_readiness(session, score, category, outcome, body):
+    row = _planned(session)
+    _readiness(session, score)
+
+    result = _evaluate(session, row.id)
+    text, markup, interaction_ids = render_morning(session, result)
+
+    line = f"Garmin Training Readiness: {score} ({category})"
+    assert result.decision_type == outcome
+    assert text.count(line) == 1
+    assert body in text
+    assert markup is None and interaction_ids == []
+
+
+def test_no_or_multiple_selected_workouts_do_not_show_training_readiness(session):
+    _readiness(session, 74)
+    no_workout, markup, interaction_ids = render_morning(session, _evaluate(session))
+
+    first, second = _planned(session), _planned(session, title="Run", suggested_time="07:00")
+    multiple, multiple_markup, multiple_ids = render_morning(session, _evaluate(session))
+
+    assert "Garmin Training Readiness:" not in no_workout
+    assert "Garmin Training Readiness:" not in multiple
+    assert first.status == second.status == "planned"
+    assert markup is multiple_markup is None
+    assert interaction_ids == multiple_ids == []
+
+
+def test_program_rest_hides_raw_training_readiness(session):
+    program, source = _add_program(session)
+    row = _planned(session)
+    _readiness(session, 100)
+    session.add(ProgramCursor(
+        program_id=program.id,
+        next_program_session_id=source[1].id,
+        last_completed_program_session_id=source[0].id,
+        last_completed_at=datetime(2026, 7, 5, 9),
+        policy_version="v1",
+        created_at=datetime(2026, 7, 1),
+        updated_at=datetime(2026, 7, 5),
+    ))
+
+    result = _evaluate(session, row.id)
+    text, markup, interaction_ids = render_morning(session, result)
+
+    assert result.decision_type == "PROGRAM_REST_RECOMMENDED"
+    assert "Garmin Training Readiness:" not in text
+    assert markup is None and interaction_ids == []
+
+
+@pytest.mark.parametrize(
     "state,score,expected",
     [
         (freshness.EXPECTED_PENDING, 70, "reading is still pending"),
         (freshness.MISSING, None, "no current reading is available"),
         (freshness.STALE, 70, "reading is stale"),
         (freshness.ERROR, 70, "Garmin returned an error"),
+        (freshness.FRESH, 0, "reading is invalid"),
         (freshness.FRESH, 101, "reading is invalid"),
+        (freshness.FRESH, None, "reading is invalid"),
     ],
 )
 def test_no_authority_reasons_are_human_readable(session, state, score, expected):
@@ -188,6 +259,7 @@ def test_no_authority_reasons_are_human_readable(session, state, score, expected
     text, markup, interaction_ids = render_morning(session, _evaluate(session, row.id))
 
     assert expected in text
+    assert "Garmin Training Readiness:" not in text
     assert "TRAINING_READINESS_" not in text
     assert markup is None and interaction_ids == []
 
@@ -201,6 +273,7 @@ def test_plan_only_omits_all_recovery_facts(session):
 
     assert text == "Planned: Full Body at 18:00."
     assert "Sleep" not in text and "HRV" not in text and "Recovery" not in text
+    assert "Garmin Training Readiness:" not in text
     assert markup is None and interaction_ids == []
 
 
@@ -219,6 +292,47 @@ def test_dashboard_fact_lines_use_the_same_canonical_signals(session):
     ]
     assert all(item["signal"] != "sleep_duration_hours" for item in result.observations)
     assert isinstance(next(item["value"] for item in result.observations if item["signal"] == "sleep_score"), int)
+
+
+def test_dashboard_recovery_panel_keeps_one_authoritative_score_and_no_controls(session, monkeypatch):
+    import app as app_module
+
+    row = _planned(session)
+    _informational_context(session)
+    _readiness(session, 74)
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("calendar access is forbidden")),
+    )
+    result = _evaluate(session, row.id)
+    rendered = app_module.templates.get_template("dashboard.html").render(
+        recovery_panel={
+            "outcome": "Keep Selected Workout",
+            "name": result.planned_session_name,
+            "time": result.planned_start_time,
+            "score": result.readiness_score,
+            "category": result.readiness_category,
+            "reason": "",
+            "facts": recovery_fact_lines(session, result, include_private_facts=True),
+        },
+        today_label="Monday, Jul 06",
+        needs_login=False,
+        last_sync_at=None,
+        device_last_upload=None,
+        sync_running=False,
+        sync_summary=None,
+        fitness_tiles=[],
+        readiness_tiles=[],
+        health_series=[],
+        sleep_series=[],
+        activities=[],
+    )
+
+    panel = rendered[rendered.index('id="selected-workout-recovery"'):rendered.index("</section>", rendered.index('id="selected-workout-recovery"'))]
+    assert panel.count("Garmin Training Readiness:") == 1
+    assert "74 (Moderate)" in panel
+    assert "Sleep 23:37-06:45: 7.1h" in panel
+    assert "<button" not in panel and "<form" not in panel
 
 
 def test_program_rest_precedes_prime_without_mutation(session):

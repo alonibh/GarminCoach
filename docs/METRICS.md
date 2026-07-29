@@ -136,6 +136,11 @@ resting-HR, or stress values proactively. The dashboard may show those stored
 fresh facts. None of these informational facts substitutes for Training
 Readiness or changes the decision.
 
+When fresh supported Training Readiness grants a selected-workout outcome,
+Telegram shows its typed score and Garmin category separately. Unsupported,
+unknown, pending, missing, stale, error, and invalid values are never shown as
+an authoritative score.
+
 ---
 
 ## 4. Retired custom readiness

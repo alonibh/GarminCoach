@@ -103,6 +103,11 @@ fresh sleep, HRV Status, and Recovery Time context, explicitly as
 informational; it does not offer an Active Recovery, Rest, or original-workout
 action in the current phase.
 
+When the deterministic result grants Training Readiness authority, Telegram
+shows its typed score and Garmin category separately from informational facts.
+Unsupported, unknown, pending, missing, stale, error, and invalid values never
+appear as an authoritative score.
+
 ### Missing data
 
 Capability, fetch state, and analytical eligibility are separate:

@@ -74,6 +74,23 @@ def readiness_authority_explanation(result: DecisionResult) -> str:
     return explanations.get(reason, "no valid current reading is available")
 
 
+def authoritative_readiness_line(result: DecisionResult) -> str | None:
+    """Present only the evaluator-granted Training Readiness authority."""
+    if result.decision_type not in {
+        "KEEP_SELECTED_WORKOUT",
+        "KEEP_SELECTED_WORKOUT_WITH_WARNING",
+        "REST_RECOMMENDED",
+    }:
+        return None
+    if (
+        type(result.readiness_score) is not int
+        or not 1 <= result.readiness_score <= 100
+        or result.readiness_category not in {"Poor", "Low", "Moderate", "High", "Prime"}
+    ):
+        return None
+    return f"Garmin Training Readiness: {result.readiness_score} ({result.readiness_category})"
+
+
 def render_morning(
     session: Session, result: DecisionResult, *, plan_only: bool = False,
 ) -> tuple[str | None, dict | None, list[str]]:
@@ -83,6 +100,7 @@ def render_morning(
         context.append(
             "Sleep, HRV Status, and Recovery Time are informational only; only fresh Garmin Training Readiness guides this decision."
         )
+    readiness = None if plan_only else authoritative_readiness_line(result)
     if result.decision_type == "NO_SELECTED_WORKOUT":
         body = "No workout is selected for today. Recovery data is informational until a workout is selected."
     elif result.decision_type == "WORKOUT_SELECTION_REQUIRED":
@@ -107,4 +125,4 @@ def render_morning(
                 f"{readiness_authority_explanation(result)}."
             )
 
-    return "\n".join([*context, body]), None, []
+    return "\n".join([*context, *([readiness] if readiness else []), body]), None, []
