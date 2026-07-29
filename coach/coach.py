@@ -417,56 +417,6 @@ Do NOT use markdown headers or greetings, just give the insight.
         logging.error(f"Failed to send proactive Telegram notification: {e}")
 
 
-def _decision_metric_line(result) -> str:
-    parts = []
-    if result.readiness_score is not None:
-        parts.append(f"Garmin readiness {result.readiness_score} ({result.readiness_category})")
-    values = {item["signal"]: item["value"] for item in result.observations}
-    duration = values.get("sleep_duration_hours")
-    sleep_score = values.get("sleep_score")
-    if duration is not None:
-        sleep_text = f"sleep {duration:g}h"
-        if isinstance(sleep_score, dict):
-            sleep_text += f", score {sleep_score['score']} ({sleep_score['category']})"
-        parts.append(sleep_text)
-    return "; ".join(parts) + ("." if parts else "")
-
-
-def _render_typed_decision(result) -> str | None:
-    metric_line = _decision_metric_line(result)
-    if result.decision_type in {"WAITING_FOR_DATA", "SYNC_REQUIRED"}:
-        return None
-    if result.workout_outcome == "PROGRAM_REST_DAY":
-        text = (
-            f"Program rest day: {result.next_program_session_name} is next, "
-            f"earliest {result.earliest_eligible_date}."
-        )
-        recovery = result.optional_recovery_activity
-        if recovery:
-            low, high = recovery["duration_min"]
-            text += f" Optional: {low}-{high} minutes of easy walking at conversational effort."
-        return text
-    session_name = result.planned_session_name or result.next_program_session_name or "Workout"
-    time_part = f" at {result.planned_start_time}" if result.planned_start_time else ""
-    if result.decision_type == "ADVISE_SKIP_SESSION":
-        return f"{metric_line}\nSkip {session_name}{time_part}. Garmin readiness is Poor. The original session remains available."
-    if result.decision_type == "WARN_ORIGINAL_SESSION":
-        return f"{metric_line}\n{session_name}{time_part} stays unchanged. Garmin readiness is Low; treat this as a warning, not a workout modification."
-    if result.workout_outcome == "KEEP_PLANNED_SESSION":
-        text = f"Planned: {session_name}{time_part}."
-    elif result.workout_outcome == "PROPOSE_NEXT_SESSION":
-        text = f"Today's program session: {session_name}."
-    else:
-        text = "No useful workout action is available today."
-    if result.best_effort:
-        omitted = ", ".join(
-            item["signal"].replace("_", " ")
-            for item in result.missing_observations if item["critical"]
-        )
-        text += f" Best effort; missing {omitted}."
-    return f"{metric_line}\n{text}".strip()
-
-
 def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = False) -> bool:
     """Evaluate and render the deterministic morning result; evening stays silent."""
     from time_utils import get_local_now

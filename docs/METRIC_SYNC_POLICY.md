@@ -34,15 +34,20 @@ morning priority refresh runs only for exactly one candidate. No-candidate and
 multiple-candidate mornings settle as informational messages and do not wait
 for a program or stage scheduling.
 
-Workout selection uses fresh local data. It does not call Garmin automatically. If required data is stale or missing, Telegram may offer an explicit recovery refresh.
+Workout selection uses fresh local data. It does not call Garmin automatically.
+Automatic priority refresh runs only for exactly one eligible selected workout;
+zero- and multiple-candidate mornings settle through the outbox as
+informational messages.
 
 ## 3. Outcomes and confirmation
 
-### Planned workout
+### Current selected-workout phase
 
-Keep the selected workout unchanged.
+Every recovery result is advisory and leaves the selected workout unchanged.
+It creates no recovery confirmation, interaction, scheduling, upload, or
+Garmin mutation.
 
-### Active Recovery
+### Active Recovery (future work)
 
 A fixed Garmin walking workout:
 
@@ -53,11 +58,14 @@ A fixed Garmin walking workout:
 
 The app must not promise that it restores performance or prevents injury.
 
-### Rest
+### Rest (future work)
 
 No structured workout that day.
 
-Telegram is the only action-confirmation surface. No response leaves the selected workout unchanged. Active Recovery or Rest keeps the original program session pending and does not advance the program cursor.
+If later implemented, Telegram will be the only action-confirmation surface.
+No response must leave the selected workout unchanged. Any future Active
+Recovery or Rest action must keep the original program session pending and not
+advance the program cursor.
 
 ## 4. V1 decision authority
 
@@ -89,9 +97,11 @@ Garmin Training Readiness already considers sleep score, Recovery Time, HRV Stat
 
 V1 has no evidence-supported fallback formula that automatically selects Active Recovery or Rest.
 
-Sleep duration, HRV Status, Recovery Time, resting HR, stress, and Body Battery may produce clear warnings or context, but the official outcome remains the selected workout unless a future versioned evidence rule is separately approved.
-
-When warnings exist, Telegram may let the athlete choose the original workout, the fixed walk, or Rest. That is an athlete choice, not a hidden biometric recommendation.
+Sleep duration, HRV Status, Recovery Time, resting HR, stress, and Body Battery
+may produce factual context, but have no direct V1 authority. Telegram displays
+fresh sleep, HRV Status, and Recovery Time context, explicitly as
+informational; it does not offer an Active Recovery, Rest, or original-workout
+action in the current phase.
 
 ### Missing data
 
@@ -303,6 +313,14 @@ Connect value to GarminCoach.
 
 HRV Status, Recovery Time, and Body Battery (including charged and drained
 summary values) are informational in V1 and have no direct workout authority.
+
+For selected-workout presentation, the durable fact contract uses the existing
+freshness signal IDs: `sleep` is numeric hours rounded to one decimal,
+`sleep_score` is one numeric Garmin score, `hrv_status` is Garmin text, and
+`recovery_time` is integer minutes. Formatting belongs only to presentation.
+Sleep, HRV Status, and Recovery Time are shown in Telegram as factual context,
+not a replacement for fresh supported Training Readiness. The fixed Active
+Recovery target and the body-composition fixture gate remain future work.
 
 These checks may change adapters or request strategy, but not the approved product authority above.
 

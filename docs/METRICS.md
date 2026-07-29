@@ -126,6 +126,16 @@ does not schedule, cancel, unschedule, replace, complete, or modify a workout.
 For unsupported devices, individual observations remain visible but have no
 prescriptive workout authority in V1.
 
+The durable selected-workout observation contract uses the freshness signal IDs:
+`sleep` is a numeric duration in hours rounded to one decimal; `sleep_score` is
+a numeric Garmin score; `hrv_status` is Garmin's status text; and
+`recovery_time` is an integer number of minutes. Telegram presents factual
+sleep (including stored timing when available), Sleep Score, HRV Status, and
+human-readable Recovery Time as context. It does not show exact overnight HRV,
+resting-HR, or stress values proactively. The dashboard may show those stored
+fresh facts. None of these informational facts substitutes for Training
+Readiness or changes the decision.
+
 ---
 
 ## 4. Retired custom readiness

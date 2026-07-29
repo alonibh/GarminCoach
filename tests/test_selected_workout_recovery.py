@@ -3,7 +3,8 @@ from datetime import date, datetime
 import pytest
 
 from coach.decision_engine import evaluate_selected_workout_recovery
-from db import DailyHealth, DecisionRecord, PlannedSession, ProgramCursor
+from coach.renderer import recovery_fact_lines, render_morning
+from db import DailyHealth, DecisionRecord, PlannedSession, ProgramCursor, Sleep
 from metrics import freshness
 from tests.test_program_state import _add_program
 
@@ -24,12 +25,40 @@ def _planned(session, **values):
 def _readiness(session, score, state=freshness.FRESH):
     freshness.note_capability_observed(session, observed_at=datetime(2026, 7, 6, 7))
     freshness.record_signal(session, freshness.TRAINING_READINESS, TARGET, state, "get_training_readiness")
-    session.add(DailyHealth(day=TARGET, training_readiness=score))
+    health = session.get(DailyHealth, TARGET)
+    if health:
+        health.training_readiness = score
+    else:
+        session.add(DailyHealth(day=TARGET, training_readiness=score))
 
 
 def _evaluate(session, planned_id=None):
     return evaluate_selected_workout_recovery(session, planned_session_id=planned_id, target=TARGET,
                                                evaluated_at=datetime(2026, 7, 6, 8))
+
+
+def _informational_context(session):
+    session.add(Sleep(
+        day=TARGET,
+        sleep_start_time=datetime(2026, 7, 5, 23, 37),
+        sleep_end_time=datetime(2026, 7, 6, 6, 45),
+        total_s=7.1 * 3600,
+        score=86,
+    ))
+    session.add(DailyHealth(
+        day=TARGET,
+        hrv_status="BALANCED",
+        hrv_overnight=54,
+        recovery_time_minutes=95,
+        resting_hr=48,
+        stress_avg=22,
+    ))
+    for signal in (
+        freshness.SLEEP, freshness.SLEEP_SCORE, freshness.HRV_STATUS,
+        freshness.HRV, freshness.RECOVERY_TIME, freshness.RESTING_HR,
+        freshness.STRESS,
+    ):
+        freshness.record_signal(session, signal, TARGET, freshness.FRESH, "test")
 
 
 def test_no_workout_has_no_recovery_or_schedule_action(session):
@@ -60,6 +89,16 @@ def test_ineligible_status_is_not_selected(session, status):
 def test_rest_and_recovery_replacements_are_not_selected(session, kwargs):
     _planned(session, **kwargs)
     assert _evaluate(session).decision_type == "NO_SELECTED_WORKOUT"
+
+
+def test_linked_optional_recovery_and_another_date_are_ineligible(session):
+    _program, source_sessions = _add_program(session)
+    source_sessions[0].session_role = "optional_recovery"
+    _planned(session, program_session_id=source_sessions[0].id)
+    other_day = _planned(session, target_date=date(2026, 7, 7))
+
+    assert _evaluate(session).decision_type == "NO_SELECTED_WORKOUT"
+    assert _evaluate(session, other_day.id).reason_codes == ["PLANNED_SESSION_NOT_ELIGIBLE_FOR_DECISION_DATE"]
 
 
 @pytest.mark.parametrize("score,category,outcome", [
@@ -108,6 +147,78 @@ def test_unsupported_and_unknown_are_distinct(session):
     assert "UNSUPPORTED" in _evaluate(session, row.id).reason_codes[0]
     freshness.set_capability_override(session, freshness.TRAINING_READINESS, None)
     assert "UNVERIFIED" in _evaluate(session, row.id).reason_codes[0]
+
+
+def test_telegram_uses_canonical_facts_without_private_values(session, monkeypatch):
+    row = _planned(session)
+    _informational_context(session)
+    freshness.set_capability_override(session, freshness.TRAINING_READINESS, "unsupported")
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("calendar access is forbidden")),
+    )
+
+    result = _evaluate(session, row.id)
+    text, markup, interaction_ids = render_morning(session, result)
+
+    assert "Sleep 23:37-06:45: 7.1h" in text
+    assert "Garmin Sleep Score: 86 (Good)" in text
+    assert "Garmin HRV Status: BALANCED" in text
+    assert "Recovery Time: 1h 35m" in text
+    assert "informational only" in text
+    assert "this device does not support it" in text
+    assert "TRAINING_READINESS_UNSUPPORTED" not in text
+    assert "54 ms" not in text and "48 bpm" not in text and "Stress: 22" not in text
+    assert markup is None and interaction_ids == []
+
+
+@pytest.mark.parametrize(
+    "state,score,expected",
+    [
+        (freshness.EXPECTED_PENDING, 70, "reading is still pending"),
+        (freshness.MISSING, None, "no current reading is available"),
+        (freshness.STALE, 70, "reading is stale"),
+        (freshness.ERROR, 70, "Garmin returned an error"),
+        (freshness.FRESH, 101, "reading is invalid"),
+    ],
+)
+def test_no_authority_reasons_are_human_readable(session, state, score, expected):
+    row = _planned(session)
+    _readiness(session, score, state)
+    text, markup, interaction_ids = render_morning(session, _evaluate(session, row.id))
+
+    assert expected in text
+    assert "TRAINING_READINESS_" not in text
+    assert markup is None and interaction_ids == []
+
+
+def test_plan_only_omits_all_recovery_facts(session):
+    row = _planned(session)
+    _informational_context(session)
+    _readiness(session, 74)
+
+    text, markup, interaction_ids = render_morning(session, _evaluate(session, row.id), plan_only=True)
+
+    assert text == "Planned: Full Body at 18:00."
+    assert "Sleep" not in text and "HRV" not in text and "Recovery" not in text
+    assert markup is None and interaction_ids == []
+
+
+def test_dashboard_fact_lines_use_the_same_canonical_signals(session):
+    row = _planned(session)
+    _informational_context(session)
+    _readiness(session, 74)
+
+    result = _evaluate(session, row.id)
+    facts = recovery_fact_lines(session, result, include_private_facts=True)
+
+    assert facts == [
+        "Sleep 23:37-06:45: 7.1h", "Garmin Sleep Score: 86 (Good)",
+        "Garmin HRV Status: BALANCED", "Recovery Time: 1h 35m",
+        "Overnight HRV: 54 ms", "Resting HR: 48 bpm", "Stress: 22",
+    ]
+    assert all(item["signal"] != "sleep_duration_hours" for item in result.observations)
+    assert isinstance(next(item["value"] for item in result.observations if item["signal"] == "sleep_score"), int)
 
 
 def test_program_rest_precedes_prime_without_mutation(session):

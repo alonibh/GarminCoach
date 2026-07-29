@@ -65,9 +65,10 @@ resumes safely after failure, and never restarts a monolithic 90-day health craw
 - [x] Verify HRV Status and Recovery Time payloads with pinned typed fixtures.
 - [x] Store HRV Status, Garmin seven-day average, and local seven-night coverage.
 - [x] Store Recovery Time and richer Body Battery summaries.
-- [ ] Next: Add intensity minutes and conditional body-composition support.
-  Daily intensity minutes are implemented from the verified daily summary.
-  Body composition remains gated pending a pinned response/units fixture; see
+- [x] Store daily moderate/vigorous intensity minutes and local 7-day/28-day totals
+  from the verified daily summary.
+- [ ] Add conditional body-composition support only after a sanitized pinned
+  payload-and-units fixture; see
   [`docs/BODY_COMPOSITION_CONTRACT.md`](docs/BODY_COMPOSITION_CONTRACT.md).
 - [ ] Make capability device/account/scale/activity scoped.
 - [x] Evaluate recovery only after a workout is selected in the website.

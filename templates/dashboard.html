@@ -24,7 +24,7 @@
   {% if recovery_panel.name %}<p><strong>{{ recovery_panel.name }}</strong>{% if recovery_panel.time %} · {{ today_label }} at {{ recovery_panel.time }}{% endif %}</p>{% endif %}
   {% if recovery_panel.score is not none %}<p>Garmin Training Readiness: <strong>{{ recovery_panel.score }} ({{ recovery_panel.category }})</strong></p>{% endif %}
   {% if recovery_panel.reason %}<p class="muted">{{ recovery_panel.reason|capitalize }}.</p>{% endif %}
-  {% if recovery_panel.facts %}<p class="muted">{% for fact in recovery_panel.facts if fact.signal != 'training_readiness' %}{{ fact.label|default(fact.signal|replace('_', ' ')|title) }}: {{ fact.value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  {% if recovery_panel.facts %}<p class="muted">{{ recovery_panel.facts|join(' · ') }}</p>{% endif %}
 </section>
 {% endif %}
 
