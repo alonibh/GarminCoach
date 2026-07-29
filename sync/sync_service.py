@@ -795,6 +795,7 @@ def _sync_daily_health_core(
     except GarminConnectTooManyRequestsError:
         raise
     except Exception as exc:
+        session.info.setdefault("hrv_status_outcomes", {})[day] = False
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("HRV fetch failed for %s", day, exc_info=True)
