@@ -1,7 +1,7 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from contextlib import contextmanager
 
-from db import DailyHealth, ObservationFreshness
+from db import DailyHealth, DeviceCapability, ObservationFreshness
 from metrics import freshness
 from sync import sync_service as svc
 
@@ -102,6 +102,37 @@ def test_full_sync_readiness_empty_or_missing_recovery_never_uses_old_score(sess
     assert _outcome(session, freshness.TRAINING_READINESS).state == freshness.FRESH
     assert _outcome(session, freshness.RECOVERY_TIME).state == freshness.MISSING
 
+
+def test_unknown_readiness_probe_uses_current_error_or_missing_outcome(session, monkeypatch):
+    freshness.set_capability_override(session, "training_status", "unsupported")
+    session.add(DailyHealth(day=TARGET, training_readiness=75))
+    monkeypatch.setattr(svc.client, "training_readiness", lambda _day: (_ for _ in ()).throw(TimeoutError()))
+    svc._sync_current_optional_health(session, TARGET, context="full")
+    svc._record_full_sync_freshness(session, TARGET, None)
+    readiness = _outcome(session, freshness.TRAINING_READINESS)
+    recovery = _outcome(session, freshness.RECOVERY_TIME)
+    assert freshness.capability_state(session) == "unknown"
+    assert (readiness.state, readiness.error_code) == (freshness.ERROR, "timeout")
+    assert (recovery.state, recovery.error_code) == (freshness.ERROR, "timeout")
+
+    session.get(DeviceCapability, freshness.TRAINING_READINESS).last_probe_at = datetime.now() - timedelta(days=8)
+    monkeypatch.setattr(svc.client, "training_readiness", lambda _day: {})
+    svc._sync_current_optional_health(session, TARGET, context="full")
+    svc._record_full_sync_freshness(session, TARGET, None)
+    assert _outcome(session, freshness.TRAINING_READINESS).state == freshness.MISSING
+    assert _outcome(session, freshness.RECOVERY_TIME).state == freshness.MISSING
+    assert freshness.capability_state(session) == "unknown"
+
+
+def test_unknown_readiness_probe_not_due_records_missing_without_call(session, monkeypatch):
+    freshness.set_capability_override(session, "training_status", "unsupported")
+    freshness.note_capability_probe(session, freshness.TRAINING_READINESS, "empty")
+    monkeypatch.setattr(svc.client, "training_readiness", lambda _day: (_ for _ in ()).throw(AssertionError("not due")))
+    svc._sync_current_optional_health(session, TARGET, context="full")
+    svc._record_full_sync_freshness(session, TARGET, None)
+    row = _outcome(session, freshness.TRAINING_READINESS)
+    assert (row.state, row.error_code, row.source_endpoint) == (freshness.MISSING, None, "capability_probe_not_due")
+    assert freshness.capability_state(session) == "unknown"
 
 def test_supported_readiness_hero_shows_only_fresh_supporting_recovery_facts(session, monkeypatch):
     import app as app_module

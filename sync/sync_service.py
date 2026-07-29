@@ -1502,13 +1502,27 @@ def _record_full_sync_freshness(
         fetched_at=fetched_at, device_upload_at=device_upload_at,
         error_code=hrv_outcome.error_code,
     )
-    if capability in {"unsupported", "unknown"}:
+    if capability == "unsupported":
         record_signal(
             session, TRAINING_READINESS, day,
-            UNSUPPORTED if capability == "unsupported" else MISSING,
-            "device_capability" if capability == "unsupported" else "capability_probe",
+            UNSUPPORTED, "device_capability",
             fetched_at=fetched_at, device_upload_at=device_upload_at,
         )
+    elif readiness_outcome.requested:
+        record_signal(
+            session, TRAINING_READINESS, day,
+            readiness_outcome.state,
+            "get_training_readiness", fetched_at=fetched_at, device_upload_at=device_upload_at,
+            error_code=readiness_outcome.error_code,
+        )
+    else:
+        record_signal(
+            session, TRAINING_READINESS, day, MISSING,
+            "capability_probe_not_due" if capability == "unknown" else "get_training_readiness",
+            fetched_at=fetched_at, device_upload_at=device_upload_at,
+        )
+
+    if capability in {"unsupported", "unknown"}:
         individual = (
             (RESTING_HR, health.resting_hr if health else None, "get_rhr_day"),
             (STRESS, health.stress_avg if health else None, "get_all_day_stress"),
@@ -1518,13 +1532,6 @@ def _record_full_sync_freshness(
                 session, signal, day, FRESH if value is not None else MISSING, endpoint,
                 fetched_at=fetched_at, device_upload_at=device_upload_at,
             )
-    else:
-        record_signal(
-            session, TRAINING_READINESS, day,
-            readiness_outcome.state,
-            "get_training_readiness", fetched_at=fetched_at, device_upload_at=device_upload_at,
-            error_code=readiness_outcome.error_code,
-        )
     record_signal(
         session, HRV_STATUS, day,
         hrv_status_outcome.state if hrv_status_outcome.state == ERROR else (
