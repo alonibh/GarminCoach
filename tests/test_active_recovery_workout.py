@@ -111,6 +111,8 @@ class _FakeApi(_ForbiddenApi):
         self.read_payload = read_payload
         self.delete_error = delete_error
         self.uploads, self.reads, self.deleted = [], [], []
+        self.boundary = None
+        self.delete_depths = []
 
     def upload_walking_workout(self, workout):
         self.uploads.append(workout)
@@ -130,6 +132,9 @@ class _FakeApi(_ForbiddenApi):
         return deepcopy(self.read_payload if self.read_payload is not None else _payload())
 
     def delete_workout(self, workout_id):
+        if self.boundary is None or self.boundary.depth <= 0:
+            raise AssertionError("delete_workout must run inside current_garmin_client")
+        self.delete_depths.append(self.boundary.depth)
         self.deleted.append(workout_id)
         if self.delete_error:
             raise self.delete_error
@@ -152,11 +157,33 @@ class _FakeClient:
         self.expired = True
 
 
+class _Boundary:
+    def __init__(self, client):
+        self.client = client
+        self.depth = 0
+        self.events = []
+
+    @contextmanager
+    def current(self):
+        self.depth += 1
+        self.events.append("enter")
+        try:
+            yield self.client
+        finally:
+            self.events.append("exit")
+            self.depth -= 1
+
+
 def _use_client(monkeypatch, client):
+    boundary = _Boundary(client)
+    client.api.boundary = boundary
+
     @contextmanager
     def current():
-        yield client
+        with boundary.current() as current_client:
+            yield current_client
     monkeypatch.setattr("coach.active_recovery.current_garmin_client", current)
+    return boundary
 
 
 def _assert_no_unrelated_mutation(session):
@@ -188,12 +215,13 @@ def test_service_reuses_existing_id_without_upload_or_delete(session, monkeypatc
     session.add(SyncState(key=ACTIVE_RECOVERY_SYNC_STATE_KEY, value="41"))
     session.commit()
     api = _FakeApi()
-    _use_client(monkeypatch, _FakeClient(api))
+    boundary = _use_client(monkeypatch, _FakeClient(api))
 
     result = ensure_active_recovery_workout(session)
 
     assert result.ok and not result.created and result.workout_id == 41
     assert api.uploads == [] and api.reads == [41] and api.deleted == []
+    assert boundary.events == ["enter", "exit"]
     _assert_no_unrelated_mutation(session)
 
 
@@ -214,13 +242,14 @@ def test_service_stored_id_404_creates_one_verified_replacement(session, monkeyp
     session.add(SyncState(key=ACTIVE_RECOVERY_SYNC_STATE_KEY, value="41"))
     session.commit()
     api = _FakeApi(read_error={41: GarminConnectNotFoundError("not found")})
-    _use_client(monkeypatch, _FakeClient(api))
+    boundary = _use_client(monkeypatch, _FakeClient(api))
 
     result = ensure_active_recovery_workout(session)
 
     assert result.ok and result.created and result.workout_id == 77
     assert api.reads == [41, 77] and len(api.uploads) == 1 and api.deleted == []
     assert session.get(SyncState, ACTIVE_RECOVERY_SYNC_STATE_KEY).value == "77"
+    assert boundary.events == ["enter", "exit"]
 
 
 @pytest.mark.parametrize("exc", [GarminConnectConnectionError("network"), GarminConnectTooManyRequestsError("429")])
@@ -243,51 +272,74 @@ def test_service_invalid_existing_template_is_neither_deleted_nor_replaced(sessi
     invalid = _payload()
     invalid["workoutName"] = "Wrong"
     api = _FakeApi(read_payload=invalid)
-    _use_client(monkeypatch, _FakeClient(api))
+    boundary = _use_client(monkeypatch, _FakeClient(api))
 
     result = ensure_active_recovery_workout(session)
 
     assert result.failure == ActiveRecoveryFailureKind.VERIFY_REJECTED
     assert api.uploads == api.deleted == [] and api.reads == [41]
     assert session.get(SyncState, ACTIVE_RECOVERY_SYNC_STATE_KEY).value == "41"
+    assert boundary.events == ["enter", "exit"]
 
 
 def test_service_new_upload_failures_roll_back_and_delete_only_new_id(session, monkeypatch):
     invalid = _payload()
     invalid["workoutName"] = "Wrong"
     api = _FakeApi(read_payload=invalid)
-    _use_client(monkeypatch, _FakeClient(api))
+    boundary = _use_client(monkeypatch, _FakeClient(api))
 
     result = ensure_active_recovery_workout(session)
 
     assert result.failure == ActiveRecoveryFailureKind.VERIFY_REJECTED
     assert api.deleted == [77]
+    assert api.delete_depths == [1]
+    assert boundary.events == ["enter", "exit", "enter", "exit"]
     assert session.get(SyncState, ACTIVE_RECOVERY_SYNC_STATE_KEY) is None
     _assert_no_unrelated_mutation(session)
 
 
-def test_service_upload_id_missing_and_cleanup_failure_preserve_original_result(session, monkeypatch):
+def test_service_read_back_failure_reacquires_boundary_for_cleanup(session, monkeypatch):
+    api = _FakeApi(read_error={77: GarminConnectConnectionError("read back failed")})
+    boundary = _use_client(monkeypatch, _FakeClient(api))
+
+    result = ensure_active_recovery_workout(session)
+
+    assert result.failure == ActiveRecoveryFailureKind.SERVICE_FAILED
+    assert result.stage == "read_back"
+    assert api.deleted == [77] and api.delete_depths == [1]
+    assert boundary.events == ["enter", "exit", "enter", "exit"]
+    assert session.get(SyncState, ACTIVE_RECOVERY_SYNC_STATE_KEY) is None
+
+
+def test_service_upload_id_missing_and_cleanup_failure_preserve_original_result(session, monkeypatch, caplog):
     api = _FakeApi(upload_result={})
-    _use_client(monkeypatch, _FakeClient(api))
+    missing_boundary = _use_client(monkeypatch, _FakeClient(api))
     missing = ensure_active_recovery_workout(session)
     assert not missing.ok and missing.stage == "upload" and api.deleted == []
+    assert missing_boundary.events == ["enter", "exit"]
 
-    api = _FakeApi(read_payload={"workoutName": "wrong"}, delete_error=RuntimeError("cleanup"))
-    _use_client(monkeypatch, _FakeClient(api))
+    secret = "cleanup-message-must-not-be-logged"
+    api = _FakeApi(read_payload={"workoutName": "wrong"}, delete_error=RuntimeError(secret))
+    boundary = _use_client(monkeypatch, _FakeClient(api))
     failed_verify = ensure_active_recovery_workout(session)
     assert failed_verify.failure == ActiveRecoveryFailureKind.VERIFY_REJECTED
     assert failed_verify.stage == "verify" and api.deleted == [77]
+    assert api.delete_depths == [1]
+    assert boundary.events == ["enter", "exit", "enter", "exit"]
+    assert "exception_type=RuntimeError" in caplog.text and secret not in caplog.text
 
 
 def test_service_persistence_failure_rolls_back_and_deletes_new_upload(session, monkeypatch):
     api = _FakeApi()
-    _use_client(monkeypatch, _FakeClient(api))
+    boundary = _use_client(monkeypatch, _FakeClient(api))
     monkeypatch.setattr(session, "commit", lambda: (_ for _ in ()).throw(RuntimeError("database unavailable")))
 
     result = ensure_active_recovery_workout(session)
 
     assert not result.ok and result.stage == "persist"
     assert api.deleted == [77]
+    assert api.delete_depths == [1]
+    assert boundary.events == ["enter", "exit", "enter", "exit"]
     assert session.get(SyncState, ACTIVE_RECOVERY_SYNC_STATE_KEY) is None
 
 
@@ -306,10 +358,11 @@ def test_service_rate_limit_is_not_retried_and_logs_no_payload(session, monkeypa
 def test_service_auth_failure_marks_expired_and_does_not_mutate(session, monkeypatch):
     api = _FakeApi()
     client = _FakeClient(api, auth_error=GarminConnectAuthenticationError("expired"))
-    _use_client(monkeypatch, client)
+    boundary = _use_client(monkeypatch, client)
 
     result = ensure_active_recovery_workout(session)
 
     assert result.failure == ActiveRecoveryFailureKind.RECONNECT_REQUIRED
     assert client.expired and api.uploads == api.reads == api.deleted == []
+    assert boundary.events == ["enter", "exit"]
     _assert_no_unrelated_mutation(session)

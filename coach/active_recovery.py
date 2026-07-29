@@ -301,9 +301,10 @@ def ensure_active_recovery_workout(session: Session) -> ActiveRecoveryTemplateRe
             if new_id is not None:
                 session.rollback()
             _mark_session_expired(garmin_client, exc)
-            if new_id is not None and garmin_client is not None:
+            if new_id is not None:
                 try:
-                    garmin_client.api.delete_workout(new_id)
+                    with current_garmin_client() as cleanup_client:
+                        cleanup_client.api.delete_workout(new_id)
                 except Exception as cleanup_exc:
                     logger.error(
                         "garmin_mutation_failed operation=ensure_active_recovery_workout "
