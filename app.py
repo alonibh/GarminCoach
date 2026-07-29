@@ -807,7 +807,7 @@ def _readiness_tiles() -> list[dict]:
             else None
         )
         category = training_readiness_category(int(r_val)) if r_val is not None else None
-        if capability == "unsupported":
+        if capability in {"unsupported", "unknown"}:
             raw_facts_synced = synced_raw_metrics_ready(s, today)
 
             def is_fresh(signal: str) -> bool:
@@ -959,7 +959,11 @@ def _readiness_tiles() -> list[dict]:
                 "key": "recovery_signals",
                 "label": "Recovery signals",
                 "signal_rows": signal_rows,
-                "hint": "Your watch does not provide Garmin Training Readiness. These synced signals are shown separately without applying unvalidated composite weights.",
+                "hint": (
+                    "Your watch does not provide Garmin Training Readiness. These synced signals are shown separately without applying unvalidated composite weights."
+                    if capability == "unsupported" else
+                    "GarminCoach has not verified whether this watch provides Garmin Training Readiness. Available synced signals are shown separately; no substitute readiness score is calculated."
+                ),
             }
         elif r_val is None:
             readiness_tile = {

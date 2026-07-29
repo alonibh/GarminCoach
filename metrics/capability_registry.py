@@ -82,10 +82,11 @@ MODEL_RULES = (
     ModelRule("vivoactive_5", "vívoactive 5", (re.compile(r"\bvivoactive\s*5\b"),), _VA5),
 )
 
-_DEVICE_FIELDS = (
+_HUMAN_DEVICE_FIELDS = (
     "lastUsedDeviceName", "productDisplayName", "displayName", "modelName", "productName",
-    "deviceName", "deviceType", "lastUsedDeviceApplicationKey",
+    "deviceName", "deviceType",
 )
+_APPLICATION_KEY_FIELD = "lastUsedDeviceApplicationKey"
 
 
 def normalize_device_name(value: object) -> str:
@@ -93,37 +94,64 @@ def normalize_device_name(value: object) -> str:
         return ""
     value = value.replace("™", " ").replace("®", " ")
     ascii_name = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_name.lower()).split())
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_name.lower()).split())
+    # Garmin exposes both display names and compact application keys.  Make
+    # their word boundaries equivalent without attempting broad family matches.
+    return re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", normalized)
 
 
-def _field_values(payload: object):
+def _usable_device_value(value: object) -> bool:
+    if not isinstance(value, str) or "\ufffd" in value:
+        return False
+    normalized = normalize_device_name(value)
+    return bool(normalized and re.search(r"[a-z]", normalized) and normalized not in {
+        "garmin", "garmin device", "device", "watch",
+    })
+
+
+def _nested_field_values(payload: object):
+    """Yield nested identity candidates only after every direct tier failed."""
     if not isinstance(payload, dict):
         return
-    for key in _DEVICE_FIELDS:
-        value = payload.get(key)
-        if isinstance(value, str) and normalize_device_name(value):
-            yield key, value
-    # Nested values are lower priority than direct current-watch fields.
     for value in payload.values():
-        if isinstance(value, dict):
-            yield from _field_values(value)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                yield from _field_values(item)
+        children = value if isinstance(value, (list, tuple)) else (value,)
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            for key in (*_HUMAN_DEVICE_FIELDS, _APPLICATION_KEY_FIELD):
+                raw = child.get(key)
+                if _usable_device_value(raw):
+                    yield key, raw
+            yield from _nested_field_values(child)
+
+
+def _identity_for(field: str, raw: str) -> DeviceIdentity:
+    normalized = normalize_device_name(raw)
+    for rule in MODEL_RULES:
+        if any(pattern.search(normalized) for pattern in rule.patterns):
+            return DeviceIdentity(rule.model_key, rule.display_name, normalized, field)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return DeviceIdentity(f"unknown_{digest}", raw.strip(), normalized, field)
 
 
 def resolve_device_identity(payload: object, previous: DeviceIdentity | None = None) -> DeviceIdentity | None:
-    unknown: DeviceIdentity | None = None
-    for field, raw in _field_values(payload):
-        normalized = normalize_device_name(raw)
-        for rule in MODEL_RULES:
-            if any(pattern.search(normalized) for pattern in rule.patterns):
-                return DeviceIdentity(rule.model_key, rule.display_name, normalized, field)
-        if unknown is None:
-            # A usable but unlisted name gets a deterministic key and cannot match a family.
-            digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
-            unknown = DeviceIdentity(f"unknown_{digest}", raw.strip(), normalized, field)
-    return unknown or previous
+    if not isinstance(payload, dict):
+        return previous
+    # Tier 1 is deliberately terminal: a current human-readable watch name is
+    # more trustworthy than stale application keys and unrelated nested devices.
+    direct = [(field, payload[field]) for field in _HUMAN_DEVICE_FIELDS if _usable_device_value(payload.get(field))]
+    if direct:
+        for field, raw in direct:
+            identity = _identity_for(field, raw)
+            if not identity.model_key.startswith("unknown_"):
+                return identity
+        return _identity_for(*direct[0])
+    raw_key = payload.get(_APPLICATION_KEY_FIELD)
+    if _usable_device_value(raw_key):
+        return _identity_for(_APPLICATION_KEY_FIELD, raw_key)
+    for field, raw in _nested_field_values(payload):
+        return _identity_for(field, raw)
+    return previous
 
 
 def model_rule(model_key: str | None) -> ModelRule | None:
@@ -146,5 +174,7 @@ def fetch_decision(state: str, *, last_probe_at: datetime | None, newly_detected
     if context not in allowed:
         return "skip_unknown_not_due"
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    due = newly_detected or last_probe_at is None or now - last_probe_at >= timedelta(days=interval_days)
+    # A model change clears probe timestamps.  A persistent "newly detected"
+    # marker must not repeatedly bypass the interval for an already-probed row.
+    due = last_probe_at is None or now - last_probe_at >= timedelta(days=interval_days)
     return "probe_unknown" if due else "skip_unknown_not_due"

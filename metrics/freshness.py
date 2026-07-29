@@ -89,16 +89,19 @@ def note_capability_from_device(
         row = session.get(DeviceCapability, capability) or DeviceCapability(
             metric=capability, support_state="unknown", evidence_source="unresolved", updated_at=now,
         )
-        if model_changed and row.override_state is None:
+        if model_changed:
+            # Overrides are policy layered on top of evidence.  Never carry
+            # evidence from the old watch into the new device.
+            override = row.override_state
             row.support_state, row.evidence_source = "unknown", "unresolved"
             row.first_observed_at = row.last_observed_at = None
             row.last_probe_at = row.last_probe_outcome = None
+            row.source_verified_on = None
+            row.override_state = override
         rule = registry_rule(identity.model_key, capability)
         # Current-device observations survive an idempotent same-model refresh.
         observed = row.support_state == "supported" and row.evidence_source == "garmin_observation" and not model_changed
         if rule and not observed:
-            if row.support_state == "supported" and row.evidence_source == "garmin_observation":
-                logger.warning("Current Garmin observation contradicts capability registry for %s", capability)
             row.support_state = rule.state
             row.evidence_source = f"registry:{rule.source_id}"
             row.source_verified_on = SOURCES[rule.source_id].verified_on
@@ -157,8 +160,16 @@ def note_capability_observed(
         first_observed_at=now,
         updated_at=now,
     )
+    contradicted_registry = row.support_state == "unsupported" and row.evidence_source.startswith("registry:")
     row.support_state = "supported"
+    if contradicted_registry:
+        logger.warning("Garmin capability observation contradicts registry: capability=%s model_key=%s", metric, row.device_model_key or "unknown")
     row.evidence_source = source
+    row.source_verified_on = None
+    identity = _identity_from_state(session)
+    if identity:
+        row.device_model_key = identity.model_key
+        row.registry_version = GARMIN_CAPABILITY_REGISTRY_VERSION
     row.first_observed_at = row.first_observed_at or now
     row.last_observed_at = now
     row.updated_at = now
@@ -173,16 +184,17 @@ def note_capability_probe(session: Session, metric: str, outcome: str, *, observ
         raise ValueError("Unknown capability probe outcome")
     now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
     row = session.get(DeviceCapability, metric) or DeviceCapability(metric=metric, support_state="unknown", evidence_source="unresolved", updated_at=now)
-    row.last_probe_at, row.last_probe_outcome, row.updated_at = now, outcome, now
+    if outcome in {"observed", "empty", "ordinary_error"}:
+        row.last_probe_at = now
+    row.last_probe_outcome, row.updated_at = outcome, now
     session.add(row)
 
 
 def capability_fetch_decision(session: Session, metric: str, context: str) -> str:
     row = session.get(DeviceCapability, metric)
-    newly = (session.get(SyncState, "garmin_capability_newly_detected") or SyncState(key="", value="0")).value == "1"
     return fetch_decision(
         capability_state(session, metric), last_probe_at=row.last_probe_at if row else None,
-        newly_detected=newly, context=context, capability=metric,
+        newly_detected=False, context=context, capability=metric,
         interval_days=__import__("config").CAPABILITY_PROBE_INTERVAL_DAYS,
     )
 
@@ -203,11 +215,16 @@ def set_capability_override(session: Session, metric: str, state: str | None) ->
     row = session.get(DeviceCapability, metric) or DeviceCapability(
         metric=metric,
         support_state="unknown",
-        evidence_source="administrator_override",
+        evidence_source="unresolved",
         updated_at=now,
     )
+    # Old rows used administrator_override as their only evidence marker.
+    # Once the override is cleared, expose no invented historical evidence.
+    if row.evidence_source == "administrator_override":
+        row.evidence_source = "unresolved"
+        row.support_state = "unknown"
+        row.source_verified_on = None
     row.override_state = state
-    row.evidence_source = "administrator_override" if state else row.evidence_source
     row.updated_at = now
     session.add(row)
 
@@ -265,7 +282,7 @@ def morning_freshness(session: Session, day: date | None = None) -> dict:
         critical.append(TRAINING_READINESS)
     missing_critical = [signal for signal in critical if not rows.get(signal) or rows[signal].state != FRESH]
     noncritical = [SLEEP_SCORE]
-    if capability == "unsupported":
+    if capability in {"unsupported", "unknown"}:
         noncritical.extend((HRV, RESTING_HR, STRESS))
     missing_noncritical = [signal for signal in noncritical if not rows.get(signal) or rows[signal].state != FRESH]
     return {
