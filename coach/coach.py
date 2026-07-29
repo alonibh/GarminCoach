@@ -424,12 +424,12 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
         logger.info("Evening workout proposals are disabled until next morning's overnight data.")
         return False
     from coach.decision_engine import evaluate_morning_decision
-    from coach.renderer import render_morning
+    from coach.interactions import prepare_recovery_morning
     result = evaluate_morning_decision(session, allow_incomplete=allow_incomplete)
     now = get_local_now()
     # A missing selected workout is itself a settled informational result; do
     # not wait for a program or turn it into a proposed/scheduled session.
-    text, reply_markup, interaction_ids = render_morning(session, result)
+    text, interaction_ids = prepare_recovery_morning(session, result)
     if not text:
         return False
     existing = (

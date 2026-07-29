@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from coach.evidence import GARMIN_READINESS_CATEGORY_V1
 from coach.onboarding import active_program
+from coach.planned_session_status import INACTIVE_ORIGINAL_SESSION_STATUSES
 from coach.program_state import program_state_facts
 from db import (
     DailyHealth,
@@ -26,6 +27,13 @@ from metrics.freshness import (
     SLEEP, SLEEP_SCORE, STALE, STRESS, TRAINING_READINESS, capability_state,
 )
 from time_utils import get_local_date, get_local_now
+
+
+RECOVERY_ACTION_POLICY_VERSION = "v1"
+_ACTIONABLE_RECOVERY_OUTCOMES = {
+    "PROGRAM_REST_RECOMMENDED", "REST_RECOMMENDED",
+    "KEEP_SELECTED_WORKOUT_WITH_WARNING", "NO_BIOMETRIC_AUTHORITY",
+}
 
 
 DECISION_TYPES = {
@@ -102,7 +110,7 @@ def selected_workouts_for_date(session: Session, target: date | None = None) -> 
     target = target or get_local_date()
     rows = session.query(PlannedSession).filter(
         PlannedSession.target_date == target,
-        PlannedSession.status.notin_(("completed", "cancelled")),
+        PlannedSession.status.notin_(tuple(INACTIVE_ORIGINAL_SESSION_STATUSES)),
     ).order_by(PlannedSession.suggested_time, PlannedSession.id).all()
     eligible = []
     for row in rows:
@@ -163,7 +171,8 @@ def _recovery_record(session: Session, result: DecisionResult, identity: dict) -
         observations_json=json.dumps(result.observations, sort_keys=True),
         missing_json=json.dumps(result.missing_observations, sort_keys=True),
         rule_ids_json=json.dumps([item["rule_id"] for item in result.applied_rules]),
-        reason_codes_json=json.dumps(result.reason_codes), permitted_actions_json="[]",
+        reason_codes_json=json.dumps(result.reason_codes),
+        permitted_actions_json=json.dumps(result.permitted_actions, sort_keys=True),
         result_json=json.dumps(result.to_dict(), sort_keys=True), idempotency_key=result.idempotency_key,
     ))
     session.flush()
@@ -237,6 +246,19 @@ def evaluate_selected_workout_recovery(
                                 ERROR: "TRAINING_READINESS_ERROR", "missing": "TRAINING_READINESS_MISSING"}.get(state_name, "TRAINING_READINESS_INVALID")]
 
     observations.extend(_informational_recovery_facts(session, target))
+    permitted_actions = []
+    if selected and outcome in _ACTIONABLE_RECOVERY_OUTCOMES:
+        recommended = "rest" if outcome in {"PROGRAM_REST_RECOMMENDED", "REST_RECOMMENDED"} else (
+            "original" if outcome == "KEEP_SELECTED_WORKOUT_WITH_WARNING" else None
+        )
+        permitted_actions = [{
+            "type": "choose_recovery_outcome",
+            "policy_version": RECOVERY_ACTION_POLICY_VERSION,
+            "planned_session_id": selected.id,
+            "decision_date": target.isoformat(),
+            "choices": ["original", "active_recovery", "rest"],
+            "recommended_choice": recommended,
+        }]
     result = DecisionResult(
         decision_id=str(uuid4()), evaluated_at=now.isoformat(), decision_type=outcome, workout_outcome=outcome,
         active_program_id=program.id if program else None, active_program_name=program.name if program else None,
@@ -244,7 +266,8 @@ def evaluate_selected_workout_recovery(
         planned_session_name=selected.title if selected else None, planned_start_time=selected.suggested_time if selected else None,
         next_program_session_id=None, next_program_session_name=None, earliest_eligible_date=None,
         readiness_score=readiness_score, readiness_category=readiness_category, observations=observations,
-        missing_observations=missing, applied_rules=rules, reason_codes=reasons, permitted_actions=[],
+        missing_observations=missing, applied_rules=rules, reason_codes=reasons,
+        permitted_actions=permitted_actions,
         decision_date=target.isoformat(),
     )
     health = session.get(DailyHealth, target)
@@ -257,6 +280,8 @@ def evaluate_selected_workout_recovery(
         "freshness": readiness_row.state if readiness_row else "missing",
         "score": health.training_readiness if health else None,
         "policy": policy_version, "rules": [(rule["rule_id"], rule["version"]) for rule in rules],
+        "recovery_action_policy": RECOVERY_ACTION_POLICY_VERSION,
+        "permitted_actions": permitted_actions,
     })
 
 

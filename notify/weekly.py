@@ -89,7 +89,7 @@ def build_weekly_summary(session: Session, week_end: date) -> str:
     missed = session.query(PlannedSession).filter(
         PlannedSession.target_date >= week_start,
         PlannedSession.target_date <= week_end,
-        PlannedSession.status.notin_(("completed", "cancelled")),
+        PlannedSession.status.notin_(("completed", "cancelled", "replaced_by_active_recovery", "rest_selected")),
     ).count()
     progression = _strength_progression(session, week_start, week_end)
 

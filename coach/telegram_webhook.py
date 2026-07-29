@@ -483,14 +483,16 @@ def _date_retry_markup(
 def _claim_garmin_callback(
     identity: TenantIdentity, callback_data: str
 ):
-    if not callback_data.startswith("decision_action_"):
+    if not (callback_data.startswith("decision_action_") or callback_data.startswith("rc:")):
         return None
     interaction_id = callback_data.removeprefix("decision_action_")
     tenant_token = bind_tenant(identity)
     try:
-        from coach.interactions import claim_garmin_interaction
+        from coach.interactions import claim_garmin_interaction, claim_recovery_choice
 
         with get_user_session(identity.user_id) as database:
+            if callback_data.startswith("rc:"):
+                return claim_recovery_choice(database, callback_data)
             return claim_garmin_interaction(database, interaction_id)
     finally:
         reset_tenant(tenant_token)
@@ -501,10 +503,13 @@ def _apply_claimed_for_user(
 ) -> tuple[str, str]:
     tenant_token = bind_tenant(identity)
     try:
-        from coach.interactions import apply_claimed_interaction
+        from coach.interactions import apply_claimed_interaction, apply_claimed_recovery_choice
 
         try:
             with get_user_session(identity.user_id) as database:
+                row = database.get(PendingInteraction, interaction_id)
+                if row and row.action_type == "choose_recovery_outcome":
+                    return apply_claimed_recovery_choice(database, interaction_id)
                 return apply_claimed_interaction(database, interaction_id)
         except Exception as exc:
             log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
@@ -515,7 +520,7 @@ def _apply_claimed_for_user(
                     row.failure_reason = (
                         f"service_failed:{type(exc).__name__}"
                     )
-            return "failed", "Garmin scheduling failed. No session was scheduled."
+            return "failed", "GarminCoach could not safely apply this choice. Nothing was changed."
     finally:
         reset_tenant(tenant_token)
 
@@ -591,7 +596,7 @@ async def run_garmin_interaction(
         log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
         await asyncio.to_thread(
             _deliver_callback_result,
-            "Garmin scheduling failed. No session was scheduled.",
+            "GarminCoach could not safely apply this choice. Nothing was changed.",
             chat_id=chat_id,
             message_id=message_id,
             reply_markup=main_menu_markup(),

@@ -37,6 +37,15 @@ def _evaluate(session, planned_id=None):
                                                evaluated_at=datetime(2026, 7, 6, 8))
 
 
+def _recovery_action(row, recommendation):
+    return [{
+        "type": "choose_recovery_outcome", "policy_version": "v1",
+        "planned_session_id": row.id, "decision_date": TARGET.isoformat(),
+        "choices": ["original", "active_recovery", "rest"],
+        "recommended_choice": recommendation,
+    }]
+
+
 def _informational_context(session):
     session.add(Sleep(
         day=TARGET,
@@ -112,7 +121,9 @@ def test_readiness_boundaries_are_selected_workout_advice(session, score, catego
     row = _planned(session)
     _readiness(session, score)
     result = _evaluate(session, row.id)
-    assert (result.readiness_category, result.decision_type, result.permitted_actions) == (category, outcome, [])
+    recommendation = "rest" if category == "Poor" else "original" if category == "Low" else None
+    actions = _recovery_action(row, recommendation) if recommendation else []
+    assert (result.readiness_category, result.decision_type, result.permitted_actions) == (category, outcome, actions)
     assert row.status == "planned"
 
 
@@ -346,7 +357,9 @@ def test_program_rest_precedes_prime_without_mutation(session):
     session.add(cursor)
     result = _evaluate(session, row.id)
     assert result.decision_type == "PROGRAM_REST_RECOMMENDED"
-    assert (row.status, cursor.next_program_session_id, result.permitted_actions) == ("planned", source[1].id, [])
+    assert (row.status, cursor.next_program_session_id, result.permitted_actions) == (
+        "planned", source[1].id, _recovery_action(row, "rest")
+    )
 
 
 def test_identity_is_per_selected_session_and_changes_with_score(session):

@@ -43,11 +43,13 @@ informational messages.
 
 ### Current selected-workout phase
 
-Every recovery result is advisory and leaves the selected workout unchanged.
-It creates no recovery confirmation, interaction, scheduling, upload, or
+Every recovery result is advisory until the athlete confirms a current
+Telegram choice. The approved actionable outcomes stage one durable choice
+set; informational metrics never automatically select a walk or Rest. Outside
+that confirmed flow, recovery evaluation creates no scheduling, upload, or
 Garmin mutation.
 
-### Active Recovery (future work)
+### Active Recovery template
 
 A fixed Garmin walking workout:
 
@@ -100,8 +102,9 @@ V1 has no evidence-supported fallback formula that automatically selects Active 
 Sleep duration, HRV Status, Recovery Time, resting HR, stress, and Body Battery
 may produce factual context, but have no direct V1 authority. Telegram displays
 fresh sleep, HRV Status, and Recovery Time context, explicitly as
-informational; it does not offer an Active Recovery, Rest, or original-workout
-action in the current phase.
+informational. When the result is `NO_BIOMETRIC_AUTHORITY`, Telegram may offer
+the athlete the same three choices, but never presents walk or Rest as a
+biometric recommendation.
 
 When the deterministic result grants Training Readiness authority, Telegram
 shows its typed score and Garmin category separately from informational facts.

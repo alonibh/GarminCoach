@@ -66,9 +66,8 @@ refresh.
 
 Active Recovery and Rest keep the original program session pending and do not
 advance the program cursor. The canonical 30-minute Active Recovery walking
-template primitive now exists, but it is not automatically uploaded or
-scheduled. Telegram confirmation and selected-session replacement remain future
-work.
+template is scheduled only after a current Telegram confirmation and exact
+selected-session revalidation.
 
 No response leaves the selected workout unchanged.
 
@@ -113,6 +112,19 @@ watches must not reuse the old watch's unsupported state.
 
 Telegram is the only recovery-action surface. The web app may display the
 current result but has no recovery mutation buttons.
+
+### Confirmed recovery choices
+
+For a single current selected workout, GarminCoach offers one durable Telegram
+choice set only for program-rest, Poor readiness, Low-readiness warning, and
+no-biometric-authority outcomes: keep the original workout, replace the slot
+with the fixed **Active Recovery — 30 Minute Walk**, or select Rest. Every
+callback is claimed and revalidated against the exact decision and local
+planned-session snapshot. The replacement uses the already verified walking
+template and the source program session remains pending; neither a walk nor
+Rest advances the program cursor. The same-slot flow never reads the private
+calendar. Remote scheduling/unscheduling is compensated if local persistence
+cannot commit. The dashboard remains read-only.
 
 A pending interaction stores the exact target, source decision, program/sync/
 calendar versions, expiry, and action payload. Button clicks reload all decisive

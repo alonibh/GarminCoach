@@ -125,4 +125,8 @@ def render_morning(
                 f"{readiness_authority_explanation(result)}."
             )
 
+    if not plan_only and any(action.get("type") == "choose_recovery_outcome" for action in result.permitted_actions):
+        if result.decision_type == "NO_BIOMETRIC_AUTHORITY":
+            body += " GarminCoach is not using the informational recovery facts to choose a replacement."
+        body += " Choose what to do today: keep the selected workout, use the 30-minute walk, or rest."
     return "\n".join([*context, *([readiness] if readiness else []), body]), None, []

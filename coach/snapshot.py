@@ -281,7 +281,7 @@ def build_snapshot(session: Session) -> str:
         .filter(
             PlannedSession.target_date >= local_time.date(),
             PlannedSession.target_date < schedule_end,
-            PlannedSession.status.notin_(("cancelled", "completed")),
+            PlannedSession.status.notin_(("cancelled", "completed", "replaced_by_active_recovery", "rest_selected")),
         )
         .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
         .all()

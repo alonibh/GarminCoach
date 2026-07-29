@@ -8,6 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from coach.exercises import exercise_key
+from coach.planned_session_status import INACTIVE_ORIGINAL_SESSION_STATUSES
 from coach.program_policy import PROGRAM_POLICIES, ProgramPolicy
 from db import (
     Activity,
@@ -131,7 +132,7 @@ def _exact_planned_match(
             ProgramSession.program_id == program.id,
             PlannedSession.program_session_id == next_session_id,
             PlannedSession.garmin_workout_id == activity.source_workout_id,
-            PlannedSession.status.notin_(("completed", "cancelled")),
+            PlannedSession.status.notin_(tuple(INACTIVE_ORIGINAL_SESSION_STATUSES)),
         )
         .order_by(PlannedSession.target_date.desc(), PlannedSession.id.desc())
         .first()
@@ -152,7 +153,7 @@ def _complete_planned_session(
             .filter(
                 PlannedSession.program_session_id == program_session_id,
                 PlannedSession.target_date <= activity.start_time.date(),
-                PlannedSession.status.notin_(("completed", "cancelled")),
+                PlannedSession.status.notin_(tuple(INACTIVE_ORIGINAL_SESSION_STATUSES)),
             )
             .order_by(PlannedSession.target_date.desc(), PlannedSession.id.desc())
             .first()

@@ -368,7 +368,7 @@ def _planned_sessions(session: Session, today: date) -> dict:
         session.query(PlannedSession)
         .filter(
             PlannedSession.target_date >= today,
-            PlannedSession.status.notin_(("cancelled", "completed")),
+            PlannedSession.status.notin_(("cancelled", "completed", "replaced_by_active_recovery", "rest_selected")),
         )
         .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
         .all()
@@ -577,7 +577,7 @@ def _active_program(session: Session) -> dict | None:
         .filter(
             PlannedSession.program_session_id
             == (next_session.id if next_session else -1),
-            PlannedSession.status.notin_(("cancelled", "completed")),
+            PlannedSession.status.notin_(("cancelled", "completed", "replaced_by_active_recovery", "rest_selected")),
         )
         .order_by(PlannedSession.target_date)
         .scalar()

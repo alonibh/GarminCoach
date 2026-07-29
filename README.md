@@ -111,9 +111,12 @@ The complete ten-routine audit is in
   replacement score. Until individual-metric rules are separately approved,
   program and calendar rules determine workout eligibility.
 - Source-approved, evidence-reviewed recovery activity may be suggested
-  verbally on a rest day. The fixed Active Recovery walking template exists as
-  a verified Garmin library primitive, but it is not uploaded automatically,
-  scheduled, or available through Telegram yet.
+  only through a current Telegram confirmation when a selected workout has an
+  actionable recovery result. The three choices are to keep that workout, use
+  the fixed 30-minute walk, or Rest; the latter two preserve the program
+  sequence. Informational metrics never choose a replacement automatically.
+  verbally on a rest day. The fixed Active Recovery walking template is used
+  only after the athlete confirms the same-slot Telegram replacement.
 - No evening workout is created before the following night's sleep and morning
   observations are available.
 

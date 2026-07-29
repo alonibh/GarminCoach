@@ -110,6 +110,11 @@ planned-session ID is accepted; when none is supplied, zero candidates produces
 `WORKOUT_SELECTION_REQUIRED`, including the candidate IDs and names. GarminCoach
 never chooses a program-cursor session as a recovery target.
 
+Fresh supported Garmin Training Readiness is the only biometric authority that
+can recommend Rest. Informational metrics never automatically choose a walk or
+Rest; when Training Readiness has no authority, any Telegram walk/Rest choice
+is explicitly the athlete's selection.
+
 Program-required rest precedes biometrics and leaves the selected session and
 cursor unchanged. Fresh same-day supported Garmin Training Readiness is the
 only biometric authority: Prime/High/Moderate keep, Low keeps with a warning,

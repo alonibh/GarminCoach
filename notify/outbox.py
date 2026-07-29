@@ -54,7 +54,7 @@ def enqueue_notification(
 
 
 def enqueue_pre_workout_reminder(session: Session, planned: PlannedSession) -> NotificationOutbox | None:
-    if not planned.suggested_time or planned.status in {"completed", "cancelled"}:
+    if not planned.suggested_time or planned.status in {"completed", "cancelled", "replaced_by_active_recovery", "rest_selected"}:
         return None
     try:
         hour, minute = map(int, planned.suggested_time.split(":"))
@@ -131,14 +131,14 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
                 source = json.loads(record.result_json)
                 best_effort = bool(source.get("best_effort"))
             from coach.decision_engine import evaluate_morning_decision
-            from coach.renderer import render_morning
+            from coach.interactions import prepare_recovery_morning
             current = evaluate_morning_decision(
                 session,
                 allow_incomplete=best_effort,
                 target=day,
                 evaluated_at=get_local_now(),
             )
-            text, _markup, interaction_ids = render_morning(session, current)
+            text, interaction_ids = prepare_recovery_morning(session, current)
             if not text:
                 return None
             from coach.interactions import reply_markup_for_ids
@@ -162,7 +162,7 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
 
     if row.event_type == "pre_workout_reminder":
         planned = session.get(PlannedSession, payload["planned_session_id"])
-        if not planned or planned.status in {"completed", "cancelled"}:
+        if not planned or planned.status in {"completed", "cancelled", "replaced_by_active_recovery", "rest_selected"}:
             return None
         if planned.target_date.isoformat() != payload["target_date"] or planned.suggested_time != payload["start_time"]:
             return None
@@ -266,6 +266,9 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
     if not materialized:
         row.status = "cancelled"
         row.last_error = "revalidation_failed"
+        for interaction_id in json.loads(row.payload_json).get("interaction_ids", []):
+            from coach.interactions import mark_delivery_failed
+            mark_delivery_failed(session, [interaction_id], "revalidation_failed")
         session.commit()
         logger.info("Cancelled notification row_id=%s event_type=%s", row.id, row.event_type)
         return "cancelled"
@@ -286,6 +289,9 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
     if row.attempts >= 5:
         row.status = "failed"
         row.last_error = row.last_error or "telegram_delivery_failed"
+        for interaction_id in json.loads(row.payload_json).get("interaction_ids", []):
+            from coach.interactions import mark_delivery_failed
+            mark_delivery_failed(session, [interaction_id], "telegram_delivery_failed")
         session.commit()
         logger.info("Failed notification row_id=%s event_type=%s", row.id, row.event_type)
         return "failed"

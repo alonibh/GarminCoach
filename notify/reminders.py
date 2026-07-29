@@ -20,7 +20,7 @@ def schedule_pre_workout_reminder(payload: dict[str, Any]) -> None:
     with get_session() as session:
         query = session.query(PlannedSession).filter_by(
             target_date=target, suggested_time=time_text,
-        ).filter(PlannedSession.status.notin_(("completed", "cancelled")))
+        ).filter(PlannedSession.status.notin_(("completed", "cancelled", "replaced_by_active_recovery", "rest_selected")))
         if payload.get("program_session_id"):
             query = query.filter_by(program_session_id=payload["program_session_id"])
         planned = query.order_by(PlannedSession.id.desc()).first()

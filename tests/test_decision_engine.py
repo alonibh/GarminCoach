@@ -103,7 +103,8 @@ def test_program_rest_day_precedes_prime_readiness(session):
 
     assert result.decision_type == "PROGRAM_REST_RECOMMENDED"
     assert result.readiness_category is None
-    assert result.permitted_actions == []
+    assert result.permitted_actions[0]["choices"] == ["original", "active_recovery", "rest"]
+    assert result.permitted_actions[0]["recommended_choice"] == "rest"
 
 
 def test_plan_only_render_omits_sleep_and_optional_recovery_details(session):
@@ -154,7 +155,8 @@ def test_poor_readiness_with_calendar_conflict_offers_keep_cancel_and_new_date(s
     )
 
     assert result.decision_type == "REST_RECOMMENDED"
-    assert result.permitted_actions == []
+    assert result.permitted_actions[0]["choices"] == ["original", "active_recovery", "rest"]
+    assert result.permitted_actions[0]["recommended_choice"] == "rest"
 
 
 def test_unsupported_device_has_no_metric_only_warning_or_skip(session):

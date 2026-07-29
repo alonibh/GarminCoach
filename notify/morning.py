@@ -161,8 +161,8 @@ def enqueue_late_material_update(session) -> bool:
     ).first()
     if existing:
         return False
-    from coach.renderer import render_morning
-    text, _markup, interaction_ids = render_morning(session, current)
+    from coach.interactions import prepare_recovery_morning
+    text, interaction_ids = prepare_recovery_morning(session, current)
     if not text:
         return False
     from notify.outbox import enqueue_notification
