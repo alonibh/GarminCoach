@@ -67,24 +67,6 @@ def test_body_battery_range_stores_charged_and_drained_and_hrv_coverage_backfill
     assert session.get(DailyHealth, day + timedelta(days=6)).hrv_7d_coverage_days == 7
 
 
-def test_body_battery_range_stores_charged_and_drained_and_hrv_coverage_backfills(session, monkeypatch):
-    day = date(2026, 7, 1)
-    for offset in range(1, 7):
-        session.add(DailyHealth(day=day + timedelta(days=offset), hrv_overnight=40 + offset))
-    monkeypatch.setattr(svc.client, "body_battery", lambda *_: [{
-        "date": day.isoformat(), "charged": 0, "drained": 31,
-        "bodyBatteryValuesArray": [[1, 0], [2, 50]],
-    }])
-    assert svc._apply_body_battery_range(session, [day]) == {day}
-    row = session.get(DailyHealth, day)
-    assert (row.body_battery_charged, row.body_battery_drained) == (0, 31)
-
-    row.hrv_overnight = 42
-    svc._recompute_hrv_coverage(session, day)
-    assert session.get(DailyHealth, day).hrv_7d_coverage_days == 1
-    assert session.get(DailyHealth, day + timedelta(days=6)).hrv_7d_coverage_days == 7
-
-
 def test_invalid_steps_shape_does_not_block_body_battery_or_advance_cursor(session, monkeypatch):
     day = date(2026, 7, 1)
     monkeypatch.setattr(svc, "_sync_daily_health_core", lambda *_args, **_kwargs: (True, True, True))

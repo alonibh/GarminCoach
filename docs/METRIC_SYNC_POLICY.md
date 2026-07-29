@@ -244,8 +244,6 @@ Later implementation must still verify factual account/API details with sanitize
 
 - exact Training Readiness response shapes;
 - whether daily stats contain every intended combined summary field;
-- HRV Status fields returned for the connected watch;
-- Recovery Time endpoint/payload behavior;
 - whether the account has useful weight/body-fat data;
 - Training Status capability and response behavior.
 
@@ -260,7 +258,7 @@ Recovery Time is read only from the selected current Training Readiness
 snapshot, in minutes; there is no dedicated Recovery Time request. When Garmin
 reports `REACHED_ZERO`, GarminCoach stores the source minutes when supplied and
 uses zero as the effective remaining time. Device and Connect Recovery Time are
-separate capabilities: a vÃ­voactive 5 can show it on-watch without exposing a
+separate capabilities: a vívoactive 5 can show it on-watch without exposing a
 Connect value to GarminCoach.
 
 HRV Status, Recovery Time, and Body Battery (including charged and drained

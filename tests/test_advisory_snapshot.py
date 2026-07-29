@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 import config
 from coach.advisory_snapshot import RECOVERY_METRICS, build_advisory_snapshot
 from db import Activity, DailyHealth, DailyMetrics, Sleep, SyncState
+from metrics import freshness
 
 
 def test_snapshot_has_metric_and_bounded_section_wrappers(session, monkeypatch):
@@ -70,3 +71,30 @@ def test_snapshot_has_metric_and_bounded_section_wrappers(session, monkeypatch):
     }
     assert not session.new and not session.dirty
     assert '"id"' not in str(snapshot)
+
+
+def test_snapshot_gates_recovery_facts_by_current_freshness_and_never_uses_legacy_readiness(session):
+    today = datetime.now().date()
+    session.add(DailyHealth(
+        day=today, hrv_status="BALANCED", hrv_weekly_avg=45,
+        recovery_time_minutes=120, recovery_time_change_phrase="REACHED_ZERO",
+        training_readiness=None,
+    ))
+    session.add(DailyMetrics(day=today, readiness=75))
+    freshness.record_signal(session, freshness.HRV_STATUS, today, freshness.MISSING, "get_hrv_data")
+    freshness.record_signal(session, freshness.RECOVERY_TIME, today, freshness.ERROR, "get_training_readiness", error_code="timeout")
+    session.commit()
+
+    recovery = build_advisory_snapshot(session)["recovery"]
+    assert recovery["garmin_hrv_status"]["value"] is None
+    assert recovery["hrv_weekly_avg"]["value"] is None
+    assert recovery["recovery_time_minutes"]["value"] is None
+    assert recovery["recovery_time_change_phrase"]["value"] is None
+    assert recovery["training_readiness"]["value"] is None
+
+    freshness.record_signal(session, freshness.HRV_STATUS, today, freshness.FRESH, "get_hrv_data")
+    freshness.record_signal(session, freshness.RECOVERY_TIME, today, freshness.FRESH, "get_training_readiness")
+    session.commit()
+    fresh = build_advisory_snapshot(session)["recovery"]
+    assert fresh["garmin_hrv_status"]["value"] == "BALANCED"
+    assert fresh["recovery_time_minutes"]["value"] == 120

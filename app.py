@@ -1009,6 +1009,29 @@ def _readiness_tiles() -> list[dict]:
                 "hint": "Garmin's 1-100 Training Readiness score and official category. It supports a decision but does not predict performance.",
             }
         else:
+            def current_fresh(signal: str) -> bool:
+                row = s.get(ObservationFreshness, (signal, today))
+                return bool(row and row.state == FRESH)
+
+            supporting_signals = []
+            if health and health.hrv_status and current_fresh(HRV_STATUS):
+                details = [f"Garmin status: {health.hrv_status.replace('_', ' ').title()}"]
+                if health.hrv_weekly_avg is not None:
+                    details.append(f"weekly avg {int(round(health.hrv_weekly_avg))} ms")
+                if health.hrv_7d_coverage_days is not None:
+                    details.append(f"local data coverage {health.hrv_7d_coverage_days}/7 nights")
+                if health.hrv_overnight is not None and current_fresh(HRV):
+                    details.append(f"overnight {int(round(health.hrv_overnight))} ms")
+                supporting_signals.append({
+                    "label": "HRV", "value": " · ".join(details),
+                    "indicator": "Garmin status", "tone": "neutral",
+                })
+            if health and health.recovery_time_minutes is not None and current_fresh(RECOVERY_TIME):
+                supporting_signals.append({
+                    "label": "Recovery Time",
+                    "value": f"Garmin recovery timer: {int(health.recovery_time_minutes)} min remaining",
+                    "indicator": "Informational", "tone": "neutral",
+                })
             readiness_tile = {
                 "key": "readiness", "label": "Garmin Readiness",
                 "value": int(r_val), "unit": "", "empty_value": None, "empty_label": None,
@@ -1018,6 +1041,7 @@ def _readiness_tiles() -> list[dict]:
                           else "red" if category == "Poor"
                           else None),
                 "bar_pct": int(r_val),
+                "supporting_signals": supporting_signals,
                 "hint": "Garmin's 1-100 Training Readiness score and official category. It supports a decision but does not predict performance.",
             }
 
@@ -1178,6 +1202,7 @@ def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> di
             "detail": readiness.get("age") or readiness.get("desc") or "Waiting for today's data",
             "tone": readiness_tone,
             "signals": readiness.get("signal_rows"),
+            "supporting_signals": readiness.get("supporting_signals"),
             "hint": readiness.get("hint"),
         },
         "sleep": {

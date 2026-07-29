@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from sqlalchemy.orm import Session
@@ -707,6 +708,28 @@ def _finite_number(value: object) -> float | int | None:
     return None
 
 
+@dataclass(frozen=True)
+class _SignalOutcome:
+    """The result of this invocation, never a conclusion from stored values."""
+
+    state: str  # fresh, missing, or error
+    error_code: str | None = None
+    requested: bool = True
+
+
+def _set_hrv_outcomes(
+    session: Session, day: date, overnight: _SignalOutcome, status: _SignalOutcome,
+) -> None:
+    session.info.setdefault("hrv_request_outcomes", {})[day] = {
+        "hrv": overnight,
+        "hrv_status": status,
+    }
+
+
+def _set_recovery_outcome(session: Session, day: date, outcome: _SignalOutcome) -> None:
+    session.info.setdefault("recovery_time_request_outcomes", {})[day] = outcome
+
+
 def _recompute_hrv_coverage(session: Session, changed_day: date) -> None:
     """Refresh local seven-night HRV completeness for an edited date and successors."""
     for offset in range(7):
@@ -727,16 +750,19 @@ def _recompute_hrv_coverage(session: Session, changed_day: date) -> None:
 
 def _apply_normalized_hrv(session: Session, row: DailyHealth, normalized) -> bool:
     """Persist valid HRV siblings without treating a nightly value as status evidence."""
-    status_outcomes = session.info.setdefault("hrv_status_outcomes", {})
     if normalized is None or normalized.calendar_date != row.day:
-        status_outcomes[row.day] = False
+        _set_hrv_outcomes(
+            session, row.day, _SignalOutcome("missing"), _SignalOutcome("missing"),
+        )
         return False
-    status_outcomes[row.day] = normalized.status is not None
+    # These three fields are one Garmin Status observation.  A valid current
+    # summary replaces the group, including optional absences, so stale status
+    # text can never accompany a later status-less response.
+    row.hrv_weekly_avg = normalized.weekly_avg
+    row.hrv_status = normalized.status
+    row.hrv_feedback_phrase = normalized.feedback_phrase
     fields = {
         "hrv_overnight": normalized.overnight_avg,
-        "hrv_weekly_avg": normalized.weekly_avg,
-        "hrv_status": normalized.status,
-        "hrv_feedback_phrase": normalized.feedback_phrase,
         "hrv_baseline_low": normalized.baseline_low,
         "hrv_baseline_high": normalized.baseline_high,
     }
@@ -748,6 +774,11 @@ def _apply_normalized_hrv(session: Session, row: DailyHealth, normalized) -> boo
         note_capability_observed(session, "hrv_status")
     session.add(row)
     _recompute_hrv_coverage(session, row.day)
+    _set_hrv_outcomes(
+        session, row.day,
+        _SignalOutcome("fresh" if normalized.overnight_avg is not None else "missing"),
+        _SignalOutcome("fresh" if normalized.status is not None else "missing"),
+    )
     return normalized.overnight_avg is not None
 
 
@@ -759,19 +790,17 @@ def _persist_recovery_time(
     fallback_observed_at: datetime,
 ) -> bool:
     """Persist only a current, already-selected Recovery Time observation."""
-    recovery_outcomes = session.info.setdefault("recovery_time_outcomes", {})
     recovery = normalize_recovery_time(
         normalized_readiness, fallback_observed_at=fallback_observed_at,
     )
     if recovery is None or recovery.calendar_date != row.day:
-        recovery_outcomes[row.day] = False
+        _set_recovery_outcome(session, row.day, _SignalOutcome("missing"))
         return False
-    recovery_outcomes[row.day] = True
-    if recovery.source_minutes is not None:
-        row.recovery_time_source_minutes = recovery.source_minutes
+    _set_recovery_outcome(session, row.day, _SignalOutcome("fresh"))
+    # All four columns describe this selected snapshot and must settle together.
+    row.recovery_time_source_minutes = recovery.source_minutes
     row.recovery_time_minutes = recovery.effective_minutes
-    if recovery.change_phrase is not None:
-        row.recovery_time_change_phrase = recovery.change_phrase
+    row.recovery_time_change_phrase = recovery.change_phrase
     row.recovery_time_observed_at = recovery.observed_at
     session.add(row)
     from metrics.freshness import note_capability_observed
@@ -793,9 +822,15 @@ def _sync_daily_health_core(
     try:
         _apply_normalized_hrv(session, row, normalize_hrv_data(client.hrv(day), day))
     except GarminConnectTooManyRequestsError:
+        _set_hrv_outcomes(
+            session, day, _SignalOutcome("error", "rate_limited"), _SignalOutcome("error", "rate_limited"),
+        )
         raise
     except Exception as exc:
-        session.info.setdefault("hrv_status_outcomes", {})[day] = False
+        code = "authentication_required" if _is_auth_error(exc) else _freshness_error_code(exc)
+        _set_hrv_outcomes(
+            session, day, _SignalOutcome("error", code), _SignalOutcome("error", code),
+        )
         if _is_auth_error(exc):
             raise GarminConnectAuthenticationError("Garmin Connect authentication failed (401)") from exc
         logger.warning("HRV fetch failed for %s", day, exc_info=True)
@@ -1034,21 +1069,27 @@ def _sync_current_optional_health(
     decision = capability_fetch_decision(session, "training_readiness", context)
     if decision in {"fetch_supported", "probe_unknown"}:
         current_probe_outcome: str | None = None
+        recovery_error_code: str | None = None
         try:
             payload = normalize_training_readiness(client.training_readiness(day), day)
         except GarminConnectTooManyRequestsError:
+            _set_recovery_outcome(session, day, _SignalOutcome("error", "rate_limited"))
             if decision == "probe_unknown":
                 note_capability_probe(session, "training_readiness", "rate_limited")
             raise
         except GarminConnectAuthenticationError:
+            _set_recovery_outcome(session, day, _SignalOutcome("error", "authentication_required"))
             if decision == "probe_unknown":
                 note_capability_probe(session, "training_readiness", "authentication_error")
             raise
         except Exception as exc:
             if _is_auth_error(exc):
+                _set_recovery_outcome(session, day, _SignalOutcome("error", "authentication_required"))
                 if decision == "probe_unknown":
                     note_capability_probe(session, "training_readiness", "authentication_error")
                 raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
+            recovery_error_code = _freshness_error_code(exc)
+            _set_recovery_outcome(session, day, _SignalOutcome("error", recovery_error_code))
             if decision == "probe_unknown":
                 current_probe_outcome = "ordinary_error"
                 note_capability_probe(session, "training_readiness", current_probe_outcome)
@@ -1062,7 +1103,8 @@ def _sync_current_optional_health(
                 fallback_observed_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
         else:
-            session.info.setdefault("recovery_time_outcomes", {})[day] = False
+            if recovery_error_code is None:
+                _set_recovery_outcome(session, day, _SignalOutcome("missing"))
             if decision == "probe_unknown" and current_probe_outcome is None:
                 note_capability_probe(session, "training_readiness", "empty")
 
@@ -1131,21 +1173,27 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
             decision = capability_fetch_decision(session, "training_readiness", "stage1")
             if decision in {"fetch_supported", "probe_unknown"}:
                 current_probe_outcome: str | None = None
+                recovery_error_code: str | None = None
                 try:
                     payload = normalize_training_readiness(client.training_readiness(today), today)
                 except GarminConnectTooManyRequestsError:
+                    _set_recovery_outcome(session, today, _SignalOutcome("error", "rate_limited"))
                     if decision == "probe_unknown":
                         note_capability_probe(session, "training_readiness", "rate_limited")
                     raise
                 except GarminConnectAuthenticationError:
+                    _set_recovery_outcome(session, today, _SignalOutcome("error", "authentication_required"))
                     if decision == "probe_unknown":
                         note_capability_probe(session, "training_readiness", "authentication_error")
                     raise
                 except Exception as exc:
                     if _is_auth_error(exc):
+                        _set_recovery_outcome(session, today, _SignalOutcome("error", "authentication_required"))
                         if decision == "probe_unknown":
                             note_capability_probe(session, "training_readiness", "authentication_error")
                         raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
+                    recovery_error_code = _freshness_error_code(exc)
+                    _set_recovery_outcome(session, today, _SignalOutcome("error", recovery_error_code))
                     if decision == "probe_unknown":
                         current_probe_outcome = "ordinary_error"
                         note_capability_probe(session, "training_readiness", current_probe_outcome)
@@ -1160,7 +1208,8 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
                         fallback_observed_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
                 else:
-                    session.info.setdefault("recovery_time_outcomes", {})[today] = False
+                    if recovery_error_code is None:
+                        _set_recovery_outcome(session, today, _SignalOutcome("missing"))
                     if decision == "probe_unknown" and current_probe_outcome is None:
                         note_capability_probe(session, "training_readiness", "empty")
                 session.add(row)
@@ -1357,6 +1406,7 @@ def _record_full_sync_freshness(
 ) -> None:
     """Align today's full-sync facts with the per-signal freshness contract."""
     from metrics.freshness import (
+        ERROR,
         EXPECTED_PENDING,
         FRESH,
         HRV,
@@ -1401,8 +1451,17 @@ def _record_full_sync_freshness(
     capability = capability_state(session)
     hrv_status_capability = capability_state(session, "hrv_status")
     recovery_time_capability = capability_state(session, "recovery_time_connect")
-    hrv_status_observed = session.info.get("hrv_status_outcomes", {}).get(day)
-    recovery_time_observed = session.info.get("recovery_time_outcomes", {}).get(day)
+    hrv_outcomes = session.info.get("hrv_request_outcomes", {}).get(day, {})
+    hrv_outcome = hrv_outcomes.get("hrv", _SignalOutcome("missing", requested=False))
+    hrv_status_outcome = hrv_outcomes.get("hrv_status", _SignalOutcome("missing", requested=False))
+    recovery_outcome = session.info.get("recovery_time_request_outcomes", {}).get(
+        day, _SignalOutcome("missing", requested=False),
+    )
+    record_signal(
+        session, HRV, day, hrv_outcome.state, "get_hrv_data",
+        fetched_at=fetched_at, device_upload_at=device_upload_at,
+        error_code=hrv_outcome.error_code,
+    )
     if capability in {"unsupported", "unknown"}:
         record_signal(
             session, TRAINING_READINESS, day,
@@ -1411,7 +1470,6 @@ def _record_full_sync_freshness(
             fetched_at=fetched_at, device_upload_at=device_upload_at,
         )
         individual = (
-            (HRV, health.hrv_overnight if health else None, "get_hrv_data"),
             (RESTING_HR, health.resting_hr if health else None, "get_rhr_day"),
             (STRESS, health.stress_avg if health else None, "get_all_day_stress"),
         )
@@ -1428,21 +1486,19 @@ def _record_full_sync_freshness(
         )
     record_signal(
         session, HRV_STATUS, day,
-        FRESH if hrv_status_observed is True else (
-            UNSUPPORTED if hrv_status_capability == "unsupported" else
-            MISSING if hrv_status_observed is False else
-            FRESH if health and health.hrv_status else MISSING
+        hrv_status_outcome.state if hrv_status_outcome.state == ERROR else (
+            UNSUPPORTED if hrv_status_capability == "unsupported" else hrv_status_outcome.state
         ),
         "get_hrv_data", fetched_at=fetched_at, device_upload_at=device_upload_at,
+        error_code=hrv_status_outcome.error_code,
     )
     record_signal(
         session, RECOVERY_TIME, day,
-        FRESH if recovery_time_observed is True else (
-            UNSUPPORTED if recovery_time_capability == "unsupported" else
-            MISSING if recovery_time_observed is False else
-            FRESH if health and health.recovery_time_minutes is not None else MISSING
+        recovery_outcome.state if recovery_outcome.state == ERROR else (
+            UNSUPPORTED if recovery_time_capability == "unsupported" else recovery_outcome.state
         ),
         "get_training_readiness", fetched_at=fetched_at, device_upload_at=device_upload_at,
+        error_code=recovery_outcome.error_code,
     )
 
 
@@ -1588,7 +1644,7 @@ def _run_priority_sync() -> dict:
                 health = session.get(DailyHealth, target) or DailyHealth(day=target)
                 if value is not None:
                     health.training_readiness = int(value)
-                    _persist_recovery_time(
+                    recovery_observed = _persist_recovery_time(
                         session, health, payload, fallback_observed_at=fetched_at,
                     )
                     session.add(health)
@@ -1600,7 +1656,7 @@ def _run_priority_sync() -> dict:
                     )
                     record_signal(
                         session, RECOVERY_TIME, target,
-                        FRESH if health.recovery_time_minutes is not None else MISSING,
+                        FRESH if recovery_observed else MISSING,
                         "get_training_readiness", fetched_at=fetched_at,
                         device_upload_at=device_upload_at,
                     )

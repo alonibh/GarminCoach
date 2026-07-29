@@ -123,6 +123,17 @@
   <article class="hero-metric readiness {{ hero_metrics.readiness.tone }}">
     <div class="metric-ring" style="--ring-pct:{{ hero_metrics.readiness.progress }}"><div class="metric-ring-content"><span class="metric-ring-value">{{ hero_metrics.readiness.value if hero_metrics.readiness.value is not none else '—' }}</span><span class="metric-ring-unit">score</span></div></div>
     <div class="hero-metric-label">{{ icon('heart') }} Readiness</div><div class="hero-metric-detail">{{ hero_metrics.readiness.detail }}</div>
+    {% if hero_metrics.readiness.supporting_signals %}
+    <div class="recovery-signal-list" aria-label="Informational recovery facts">
+      {% for row in hero_metrics.readiness.supporting_signals %}
+      <div class="recovery-signal-row">
+        <span class="signal-label">{{ row.label }}</span>
+        <span class="recovery-signal-indicator {{ row.tone }}"><span class="recovery-signal-dot" aria-hidden="true"></span>{{ row.indicator }}</span>
+        <strong class="signal-val">{{ row.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
   </article>
   {% endif %}
   <article class="hero-metric sleep">

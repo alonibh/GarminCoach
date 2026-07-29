@@ -286,6 +286,35 @@ def _recovery(session: Session, generated_at: datetime) -> dict:
     )
     health_at = _day_observed(health.day if health else None)
     metrics_at = _day_observed(metrics.day if metrics else None)
+    def current_recovery_fact(value, signal: str, observed_at: datetime | None):
+        if health is None:
+            return None, None
+        row = session.get(ObservationFreshness, (signal, health.day))
+        if row is None:
+            return None, None
+        if row.state == "fresh":
+            return value, observed_at or row.fetched_at
+        # A genuinely stale observation retains the snapshot's normal stale
+        # representation. Missing, unsupported, and failed fetches never leak
+        # an older stored fact as current availability.
+        if row.state == "stale":
+            return value, row.fetched_at
+        return None, None
+
+    hrv_weekly_avg, hrv_status_at = current_recovery_fact(
+        health.hrv_weekly_avg if health else None, "hrv_status", health_at,
+    )
+    hrv_status, _ = current_recovery_fact(
+        health.hrv_status if health else None, "hrv_status", health_at,
+    )
+    recovery_minutes, recovery_at = current_recovery_fact(
+        health.recovery_time_minutes if health else None, "recovery_time",
+        health.recovery_time_observed_at if health else None,
+    )
+    recovery_phrase, recovery_phrase_at = current_recovery_fact(
+        health.recovery_time_change_phrase if health else None, "recovery_time",
+        health.recovery_time_observed_at if health else None,
+    )
     values = {
         "sleep_duration_hours": (
             round(sleep.total_s / 3600, 2)
@@ -303,8 +332,8 @@ def _recovery(session: Session, generated_at: datetime) -> dict:
             health.hrv_baseline_high if health else None,
             health_at,
         ),
-        "hrv_weekly_avg": (health.hrv_weekly_avg if health else None, health_at),
-        "garmin_hrv_status": (health.hrv_status if health else None, health_at),
+        "hrv_weekly_avg": (hrv_weekly_avg, hrv_status_at),
+        "garmin_hrv_status": (hrv_status, hrv_status_at),
         "hrv_7d_coverage_days": (health.hrv_7d_coverage_days if health else None, health_at),
         "resting_heart_rate": (health.resting_hr if health else None, health_at),
         "body_battery": (
@@ -321,8 +350,8 @@ def _recovery(session: Session, generated_at: datetime) -> dict:
             health.training_readiness if health else None,
             health_at if health and health.training_readiness is not None else None,
         ),
-        "recovery_time_minutes": (health.recovery_time_minutes if health else None, health.recovery_time_observed_at if health else None),
-        "recovery_time_change_phrase": (health.recovery_time_change_phrase if health else None, health.recovery_time_observed_at if health else None),
+        "recovery_time_minutes": (recovery_minutes, recovery_at),
+        "recovery_time_change_phrase": (recovery_phrase, recovery_phrase_at),
         "stress": (health.stress_avg if health else None, health_at),
         "acute_load": (metrics.acute_load if metrics else None, metrics_at),
         "chronic_load": (metrics.chronic_load if metrics else None, metrics_at),

@@ -225,7 +225,9 @@ def test_full_sync_records_today_individual_freshness_for_unsupported_watch(sess
     assert session.get(ObservationFreshness, (freshness.SLEEP, target)).state == freshness.FRESH
     assert session.get(ObservationFreshness, (freshness.SLEEP_SCORE, target)).state == freshness.FRESH
     assert session.get(ObservationFreshness, (freshness.TRAINING_READINESS, target)).state == freshness.UNSUPPORTED
-    assert session.get(ObservationFreshness, (freshness.HRV, target)).state == freshness.FRESH
+    # Full-sync freshness only reflects the current request journal; it never
+    # treats an older stored HRV value as proof of a current observation.
+    assert session.get(ObservationFreshness, (freshness.HRV, target)).state == freshness.MISSING
     assert session.get(ObservationFreshness, (freshness.RESTING_HR, target)).state == freshness.FRESH
     assert session.get(ObservationFreshness, (freshness.STRESS, target)).state == freshness.FRESH
 
