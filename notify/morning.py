@@ -90,6 +90,15 @@ def start_priority_fetch() -> bool:
         row = _state(session)
         if reconcile_sent_brief(session, row):
             return False
+        from coach.decision_engine import selected_workouts_for_date
+        # Automatic recovery refresh has a single, unambiguous selected-workout
+        # target. It never fetches merely to propose the next program session.
+        if len(selected_workouts_for_date(session)) != 1:
+            row.status = "evaluating"
+            sent = generate_daily_suggestion(session)
+            row.status = "queued" if sent else "complete"
+            row.updated_at = _now_naive()
+            return False
         mark_priority_pending(session)
         row.status = "fetching"
         row.updated_at = _now_naive()
@@ -101,19 +110,22 @@ def priority_sync_finished() -> None:
     with get_session() as session:
         row = _state(session)
         row.last_priority_fetch_at = _now_naive()
-        facts = morning_freshness(session)
+        from coach.decision_engine import selected_workouts_for_date
         if reconcile_sent_brief(session, row):
             enqueue_late_material_update(session)
             return
-        if facts["ready"] or row.answer_anyway:
+        if len(selected_workouts_for_date(session)) != 1:
             row.status = "evaluating"
-            sent = generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
-            if sent:
-                row.status = "queued"
-            else:
-                row.status = "waiting_for_program"
+            sent = generate_daily_suggestion(session)
+            row.status = "queued" if sent else "complete"
         else:
-            row.status = "waiting"
+            facts = morning_freshness(session)
+            if facts["ready"] or row.answer_anyway:
+                row.status = "evaluating"
+                sent = generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
+                row.status = "queued" if sent else "complete"
+            else:
+                row.status = "waiting"
         row.updated_at = _now_naive()
 
 
@@ -142,21 +154,7 @@ def enqueue_late_material_update(session) -> bool:
         return False
     original = json.loads(first.result_json)
     current = evaluate_morning_decision(session, target=day, evaluated_at=now)
-    became_poor = (
-        original.get("decision_type") != "ADVISE_SKIP_SESSION"
-        and current.decision_type == "ADVISE_SKIP_SESSION"
-    )
-    program_became_available = (
-        original.get("workout_outcome") == "NO_ACTION"
-        and current.workout_outcome in {
-            "KEEP_PLANNED_SESSION", "PROPOSE_NEXT_SESSION", "PROGRAM_REST_DAY",
-        }
-    )
-    was_best_effort = bool(original.get("best_effort"))
-    now_complete = not current.best_effort
-    became_complete = was_best_effort and now_complete
-
-    if not (became_poor or program_became_available or became_complete):
+    if original.get("idempotency_key") == current.idempotency_key:
         return False
     existing = session.query(NotificationOutbox).filter_by(
         idempotency_key=f"late-update:{current.idempotency_key}"
@@ -198,7 +196,7 @@ def morning_deadline() -> bool:
             if sent:
                 row.status = "queued"
             else:
-                row.status = "waiting_for_program"
+                row.status = "complete"
             row.updated_at = _now_naive()
             return sent
 
@@ -208,7 +206,7 @@ def morning_deadline() -> bool:
         if sent:
             row.status = "queued"
         else:
-            row.status = "waiting_for_program"
+            row.status = "complete"
         row.updated_at = _now_naive()
         return sent
 
@@ -226,6 +224,6 @@ def answer_anyway(day_key: str) -> bool:
         if sent:
             row.status = "queued"
         else:
-            row.status = "waiting_for_program"
+            row.status = "complete"
         row.updated_at = _now_naive()
         return sent

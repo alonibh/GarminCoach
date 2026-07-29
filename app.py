@@ -1287,6 +1287,19 @@ def dashboard(request: Request, activity_page: int = 1):
             "seven_day": _intensity_minutes_summary(s, get_local_date(), 7),
             "twenty_eight_day": _intensity_minutes_summary(s, get_local_date(), 28),
         }
+        # The recovery panel evaluates only stored local facts.  The evaluator
+        # intentionally has no Garmin, calendar, scheduling, or compiler path.
+        from coach.decision_engine import evaluate_selected_workout_recovery
+        recovery_result = evaluate_selected_workout_recovery(s, target=get_local_date())
+        recovery_panel = {
+            "outcome": recovery_result.decision_type.replace("_", " ").title(),
+            "name": recovery_result.planned_session_name,
+            "time": recovery_result.planned_start_time,
+            "score": recovery_result.readiness_score,
+            "category": recovery_result.readiness_category,
+            "reason": " ".join(item.replace("_", " ").lower() for item in recovery_result.reason_codes),
+            "facts": recovery_result.observations,
+        }
         # Detach for template use
         activities = [
             {
@@ -1329,6 +1342,7 @@ def dashboard(request: Request, activity_page: int = 1):
             "profile": profile,
             "active_program": current_program,
             "intensity_summary": intensity_summary,
+            "recovery_panel": recovery_panel,
         },
     )
 

@@ -26,6 +26,14 @@ Without a selected workout:
 - it does not choose the next program workout;
 - it does not create a Workout / Active Recovery / Rest decision.
 
+Selection is strict: a candidate is a `PlannedSession` for the requested local
+date that is not completed, cancelled, Rest, or a recovery replacement. One
+candidate may be resolved implicitly; multiple candidates require an explicit
+planned-session ID and no candidate produces `NO_SELECTED_WORKOUT`. Automatic
+morning priority refresh runs only for exactly one candidate. No-candidate and
+multiple-candidate mornings settle as informational messages and do not wait
+for a program or stage scheduling.
+
 Workout selection uses fresh local data. It does not call Garmin automatically. If required data is stale or missing, Telegram may offer an explicit recovery refresh.
 
 ## 3. Outcomes and confirmation
@@ -58,6 +66,14 @@ Program recovery rules are evaluated before biometrics. A required program rest 
 ### Garmin Training Readiness
 
 Fresh Garmin Training Readiness is the only biometric with direct V1 authority.
+
+Missing sleep does not block a valid fresh same-day Training Readiness score.
+Support state, fetch freshness, and decision eligibility remain separate:
+unsupported means no usable device/account value, unknown means unverified,
+and supported pending/missing/stale/error/invalid values are reported exactly.
+None permits a fallback score or biometric recommendation. Recovery evaluation
+and dashboard display use stored local facts only; they make zero Garmin or
+private-calendar calls and create no recovery mutation in this phase.
 
 | Garmin score | Category | GarminCoach action |
 | ---: | --- | --- |

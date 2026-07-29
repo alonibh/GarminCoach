@@ -51,7 +51,7 @@ def _constraints(session):
     )
 
 
-def test_renderer_stages_only_deterministic_original_session(session, monkeypatch):
+def test_recovery_renderer_stages_no_interaction(session, monkeypatch):
     _fixed_now(monkeypatch)
     _fresh_calendar(monkeypatch)
     _constraints(session)
@@ -59,34 +59,17 @@ def test_renderer_stages_only_deterministic_original_session(session, monkeypatc
 
     text, markup, ids = render_morning(session, result)
 
-    assert "Suggested today: Full Body 1 at 18:00." in text
-    assert len(ids) == 1
-    assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
-    pending = session.get(PendingInteraction, ids[0])
-    payload = json.loads(pending.payload_json)
-    assert payload["program_session_id"] == result.next_program_session_id
-    assert payload["modifications"] == []
+    assert "No workout is selected" in text
+    assert markup is None
+    assert ids == []
 
 
-def test_interaction_revalidates_and_schedules_once(session, monkeypatch):
+def test_recovery_result_never_stages_a_schedule(session, monkeypatch):
     _fixed_now(monkeypatch)
     _fresh_calendar(monkeypatch)
     _constraints(session)
     result = _decision(session, 74)
-    pending = stage_decision_actions(session, result)[0]
-    calls = []
-    monkeypatch.setattr(
-        "coach.garmin_compiler.compile_and_schedule",
-        lambda _session, payload: calls.append(payload) or True,
-    )
-
-    first = apply_interaction(session, pending.interaction_id)
-    second = apply_interaction(session, pending.interaction_id)
-
-    assert first[0] == "applied"
-    assert second[0] == "stale"
-    assert len(calls) == 1
-    assert calls[0]["modifications"] == []
+    assert stage_decision_actions(session, result) == []
 
 
 def test_button_only_schedule_flow_uses_pending_payload(session, monkeypatch):

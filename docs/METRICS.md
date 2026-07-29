@@ -100,6 +100,29 @@ A usable score must be fresh, supported, for the current decision date, and
 selected from the latest valid same-day Garmin snapshot. Missing data is not a
 substitute score and does not imply support or non-support.
 
+## Selected-workout recovery evaluation
+
+A recovery decision exists only for exactly one local `PlannedSession` on the
+local decision date: it must be neither completed nor cancelled and must be a
+normal workout (not Rest or an optional/recovery replacement). An explicit
+planned-session ID is accepted; when none is supplied, zero candidates produces
+`NO_SELECTED_WORKOUT` and multiple candidates produces
+`WORKOUT_SELECTION_REQUIRED`, including the candidate IDs and names. GarminCoach
+never chooses a program-cursor session as a recovery target.
+
+Program-required rest precedes biometrics and leaves the selected session and
+cursor unchanged. Fresh same-day supported Garmin Training Readiness is the
+only biometric authority: Prime/High/Moderate keep, Low keeps with a warning,
+and Poor recommends Rest while the original remains pending. Missing sleep does
+not invalidate a valid Training Readiness score. Unsupported, unknown,
+pending, missing, stale, error, and invalid readiness states have no substitute
+score or outcome authority. Sleep, Sleep Score, HRV, Recovery Time, resting HR,
+stress, and other valid fresh facts are informational only.
+
+Evaluation and dashboard presentation read stored local data only and make zero
+Garmin or private-calendar calls. This phase stages no recovery interaction and
+does not schedule, cancel, unschedule, replace, complete, or modify a workout.
+
 For unsupported devices, individual observations remain visible but have no
 prescriptive workout authority in V1.
 

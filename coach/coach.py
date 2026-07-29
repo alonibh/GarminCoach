@@ -477,16 +477,8 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
     from coach.renderer import render_morning
     result = evaluate_morning_decision(session, allow_incomplete=allow_incomplete)
     now = get_local_now()
-    # Before the final 11:30 deadline, a temporarily unavailable program is not
-    # a trustworthy "do nothing" decision. Keep waiting so program activation
-    # or restoration can produce the real daily call.
-    if (
-        result.workout_outcome == "NO_ACTION"
-        and result.active_program_id is None
-        and (now.hour, now.minute) < (11, 30)
-    ):
-        logger.info("Deferring morning briefing until an active program is available.")
-        return False
+    # A missing selected workout is itself a settled informational result; do
+    # not wait for a program or turn it into a proposed/scheduled session.
     text, reply_markup, interaction_ids = render_morning(session, result)
     if not text:
         return False

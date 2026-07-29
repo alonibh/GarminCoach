@@ -26,7 +26,7 @@ GARMIN_READINESS_CATEGORY_V1 = EvidenceRule(
     version="1.0.0",
     conclusion=(
         "Use Garmin's official category boundaries. Low adds a warning; Poor "
-        "supports advice to skip while preserving the original-workout override."
+        "recommends Rest while preserving the selected workout as pending."
     ),
     population="Users whose device is known to support Garmin Training Readiness",
     inputs=("fresh Garmin Training Readiness score for the decision date",),

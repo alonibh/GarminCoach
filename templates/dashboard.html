@@ -18,6 +18,16 @@
   </div>
 </header>
 
+{% if recovery_panel %}
+<section class="card" aria-labelledby="selected-workout-recovery" style="margin-bottom:1rem; padding:1rem 1.25rem;">
+  <div class="chart-head"><div><span class="eyebrow">Selected-workout recovery</span><h2 id="selected-workout-recovery">{{ recovery_panel.outcome }}</h2></div></div>
+  {% if recovery_panel.name %}<p><strong>{{ recovery_panel.name }}</strong>{% if recovery_panel.time %} · {{ today_label }} at {{ recovery_panel.time }}{% endif %}</p>{% endif %}
+  {% if recovery_panel.score is not none %}<p>Garmin Training Readiness: <strong>{{ recovery_panel.score }} ({{ recovery_panel.category }})</strong></p>{% endif %}
+  {% if recovery_panel.reason %}<p class="muted">{{ recovery_panel.reason|capitalize }}.</p>{% endif %}
+  {% if recovery_panel.facts %}<p class="muted">{% for fact in recovery_panel.facts if fact.signal != 'training_readiness' %}{{ fact.label|default(fact.signal|replace('_', ' ')|title) }}: {{ fact.value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+</section>
+{% endif %}
+
 {% if sync_summary and (sync_summary.code == "authentication_required" or "session expired" in (sync_summary.errors|join(' ')|lower)) %}
 <div class="notice" style="background: rgba(225, 29, 72, 0.12); border: 1px solid rgba(225, 29, 72, 0.3); color: #fda4af; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
   <div>

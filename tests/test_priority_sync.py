@@ -346,7 +346,7 @@ def test_deadline_sends_best_effort_brief_and_is_not_duplicated(session, monkeyp
     assert process_due_notifications(datetime(2026, 7, 4, 11, 30))["sent"] == 1
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
-    assert "Best effort; missing sleep." in sent[0][0]
+    assert "No workout is selected for today" in sent[0][0]
     assert session.get(MorningBriefState, target).status == "complete"
     assert session.get(MorningBriefState, target).answer_anyway is True
 

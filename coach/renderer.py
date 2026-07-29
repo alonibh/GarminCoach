@@ -7,7 +7,6 @@ import json
 from sqlalchemy.orm import Session
 
 from coach.decision_engine import DecisionResult
-from coach.interactions import reply_markup, stage_decision_actions
 from db import Sleep
 from time_utils import format_chat_date
 
@@ -38,70 +37,30 @@ def _metric_line(session: Session, result: DecisionResult) -> str:
 def render_morning(
     session: Session, result: DecisionResult, *, plan_only: bool = False,
 ) -> tuple[str | None, dict | None, list[str]]:
-    if result.decision_type in {"WAITING_FOR_DATA", "SYNC_REQUIRED"}:
-        return None, None, []
-
-    interactions = stage_decision_actions(session, result)
-    schedule = next(
-        (item for item in interactions if item.action_type == "schedule_original_session"),
-        None,
-    )
-    proposed_time = json.loads(schedule.payload_json)["suggested_time"] if schedule else None
-
-    # The authoritative morning brief always keeps its available overnight
-    # facts. A positive workout decision must not reduce the message to an
-    # unsupported-looking schedule proposal.
-    recommends_workout = (
-        result.workout_outcome in {"KEEP_PLANNED_SESSION", "PROPOSE_NEXT_SESSION"}
-        and result.decision_type not in {"ADVISE_SKIP_SESSION"}
-        and not result.calendar_conflict
-    )
+    # Recovery is advisory in this phase: rendering must not stage interactions.
+    recommends_workout = result.workout_outcome in {"KEEP_SELECTED_WORKOUT", "KEEP_SELECTED_WORKOUT_WITH_WARNING"}
     metrics = "" if plan_only else _metric_line(session, result)
-    if result.workout_outcome == "PROGRAM_REST_DAY":
-        earliest = format_chat_date(result.earliest_eligible_date) or result.earliest_eligible_date
-        body = (
-            f"Program rest day. {result.next_program_session_name} is next; "
-            f"earliest {earliest}."
-        )
-        recovery = result.optional_recovery_activity
-        if recovery and not plan_only:
-            low, high = recovery["duration_min"]
-            body += f" Optional: {low}-{high} min easy walking at conversational effort."
+    if result.decision_type == "NO_SELECTED_WORKOUT":
+        body = "No workout is selected for today. Recovery data is informational until a workout is selected."
+    elif result.decision_type == "WORKOUT_SELECTION_REQUIRED":
+        candidates = next((item["value"] for item in result.observations if item["signal"] == "selected_workout_candidates"), [])
+        body = "Choose a specific workout before recovery can be evaluated: " + ", ".join(
+            f"{item['name']} ({item['scheduled_time'] or 'time unset'})" for item in candidates
+        ) + "."
+    elif result.decision_type == "PROGRAM_REST_RECOMMENDED":
+        body = f"Program rest is recommended; {result.planned_session_name} remains selected and pending."
     else:
-        name = result.planned_session_name or result.next_program_session_name or "Workout"
+        name = result.planned_session_name or "Workout"
         at = f" at {result.planned_start_time}" if result.planned_start_time else ""
-        if result.decision_type == "ADVISE_SKIP_SESSION":
-            body = f"Rest is recommended instead of {name}{at}. Readiness is Poor. The program workout remains pending."
-        elif result.decision_type == "WARN_ORIGINAL_SESSION":
-            body = f"Keep {name}{at}."
-        elif result.workout_outcome == "KEEP_PLANNED_SESSION":
+        if result.decision_type == "REST_RECOMMENDED":
+            body = f"Rest is recommended instead of {name}{at}. Garmin Training Readiness is Poor; the selected workout remains pending."
+        elif result.decision_type == "KEEP_SELECTED_WORKOUT_WITH_WARNING":
+            body = f"Keep {name}{at}. Garmin Training Readiness is Low; this is a warning only."
+        elif result.decision_type == "KEEP_SELECTED_WORKOUT":
             body = f"Planned: {name}{at}."
-        elif result.workout_outcome == "PROPOSE_NEXT_SESSION":
-            body = (
-                f"Suggested today: {name} at {proposed_time}."
-                if proposed_time else
-                f"No workout is recommended today: no calendar-validated full-workout slot is available for {name}."
-            )
         else:
-            body = "No workout action is available today."
+            reason = result.reason_codes[0].replace("_", " ").lower() if result.reason_codes else "unavailable"
+            body = f"{name}{at} remains selected. Garmin Training Readiness has no workout authority today ({reason})."
 
-    if result.calendar_conflict and not plan_only:
-        conflict = result.calendar_conflict
-        body += f" Calendar conflict: {conflict.get('title', 'another event')} at {conflict.get('start', '')[-5:]}."
-    elif "CALENDAR_ACCESS_ERROR" in result.reason_codes and not plan_only:
-        body += " Calendar could not be checked."
-
-    if result.best_effort and not recommends_workout and not plan_only:
-        omitted = ", ".join(
-            item["signal"].replace("_", " ")
-            for item in result.missing_observations if item["critical"]
-        )
-        body += f" Best effort; missing {omitted}."
-    noncritical = [
-        item["signal"].replace("_", " ")
-        for item in result.missing_observations if not item["critical"]
-    ]
-    if noncritical and not recommends_workout and not plan_only:
-        body += f" Missing non-critical data: {', '.join(noncritical)}."
     text = "\n".join(part for part in (metrics, body) if part)
-    return text, reply_markup(interactions), [item.interaction_id for item in interactions]
+    return text, None, []

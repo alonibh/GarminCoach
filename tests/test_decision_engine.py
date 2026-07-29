@@ -30,20 +30,21 @@ def _fresh_readiness(session, score):
 @pytest.mark.parametrize(
     "score,category,decision_type",
     [
-        (1, "Poor", "ADVISE_SKIP_SESSION"),
-        (24, "Poor", "ADVISE_SKIP_SESSION"),
-        (25, "Low", "WARN_ORIGINAL_SESSION"),
-        (49, "Low", "WARN_ORIGINAL_SESSION"),
-        (50, "Moderate", "PROPOSE_NEXT_SESSION"),
-        (74, "Moderate", "PROPOSE_NEXT_SESSION"),
-        (75, "High", "PROPOSE_NEXT_SESSION"),
-        (94, "High", "PROPOSE_NEXT_SESSION"),
-        (95, "Prime", "PROPOSE_NEXT_SESSION"),
-        (100, "Prime", "PROPOSE_NEXT_SESSION"),
+        (1, "Poor", "REST_RECOMMENDED"),
+        (24, "Poor", "REST_RECOMMENDED"),
+        (25, "Low", "KEEP_SELECTED_WORKOUT_WITH_WARNING"),
+        (49, "Low", "KEEP_SELECTED_WORKOUT_WITH_WARNING"),
+        (50, "Moderate", "KEEP_SELECTED_WORKOUT"),
+        (74, "Moderate", "KEEP_SELECTED_WORKOUT"),
+        (75, "High", "KEEP_SELECTED_WORKOUT"),
+        (94, "High", "KEEP_SELECTED_WORKOUT"),
+        (95, "Prime", "KEEP_SELECTED_WORKOUT"),
+        (100, "Prime", "KEEP_SELECTED_WORKOUT"),
     ],
 )
 def test_official_garmin_readiness_boundaries(session, score, category, decision_type):
     _add_program(session)
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, status="planned", source="coach"))
     _fresh_sleep(session)
     _fresh_readiness(session, score)
     session.commit()
@@ -60,6 +61,7 @@ def test_official_garmin_readiness_boundaries(session, score, category, decision
 
 def test_supported_missing_readiness_waits_then_uses_no_fallback(session):
     _add_program(session)
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, status="planned", source="coach"))
     _fresh_sleep(session)
     freshness.note_capability_observed(session, observed_at=datetime(2026, 7, 5, 8))
     freshness.record_signal(
@@ -77,12 +79,11 @@ def test_supported_missing_readiness_waits_then_uses_no_fallback(session):
         session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 11, 31), allow_incomplete=True
     )
 
-    assert waiting.decision_type == "WAITING_FOR_DATA"
-    assert deadline.decision_type == "SYNC_REQUIRED"
-    assert anyway.workout_outcome == "PROPOSE_NEXT_SESSION"
-    assert anyway.best_effort is True
+    assert waiting.decision_type == deadline.decision_type == anyway.decision_type == "NO_BIOMETRIC_AUTHORITY"
+    assert anyway.workout_outcome != "PROPOSE_NEXT_SESSION"
+    assert anyway.best_effort is False
     assert anyway.readiness_score is None
-    assert "GARMIN_READINESS_UNAVAILABLE_NO_SUBSTITUTE" in anyway.reason_codes
+    assert "TRAINING_READINESS_MISSING" in anyway.reason_codes
 
 
 def test_program_rest_day_precedes_prime_readiness(session):
@@ -93,14 +94,15 @@ def test_program_rest_day_precedes_prime_readiness(session):
     cursor.last_completed_program_session_id = source_sessions[0].id
     cursor.last_completed_at = datetime(2026, 7, 5, 9)
     cursor.next_program_session_id = source_sessions[1].id
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, status="planned", source="coach"))
     session.commit()
 
     result = evaluate_morning_decision(
         session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
     )
 
-    assert result.decision_type == "PROGRAM_REST_DAY"
-    assert result.readiness_category == "Prime"
+    assert result.decision_type == "PROGRAM_REST_RECOMMENDED"
+    assert result.readiness_category is None
     assert result.permitted_actions == []
 
 
@@ -112,6 +114,7 @@ def test_plan_only_render_omits_sleep_and_optional_recovery_details(session):
     cursor.last_completed_program_session_id = source_sessions[0].id
     cursor.last_completed_at = datetime(2026, 7, 5, 9)
     cursor.next_program_session_id = source_sessions[1].id
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, status="planned", source="coach"))
     session.commit()
 
     result = evaluate_morning_decision(
@@ -119,7 +122,7 @@ def test_plan_only_render_omits_sleep_and_optional_recovery_details(session):
     )
     text, _markup, _ids = render_morning(session, result, plan_only=True)
 
-    assert text == "Program rest day. Full Body 2 is next; earliest 07/07/2026."
+    assert text == "Program rest is recommended; Selected remains selected and pending."
     assert "sleep" not in text.lower()
     assert "Optional" not in text
 
@@ -150,10 +153,8 @@ def test_poor_readiness_with_calendar_conflict_offers_keep_cancel_and_new_date(s
         session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
     )
 
-    assert result.decision_type == "ADVISE_SKIP_SESSION"
-    assert {item["type"] for item in result.permitted_actions} == {
-        "keep_planned_session", "cancel_planned_session", "request_reschedule",
-    }
+    assert result.decision_type == "REST_RECOMMENDED"
+    assert result.permitted_actions == []
 
 
 def test_unsupported_device_has_no_metric_only_warning_or_skip(session):
@@ -166,13 +167,14 @@ def test_unsupported_device_has_no_metric_only_warning_or_skip(session):
         session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
     )
 
-    assert result.decision_type == "PROPOSE_NEXT_SESSION"
+    assert result.decision_type == "NO_SELECTED_WORKOUT"
     assert result.readiness_score is None
     assert result.applied_rules == []
 
 
 def test_phase3b_recovery_facts_never_change_the_official_decision(session):
     _add_program(session)
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, status="planned", source="coach"))
     _fresh_sleep(session)
     _fresh_readiness(session, 74)
     session.commit()
@@ -193,6 +195,7 @@ def test_phase3b_recovery_facts_never_change_the_official_decision(session):
 
 def test_decision_record_is_idempotent_for_identical_facts(session):
     _add_program(session)
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, status="planned", source="coach"))
     _fresh_sleep(session)
     _fresh_readiness(session, 74)
     session.commit()
@@ -236,8 +239,5 @@ def test_morning_render_keeps_overnight_facts_with_positive_planned_workouts(ses
     )
     text, _markup, _ids = render_morning(session, result)
 
-    assert text == (
-        "sleep 23:37-06:45, 7.1h, score 86 (Good).\n"
-        "Planned: Day 1 at 18:00."
-    )
+    assert "Day 1 at 18:00 remains selected" in text
     assert "No workout action" not in text

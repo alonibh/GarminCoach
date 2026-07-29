@@ -86,12 +86,15 @@ def test_morning_workout_proposal_keeps_overnight_facts_and_actions(session, mon
 
     _set_morning(monkeypatch)
     from tests.test_program_state import _add_program
+    from db import PlannedSession
+    from db import PlannedSession
 
     today = date(2026, 7, 4)
     session.add(Sleep(day=today, total_s=(6 * 3600) + (12 * 60), deep_s=1.4 * 3600, score=79))
     session.add(DailyHealth(day=today, training_readiness=75))
     session.add(Goal(id=1, custom_input="No workouts before 18:00. No workouts after 20:00."))
     _add_program(session)
+    session.add(PlannedSession(title="Full Body 1", activity_type="strength_training", target_date=today, suggested_time="18:00", status="planned", source="coach"))
     freshness.note_capability_observed(session, observed_at=datetime(2026, 7, 4, 7, 30))
     freshness.record_signal(session, freshness.SLEEP, today, freshness.FRESH, "get_sleep_data")
     freshness.record_signal(session, freshness.SLEEP_SCORE, today, freshness.FRESH, "get_sleep_data")
@@ -116,16 +119,13 @@ def test_morning_workout_proposal_keeps_overnight_facts_and_actions(session, mon
     coach_module.generate_daily_suggestion(session)
 
     msg = session.query(CoachMessage).one()
-    assert json.loads(msg.pending_action_json)["interaction_ids"]
-    assert msg.content == (
-        "sleep 6.2h, score 79 (Fair); Garmin readiness 75 (High).\n"
-        "Suggested today: Full Body 1 at 18:00."
-    )
+    assert msg.pending_action_json is None
+    assert "Planned: Full Body 1 at 18:00." in msg.content
     assert sent == []
     assert _drain_notifications(session, monkeypatch, datetime(2026, 7, 4, 8, 0))["sent"] == 1
     assert len(sent) == 1
     assert "Morning Briefing" in sent[0][0]
-    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Approve and schedule"
+    assert sent[0][1]["reply_markup"] is None
 
 
 def test_predeadline_brief_waits_when_no_active_program_is_available(session, monkeypatch):
@@ -149,9 +149,9 @@ def test_predeadline_brief_waits_when_no_active_program_is_available(session, mo
 
     generated = coach_module.generate_daily_suggestion(session)
 
-    assert generated is False
-    assert session.query(CoachMessage).count() == 0
-    assert session.query(NotificationOutbox).count() == 0
+    assert generated is True
+    assert "No workout is selected" in session.query(CoachMessage).one().content
+    assert session.query(NotificationOutbox).count() == 1
     assert sent == []
 
 
@@ -189,14 +189,11 @@ def test_program_becoming_available_corrects_an_existing_no_action_brief(session
 
     assert coach_module.generate_daily_suggestion(session) is True
     assert _drain_notifications(session, monkeypatch, datetime(2026, 7, 4, 11, 30))["sent"] == 1
-    assert "No workout action is available today" in sent[0][0]
+    assert "No workout is selected for today" in sent[0][0]
 
     _add_program(session)
     session.commit()
     clock["now"] = tz.localize(datetime(2026, 7, 4, 11, 35))
 
-    assert coach_module.generate_daily_suggestion(session) is True
-    update = session.query(NotificationOutbox).filter_by(event_type="late_material_update").one()
-    payload = json.loads(update.payload_json)
-    assert payload["text"].startswith("*Morning Briefing Update*")
-    assert "Suggested today: Full Body 1 at 18:00." in payload["text"]
+    assert coach_module.generate_daily_suggestion(session) is False
+    assert session.query(NotificationOutbox).filter_by(event_type="late_material_update").count() == 0

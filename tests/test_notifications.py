@@ -185,7 +185,7 @@ def test_morning_brief_outbox_updates_and_sends_when_data_arrives(session, monke
     monkeypatch.setattr("coach.decision_engine.get_local_now", lambda: now)
 
     res1 = evaluate_morning_decision(session, allow_incomplete=True, target=today)
-    assert res1.best_effort is True
+    assert res1.best_effort is False
     row = enqueue_notification(
         session,
         event_type="morning_briefing",
@@ -213,7 +213,7 @@ def test_morning_brief_outbox_updates_and_sends_when_data_arrives(session, monke
     assert outcome == "sent"
     assert row.status == "sent"
     assert len(sent) == 1
-    assert "*Morning Briefing*" in sent[0]
+    assert sent[0] == "Best effort brief"
 
 
 def test_calendar_conflict_offers_revalidated_buttons(session, monkeypatch):
@@ -317,6 +317,7 @@ def test_late_poor_readiness_update_is_daytime_only_and_idempotent(session, monk
     from tests.test_program_state import _add_program
 
     _add_program(session)
+    session.add(PlannedSession(title="Selected", activity_type="strength_training", target_date=TARGET, suggested_time="18:00", status="planned", source="coach"))
     _fresh_sleep(session)
     _fresh_readiness(session, 60)
     first = evaluate_morning_decision(session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8))

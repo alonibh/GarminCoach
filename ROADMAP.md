@@ -70,9 +70,9 @@ resumes safely after failure, and never restarts a monolithic 90-day health craw
   Body composition remains gated pending a pinned response/units fixture; see
   [`docs/BODY_COMPOSITION_CONTRACT.md`](docs/BODY_COMPOSITION_CONTRACT.md).
 - [ ] Make capability device/account/scale/activity scoped.
-- [ ] Evaluate recovery only after a workout is selected in the website.
-- [ ] Use Training Readiness as the only biometric with direct V1 authority.
-- [ ] Show unsupported-device sleep/HRV/Recovery Time warnings without inventing
+- [x] Evaluate recovery only after a workout is selected in the website.
+- [x] Use Training Readiness as the only biometric with direct V1 authority.
+- [x] Show unsupported-device sleep/HRV/Recovery Time warnings without inventing
   a replacement score or automatic fallback outcome.
 - [ ] Add the fixed 30-minute Active Recovery Garmin workout.
 - [ ] Add Telegram-only original/walk/rest actions with pending-session semantics.
