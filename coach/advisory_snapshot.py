@@ -27,17 +27,23 @@ from db import (
 )
 from tenant_context import current_tenant
 
-SNAPSHOT_VERSION = "ask-coach-v1"
+SNAPSHOT_VERSION = "ask-coach-v2"
 RECOVERY_METRICS = (
     "sleep_duration_hours",
     "sleep_score",
     "hrv",
     "hrv_baseline_low",
     "hrv_baseline_high",
-    "hrv_baseline_status",
+    "hrv_weekly_avg",
+    "garmin_hrv_status",
+    "hrv_7d_coverage_days",
     "resting_heart_rate",
     "body_battery",
+    "body_battery_charged",
+    "body_battery_drained",
     "training_readiness",
+    "recovery_time_minutes",
+    "recovery_time_change_phrase",
     "stress",
     "acute_load",
     "chronic_load",
@@ -280,25 +286,6 @@ def _recovery(session: Session, generated_at: datetime) -> dict:
     )
     health_at = _day_observed(health.day if health else None)
     metrics_at = _day_observed(metrics.day if metrics else None)
-    hrv_status = None
-    if health and health.hrv_overnight is not None:
-        if (
-            health.hrv_baseline_low is not None
-            and health.hrv_overnight < health.hrv_baseline_low
-        ):
-            hrv_status = "low"
-        elif (
-            health.hrv_baseline_high is not None
-            and health.hrv_overnight > health.hrv_baseline_high
-        ):
-            hrv_status = "high"
-        elif (
-            health.hrv_baseline_low is not None
-            and health.hrv_baseline_high is not None
-        ):
-            hrv_status = "balanced"
-        else:
-            hrv_status = "incomplete"
     values = {
         "sleep_duration_hours": (
             round(sleep.total_s / 3600, 2)
@@ -316,7 +303,9 @@ def _recovery(session: Session, generated_at: datetime) -> dict:
             health.hrv_baseline_high if health else None,
             health_at,
         ),
-        "hrv_baseline_status": (hrv_status, health_at),
+        "hrv_weekly_avg": (health.hrv_weekly_avg if health else None, health_at),
+        "garmin_hrv_status": (health.hrv_status if health else None, health_at),
+        "hrv_7d_coverage_days": (health.hrv_7d_coverage_days if health else None, health_at),
         "resting_heart_rate": (health.resting_hr if health else None, health_at),
         "body_battery": (
             (
@@ -326,14 +315,14 @@ def _recovery(session: Session, generated_at: datetime) -> dict:
             ),
             health_at,
         ),
+        "body_battery_charged": (health.body_battery_charged if health else None, health_at),
+        "body_battery_drained": (health.body_battery_drained if health else None, health_at),
         "training_readiness": (
-            (
-                health.training_readiness
-                if health and health.training_readiness is not None
-                else metrics.readiness if metrics else None
-            ),
-            health_at if health and health.training_readiness is not None else metrics_at,
+            health.training_readiness if health else None,
+            health_at if health and health.training_readiness is not None else None,
         ),
+        "recovery_time_minutes": (health.recovery_time_minutes if health else None, health.recovery_time_observed_at if health else None),
+        "recovery_time_change_phrase": (health.recovery_time_change_phrase if health else None, health.recovery_time_observed_at if health else None),
         "stress": (health.stress_avg if health else None, health_at),
         "acute_load": (metrics.acute_load if metrics else None, metrics_at),
         "chronic_load": (metrics.chronic_load if metrics else None, metrics_at),

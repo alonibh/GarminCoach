@@ -179,3 +179,10 @@ daily workout authority:
 
 Their detailed request strategy and history are defined in
 [`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md).
+
+HRV Status is Garmin's explicit daily-payload status, not a GarminCoach
+comparison of a nightly value with a baseline. The Garmin seven-day average is
+stored as source data. The displayed `N/7 nights` value is only local stored
+overnight-HRV completeness. Recovery Time is stored in minutes from the
+selected current Training Readiness snapshot; `REACHED_ZERO` means effective
+zero while retaining source minutes. No separate Recovery Time endpoint exists.

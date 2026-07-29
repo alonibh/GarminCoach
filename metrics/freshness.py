@@ -31,6 +31,8 @@ TRAINING_READINESS = "training_readiness"
 SLEEP = "sleep"
 SLEEP_SCORE = "sleep_score"
 HRV = "hrv"
+HRV_STATUS = "hrv_status"
+RECOVERY_TIME = "recovery_time"
 RESTING_HR = "resting_hr"
 STRESS = "stress"
 
@@ -281,7 +283,7 @@ def morning_freshness(session: Session, day: date | None = None) -> dict:
     if capability == "supported":
         critical.append(TRAINING_READINESS)
     missing_critical = [signal for signal in critical if not rows.get(signal) or rows[signal].state != FRESH]
-    noncritical = [SLEEP_SCORE]
+    noncritical = [SLEEP_SCORE, HRV_STATUS, RECOVERY_TIME]
     if capability in {"unsupported", "unknown"}:
         noncritical.extend((HRV, RESTING_HR, STRESS))
     missing_noncritical = [signal for signal in noncritical if not rows.get(signal) or rows[signal].state != FRESH]

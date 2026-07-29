@@ -10,7 +10,9 @@ the DB schema happens in sync/sync_service.py.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import math
 from typing import Any, Callable, Optional
 
 from garminconnect import (
@@ -21,6 +23,115 @@ from garminconnect import (
 
 import config
 from sync.endpoint_telemetry import instrument_read
+
+
+@dataclass(frozen=True)
+class NormalizedHrvData:
+    """Safe, endpoint-local representation of Garmin's daily HRV summary."""
+
+    calendar_date: date
+    overnight_avg: float | int | None
+    weekly_avg: float | int | None
+    status: str | None
+    feedback_phrase: str | None
+    baseline_low: float | int | None
+    baseline_high: float | int | None
+    last_night_5min_high: float | int | None
+
+
+@dataclass(frozen=True)
+class NormalizedRecoveryTime:
+    """Recovery Time from an already-selected Training Readiness snapshot."""
+
+    source_minutes: int | None
+    effective_minutes: int
+    change_phrase: str | None
+    observed_at: datetime
+    calendar_date: date
+
+
+def _finite_garmin_number(value: object) -> float | int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return None
+
+
+def _trimmed_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def normalize_hrv_data(response: object, target_date: date) -> NormalizedHrvData | None:
+    """Normalize only verified fields from Garmin's existing HRV endpoint.
+
+    Each optional metric is isolated so a malformed sibling never removes a
+    valid HRV fact.  Status is deliberately open-ended: Garmin owns its
+    vocabulary and GarminCoach does not infer it from values or baselines.
+    """
+    if not isinstance(response, dict) or not isinstance(response.get("hrvSummary"), dict):
+        return None
+    summary = response["hrvSummary"]
+    raw_day = summary.get("calendarDate")
+    if raw_day is not None:
+        if not isinstance(raw_day, str):
+            return None
+        try:
+            response_day = date.fromisoformat(raw_day)
+        except ValueError:
+            return None
+        if response_day != target_date:
+            return None
+    baseline = summary.get("baseline")
+    baseline = baseline if isinstance(baseline, dict) else {}
+    return NormalizedHrvData(
+        calendar_date=target_date,
+        overnight_avg=_finite_garmin_number(summary.get("lastNightAvg")),
+        weekly_avg=_finite_garmin_number(summary.get("weeklyAvg")),
+        status=_trimmed_text(summary.get("status")),
+        feedback_phrase=_trimmed_text(summary.get("feedbackPhrase")),
+        baseline_low=_finite_garmin_number(baseline.get("balancedLow")),
+        baseline_high=_finite_garmin_number(baseline.get("balancedUpper")),
+        last_night_5min_high=_finite_garmin_number(summary.get("lastNight5MinHigh")),
+    )
+
+
+def normalize_recovery_time(
+    normalized_readiness: dict[str, Any] | None,
+    *,
+    fallback_observed_at: datetime,
+) -> NormalizedRecoveryTime | None:
+    """Extract Recovery Time without reselecting or re-requesting readiness."""
+    if not isinstance(normalized_readiness, dict):
+        return None
+    raw_day = normalized_readiness.get("calendarDate")
+    if not isinstance(raw_day, str):
+        return None
+    try:
+        calendar_date = date.fromisoformat(raw_day)
+    except ValueError:
+        return None
+    raw_minutes = normalized_readiness.get("recoveryTime")
+    source_minutes = raw_minutes if isinstance(raw_minutes, int) and not isinstance(raw_minutes, bool) and raw_minutes >= 0 else None
+    phrase = _trimmed_text(normalized_readiness.get("recoveryTimeChangePhrase"))
+    if phrase == "REACHED_ZERO":
+        effective_minutes = 0
+    elif source_minutes is not None:
+        effective_minutes = source_minutes
+    else:
+        return None
+    return NormalizedRecoveryTime(
+        source_minutes=source_minutes,
+        effective_minutes=effective_minutes,
+        change_phrase=phrase,
+        observed_at=_readiness_timestamp(normalized_readiness) or fallback_observed_at,
+        calendar_date=calendar_date,
+    )
 
 
 def _readiness_score(snapshot: dict[str, Any]) -> int | None:

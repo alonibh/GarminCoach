@@ -50,7 +50,7 @@ def test_snapshot_has_metric_and_bounded_section_wrappers(session, monkeypatch):
 
     snapshot = build_advisory_snapshot(session)
 
-    assert snapshot["snapshot_version"] == "ask-coach-v1"
+    assert snapshot["snapshot_version"] == "ask-coach-v2"
     assert snapshot["generated_at"].endswith("Z")
     assert set(snapshot["recovery"]) == set(RECOVERY_METRICS)
     for wrapper in snapshot["recovery"].values():

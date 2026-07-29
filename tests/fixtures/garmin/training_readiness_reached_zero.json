@@ -1,0 +1,13 @@
+[
+  {
+    "userProfilePK": 1001,
+    "calendarDate": "2026-07-25",
+    "timestamp": "2026-07-25T05:20:00.000Z",
+    "timestampLocal": "2026-07-25T08:20:00.000",
+    "deviceId": 10001,
+    "score": 71,
+    "level": "MODERATE",
+    "recoveryTime": 120,
+    "recoveryTimeChangePhrase": "REACHED_ZERO"
+  }
+]

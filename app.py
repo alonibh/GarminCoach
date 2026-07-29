@@ -786,6 +786,8 @@ def _readiness_tiles() -> list[dict]:
         from metrics.freshness import (
             FRESH,
             HRV,
+            HRV_STATUS,
+            RECOVERY_TIME,
             RESTING_HR,
             SLEEP,
             SLEEP_SCORE,
@@ -847,7 +849,18 @@ def _readiness_tiles() -> list[dict]:
                 "tone": sleep_tone,
             })
 
-            if health and health.hrv_overnight is not None and is_fresh(HRV):
+            if health and health.hrv_status and is_fresh(HRV_STATUS):
+                status = health.hrv_status.replace("_", " ").title()
+                details = [f"Garmin status: {status}"]
+                if health.hrv_weekly_avg is not None:
+                    details.append(f"weekly avg {int(round(health.hrv_weekly_avg))} ms")
+                if health.hrv_7d_coverage_days is not None:
+                    details.append(f"local data coverage {health.hrv_7d_coverage_days}/7 nights")
+                prefix = f"{int(round(health.hrv_overnight))} ms · " if health.hrv_overnight is not None and is_fresh(HRV) else ""
+                hrv_value = prefix + " · ".join(details)
+                hrv_indicator = "Garmin status"
+                hrv_tone = "neutral"
+            elif health and health.hrv_overnight is not None and is_fresh(HRV):
                 hrv = int(round(health.hrv_overnight))
                 if health.hrv_baseline_low is not None and health.hrv_baseline_high is not None:
                     low = int(round(health.hrv_baseline_low))
@@ -874,6 +887,27 @@ def _readiness_tiles() -> list[dict]:
                 "value": hrv_value,
                 "indicator": hrv_indicator,
                 "tone": hrv_tone,
+            })
+
+            recovery_capability = capability_state(s, "recovery_time_connect")
+            device_recovery = capability_state(s, "recovery_time_device")
+            if health and health.recovery_time_minutes is not None and is_fresh(RECOVERY_TIME):
+                recovery_value = f"Garmin recovery timer: {int(health.recovery_time_minutes)} min remaining"
+                recovery_indicator = "Informational"
+            elif device_recovery == "supported" and recovery_capability == "unsupported":
+                recovery_value = "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect."
+                recovery_indicator = "Watch only"
+            elif recovery_capability == "unknown":
+                recovery_value = "Recovery Time availability through Garmin Connect is unverified."
+                recovery_indicator = "Unverified"
+            else:
+                recovery_value = "Not available today"
+                recovery_indicator = "No data"
+            signal_rows.append({
+                "label": "Recovery Time",
+                "value": recovery_value,
+                "indicator": recovery_indicator,
+                "tone": "neutral",
             })
 
             if health and health.resting_hr is not None and is_fresh(RESTING_HR):

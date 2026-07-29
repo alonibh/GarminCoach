@@ -171,6 +171,26 @@ def test_unsupported_device_has_no_metric_only_warning_or_skip(session):
     assert result.applied_rules == []
 
 
+def test_phase3b_recovery_facts_never_change_the_official_decision(session):
+    _add_program(session)
+    _fresh_sleep(session)
+    _fresh_readiness(session, 74)
+    session.commit()
+    baseline = evaluate_morning_decision(session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8))
+
+    health = session.get(DailyHealth, TARGET)
+    health.hrv_status = "UNBALANCED"
+    health.recovery_time_minutes = 0
+    health.body_battery_charged = 99
+    health.body_battery_drained = 99
+    session.flush()
+    changed = evaluate_morning_decision(session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 9))
+
+    assert (changed.decision_type, changed.workout_outcome, changed.readiness_score) == (
+        baseline.decision_type, baseline.workout_outcome, baseline.readiness_score,
+    )
+
+
 def test_decision_record_is_idempotent_for_identical_facts(session):
     _add_program(session)
     _fresh_sleep(session)

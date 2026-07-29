@@ -155,6 +155,7 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
     assert readiness["signal_rows"] == [
         {"label": "Sleep", "value": "8h 15m · score 91 (Excellent)", "indicator": "Excellent", "tone": "positive"},
         {"label": "HRV", "value": "61 ms · within 57–66 baseline", "indicator": "Within baseline", "tone": "positive"},
+        {"label": "Recovery Time", "value": "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect.", "indicator": "Watch only", "tone": "neutral"},
         {"label": "Resting HR", "value": "49 bpm · 3 bpm below 28-day median", "indicator": "Below median", "tone": "comparison"},
         {"label": "Sleep stress", "value": "18 · Garmin resting range", "indicator": "Resting Range", "tone": "positive"},
     ]
@@ -209,7 +210,12 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
         "label": "HRV", "value": "55 ms · within 50–60 baseline",
         "indicator": "Within baseline", "tone": "positive",
     }
-    assert all(row["label"] != "Recovery time" for row in recovery["signal_rows"])
+    assert recovery["signal_rows"][2] == {
+        "label": "Recovery Time",
+        "value": "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect.",
+        "indicator": "Watch only",
+        "tone": "neutral",
+    }
 
 
 def test_dashboard_sleep_chart_does_not_turn_missing_today_into_zero(monkeypatch):

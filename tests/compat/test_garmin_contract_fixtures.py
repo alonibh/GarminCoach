@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 from db import Activity, DailyHealth, Sleep
-from sync.garmin_client import normalize_training_readiness
+from sync.garmin_client import normalize_hrv_data, normalize_recovery_time, normalize_training_readiness
 from sync import sync_service
 
 
@@ -257,6 +257,41 @@ def test_training_readiness_normalizer_preserves_supporting_fields():
     assert normalized["trainingReadiness"] == 71
     assert normalized["recoveryTime"] == 120
     assert normalized["level"] == "MODERATE"
+
+
+def test_hrv_normalizer_uses_explicit_status_and_isolates_bad_optional_fields():
+    normalized = normalize_hrv_data(_fixture("hrv.json"), TARGET)
+    assert normalized is not None
+    assert normalized.overnight_avg == 46
+    assert normalized.weekly_avg == 45
+    assert normalized.status == "BALANCED"
+    assert normalized.feedback_phrase == "SYNTHETIC_BALANCED"
+    assert (normalized.baseline_low, normalized.baseline_high) == (38, 58)
+
+    partial = normalize_hrv_data({"hrvSummary": {
+        "calendarDate": TARGET.isoformat(), "lastNightAvg": 48,
+        "weeklyAvg": "bad", "status": "  FUTURE_STATUS  ",
+        "baseline": {"balancedLow": float("nan"), "balancedUpper": 61},
+    }}, TARGET)
+    assert partial is not None
+    assert (partial.overnight_avg, partial.weekly_avg, partial.status) == (48, None, "FUTURE_STATUS")
+    assert (partial.baseline_low, partial.baseline_high) == (None, 61)
+    assert normalize_hrv_data({"hrvSummary": {"calendarDate": "invalid"}}, TARGET) is None
+    assert normalize_hrv_data({"hrvSummary": {"calendarDate": "2026-07-24"}}, TARGET) is None
+
+
+def test_recovery_time_normalizer_preserves_source_and_reached_zero():
+    selected = normalize_training_readiness(_fixture("training_readiness_list.json"), TARGET)
+    result = normalize_recovery_time(selected, fallback_observed_at=datetime(2026, 7, 25, 9))
+    assert result is not None and (result.source_minutes, result.effective_minutes) == (120, 120)
+    zero = normalize_recovery_time(
+        normalize_training_readiness(_fixture("training_readiness_reached_zero.json"), TARGET),
+        fallback_observed_at=datetime(2026, 7, 25, 9),
+    )
+    assert zero is not None and (zero.source_minutes, zero.effective_minutes, zero.change_phrase) == (120, 0, "REACHED_ZERO")
+    legacy = normalize_recovery_time({"calendarDate": TARGET.isoformat(), "recoveryTimeChangePhrase": " REACHED_ZERO "}, fallback_observed_at=datetime(2026, 7, 25, 9))
+    assert legacy is not None and legacy.observed_at == datetime(2026, 7, 25, 9)
+    assert normalize_recovery_time({"calendarDate": TARGET.isoformat(), "recoveryTime": True}, fallback_observed_at=datetime(2026, 7, 25, 9)) is None
 
 
 def test_training_readiness_normalizer_rejects_malformed_and_off_date_entries():

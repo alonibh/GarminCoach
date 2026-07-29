@@ -47,6 +47,10 @@ def test_typed_models_needed_by_garmincoach_import_and_validate_fixtures():
         for item in _fixture("training_readiness_list.json")
     ] == [71]
     assert [
+        TrainingReadiness.model_validate(item).recovery_time_change_phrase
+        for item in _fixture("training_readiness_reached_zero.json")
+    ] == ["REACHED_ZERO"]
+    assert [
         Activity.model_validate(item).activity_id
         for item in _fixture("activities.json")
     ] == [987654321]

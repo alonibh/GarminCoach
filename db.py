@@ -146,11 +146,17 @@ class DailyHealth(Base):
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     resting_hr: Mapped[Optional[float]] = mapped_column(Float)
     hrv_overnight: Mapped[Optional[float]] = mapped_column(Float)
+    hrv_weekly_avg: Mapped[Optional[float]] = mapped_column(Float)
+    hrv_status: Mapped[Optional[str]] = mapped_column(String(64))
+    hrv_feedback_phrase: Mapped[Optional[str]] = mapped_column(String(128))
+    hrv_7d_coverage_days: Mapped[Optional[int]] = mapped_column(Integer)
     hrv_baseline_low: Mapped[Optional[float]] = mapped_column(Float)
     hrv_baseline_high: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_high: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_low: Mapped[Optional[float]] = mapped_column(Float)
     body_battery_current: Mapped[Optional[float]] = mapped_column(Float)
+    body_battery_charged: Mapped[Optional[int]] = mapped_column(Integer)
+    body_battery_drained: Mapped[Optional[int]] = mapped_column(Integer)
     stress_avg: Mapped[Optional[float]] = mapped_column(Float)
     steps: Mapped[Optional[int]] = mapped_column(Integer)
     step_goal: Mapped[Optional[int]] = mapped_column(Integer)
@@ -158,6 +164,10 @@ class DailyHealth(Base):
     active_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     bmr_kcal: Mapped[Optional[int]] = mapped_column(Integer)
     training_readiness: Mapped[Optional[int]] = mapped_column(Integer)
+    recovery_time_source_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    recovery_time_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    recovery_time_change_phrase: Mapped[Optional[str]] = mapped_column(String(64))
+    recovery_time_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     training_status: Mapped[Optional[str]] = mapped_column(String(32))
 
 
@@ -611,10 +621,20 @@ _PLANNED_SESSION_ADD_COLUMNS = {
 
 
 _DAILY_HEALTH_ADD_COLUMNS = {
+    "hrv_weekly_avg": "FLOAT",
+    "hrv_status": "VARCHAR(64)",
+    "hrv_feedback_phrase": "VARCHAR(128)",
+    "hrv_7d_coverage_days": "INTEGER",
     "hrv_baseline_low": "FLOAT",
     "hrv_baseline_high": "FLOAT",
     "step_goal": "INTEGER",
     "body_battery_current": "FLOAT",
+    "body_battery_charged": "INTEGER",
+    "body_battery_drained": "INTEGER",
+    "recovery_time_source_minutes": "INTEGER",
+    "recovery_time_minutes": "INTEGER",
+    "recovery_time_change_phrase": "VARCHAR(64)",
+    "recovery_time_observed_at": "DATETIME",
 }
 
 
