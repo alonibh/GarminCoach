@@ -133,6 +133,7 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
         freshness.STRESS,
     ):
         freshness.record_signal(session, signal, today, freshness.FRESH, "test")
+    freshness.set_capability_override(session, "recovery_time_connect", "unsupported")
     session.commit()
     monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
     monkeypatch.setattr(app_module, "get_local_date", lambda: today)
@@ -212,8 +213,8 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
     }
     assert recovery["signal_rows"][2] == {
         "label": "Recovery Time",
-        "value": "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect.",
-        "indicator": "Watch only",
+        "value": "Recovery Time is available on the watch; availability through Garmin Connect is unverified.",
+        "indicator": "Unverified",
         "tone": "neutral",
     }
 

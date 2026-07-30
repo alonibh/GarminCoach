@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 import inspect as pyinspect
 
+import pytest
+
 from sqlalchemy import create_engine, inspect, text
 
 import db
@@ -32,7 +34,6 @@ def test_watch_change_keeps_account_activity_scale_and_old_device_evidence(sessi
     freshness.note_capability_observed(session, "training_readiness")
     freshness.note_capability_observed(session, "fitness_age")
     freshness.note_capability_observed(session, "vo2max", activity_domain="running")
-    freshness.note_capability_probe(session, "body_composition", "empty")
     first = freshness.capability_ref(session).scope_key
 
     freshness.note_capability_from_device(session, {"lastUsedDeviceName": "vivoactive 5"})
@@ -85,6 +86,33 @@ def test_body_composition_remains_unprobed_and_has_no_sync_endpoint_call(session
     assert "body_composition" not in pyinspect.getsource(sync_service)
 
 
+def test_body_composition_contract_gate_rejects_evidence_and_never_authorizes_calls(session):
+    for context in ("priority", "incremental", "stage1", "scheduled", "full"):
+        assert freshness.capability_fetch_decision(session, "body_composition", context) == "skip_unknown_not_due"
+    with pytest.raises(ValueError, match="contract gate"):
+        freshness.note_capability_probe(session, "body_composition", "empty")
+    with pytest.raises(ValueError, match="contract gate"):
+        freshness.note_capability_observed(session, "body_composition")
+    for state in ("supported", "unsupported"):
+        with pytest.raises(ValueError, match="contract gate"):
+            freshness.set_capability_override(session, "body_composition", state)
+    assert _row(session, "body_composition") is None
+
+
+def test_body_composition_gate_masks_stale_row_and_diagnostics(session):
+    stale = MetricCapability(
+        metric="body_composition", scope_kind="scale", scope_key="scale",
+        support_state="supported", override_state="supported", evidence_source="test",
+        first_observed_at=datetime(2026, 7, 1), last_observed_at=datetime(2026, 7, 1),
+        last_probe_at=datetime(2026, 7, 1), last_probe_outcome="observed", updated_at=datetime(2026, 7, 1),
+    )
+    session.add(stale)
+    assert freshness.capability_state(session, "body_composition") == "unknown"
+    diagnostic = next(row for row in freshness.capability_diagnostics(session)["capabilities"] if row["key"] == "body_composition")
+    assert diagnostic["scope_kind"] == "scale" and diagnostic["scope_key"] == "scale"
+    assert diagnostic["effective_state"] == "unknown" and diagnostic["contract_gated"] is True
+
+
 def test_legacy_capability_migration_preserves_rows_and_provenance(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}", future=True)
     other_tables = [table for table in db.Base.metadata.sorted_tables if table.name != "device_capabilities"]
@@ -134,3 +162,22 @@ def test_legacy_capability_migration_preserves_rows_and_provenance(tmp_path):
     db._migrate_add_columns(engine)
     with engine.begin() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM device_capabilities")).scalar() == 5
+
+
+def test_body_composition_gate_migration_normalizes_only_body_rows(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'scoped.db'}", future=True)
+    db.Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO device_capabilities VALUES
+            ('body_composition', 'scale', 'scale', 'supported', 'old', '2026-07-01', '2026-07-01', 'unsupported', NULL, 'v1', '2026-07-01', '2026-07-01', 'observed', '2026-07-01'),
+            ('fitness_age', 'account', 'account', 'supported', 'observation', '2026-07-02', '2026-07-02', NULL, NULL, 'v1', NULL, NULL, NULL, '2026-07-02')
+        """))
+    db._migrate_add_columns(engine)
+    with engine.begin() as conn:
+        body = conn.execute(text("SELECT * FROM device_capabilities WHERE metric = 'body_composition'")).mappings().one()
+        fitness = conn.execute(text("SELECT * FROM device_capabilities WHERE metric = 'fitness_age'")).mappings().one()
+        marker = conn.execute(text("SELECT 1 FROM app_migrations WHERE migration_key = :key"), {"key": db._BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY}).first()
+    assert marker and (body["support_state"], body["override_state"], body["last_probe_at"], body["last_observed_at"], body["evidence_source"]) == ("unknown", None, None, None, "contract_gate")
+    assert (fitness["support_state"], fitness["evidence_source"], fitness["last_observed_at"]) == ("supported", "observation", "2026-07-02")
+    db._migrate_add_columns(engine)

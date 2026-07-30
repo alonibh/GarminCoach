@@ -23,6 +23,7 @@ from metrics.capability_registry import (
     SOURCES,
     capability_ref_for,
     fetch_decision,
+    is_contract_gated,
     registry_rule,
     resolve_device_identity,
     scope_kind_for,
@@ -182,6 +183,8 @@ def capability_state(
     scope_kind: str | None = None,
     scope_key: str | None = None,
 ) -> str:
+    if is_contract_gated(metric):
+        return "unknown"
     row = _capability_row(session, capability_ref(
         session, metric, activity_domain=activity_domain,
         scope_kind=scope_kind, scope_key=scope_key,
@@ -201,6 +204,8 @@ def note_capability_observed(
     scope_kind: str | None = None,
     scope_key: str | None = None,
 ) -> MetricCapability:
+    if is_contract_gated(metric):
+        raise ValueError(f"{metric} is blocked by its contract gate")
     now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
     ref = capability_ref(
         session, metric, activity_domain=activity_domain,
@@ -231,6 +236,8 @@ def note_capability_probe(
 ) -> None:
     if outcome not in {"observed", "empty", "ordinary_error", "authentication_error", "rate_limited"}:
         raise ValueError("Unknown capability probe outcome")
+    if is_contract_gated(metric):
+        raise ValueError(f"{metric} is blocked by its contract gate")
     now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
     ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
     row = _capability_row(session, ref) or _new_capability(ref, now)
@@ -244,6 +251,10 @@ def capability_fetch_decision(
     session: Session, metric: str, context: str, *, activity_domain: str | None = None,
     scope_kind: str | None = None, scope_key: str | None = None,
 ) -> str:
+    if is_contract_gated(metric):
+        # Contract-gated metrics are no-call in every sync context; this is
+        # intentionally not a probe-cadence result.
+        return "skip_unknown_not_due"
     ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
     row = _capability_row(session, ref)
     return fetch_decision(
@@ -256,15 +267,25 @@ def capability_fetch_decision(
 def capability_diagnostics(session: Session) -> dict:
     identity = _identity_from_state(session)
     rows = []
+    has_body_composition = False
     for row in session.query(MetricCapability).order_by(
         MetricCapability.metric, MetricCapability.scope_kind, MetricCapability.scope_key
     ):
+        gated = is_contract_gated(row.metric)
+        has_body_composition = has_body_composition or row.metric == "body_composition"
         rows.append({"key": row.metric, "scope_kind": row.scope_kind, "scope_key": row.scope_key,
                      "current_device": bool(identity and row.scope_kind == "device" and row.scope_key == identity.model_key),
-                     "state": row.support_state, "effective_state": row.override_state or row.support_state or "unknown",
+                     "state": row.support_state, "effective_state": "unknown" if gated else row.override_state or row.support_state or "unknown",
                      "evidence_source": row.evidence_source, "source_verified_on": row.source_verified_on.isoformat() if row.source_verified_on else None,
                      "last_probe_at": row.last_probe_at.isoformat() if row.last_probe_at else None,
-                     "last_probe_outcome": row.last_probe_outcome, "overridden": bool(row.override_state)})
+                     "last_probe_outcome": row.last_probe_outcome, "overridden": bool(row.override_state),
+                     "contract_gated": gated})
+    if not has_body_composition:
+        rows.append({"key": "body_composition", "scope_kind": "scale", "scope_key": "scale",
+                     "current_device": False, "state": "unknown", "effective_state": "unknown",
+                     "evidence_source": "contract_gate", "source_verified_on": None,
+                     "last_probe_at": None, "last_probe_outcome": None, "overridden": False,
+                     "contract_gated": True})
     return {"device": None if identity is None else {"model_key": identity.model_key, "display_name": identity.display_name}, "registry_version": GARMIN_CAPABILITY_REGISTRY_VERSION, "capabilities": rows}
 
 
@@ -274,6 +295,16 @@ def set_capability_override(
 ) -> None:
     if state not in {None, "supported", "unsupported"}:
         raise ValueError("Capability override must be supported, unsupported, or None")
+    if is_contract_gated(metric):
+        if state is not None:
+            raise ValueError(f"{metric} is blocked by its contract gate")
+        ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
+        row = _capability_row(session, ref)
+        if row:
+            row.override_state = None
+            row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            session.add(row)
+        return
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
     row = _capability_row(session, ref) or _new_capability(ref, now)

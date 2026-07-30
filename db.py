@@ -670,6 +670,7 @@ _DEVICE_CAPABILITY_ADD_COLUMNS = {
 }
 
 _CAPABILITY_SCOPE_MIGRATION_KEY = "metric_capabilities_scoped_identity_2026_07_30_v1"
+_BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY = "body_composition_capability_contract_gate_2026_07_30_v1"
 
 
 def _migrate_capability_scopes(conn) -> None:
@@ -737,6 +738,31 @@ def _migrate_capability_scopes(conn) -> None:
         "CREATE INDEX ix_device_capabilities_scope_metric "
         "ON device_capabilities (scope_kind, scope_key, metric)"
     ))
+
+
+def _normalize_body_composition_contract_gate(conn) -> None:
+    """Remove any pre-contract Body Composition capability evidence."""
+    from sqlalchemy import text
+
+    conn.execute(text("""
+        UPDATE device_capabilities
+        SET support_state = 'unknown', override_state = NULL,
+            first_observed_at = NULL, last_observed_at = NULL,
+            last_probe_at = NULL, last_probe_outcome = NULL,
+            evidence_source = 'contract_gate', source_verified_on = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE metric = 'body_composition'
+    """))
+    conn.execute(text("""
+        INSERT INTO device_capabilities (
+            metric, scope_kind, scope_key, support_state, evidence_source, updated_at
+        )
+        SELECT 'body_composition', 'scale', 'scale', 'unknown', 'contract_gate', CURRENT_TIMESTAMP
+        WHERE NOT EXISTS (
+            SELECT 1 FROM device_capabilities
+            WHERE metric = 'body_composition' AND scope_kind = 'scale' AND scope_key = 'scale'
+        )
+    """))
 
 
 _ATHLETE_PROFILE_ADD_COLUMNS = {
@@ -845,6 +871,16 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                 "INSERT INTO app_migrations (migration_key, applied_at) "
                 "VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": _CAPABILITY_SCOPE_MIGRATION_KEY})
+
+        body_gate_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY},
+        ).first()
+        if not body_gate_applied:
+            _normalize_body_composition_contract_gate(conn)
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY})
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}

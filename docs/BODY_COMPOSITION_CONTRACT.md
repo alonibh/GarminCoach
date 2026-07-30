@@ -4,8 +4,9 @@ GarminCoach does **not** synchronize body composition in this release.
 
 The capability model may represent Body Composition with the non-PII
 scale-scoped key `scale` for diagnostics, but that state remains unknown and
-unprobed. Scope does not satisfy this contract gate or authorize an endpoint
-call, storage, or UI.
+unprobed. The capability layer enforces this no-probe, no-observation, and
+no-override contract gate. Scope does not authorize an endpoint call, storage,
+or UI.
 
 The installed, pinned `garminconnect==0.3.7` package exposes the public method
 `Garmin.get_body_composition(startdate: str, enddate: str | None = None) -> dict[str, Any]`.

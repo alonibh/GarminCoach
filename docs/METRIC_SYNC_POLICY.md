@@ -202,9 +202,10 @@ model's rows without clearing prior model history or rewriting account,
 activity, or scale evidence. Legacy generic VO2 max evidence is retained as
 `legacy_unverified` for audit but cannot authorize a sport-specific decision.
 
-Body Composition remains scale-scoped but unknown and unprobed. Scope does not
-authorize its endpoint, storage, or UI before the separate fixture-and-units
-contract gate is complete.
+Body Composition remains scale-scoped but effectively unknown and unprobed.
+The capability layer returns a no-call decision and rejects probe, observation,
+and support-override writes until the separate fixture-and-units contract gate
+is complete; scope does not authorize its endpoint, storage, or UI.
 
 ## 6. Metrics not planned for V1
 

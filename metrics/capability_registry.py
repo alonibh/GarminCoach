@@ -44,6 +44,13 @@ class CapabilityRef:
         return (self.metric, self.scope_kind, self.scope_key)
 
 
+@dataclass(frozen=True)
+class CapabilityPolicy:
+    """Non-ownership capability constraints enforced by every API helper."""
+
+    contract_gated: bool = False
+
+
 # This is deliberately the only ownership mapping.  Call sites may supply an
 # activity domain, but they never choose a scope kind for a metric themselves.
 CAPABILITY_SCOPE_KINDS: Mapping[str, ScopeKind] = MappingProxyType({
@@ -60,13 +67,19 @@ CAPABILITY_SCOPE_KINDS: Mapping[str, ScopeKind] = MappingProxyType({
 DEVICE_CAPABILITY_KEYS = tuple(
     metric for metric in CAPABILITY_KEYS if CAPABILITY_SCOPE_KINDS[metric] == "device"
 )
-
-
+CAPABILITY_POLICIES: Mapping[str, CapabilityPolicy] = MappingProxyType({
+    metric: CapabilityPolicy(contract_gated=metric == "body_composition")
+    for metric in CAPABILITY_KEYS
+})
 def scope_kind_for(metric: str) -> ScopeKind:
     try:
         return CAPABILITY_SCOPE_KINDS[metric]
     except KeyError as exc:
         raise ValueError(f"Unknown capability metric: {metric}") from exc
+
+
+def is_contract_gated(metric: str) -> bool:
+    return CAPABILITY_POLICIES[metric].contract_gated
 
 
 def normalize_activity_domain(value: object) -> str:
