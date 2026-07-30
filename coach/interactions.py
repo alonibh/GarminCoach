@@ -1015,10 +1015,14 @@ def _compensate_remote_recovery(api, *, original_id: int | None, walk_id: int | 
     try:
         current_originals = _occurrences(api, original_id, target)
         current_walks = _occurrences(api, walk_id, target)
-        if schedule_attempted and not set(current_walks) - set(before_walks) and not before_walks:
-            # A schedule attempt followed by no observable occurrence cannot be
-            # proven safe to compensate.
-            return False
+        # A schedule attempt whose new occurrence is no longer observable is
+        # unresolved, but must not prevent safe restoration of an original
+        # occurrence that this invocation may already have removed.
+        unresolved_walk = (
+            schedule_attempted
+            and not set(current_walks) - set(before_walks)
+            and not before_walks
+        )
         for occurrence in set(current_walks) - set(before_walks):
             api.unschedule_workout(occurrence)
         if before_originals and not current_originals and original_id:
@@ -1028,7 +1032,11 @@ def _compensate_remote_recovery(api, *, original_id: int | None, walk_id: int | 
         # Garmin gives a newly scheduled restoration a new occurrence ID.  The
         # original contract is cardinality on the exact day; walks, which may
         # predate this invocation, retain their exact proven IDs.
-        return len(final_originals) == len(before_originals) and set(final_walks) == set(before_walks)
+        return (
+            not unresolved_walk
+            and len(final_originals) == len(before_originals)
+            and set(final_walks) == set(before_walks)
+        )
     except Exception as exc:
         if isinstance(exc, GarminConnectAuthenticationError):
             marker = getattr(garmin_client, "mark_session_expired", None)

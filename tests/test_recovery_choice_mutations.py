@@ -11,6 +11,7 @@ from garminconnect import GarminConnectAuthenticationError
 from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME, ActiveRecoveryTemplateResult
 from coach.decision_engine import evaluate_selected_workout_recovery
 from coach.interactions import (
+    _compensate_remote_recovery,
     apply_claimed_recovery_choice,
     claim_recovery_choice,
     reply_markup,
@@ -353,3 +354,21 @@ def test_auth_during_rest_compensation_is_truthful_and_marks_cleanup_expired(ses
     assert state == "failed" and "disconnected" in text and "could not be fully verified" in text
     assert "Nothing was changed" not in text and "original workout remains unchanged" not in text
     assert primary.expired and cleanup.expired and planned.status == "planned"
+
+
+def test_unobservable_walk_still_restores_original_before_incomplete_result():
+    api = _BoundaryApi(originals=(), walks=())
+    client = _Client(api)
+    api.depth = 1
+    try:
+        verified = _compensate_remote_recovery(
+            api, original_id=55, walk_id=77, target=DAY,
+            before_originals=[900], before_walks=[], schedule_attempted=True,
+            garmin_client=client,
+        )
+    finally:
+        api.depth = 0
+    assert verified is False
+    assert len(api.by_workout[55]) == 1
+    assert api.by_workout[77] == []
+    assert api.mutation_depths == [1]
