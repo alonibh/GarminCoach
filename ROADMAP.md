@@ -81,22 +81,29 @@ resumes safely after failure, and never restarts a monolithic 90-day health craw
 **Gate:** no biometric except fresh Training Readiness can automatically change
 the selected workout, and every mutation requires a current Telegram confirmation.
 
+**Complete:** Phase 3 is complete for all currently verified metrics and recovery actions. Body Composition remains intentionally deferred behind its sanitized fixture-and-units contract gate and is not required for Phase 3 closure.
+
 ## Phase 4: Progress and UI
 
-- [ ] Design exercise-level template-weight progression proposals from differences between matched completed working sets and the active template.
-- [ ] Design exercise-level template-weight proposals from explicit post-workout feedback such as too easy or too hard.
-- [ ] Require preview and explicit confirmation before every template mutation.
-- [ ] Exclude warm-up sets from progression evidence.
-- [ ] Define matching, confidence, increments, duplicate suppression, stale-proposal handling, rollback, and auditability before implementation.
-- [ ] Never automatically change exercises, sets, repetitions, or weights.
+- [x] Phase 4A: deterministic strength-progression contract. The approved
+  documentation-only design is
+  [`docs/STRENGTH_PROGRESSION_CONTRACT.md`](docs/STRENGTH_PROGRESSION_CONTRACT.md).
+- [ ] Phase 4B: durable evidence, streak, proposal, and audit persistence plus a
+  read-only deterministic proposal engine.
+- [ ] Phase 4C: web review/edit/approve/reject flow and confirmed local
+  template-weight mutation.
+- [ ] Phase 4D: deduplicated Telegram notification and bounded integration
+  triggers.
+- [ ] Later Phase 4: meaningful 28-day recovery/health trends.
+- [ ] Later Phase 4: Fitness Age and VO2 max history, capability-aware Training
+  Status, weekly-summary improvements, and compact aggregate AI context.
 
-- [ ] Add meaningful 28-day recovery/health trends.
-- [ ] Keep Fitness Age and VO2 max with weekly current-value refresh and local history.
-- [ ] Show Training Status only when account/device capability supports it.
-- [ ] Add weight/body-fat trends only when useful account data exists.
-- [ ] Improve weekly summary with meaningful changes, coverage, program adherence,
-  and strength progression.
-- [ ] Keep AI context compact and exclude raw sensor histories.
+Only Phase 4A design/specification is complete. The later runtime stages remain
+unchecked. Progression evidence has no authority from Garmin RPE, Garmin Feel,
+subjective feedback, biometrics, readiness, or recovery metrics. Any future
+approved change is limited to a local `SessionExercise.weight_kg`; it never
+automatically rewrites exercise structure or already scheduled Garmin workouts.
+
 
 ## Later product work
 
