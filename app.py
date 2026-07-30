@@ -894,7 +894,7 @@ def _readiness_tiles() -> list[dict]:
             if health and health.recovery_time_minutes is not None and is_fresh(RECOVERY_TIME):
                 recovery_value = f"Garmin recovery timer: {int(health.recovery_time_minutes)} min remaining"
                 recovery_indicator = "Informational"
-            elif device_recovery == "supported" and recovery_capability == "unsupported":
+            elif device_recovery == "supported" and recovery_capability in {"unsupported", "unknown"}:
                 recovery_value = "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect."
                 recovery_indicator = "Watch only"
             elif recovery_capability == "unknown":

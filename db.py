@@ -431,12 +431,14 @@ class MetricSnapshot(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
-class DeviceCapability(Base):
-    """Tri-state device support; missing observations never imply unsupported."""
+class MetricCapability(Base):
+    """Tri-state capability evidence, isolated by its durable source scope."""
 
     __tablename__ = "device_capabilities"
 
     metric: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scope_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    scope_key: Mapped[str] = mapped_column(String(96), primary_key=True)
     support_state: Mapped[str] = mapped_column(String(16), default="unknown")
     evidence_source: Mapped[str] = mapped_column(String(64), default="unresolved")
     first_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -448,6 +450,15 @@ class DeviceCapability(Base):
     last_probe_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_probe_outcome: Mapped[Optional[str]] = mapped_column(String(32))
     updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+    __table_args__ = (
+        Index("ix_device_capabilities_scope_metric", "scope_kind", "scope_key", "metric"),
+    )
+
+
+# Compatibility import for integrations that imported the old model name.
+# There is one table and one source of truth.
+DeviceCapability = MetricCapability
 
 
 class ObservationFreshness(Base):
@@ -658,6 +669,75 @@ _DEVICE_CAPABILITY_ADD_COLUMNS = {
     "last_probe_outcome": "VARCHAR(32)",
 }
 
+_CAPABILITY_SCOPE_MIGRATION_KEY = "metric_capabilities_scoped_identity_2026_07_30_v1"
+
+
+def _migrate_capability_scopes(conn) -> None:
+    """Rebuild the legacy metric-primary-key table as a scoped capability table."""
+    from sqlalchemy import inspect, text
+    from metrics.capability_registry import legacy_capability_ref
+
+    inspector = inspect(conn)
+    if "device_capabilities" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("device_capabilities")}
+    primary_key = inspector.get_pk_constraint("device_capabilities").get("constrained_columns") or []
+    if {"scope_kind", "scope_key"}.issubset(columns) and set(primary_key) == {
+        "metric", "scope_kind", "scope_key",
+    }:
+        return
+
+    current_model = conn.execute(text(
+        "SELECT value FROM sync_state WHERE key = 'garmin_device_model_key'"
+    )).scalar()
+    rows = conn.execute(text("SELECT * FROM device_capabilities")).mappings().all()
+    conn.execute(text("""
+        CREATE TABLE device_capabilities_scoped_new (
+            metric VARCHAR(64) NOT NULL,
+            scope_kind VARCHAR(16) NOT NULL,
+            scope_key VARCHAR(96) NOT NULL,
+            support_state VARCHAR(16),
+            evidence_source VARCHAR(64),
+            first_observed_at DATETIME,
+            last_observed_at DATETIME,
+            override_state VARCHAR(16),
+            device_model_key VARCHAR(96),
+            registry_version VARCHAR(32),
+            source_verified_on DATE,
+            last_probe_at DATETIME,
+            last_probe_outcome VARCHAR(32),
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (metric, scope_kind, scope_key)
+        )
+    """))
+    for row in rows:
+        device_key = row.get("device_model_key") or current_model
+        ref = legacy_capability_ref(row["metric"], device_key)
+        conn.execute(text("""
+            INSERT INTO device_capabilities_scoped_new (
+                metric, scope_kind, scope_key, support_state, evidence_source,
+                first_observed_at, last_observed_at, override_state, device_model_key,
+                registry_version, source_verified_on, last_probe_at, last_probe_outcome,
+                updated_at
+            ) VALUES (
+                :metric, :scope_kind, :scope_key, :support_state, :evidence_source,
+                :first_observed_at, :last_observed_at, :override_state, :device_model_key,
+                :registry_version, :source_verified_on, :last_probe_at, :last_probe_outcome,
+                :updated_at
+            )
+        """), {
+            **dict(row),
+            "scope_kind": ref.scope_kind,
+            "scope_key": ref.scope_key,
+            "device_model_key": ref.scope_key if ref.scope_kind == "device" else row.get("device_model_key"),
+        })
+    conn.execute(text("DROP TABLE device_capabilities"))
+    conn.execute(text("ALTER TABLE device_capabilities_scoped_new RENAME TO device_capabilities"))
+    conn.execute(text(
+        "CREATE INDEX ix_device_capabilities_scope_metric "
+        "ON device_capabilities (scope_kind, scope_key, metric)"
+    ))
+
 
 _ATHLETE_PROFILE_ADD_COLUMNS = {
     "training_type": "VARCHAR(32)",
@@ -751,6 +831,21 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             if col not in existing_capabilities:
                 conn.execute(text(f"ALTER TABLE device_capabilities ADD COLUMN {col} {sqltype}"))
 
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS app_migrations ("
+            "migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"
+        ))
+        already_scoped = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _CAPABILITY_SCOPE_MIGRATION_KEY},
+        ).first()
+        if not already_scoped:
+            _migrate_capability_scopes(conn)
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) "
+                "VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _CAPABILITY_SCOPE_MIGRATION_KEY})
+
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}
         missing_profile = {k: v for k, v in _ATHLETE_PROFILE_ADD_COLUMNS.items() if k not in existing_profile}
@@ -797,10 +892,6 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
 
         # One-time data fixes are tracked so a later user edit is never
         # overwritten on every startup.
-        conn.execute(text(
-            "CREATE TABLE IF NOT EXISTS app_migrations ("
-            "migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"
-        ))
         rest_migration = "total_package_default_rest_60_v1"
         already_applied = conn.execute(
             text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),

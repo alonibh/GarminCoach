@@ -115,7 +115,7 @@ def test_unknown_readiness_probe_uses_current_error_or_missing_outcome(session, 
     assert (readiness.state, readiness.error_code) == (freshness.ERROR, "timeout")
     assert (recovery.state, recovery.error_code) == (freshness.ERROR, "timeout")
 
-    session.get(DeviceCapability, freshness.TRAINING_READINESS).last_probe_at = datetime.now() - timedelta(days=8)
+    session.get(DeviceCapability, freshness.capability_ref(session).identity).last_probe_at = datetime.now() - timedelta(days=8)
     monkeypatch.setattr(svc.client, "training_readiness", lambda _day: {})
     svc._sync_current_optional_health(session, TARGET, context="full")
     svc._record_full_sync_freshness(session, TARGET, None)

@@ -15,13 +15,94 @@ from types import MappingProxyType
 from typing import Literal, Mapping, Pattern
 
 
-GARMIN_CAPABILITY_REGISTRY_VERSION = "2026-07-29-v1"
+GARMIN_CAPABILITY_REGISTRY_VERSION = "2026-07-30-v2"
 CAPABILITY_KEYS = (
     "training_readiness", "training_status", "recovery_time_device",
     "recovery_time_connect", "hrv_status", "body_battery", "fitness_age", "vo2max",
+    "body_composition",
 )
 SupportState = Literal["supported", "unsupported", "unknown"]
 FetchDecision = Literal["fetch_supported", "probe_unknown", "skip_unsupported", "skip_unknown_not_due"]
+ScopeKind = Literal["device", "account", "scale", "activity"]
+
+ACCOUNT_SCOPE_KEY = "account"
+SCALE_SCOPE_KEY = "scale"
+UNKNOWN_DEVICE_SCOPE_KEY = "unknown_device"
+LEGACY_UNVERIFIED_ACTIVITY_SCOPE_KEY = "legacy_unverified"
+
+
+@dataclass(frozen=True)
+class CapabilityRef:
+    """The durable, non-PII identity of one metric capability."""
+
+    metric: str
+    scope_kind: ScopeKind
+    scope_key: str
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        return (self.metric, self.scope_kind, self.scope_key)
+
+
+# This is deliberately the only ownership mapping.  Call sites may supply an
+# activity domain, but they never choose a scope kind for a metric themselves.
+CAPABILITY_SCOPE_KINDS: Mapping[str, ScopeKind] = MappingProxyType({
+    "training_readiness": "device",
+    "training_status": "device",
+    "recovery_time_device": "device",
+    "recovery_time_connect": "account",
+    "hrv_status": "device",
+    "body_battery": "device",
+    "fitness_age": "account",
+    "vo2max": "activity",
+    "body_composition": "scale",
+})
+DEVICE_CAPABILITY_KEYS = tuple(
+    metric for metric in CAPABILITY_KEYS if CAPABILITY_SCOPE_KINDS[metric] == "device"
+)
+
+
+def scope_kind_for(metric: str) -> ScopeKind:
+    try:
+        return CAPABILITY_SCOPE_KINDS[metric]
+    except KeyError as exc:
+        raise ValueError(f"Unknown capability metric: {metric}") from exc
+
+
+def normalize_activity_domain(value: object) -> str:
+    """Return the narrow activity domain exposed by existing summaries."""
+    normalized = normalize_device_name(value)
+    if "run" in normalized:
+        return "running"
+    if "cycl" in normalized or "ride" in normalized or "bik" in normalized:
+        return "cycling"
+    return ""
+
+
+def capability_ref_for(
+    metric: str,
+    *,
+    device_model_key: str | None = None,
+    activity_domain: str | None = None,
+) -> CapabilityRef:
+    kind = scope_kind_for(metric)
+    if kind == "device":
+        return CapabilityRef(metric, kind, device_model_key or UNKNOWN_DEVICE_SCOPE_KEY)
+    if kind == "account":
+        return CapabilityRef(metric, kind, ACCOUNT_SCOPE_KEY)
+    if kind == "scale":
+        return CapabilityRef(metric, kind, SCALE_SCOPE_KEY)
+    domain = normalize_activity_domain(activity_domain)
+    if not domain:
+        raise ValueError(f"{metric} requires an explicit normalized activity domain")
+    return CapabilityRef(metric, kind, domain)
+
+
+def legacy_capability_ref(metric: str, device_model_key: str | None) -> CapabilityRef:
+    """Map a metric-only legacy row without inventing activity evidence."""
+    if scope_kind_for(metric) == "activity":
+        return CapabilityRef(metric, "activity", LEGACY_UNVERIFIED_ACTIVITY_SCOPE_KEY)
+    return capability_ref_for(metric, device_model_key=device_model_key)
 
 
 @dataclass(frozen=True)
@@ -72,10 +153,8 @@ _VA5 = MappingProxyType({
     "training_readiness": CapabilityRule("unsupported", "vivoactive_5_specs", "Absent from the reviewed official Vivoactive 5 feature set."),
     "training_status": CapabilityRule("unsupported", "training_status_faq", "Official compatibility material reviewed for Vivoactive 5."),
     "recovery_time_device": CapabilityRule("supported", "vivoactive_5_manual"),
-    "recovery_time_connect": CapabilityRule("unsupported", "vivoactive_5_manual", "Recovery Time is device-only for this model."),
     "hrv_status": CapabilityRule("supported", "vivoactive_5_manual"),
     "body_battery": CapabilityRule("supported", "vivoactive_5_manual"),
-    "vo2max": CapabilityRule("supported", "vivoactive_5_manual"),
 })
 
 MODEL_RULES = (

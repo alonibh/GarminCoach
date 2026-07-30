@@ -70,7 +70,7 @@ resumes safely after failure, and never restarts a monolithic 90-day health craw
 - [ ] Add conditional body-composition support only after a sanitized pinned
   payload-and-units fixture; see
   [`docs/BODY_COMPOSITION_CONTRACT.md`](docs/BODY_COMPOSITION_CONTRACT.md).
-- [ ] Make capability device/account/scale/activity scoped.
+- [x] Make capability device/account/scale/activity scoped.
 - [x] Evaluate recovery only after a workout is selected in the website.
 - [x] Use Training Readiness as the only biometric with direct V1 authority.
 - [x] Show unsupported-device sleep/HRV/Recovery Time warnings without inventing

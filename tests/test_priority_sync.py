@@ -61,7 +61,7 @@ def test_priority_sync_records_supported_readiness_and_per_signal_freshness(sess
 
     assert result["ready"] is True
     assert result["capability"] == "supported"
-    assert session.get(DeviceCapability, freshness.TRAINING_READINESS).support_state == "supported"
+    assert session.get(DeviceCapability, freshness.capability_ref(session).identity).support_state == "supported"
     assert session.get(
         ObservationFreshness, (freshness.TRAINING_READINESS, date(2026, 7, 4))
     ).state == freshness.FRESH
@@ -111,7 +111,7 @@ def test_missing_readiness_does_not_turn_unknown_capability_into_unsupported(ses
     # Unknown is bounded-probe state, not a permanent critical morning wait.
     assert result["ready"] is True
     assert result["capability"] == "unknown"
-    capability = session.get(DeviceCapability, freshness.TRAINING_READINESS)
+    capability = session.get(DeviceCapability, freshness.capability_ref(session).identity)
     assert capability.support_state == "unknown"
     assert capability.last_probe_outcome == "empty"
     assert result["states"][freshness.TRAINING_READINESS] == freshness.MISSING
@@ -142,7 +142,7 @@ def test_vivoactive_5_device_identity_authoritatively_marks_readiness_unsupporte
 
     result = sync_service.run_priority_sync()
 
-    capability = session.get(DeviceCapability, freshness.TRAINING_READINESS)
+    capability = session.get(DeviceCapability, freshness.capability_ref(session).identity)
     assert result["capability"] == "unsupported"
     assert capability.support_state == "unsupported"
     assert capability.override_state is None
@@ -176,7 +176,7 @@ def test_real_garmin_last_used_payload_identifies_vivoactive_5(session, monkeypa
 
     result = sync_service.run_priority_sync()
 
-    capability = session.get(DeviceCapability, freshness.TRAINING_READINESS)
+    capability = session.get(DeviceCapability, freshness.capability_ref(session).identity)
     assert result["capability"] == "unsupported"
     assert capability.support_state == "unsupported"
     assert capability.evidence_source == "registry:vivoactive_5_specs"
@@ -287,7 +287,7 @@ def test_optional_probe_current_empty_replaces_prior_ordinary_error(session, mon
     monkeypatch.setattr(sync_service.client, endpoint, failing_then_empty)
     target = date(2026, 7, 4)
     sync_service._sync_current_optional_health(session, target, context="scheduled")
-    row = session.get(DeviceCapability, metric)
+    row = session.get(DeviceCapability, freshness.capability_ref(session, metric).identity)
     assert row.last_probe_outcome == "ordinary_error"
     prior_cadence = datetime.now() - timedelta(days=8)
     row.last_probe_at = prior_cadence
@@ -314,7 +314,7 @@ def test_optional_probe_valid_result_after_ordinary_error_promotes_support(sessi
     monkeypatch.setattr(sync_service.client, endpoint, endpoint_call)
     target = date(2026, 7, 4)
     sync_service._sync_current_optional_health(session, target, context="scheduled")
-    row = session.get(DeviceCapability, metric)
+    row = session.get(DeviceCapability, freshness.capability_ref(session, metric).identity)
     row.last_probe_at = datetime.now() - timedelta(days=8)
     sync_service._sync_current_optional_health(session, target, context="scheduled")
     assert row.support_state == "supported" and row.last_probe_outcome == "observed"

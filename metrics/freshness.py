@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from db import (
     DailyHealth,
-    DeviceCapability,
+    MetricCapability,
     ObservationFreshness,
     Sleep,
     SyncState,
@@ -16,12 +16,16 @@ from db import (
 from time_utils import get_local_date, get_local_tz
 from metrics.capability_registry import (
     CAPABILITY_KEYS,
+    DEVICE_CAPABILITY_KEYS,
     GARMIN_CAPABILITY_REGISTRY_VERSION,
+    CapabilityRef,
     DeviceIdentity,
     SOURCES,
+    capability_ref_for,
     fetch_decision,
     registry_rule,
     resolve_device_identity,
+    scope_kind_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,51 +72,81 @@ def _set_state(session: Session, key: str, value: str) -> None:
     session.add(row)
 
 
+def capability_ref(
+    session: Session,
+    metric: str = TRAINING_READINESS,
+    *,
+    activity_domain: str | None = None,
+    scope_kind: str | None = None,
+    scope_key: str | None = None,
+) -> CapabilityRef:
+    """Resolve exactly one capability scope; there is never cross-scope fallback."""
+    if (scope_kind is None) != (scope_key is None):
+        raise ValueError("scope_kind and scope_key must be supplied together")
+    if scope_kind is not None:
+        expected = scope_kind_for(metric)
+        if scope_kind != expected:
+            raise ValueError(f"{metric} is {expected}-scoped, not {scope_kind}-scoped")
+        return CapabilityRef(metric, scope_kind, scope_key)
+    identity = _identity_from_state(session)
+    return capability_ref_for(
+        metric,
+        device_model_key=identity.model_key if identity else None,
+        activity_domain=activity_domain,
+    )
+
+
+def _capability_row(session: Session, ref: CapabilityRef) -> MetricCapability | None:
+    return session.get(MetricCapability, ref.identity)
+
+
+def _new_capability(ref: CapabilityRef, now: datetime, *, source: str = "unresolved") -> MetricCapability:
+    return MetricCapability(
+        metric=ref.metric,
+        scope_kind=ref.scope_kind,
+        scope_key=ref.scope_key,
+        support_state="unknown",
+        evidence_source=source,
+        device_model_key=ref.scope_key if ref.scope_kind == "device" else None,
+        updated_at=now,
+    )
+
+
 def note_capability_from_device(
     session: Session,
     payload: object,
     metric: str = TRAINING_READINESS,
     *,
     observed_at: datetime | None = None,
-) -> DeviceCapability | None:
+) -> MetricCapability | None:
     previous = _identity_from_state(session)
     identity = resolve_device_identity(payload, previous)
     if not identity:
         return None
     now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
-    model_changed = previous is not None and previous.model_key != identity.model_key
-    newly_detected = previous is None or model_changed
+    newly_detected = previous is None or previous.model_key != identity.model_key
     _set_state(session, "garmin_device_model_key", identity.model_key)
     _set_state(session, "garmin_device_display_name", identity.display_name)
     _set_state(session, "garmin_device_normalized_name", identity.normalized_name)
     _set_state(session, "garmin_capability_registry_version", GARMIN_CAPABILITY_REGISTRY_VERSION)
     _set_state(session, "garmin_device_last_seen_at", now.isoformat())
-    for capability in CAPABILITY_KEYS:
-        row = session.get(DeviceCapability, capability) or DeviceCapability(
-            metric=capability, support_state="unknown", evidence_source="unresolved", updated_at=now,
-        )
-        if model_changed:
-            # Overrides are policy layered on top of evidence.  Never carry
-            # evidence from the old watch into the new device.
-            override = row.override_state
-            row.support_state, row.evidence_source = "unknown", "unresolved"
-            row.first_observed_at = row.last_observed_at = None
-            row.last_probe_at = row.last_probe_outcome = None
-            row.source_verified_on = None
-            row.override_state = override
+    for capability in DEVICE_CAPABILITY_KEYS:
+        ref = capability_ref_for(capability, device_model_key=identity.model_key)
+        row = _capability_row(session, ref) or _new_capability(ref, now)
         rule = registry_rule(identity.model_key, capability)
         # Current-device observations survive an idempotent same-model refresh.
-        observed = row.support_state == "supported" and row.evidence_source == "garmin_observation" and not model_changed
+        observed = row.support_state == "supported" and row.evidence_source == "garmin_observation"
         if rule and not observed:
             row.support_state = rule.state
             row.evidence_source = f"registry:{rule.source_id}"
             row.source_verified_on = SOURCES[rule.source_id].verified_on
-        row.device_model_key = identity.model_key
         row.registry_version = GARMIN_CAPABILITY_REGISTRY_VERSION
         row.updated_at = now
         session.add(row)
     _set_state(session, "garmin_capability_newly_detected", "1" if newly_detected else "0")
-    return session.get(DeviceCapability, metric)
+    if scope_kind_for(metric) != "device":
+        return None
+    return _capability_row(session, capability_ref_for(metric, device_model_key=identity.model_key))
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -140,8 +174,18 @@ def _state_dt(session: Session, key: str) -> datetime | None:
     return _parse_iso(row.value if row else None)
 
 
-def capability_state(session: Session, metric: str = TRAINING_READINESS) -> str:
-    row = session.get(DeviceCapability, metric)
+def capability_state(
+    session: Session,
+    metric: str = TRAINING_READINESS,
+    *,
+    activity_domain: str | None = None,
+    scope_kind: str | None = None,
+    scope_key: str | None = None,
+) -> str:
+    row = _capability_row(session, capability_ref(
+        session, metric, activity_domain=activity_domain,
+        scope_kind=scope_kind, scope_key=scope_key,
+    ))
     if not row:
         return "unknown"
     return row.override_state or row.support_state or "unknown"
@@ -153,24 +197,24 @@ def note_capability_observed(
     *,
     observed_at: datetime | None = None,
     source: str = "garmin_observation",
-) -> DeviceCapability:
+    activity_domain: str | None = None,
+    scope_kind: str | None = None,
+    scope_key: str | None = None,
+) -> MetricCapability:
     now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
-    row = session.get(DeviceCapability, metric) or DeviceCapability(
-        metric=metric,
-        support_state="supported",
-        evidence_source=source,
-        first_observed_at=now,
-        updated_at=now,
+    ref = capability_ref(
+        session, metric, activity_domain=activity_domain,
+        scope_kind=scope_kind, scope_key=scope_key,
     )
+    row = _capability_row(session, ref) or _new_capability(ref, now, source=source)
     contradicted_registry = row.support_state == "unsupported" and row.evidence_source.startswith("registry:")
     row.support_state = "supported"
     if contradicted_registry:
-        logger.warning("Garmin capability observation contradicts registry: capability=%s model_key=%s", metric, row.device_model_key or "unknown")
+        logger.warning("Garmin capability observation contradicts registry: capability=%s scope=%s", metric, ref.scope_key)
     row.evidence_source = source
     row.source_verified_on = None
-    identity = _identity_from_state(session)
-    if identity:
-        row.device_model_key = identity.model_key
+    if ref.scope_kind == "device":
+        row.device_model_key = ref.scope_key
         row.registry_version = GARMIN_CAPABILITY_REGISTRY_VERSION
     row.first_observed_at = row.first_observed_at or now
     row.last_observed_at = now
@@ -181,21 +225,29 @@ def note_capability_observed(
     return row
 
 
-def note_capability_probe(session: Session, metric: str, outcome: str, *, observed_at: datetime | None = None) -> None:
+def note_capability_probe(
+    session: Session, metric: str, outcome: str, *, observed_at: datetime | None = None,
+    activity_domain: str | None = None, scope_kind: str | None = None, scope_key: str | None = None,
+) -> None:
     if outcome not in {"observed", "empty", "ordinary_error", "authentication_error", "rate_limited"}:
         raise ValueError("Unknown capability probe outcome")
     now = observed_at or datetime.now(timezone.utc).replace(tzinfo=None)
-    row = session.get(DeviceCapability, metric) or DeviceCapability(metric=metric, support_state="unknown", evidence_source="unresolved", updated_at=now)
+    ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
+    row = _capability_row(session, ref) or _new_capability(ref, now)
     if outcome in {"observed", "empty", "ordinary_error"}:
         row.last_probe_at = now
     row.last_probe_outcome, row.updated_at = outcome, now
     session.add(row)
 
 
-def capability_fetch_decision(session: Session, metric: str, context: str) -> str:
-    row = session.get(DeviceCapability, metric)
+def capability_fetch_decision(
+    session: Session, metric: str, context: str, *, activity_domain: str | None = None,
+    scope_kind: str | None = None, scope_key: str | None = None,
+) -> str:
+    ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
+    row = _capability_row(session, ref)
     return fetch_decision(
-        capability_state(session, metric), last_probe_at=row.last_probe_at if row else None,
+        capability_state(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key), last_probe_at=row.last_probe_at if row else None,
         newly_detected=False, context=context, capability=metric,
         interval_days=__import__("config").CAPABILITY_PROBE_INTERVAL_DAYS,
     )
@@ -204,22 +256,27 @@ def capability_fetch_decision(session: Session, metric: str, context: str) -> st
 def capability_diagnostics(session: Session) -> dict:
     identity = _identity_from_state(session)
     rows = []
-    for key in CAPABILITY_KEYS:
-        row = session.get(DeviceCapability, key)
-        rows.append({"key": key, "state": row.support_state if row else "unknown", "effective_state": capability_state(session, key), "evidence_source": row.evidence_source if row else "unresolved", "source_verified_on": row.source_verified_on.isoformat() if row and row.source_verified_on else None, "last_probe_at": row.last_probe_at.isoformat() if row and row.last_probe_at else None, "last_probe_outcome": row.last_probe_outcome if row else None, "overridden": bool(row and row.override_state)})
-    return {"device": None if identity is None else {"model_key": identity.model_key, "display_name": identity.display_name, "normalized_name": identity.normalized_name}, "registry_version": GARMIN_CAPABILITY_REGISTRY_VERSION, "capabilities": rows}
+    for row in session.query(MetricCapability).order_by(
+        MetricCapability.metric, MetricCapability.scope_kind, MetricCapability.scope_key
+    ):
+        rows.append({"key": row.metric, "scope_kind": row.scope_kind, "scope_key": row.scope_key,
+                     "current_device": bool(identity and row.scope_kind == "device" and row.scope_key == identity.model_key),
+                     "state": row.support_state, "effective_state": row.override_state or row.support_state or "unknown",
+                     "evidence_source": row.evidence_source, "source_verified_on": row.source_verified_on.isoformat() if row.source_verified_on else None,
+                     "last_probe_at": row.last_probe_at.isoformat() if row.last_probe_at else None,
+                     "last_probe_outcome": row.last_probe_outcome, "overridden": bool(row.override_state)})
+    return {"device": None if identity is None else {"model_key": identity.model_key, "display_name": identity.display_name}, "registry_version": GARMIN_CAPABILITY_REGISTRY_VERSION, "capabilities": rows}
 
 
-def set_capability_override(session: Session, metric: str, state: str | None) -> None:
+def set_capability_override(
+    session: Session, metric: str, state: str | None, *, activity_domain: str | None = None,
+    scope_kind: str | None = None, scope_key: str | None = None,
+) -> None:
     if state not in {None, "supported", "unsupported"}:
         raise ValueError("Capability override must be supported, unsupported, or None")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    row = session.get(DeviceCapability, metric) or DeviceCapability(
-        metric=metric,
-        support_state="unknown",
-        evidence_source="unresolved",
-        updated_at=now,
-    )
+    ref = capability_ref(session, metric, activity_domain=activity_domain, scope_kind=scope_kind, scope_key=scope_key)
+    row = _capability_row(session, ref) or _new_capability(ref, now)
     # Old rows used administrator_override as their only evidence marker.
     # Once the override is cleared, expose no invented historical evidence.
     if row.evidence_source == "administrator_override":

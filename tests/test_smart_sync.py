@@ -358,7 +358,7 @@ def test_stage1_order_windows_and_strength_limit(session, monkeypatch):
     ]
     monkeypatch.setattr(svc.client, "activities_by_date", lambda start, end: events.append(("activities", start, end)) or activities)
     monkeypatch.setattr(svc.client, "exercise_sets", lambda activity_id: events.append(("sets", activity_id)) or {})
-    session.add(DeviceCapability(metric="training_status", support_state="supported", evidence_source="test", updated_at=datetime.now()))
+    session.add(DeviceCapability(metric="training_status", scope_kind="device", scope_key="unknown_device", support_state="supported", evidence_source="test", updated_at=datetime.now()))
     session.commit()
 
     svc.run_sync()
@@ -446,8 +446,8 @@ def test_stage1_unsupported_optional_metrics_complete_without_calls(session, mon
     _stage1_client(monkeypatch, events)
     monkeypatch.setattr(svc.client, "activities_by_date", lambda *_: [])
     monkeypatch.setattr(svc.client, "exercise_sets", lambda *_: {})
-    session.add(DeviceCapability(metric="training_readiness", support_state="unsupported", evidence_source="test", updated_at=datetime.now()))
-    session.add(DeviceCapability(metric="training_status", support_state="unsupported", evidence_source="test", updated_at=datetime.now()))
+    session.add(DeviceCapability(metric="training_readiness", scope_kind="device", scope_key="unknown_device", support_state="unsupported", evidence_source="test", updated_at=datetime.now()))
+    session.add(DeviceCapability(metric="training_status", scope_kind="device", scope_key="unknown_device", support_state="unsupported", evidence_source="test", updated_at=datetime.now()))
     session.commit()
 
     svc.run_sync()

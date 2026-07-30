@@ -602,7 +602,8 @@ def _sync_activities(
         act_id = _upsert_activity(session, raw, enrich=enrich)
         if act_id is None:
             continue
-        if _is_strength(_g(raw, "activityType", "typeKey", default="") or ""):
+        activity_domain = _g(raw, "activityType", "typeKey", default="") or ""
+        if _is_strength(activity_domain):
             when = _parse_dt(raw.get("startTimeLocal") or raw.get("startTimeGMT")) or datetime.min
             strength_ids.append((when, act_id))
         value = _finite_number(raw.get("vO2MaxValue"))
@@ -613,7 +614,12 @@ def _sync_activities(
         if value is not None and value_date is not None:
             observed_vo2.append((value_date, float(value)))
             from metrics.freshness import note_capability_observed
-            note_capability_observed(session, "vo2max")
+            # Activity summaries expose VO2 max by sport; never generalize a
+            # running observation into cycling (or vice versa).
+            from metrics.capability_registry import normalize_activity_domain
+            domain = normalize_activity_domain(activity_domain)
+            if domain:
+                note_capability_observed(session, "vo2max", activity_domain=domain)
             if vo2_values is not None:
                 vo2_values.append((value_date, float(value)))
         count += 1

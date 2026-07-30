@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
 
-from db import DeviceCapability
+from db import MetricCapability
 from metrics import freshness
 from metrics.capability_registry import (
     CAPABILITY_KEYS,
+    DEVICE_CAPABILITY_KEYS,
     GARMIN_CAPABILITY_REGISTRY_VERSION,
     MODEL_RULES,
     SOURCES,
@@ -50,12 +51,11 @@ def test_vivoactive_5_persists_all_registry_capabilities(session):
     freshness.note_capability_from_device(session, {"lastUsedDeviceName": "vívoactive 5"})
     expected = {
         "training_readiness": "unsupported", "training_status": "unsupported",
-        "recovery_time_device": "supported", "recovery_time_connect": "unsupported",
-        "hrv_status": "supported", "body_battery": "supported", "vo2max": "supported",
-        "fitness_age": "unknown",
+        "recovery_time_device": "supported", "hrv_status": "supported",
+        "body_battery": "supported",
     }
-    assert {key: freshness.capability_state(session, key) for key in CAPABILITY_KEYS} == expected
-    assert session.query(DeviceCapability).count() == len(CAPABILITY_KEYS)
+    assert {key: freshness.capability_state(session, key) for key in DEVICE_CAPABILITY_KEYS} == expected
+    assert session.query(MetricCapability).count() == len(DEVICE_CAPABILITY_KEYS)
 
 
 def test_observation_and_override_survive_same_model_refresh_and_reset_on_change(session):
@@ -69,14 +69,14 @@ def test_observation_and_override_survive_same_model_refresh_and_reset_on_change
     assert freshness.capability_state(session, "fitness_age") == "supported"
 
 
-def test_model_change_resets_evidence_but_preserves_override(session):
+def test_model_change_selects_its_own_device_scope(session):
     freshness.note_capability_from_device(session, {"lastUsedDeviceName": "Forerunner 265"})
     freshness.note_capability_observed(session, "training_readiness")
     freshness.set_capability_override(session, "training_readiness", "unsupported")
     freshness.note_capability_from_device(session, {"lastUsedDeviceName": "vivoactive 5"})
-    row = session.get(DeviceCapability, "training_readiness")
+    row = session.get(MetricCapability, freshness.capability_ref(session, "training_readiness").identity)
     assert row.support_state == "unsupported"  # new model registry evidence
-    assert row.override_state == "unsupported"
+    assert row.override_state is None
     assert row.last_observed_at is None and row.source_verified_on is not None
     freshness.set_capability_override(session, "training_readiness", None)
     assert freshness.capability_state(session, "training_readiness") == "unsupported"
@@ -94,7 +94,7 @@ def test_unknown_probe_policy_is_bounded():
 def test_auth_and_rate_limit_probe_outcomes_preserve_cadence(session):
     observed = datetime(2026, 7, 1, 8)
     freshness.note_capability_probe(session, "training_status", "empty", observed_at=observed)
-    row = session.get(DeviceCapability, "training_status")
+    row = session.get(MetricCapability, freshness.capability_ref(session, "training_status").identity)
     freshness.note_capability_probe(session, "training_status", "authentication_error", observed_at=observed + timedelta(days=8))
     assert row.last_probe_at == observed and row.last_probe_outcome == "authentication_error"
     freshness.note_capability_probe(session, "training_status", "rate_limited", observed_at=observed + timedelta(days=9))

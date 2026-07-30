@@ -184,6 +184,28 @@ missing evidence. Once verified, it must use bounded range reads (latest for
 Stage 1, at most 180 days for Stage 2), durable cursors, bounded unknown-account
 probing, and no morning-priority or UI-time request.
 
+### Scoped capability evidence
+
+Capability evidence has a durable identity of `(metric, scope_kind, scope_key)`;
+it is not a property of the watch connected most recently. The centralized
+capability mapping uses device scope for Training Readiness, Training Status,
+device Recovery Time, HRV Status, and Body Battery; account scope for Garmin
+Connect Recovery Time and Fitness Age; activity scope for VO2 max; and scale
+scope for Body Composition.
+
+Device scope keys are normalized Garmin model keys. Account and scale scope
+keys are the non-PII constants `account` and `scale`. VO2 max observations are
+keyed only to their explicit activity domain (for example `running` or
+`cycling`), never to a universal activity scope. The offline watch registry
+initializes only device-scoped evidence. A watch change selects/creates the new
+model's rows without clearing prior model history or rewriting account,
+activity, or scale evidence. Legacy generic VO2 max evidence is retained as
+`legacy_unverified` for audit but cannot authorize a sport-specific decision.
+
+Body Composition remains scale-scoped but unknown and unprobed. Scope does not
+authorize its endpoint, storage, or UI before the separate fixture-and-units
+contract gate is complete.
+
 ## 6. Metrics not planned for V1
 
 Do not add separate calls or product surfaces for:
@@ -250,8 +272,9 @@ Do not fetch activities, steps, stress, Body Battery history, body composition, 
 
 ### Capability registry and unknown probes
 
-Device capability is resolved by a versioned, offline official-source registry.
-Known unsupported optional endpoints are skipped. Unknown does not mean an
+Device-scoped capability is resolved by a versioned, offline official-source
+registry; account, scale, and activity evidence is never inferred from that
+registry. Known unsupported optional endpoints are skipped. Unknown does not mean an
 unconditional daily request: it may be probed only on Stage 1, scheduled
 low-priority sync, or explicit full sync, and no more often than the configured
 seven-day probe interval (priority recovery sync may probe only Training
