@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from datetime import date, datetime
 import json
 
+import pytest
+
 from garminconnect import GarminConnectAuthenticationError
 
 from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME, ActiveRecoveryTemplateResult
@@ -66,6 +68,35 @@ class _Api:
                 occurrences.remove(occurrence)
 
 
+class _BoundaryApi(_Api):
+    """Fake Garmin calendar whose mutations prove their client boundary."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.depth = 0
+        self.mutation_depths: list[int] = []
+        self.fail_reads = 0
+        self.fail_after_unschedule = False
+
+    def get_scheduled_workouts(self, year, month):
+        if self.fail_reads:
+            self.fail_reads -= 1
+            raise GarminConnectAuthenticationError("expired")
+        if self.fail_after_unschedule and self.unscheduled:
+            self.fail_after_unschedule = False
+            raise GarminConnectAuthenticationError("expired")
+        return super().get_scheduled_workouts(year, month)
+
+    def schedule_workout(self, workout_id, target):
+        assert self.depth == 1
+        self.mutation_depths.append(self.depth)
+        super().schedule_workout(workout_id, target)
+
+    def unschedule_workout(self, occurrence):
+        assert self.depth == 1
+        self.mutation_depths.append(self.depth)
+        super().unschedule_workout(occurrence)
+
+
 class _Client:
     def __init__(self, api, error: Exception | None = None):
         self.api = api
@@ -85,6 +116,24 @@ def _use_client(monkeypatch, client):
     def current():
         yield client
     monkeypatch.setattr("sync.garmin_registry.current_garmin_client", current)
+
+
+def _use_clients(monkeypatch, *clients):
+    entered = []
+    @contextmanager
+    def current():
+        client = clients[min(len(entered), len(clients) - 1)]
+        entered.append(client)
+        api = client.api
+        if isinstance(api, _BoundaryApi):
+            api.depth += 1
+        try:
+            yield client
+        finally:
+            if isinstance(api, _BoundaryApi):
+                api.depth -= 1
+    monkeypatch.setattr("sync.garmin_registry.current_garmin_client", current)
+    return entered
 
 
 def _claim_walk(session, monkeypatch, *, garmin_workout_id=55):
@@ -217,3 +266,90 @@ def test_next_workout_skips_terminal_source_and_shows_active_recovery(session, m
     ])
     session.flush()
     assert ACTIVE_RECOVERY_WORKOUT_NAME in render_next_workout(session)
+
+
+@pytest.mark.parametrize(
+    ("originals", "walks", "choice"),
+    [((900, 901), (), "active_recovery"), ((900, 901), (1001,), "active_recovery"),
+     ((900,), (1001, 1002), "active_recovery"), ((900, 901), (), "rest")],
+)
+def test_ambiguous_occurrences_fail_before_any_remote_mutation(session, monkeypatch, originals, walks, choice):
+    planned, row = _claim_walk(session, monkeypatch)
+    payload = json.loads(row.payload_json)
+    payload["selected_choice"] = choice
+    row.payload_json = json.dumps(payload)
+    api = _BoundaryApi(originals=originals, walks=walks)
+    _use_clients(monkeypatch, _Client(api), _Client(api))
+    monkeypatch.setattr(
+        "coach.active_recovery.ensure_active_recovery_workout",
+        lambda _session: ActiveRecoveryTemplateResult(ok=True, workout_id=77),
+    )
+    state, text = apply_claimed_recovery_choice(session, row.interaction_id)
+    assert state == "failed" and "original workout remains unchanged" in text
+    assert api.scheduled == [] and api.unscheduled == [] and api.mutation_depths == []
+    assert planned.status == "planned"
+
+
+def test_auth_after_walk_schedule_compensates_in_fresh_boundary(session, monkeypatch):
+    planned, row = _claim_walk(session, monkeypatch)
+    api = _BoundaryApi()
+    primary, cleanup = _Client(api), _Client(api)
+    entered = _use_clients(monkeypatch, primary, cleanup)
+    monkeypatch.setattr("coach.active_recovery.ensure_active_recovery_workout", lambda _s: ActiveRecoveryTemplateResult(ok=True, workout_id=77))
+    # The post-schedule walk read loses auth; the fresh cleanup boundary sees
+    # and removes the newly introduced walk.
+    original_get = api.get_scheduled_workouts
+    raised = {"value": False}
+    def after_schedule(year, month):
+        if api.scheduled and not raised["value"]:
+            raised["value"] = True
+            api.fail_reads = 1
+        return original_get(year, month)
+    api.get_scheduled_workouts = after_schedule
+
+    state, text = apply_claimed_recovery_choice(session, row.interaction_id)
+    assert state == "failed" and "disconnected" in text and "restored" in text and "Reconnect Garmin" in text
+    assert primary.expired and len(entered) == 2
+    assert api.by_workout[55] == [900] and api.by_workout[77] == []
+    assert api.mutation_depths and all(depth == 1 for depth in api.mutation_depths)
+    assert planned.status == "planned"
+
+
+def test_auth_after_original_unschedule_restores_original(session, monkeypatch):
+    planned, row = _claim_walk(session, monkeypatch)
+    api = _BoundaryApi()
+    api.fail_after_unschedule = True
+    primary, cleanup = _Client(api), _Client(api)
+    entered = _use_clients(monkeypatch, primary, cleanup)
+    monkeypatch.setattr("coach.active_recovery.ensure_active_recovery_workout", lambda _s: ActiveRecoveryTemplateResult(ok=True, workout_id=77))
+
+    state, text = apply_claimed_recovery_choice(session, row.interaction_id)
+    assert state == "failed" and "original remote state was restored" in text
+    assert primary.expired and len(entered) == 2
+    assert len(api.by_workout[55]) == 1 and api.by_workout[77] == []
+    assert planned.status == "planned"
+
+
+def test_auth_during_rest_compensation_is_truthful_and_marks_cleanup_expired(session, monkeypatch):
+    planned, row = _claim_walk(session, monkeypatch)
+    payload = json.loads(row.payload_json)
+    payload["selected_choice"] = "rest"
+    row.payload_json = json.dumps(payload)
+    api = _BoundaryApi()
+    api.fail_after_unschedule = True
+    primary, cleanup = _Client(api), _Client(api)
+    # First read after unschedule fails on primary; first cleanup read fails too.
+    original_get = api.get_scheduled_workouts
+    calls = {"after_unschedule": 0}
+    def fail_twice(year, month):
+        if api.unscheduled and calls["after_unschedule"] < 2:
+            calls["after_unschedule"] += 1
+            raise GarminConnectAuthenticationError("expired")
+        return original_get(year, month)
+    api.get_scheduled_workouts = fail_twice
+    _use_clients(monkeypatch, primary, cleanup)
+
+    state, text = apply_claimed_recovery_choice(session, row.interaction_id)
+    assert state == "failed" and "disconnected" in text and "could not be fully verified" in text
+    assert "Nothing was changed" not in text and "original workout remains unchanged" not in text
+    assert primary.expired and cleanup.expired and planned.status == "planned"

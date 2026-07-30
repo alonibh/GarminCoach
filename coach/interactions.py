@@ -898,6 +898,7 @@ def _recovery_fail(
     stale: bool = False,
     compensation_incomplete: bool = False,
     reconnect_required: bool = False,
+    remote_state_restored: bool = False,
 ) -> tuple[str, str]:
     """Settle a claimed choice without making an unsupported promise to the user."""
     row = session.get(PendingInteraction, row.interaction_id) or row
@@ -906,6 +907,18 @@ def _recovery_fail(
     if stale:
         return "stale", "This choice is no longer current. Nothing was changed."
     if reconnect_required:
+        if compensation_incomplete:
+            return (
+                "failed",
+                "Garmin disconnected and Garmin Calendar could not be fully verified. "
+                "Review Garmin Calendar and reconnect Garmin before choosing again.",
+            )
+        if remote_state_restored:
+            return (
+                "failed",
+                "Garmin disconnected, but the original remote state was restored. "
+                "Reconnect Garmin before trying again.",
+            )
         return "failed", "Garmin is no longer connected. Reconnect Garmin and try again."
     if compensation_incomplete:
         return (
@@ -1093,6 +1106,7 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
     before_originals: list[int] = []
     before_walks: list[int] = []
     schedule_attempted = False
+    original_unschedule_attempted = False
     remote_failure: tuple[str, Exception | None] | None = None
     client = None
     try:
@@ -1111,16 +1125,21 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
             before_originals = _occurrences(client.api, planned.garmin_workout_id, planned.target_date)
             if len(before_originals) > 1:
                 remote_failure = ("ambiguous_original_occurrence", None)
-            if walk_id:
+            # Establish every cardinality precondition before the first
+            # schedule/unschedule call.  Ambiguous originals deliberately do
+            # not even inspect a walk unless future diagnostics require it.
+            if remote_failure is None and walk_id:
                 before_walks = _occurrences(client.api, walk_id, planned.target_date)
                 if len(before_walks) > 1:
                     remote_failure = ("ambiguous_walk_occurrence", None)
-                elif not before_walks:
+            if remote_failure is None and walk_id:
+                if not before_walks:
                     schedule_attempted = True
                     client.api.schedule_workout(walk_id, planned.target_date.isoformat())
                     if len(_occurrences(client.api, walk_id, planned.target_date)) != 1:
                         remote_failure = ("walk_schedule_verification_failed", None)
             if remote_failure is None and before_originals:
+                original_unschedule_attempted = True
                 client.api.unschedule_workout(before_originals[0])
                 if _occurrences(client.api, planned.garmin_workout_id, planned.target_date):
                     remote_failure = ("original_unschedule_verification_failed", None)
@@ -1138,8 +1157,15 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
             marker = getattr(client, "mark_session_expired", None)
             if callable(marker):
                 marker()
-            return _recovery_fail(session, row, reason, reconnect_required=True)
+            if not (schedule_attempted or original_unschedule_attempted):
+                return _recovery_fail(session, row, reason, reconnect_required=True)
+        if not (schedule_attempted or original_unschedule_attempted):
+            # A rejected precondition/read-only failure has no remote state to
+            # restore.  In particular, ambiguity must never touch existing
+            # walk occurrences during a speculative compensation pass.
+            return _recovery_fail(session, row, reason)
         compensated = False
+        cleanup_auth_failed = False
         if client is not None:
             try:
                 from sync.garmin_registry import current_garmin_client
@@ -1150,12 +1176,18 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
                         before_walks=before_walks, schedule_attempted=schedule_attempted,
                         garmin_client=cleanup_client,
                     )
+                    cleanup_auth_failed = bool(getattr(cleanup_client, "expired", False))
             except Exception as cleanup_exc:
                 if isinstance(cleanup_exc, GarminConnectAuthenticationError):
                     marker = getattr(client, "mark_session_expired", None)
                     if callable(marker):
                         marker()
-        return _recovery_fail(session, row, reason, compensation_incomplete=not compensated)
+        return _recovery_fail(
+            session, row, reason,
+            compensation_incomplete=not compensated,
+            reconnect_required=isinstance(exc, GarminConnectAuthenticationError) or cleanup_auth_failed,
+            remote_state_restored=(isinstance(exc, GarminConnectAuthenticationError) or cleanup_auth_failed) and compensated,
+        )
     try:
         if choice == "active_recovery":
             recovery = _recovery_session(session, planned, walk_id, now)
@@ -1173,6 +1205,7 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
     except Exception as exc:
         session.rollback()
         compensated = False
+        cleanup_auth_failed = False
         try:
             from sync.garmin_registry import current_garmin_client
             with current_garmin_client() as cleanup_client:
@@ -1182,6 +1215,7 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
                     before_walks=before_walks, schedule_attempted=schedule_attempted,
                     garmin_client=cleanup_client,
                 )
+                cleanup_auth_failed = bool(getattr(cleanup_client, "expired", False))
         except Exception as cleanup_exc:
             if isinstance(cleanup_exc, GarminConnectAuthenticationError):
                 marker = getattr(client, "mark_session_expired", None)
@@ -1190,6 +1224,8 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
         return _recovery_fail(
             session, row, f"local_persistence:{type(exc).__name__}",
             compensation_incomplete=not compensated,
+            reconnect_required=cleanup_auth_failed,
+            remote_state_restored=cleanup_auth_failed and compensated,
         )
     return ("applied", "Active Recovery — 30 Minute Walk scheduled for today.") if choice == "active_recovery" else ("applied", "Rest selected for today.")
 
