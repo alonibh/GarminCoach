@@ -115,8 +115,8 @@ The complete ten-routine audit is in
   actionable recovery result. The three choices are to keep that workout, use
   the fixed 30-minute walk, or Rest; the latter two preserve the program
   sequence. Informational metrics never choose a replacement automatically.
-  verbally on a rest day. The fixed Active Recovery walking template is used
-  only after the athlete confirms the same-slot Telegram replacement.
+  The fixed Active Recovery walking template is used only after the athlete
+  confirms the same-slot Telegram replacement.
 - No evening workout is created before the following night's sleep and morning
   observations are available.
 

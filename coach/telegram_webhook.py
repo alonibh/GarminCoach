@@ -520,7 +520,11 @@ def _apply_claimed_for_user(
                     row.failure_reason = (
                         f"service_failed:{type(exc).__name__}"
                     )
-            return "failed", "GarminCoach could not safely apply this choice. Nothing was changed."
+            return (
+                "failed",
+                "GarminCoach could not fully verify Garmin Calendar after this failure. "
+                "Review Garmin Calendar before choosing again.",
+            )
     finally:
         reset_tenant(tenant_token)
 
@@ -596,7 +600,8 @@ async def run_garmin_interaction(
         log_sanitized_error(type(exc).__name__, user_id=identity.user_id)
         await asyncio.to_thread(
             _deliver_callback_result,
-            "GarminCoach could not safely apply this choice. Nothing was changed.",
+            "GarminCoach could not fully verify Garmin Calendar after this failure. "
+            "Review Garmin Calendar before choosing again.",
             chat_id=chat_id,
             message_id=message_id,
             reply_markup=main_menu_markup(),

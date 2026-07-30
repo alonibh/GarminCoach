@@ -7,6 +7,7 @@ import json
 from sqlalchemy.orm import Session
 
 from coach.onboarding import active_program
+from coach.planned_session_status import INACTIVE_ORIGINAL_SESSION_STATUSES
 from db import (
     Activity,
     DailyHealth,
@@ -67,7 +68,7 @@ def render_next_workout(session: Session) -> str:
         session.query(PlannedSession)
         .filter(
             PlannedSession.target_date >= get_local_now().date(),
-            PlannedSession.status.notin_(("completed", "cancelled")),
+            PlannedSession.status.notin_(INACTIVE_ORIGINAL_SESSION_STATUSES),
         )
         .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
         .first()

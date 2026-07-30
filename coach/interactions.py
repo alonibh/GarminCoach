@@ -153,9 +153,10 @@ def stage_decision_actions(
     now = get_local_now().replace(tzinfo=None)
     expiry = min(now + timedelta(hours=6), datetime.combine(now.date(), datetime.max.time()))
     staged: list[PendingInteraction] = []
-    recovery = stage_recovery_choice(session, result)
-    if recovery:
-        return [recovery]
+    if action_types is None or "choose_recovery_outcome" in action_types:
+        recovery = stage_recovery_choice(session, result)
+        if recovery:
+            return [recovery]
     selected = [
         action for action in result.permitted_actions
         if action_types is None or action["type"] in action_types
@@ -225,7 +226,10 @@ def stage_recovery_choice(session: Session, result: DecisionResult) -> PendingIn
     planned = session.get(PlannedSession, action.get("planned_session_id"))
     if not planned:
         return None
-    # An applied choice is a durable athlete decision for this selected session/day.
+    # An applied or processing choice is a durable athlete decision/lease for
+    # this selected session/day.  Inspect all matching legacy rows before
+    # considering a pending one so a historical duplicate cannot expose buttons.
+    matching = []
     for old in session.query(PendingInteraction).filter_by(
         action_type="choose_recovery_outcome", target_id=planned.id
     ).all():
@@ -234,11 +238,23 @@ def stage_recovery_choice(session: Session, result: DecisionResult) -> PendingIn
         except (TypeError, ValueError):
             continue
         if old_payload.get("decision_date") != result.decision_date:
+            if old.status == "processing":
+                # An older lease may only be reclaimed by its chosen callback;
+                # never overwrite it with a different decision's buttons.
+                return old
+            if old.status == "pending":
+                old.status, old.failure_reason = "superseded", "source_decision_superseded"
             continue
-        if old.status == "applied":
-            return None
-        if old.status == "pending" and old.decision_id == result.decision_id:
-            return old
+        matching.append(old)
+    if any(old.status == "applied" for old in matching):
+        return None
+    processing = next((old for old in matching if old.status == "processing"), None)
+    if processing is not None:
+        return processing
+    pending_same = next((old for old in matching if old.status == "pending" and old.decision_id == result.decision_id), None)
+    if pending_same is not None:
+        return pending_same
+    for old in matching:
         if old.status == "pending":
             old.status, old.failure_reason = "superseded", "source_decision_superseded"
     now = get_local_now().replace(tzinfo=None)
@@ -421,7 +437,7 @@ def _scheduled_occurrence_id(raw, workout_id: int, target_day: date) -> int | No
         item_workout = item.get("workoutId") or nested_id
         item_date = item.get("date") or item.get("calendarDate") or item.get("workoutDate")
         scheduled_id = item.get("scheduledWorkoutId") or item.get("workoutScheduleId") or item.get("id")
-        if str(item_workout) == str(workout_id) and (not item_date or str(item_date)[:10] == target_day.isoformat()):
+        if str(item_workout) == str(workout_id) and isinstance(item_date, str) and item_date[:10] == target_day.isoformat():
             try:
                 return int(scheduled_id)
             except (TypeError, ValueError):
@@ -437,7 +453,7 @@ def _scheduled_occurrence_ids(raw, workout_id: int, target_day: date) -> list[in
         workout = item.get("workoutId") or nested_id
         day = item.get("date") or item.get("calendarDate") or item.get("workoutDate")
         occurrence = item.get("scheduledWorkoutId") or item.get("workoutScheduleId") or item.get("id")
-        if str(workout) == str(workout_id) and (not day or str(day)[:10] == target_day.isoformat()):
+        if str(workout) == str(workout_id) and isinstance(day, str) and day[:10] == target_day.isoformat():
             try:
                 parsed = int(occurrence)
             except (TypeError, ValueError):
@@ -874,10 +890,30 @@ def _recovery_snapshot_changed(planned: PlannedSession, snapshot: dict) -> bool:
     return _recovery_snapshot(planned) != snapshot
 
 
-def _recovery_fail(session: Session, row: PendingInteraction, reason: str, *, stale: bool = False) -> tuple[str, str]:
+def _recovery_fail(
+    session: Session,
+    row: PendingInteraction,
+    reason: str,
+    *,
+    stale: bool = False,
+    compensation_incomplete: bool = False,
+    reconnect_required: bool = False,
+) -> tuple[str, str]:
+    """Settle a claimed choice without making an unsupported promise to the user."""
+    row = session.get(PendingInteraction, row.interaction_id) or row
     row.status, row.failure_reason = ("superseded" if stale else "failed"), reason
     session.commit()
-    return ("stale", "This choice is no longer current. Nothing was changed.") if stale else ("failed", "GarminCoach could not safely apply this choice. Nothing was changed.")
+    if stale:
+        return "stale", "This choice is no longer current. Nothing was changed."
+    if reconnect_required:
+        return "failed", "Garmin is no longer connected. Reconnect Garmin and try again."
+    if compensation_incomplete:
+        return (
+            "failed",
+            "GarminCoach could not fully verify Garmin Calendar after this failure. "
+            "Review Garmin Calendar before choosing again.",
+        )
+    return "failed", "GarminCoach could not apply this choice. The original workout remains unchanged."
 
 
 def _occurrences(api, workout_id: int | None, target: date) -> list[int]:
@@ -886,16 +922,106 @@ def _occurrences(api, workout_id: int | None, target: date) -> list[int]:
     return _scheduled_occurrence_ids(api.get_scheduled_workouts(target.year, target.month), workout_id, target)
 
 
-def _replace_local_calendar_event(session: Session, planned: PlannedSession) -> None:
+def _replace_local_calendar_event(
+    session: Session, planned: PlannedSession, replacement: PlannedSession | None = None,
+) -> None:
+    """Replace one source event with at most one canonical local recovery event."""
     state = session.get(SyncState, "coach_calendar_events")
     try:
         events = json.loads(state.value) if state and state.value else []
     except (TypeError, ValueError):
         events = []
-    events = [event for event in events if not (
-        event.get("date") == planned.target_date.isoformat() and event.get("title") == planned.title
-        and event.get("start_time", "") == (planned.suggested_time or "18:30"))]
-    session.merge(SyncState(key="coach_calendar_events", value=json.dumps(events, sort_keys=True)))
+    if not isinstance(events, list):
+        events = []
+    source_time = planned.suggested_time or "18:30"
+    removed, kept = False, []
+    for event in events:
+        matches_source = (
+            isinstance(event, dict)
+            and event.get("date") == planned.target_date.isoformat()
+            and event.get("title") == planned.title
+            and event.get("start_time", "") == source_time
+        )
+        if matches_source and not removed:
+            removed = True
+            continue
+        kept.append(event)
+    if replacement is not None:
+        replacement_event = {
+            "title": replacement.title,
+            "date": planned.target_date.isoformat(),
+            "start_time": source_time,
+            "duration_min": 30,
+        }
+        # Preserve unrelated entries and retain only one exact replacement.
+        deduped = []
+        seen_replacement = False
+        for event in kept:
+            if event == replacement_event:
+                if seen_replacement:
+                    continue
+                seen_replacement = True
+            deduped.append(event)
+        if not seen_replacement:
+            deduped.append(replacement_event)
+        kept = deduped
+    session.merge(SyncState(key="coach_calendar_events", value=json.dumps(kept, sort_keys=True)))
+
+
+def _recovery_session(session: Session, source: PlannedSession, walk_id: int, now: datetime) -> PlannedSession:
+    """Return the one exact active local row for the canonical walk."""
+    from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME
+
+    expected = {
+        "program_session_id": None, "activity_type": "walking",
+        "title": ACTIVE_RECOVERY_WORKOUT_NAME, "target_date": source.target_date,
+        "suggested_time": source.suggested_time or "18:30", "duration_min": 30,
+        "intensity": "recovery", "garmin_workout_id": walk_id,
+        "source": "recovery_choice",
+    }
+    active = {"approved", "scheduled", "planned"}
+    candidates = session.query(PlannedSession).filter_by(
+        target_date=source.target_date, source="recovery_choice",
+    ).filter(PlannedSession.status.in_(active)).all()
+    exact = [item for item in candidates if all(getattr(item, key) == value for key, value in expected.items())]
+    if len(exact) == 1:
+        return exact[0]
+    if candidates:
+        raise ValueError("recovery_session_conflict")
+    recovery = PlannedSession(status="approved", created_at=now, updated_at=now, **expected)
+    session.add(recovery)
+    session.flush()
+    return recovery
+
+
+def _compensate_remote_recovery(api, *, original_id: int | None, walk_id: int | None,
+                                 target: date, before_originals: list[int],
+                                 before_walks: list[int], schedule_attempted: bool,
+                                 garmin_client=None) -> bool:
+    """Restore the proven pre-operation occurrence sets, never deleting templates."""
+    try:
+        current_originals = _occurrences(api, original_id, target)
+        current_walks = _occurrences(api, walk_id, target)
+        if schedule_attempted and not set(current_walks) - set(before_walks) and not before_walks:
+            # A schedule attempt followed by no observable occurrence cannot be
+            # proven safe to compensate.
+            return False
+        for occurrence in set(current_walks) - set(before_walks):
+            api.unschedule_workout(occurrence)
+        if before_originals and not current_originals and original_id:
+            api.schedule_workout(original_id, target.isoformat())
+        final_originals = _occurrences(api, original_id, target)
+        final_walks = _occurrences(api, walk_id, target)
+        # Garmin gives a newly scheduled restoration a new occurrence ID.  The
+        # original contract is cardinality on the exact day; walks, which may
+        # predate this invocation, retain their exact proven IDs.
+        return len(final_originals) == len(before_originals) and set(final_walks) == set(before_walks)
+    except Exception as exc:
+        if isinstance(exc, GarminConnectAuthenticationError):
+            marker = getattr(garmin_client, "mark_session_expired", None)
+            if callable(marker):
+                marker()
+        return False
 
 
 def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tuple[str, str]:
@@ -929,6 +1055,7 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
     now = get_local_now().replace(tzinfo=None)
     if choice == "original":
         if planned.garmin_workout_id:
+            client = None
             try:
                 from sync.garmin_registry import current_garmin_client
                 with current_garmin_client() as client:
@@ -936,83 +1063,134 @@ def apply_claimed_recovery_choice(session: Session, interaction_id: str) -> tupl
                     if len(_occurrences(client.api, planned.garmin_workout_id, planned.target_date)) != 1:
                         return _recovery_fail(session, row, "original_occurrence_missing")
             except Exception as exc:
+                if isinstance(exc, GarminConnectAuthenticationError):
+                    marker = getattr(client, "mark_session_expired", None)
+                    if callable(marker):
+                        marker()
+                    return _recovery_fail(session, row, "garmin_read:GarminConnectAuthenticationError", reconnect_required=True)
                 return _recovery_fail(session, row, f"garmin_read:{type(exc).__name__}")
         row.status, row.applied_at, row.failure_reason = "applied", now, ""
-        session.commit()
+        try:
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            return _recovery_fail(session, row, f"local_persistence:{type(exc).__name__}")
         return "applied", f"{planned.title} kept for today."
     if choice == "rest" and not planned.garmin_workout_id:
-        planned.status, planned.updated_at = "rest_selected", now
-        _replace_local_calendar_event(session, planned)
-        row.status, row.applied_at, row.failure_reason = "applied", now, ""
-        session.commit()
+        try:
+            planned.status, planned.updated_at = "rest_selected", now
+            _replace_local_calendar_event(session, planned)
+            row.status, row.applied_at, row.failure_reason = "applied", now, ""
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            return _recovery_fail(session, row, f"local_persistence:{type(exc).__name__}")
         return "applied", "Rest selected for today."
-    created_walk = False
-    walk_occurrence = original_occurrence = None
-    walk_id = None
+
+    # All remote work is followed by exactly one verified success path or one
+    # compensation path.  No operation below returns directly after mutation.
+    walk_id: int | None = None
+    before_originals: list[int] = []
+    before_walks: list[int] = []
+    schedule_attempted = False
+    remote_failure: tuple[str, Exception | None] | None = None
+    client = None
     try:
         if choice == "active_recovery":
-            from coach.active_recovery import ensure_active_recovery_workout
+            from coach.active_recovery import ActiveRecoveryFailureKind, ensure_active_recovery_workout
             template = ensure_active_recovery_workout(session)
             if not template.ok or not template.workout_id:
-                return _recovery_fail(session, row, "template_unavailable")
+                return _recovery_fail(
+                    session, row, "template_unavailable",
+                    reconnect_required=template.failure == ActiveRecoveryFailureKind.RECONNECT_REQUIRED,
+                )
             walk_id = template.workout_id
         from sync.garmin_registry import current_garmin_client
         with current_garmin_client() as client:
             _ensure_authenticated(client)
-            originals = _occurrences(client.api, planned.garmin_workout_id, planned.target_date)
-            if len(originals) > 1:
-                return _recovery_fail(session, row, "ambiguous_original_occurrence")
-            original_occurrence = originals[0] if originals else None
+            before_originals = _occurrences(client.api, planned.garmin_workout_id, planned.target_date)
+            if len(before_originals) > 1:
+                remote_failure = ("ambiguous_original_occurrence", None)
             if walk_id:
-                walks = _occurrences(client.api, walk_id, planned.target_date)
-                if len(walks) > 1:
-                    return _recovery_fail(session, row, "ambiguous_walk_occurrence")
-                if not walks:
+                before_walks = _occurrences(client.api, walk_id, planned.target_date)
+                if len(before_walks) > 1:
+                    remote_failure = ("ambiguous_walk_occurrence", None)
+                elif not before_walks:
+                    schedule_attempted = True
                     client.api.schedule_workout(walk_id, planned.target_date.isoformat())
-                    walks = _occurrences(client.api, walk_id, planned.target_date)
-                    if len(walks) != 1:
-                        return _recovery_fail(session, row, "walk_schedule_verification_failed")
-                    created_walk = True
-                walk_occurrence = walks[0]
-            if original_occurrence is not None:
-                client.api.unschedule_workout(original_occurrence)
+                    if len(_occurrences(client.api, walk_id, planned.target_date)) != 1:
+                        remote_failure = ("walk_schedule_verification_failed", None)
+            if remote_failure is None and before_originals:
+                client.api.unschedule_workout(before_originals[0])
                 if _occurrences(client.api, planned.garmin_workout_id, planned.target_date):
-                    raise ValueError("original_unschedule_verification_failed")
+                    remote_failure = ("original_unschedule_verification_failed", None)
+            if remote_failure is None:
+                final_originals = _occurrences(client.api, planned.garmin_workout_id, planned.target_date)
+                final_walks = _occurrences(client.api, walk_id, planned.target_date)
+                expected_walk_count = 1 if walk_id else 0
+                if final_originals or len(final_walks) != expected_walk_count:
+                    remote_failure = ("final_remote_verification_failed", None)
     except Exception as exc:
-        if created_walk and walk_occurrence is not None:
+        remote_failure = (f"garmin_mutation:{type(exc).__name__}", exc)
+    if remote_failure is not None:
+        reason, exc = remote_failure
+        if isinstance(exc, GarminConnectAuthenticationError):
+            marker = getattr(client, "mark_session_expired", None)
+            if callable(marker):
+                marker()
+            return _recovery_fail(session, row, reason, reconnect_required=True)
+        compensated = False
+        if client is not None:
             try:
                 from sync.garmin_registry import current_garmin_client
-                with current_garmin_client() as client:
-                    client.api.unschedule_workout(walk_occurrence)
-            except Exception:
-                return _recovery_fail(session, row, "compensation_incomplete")
-        return _recovery_fail(session, row, f"garmin_mutation:{type(exc).__name__}")
+                with current_garmin_client() as cleanup_client:
+                    compensated = _compensate_remote_recovery(
+                        cleanup_client.api, original_id=planned.garmin_workout_id, walk_id=walk_id,
+                        target=planned.target_date, before_originals=before_originals,
+                        before_walks=before_walks, schedule_attempted=schedule_attempted,
+                        garmin_client=cleanup_client,
+                    )
+            except Exception as cleanup_exc:
+                if isinstance(cleanup_exc, GarminConnectAuthenticationError):
+                    marker = getattr(client, "mark_session_expired", None)
+                    if callable(marker):
+                        marker()
+        return _recovery_fail(session, row, reason, compensation_incomplete=not compensated)
     try:
         if choice == "active_recovery":
-            from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME
-            if not session.query(PlannedSession).filter_by(target_date=planned.target_date, garmin_workout_id=walk_id, source="recovery_choice").first():
-                session.add(PlannedSession(program_session_id=None, activity_type="walking", title=ACTIVE_RECOVERY_WORKOUT_NAME, target_date=planned.target_date, suggested_time=planned.suggested_time, duration_min=30, intensity="recovery", status="approved", garmin_workout_id=walk_id, source="recovery_choice", created_at=now, updated_at=now))
+            recovery = _recovery_session(session, planned, walk_id, now)
             planned.status = "replaced_by_active_recovery"
+            _replace_local_calendar_event(session, planned, recovery)
+            from notify.outbox import enqueue_pre_workout_reminder
+            if datetime.combine(recovery.target_date, datetime.strptime(recovery.suggested_time or "18:30", "%H:%M").time()) > now:
+                enqueue_pre_workout_reminder(session, recovery)
         else:
             planned.status = "rest_selected"
+            _replace_local_calendar_event(session, planned)
         planned.updated_at = now
-        _replace_local_calendar_event(session, planned)
         row.status, row.applied_at, row.failure_reason = "applied", now, ""
         session.commit()
     except Exception as exc:
         session.rollback()
+        compensated = False
         try:
             from sync.garmin_registry import current_garmin_client
-            with current_garmin_client() as client:
-                if created_walk and walk_occurrence is not None:
-                    client.api.unschedule_workout(walk_occurrence)
-                if original_occurrence is not None and planned.garmin_workout_id:
-                    client.api.schedule_workout(planned.garmin_workout_id, planned.target_date.isoformat())
-                    if len(_occurrences(client.api, planned.garmin_workout_id, planned.target_date)) != 1:
-                        raise ValueError("restore_unverified")
-        except Exception:
-            return _recovery_fail(session, row, "compensation_incomplete")
-        return _recovery_fail(session, row, f"local_persistence:{type(exc).__name__}")
+            with current_garmin_client() as cleanup_client:
+                compensated = _compensate_remote_recovery(
+                    cleanup_client.api, original_id=planned.garmin_workout_id, walk_id=walk_id,
+                    target=planned.target_date, before_originals=before_originals,
+                    before_walks=before_walks, schedule_attempted=schedule_attempted,
+                    garmin_client=cleanup_client,
+                )
+        except Exception as cleanup_exc:
+            if isinstance(cleanup_exc, GarminConnectAuthenticationError):
+                marker = getattr(client, "mark_session_expired", None)
+                if callable(marker):
+                    marker()
+        return _recovery_fail(
+            session, row, f"local_persistence:{type(exc).__name__}",
+            compensation_incomplete=not compensated,
+        )
     return ("applied", "Active Recovery — 30 Minute Walk scheduled for today.") if choice == "active_recovery" else ("applied", "Rest selected for today.")
 
 
