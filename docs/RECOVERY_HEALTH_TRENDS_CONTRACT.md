@@ -77,7 +77,10 @@ Sleep timing requires both stored endpoints and `end > start`. Its actual
 midpoint is `start + (end-start)/2`, represented as minutes from midnight on
 the stored `Sleep.day`; negative and greater-than-1440 offsets remain valid.
 Each window reports median midpoint and median absolute deviation (MAD) from
-that median. The card shows recent median bedtime, wake time, timing
+that median. Displayed bedtime and wake-time medians are calculated from those
+day-relative start/end offsets first, then formatted modulo 1440 as a local
+clock time; raw `hour * 60 + minute` medians are not used. The card shows
+recent median bedtime, wake time, timing
 variability, valid-night coverage, and a higher/lower/similar comparison of
 recent MAD to baseline MAD; 15 minutes is the stable threshold. It is not a
 0--100 consistency score.
@@ -86,10 +89,14 @@ Body Battery remains four independent source trends: daily high, daily low,
 charged, and drained. High and low are prominent, charged/drained secondary.
 No high-minus-low, charged-minus-drained, or weighted composite is calculated.
 
-The most recent valid Garmin `hrv_status` is displayed as title-cased source
-text with its source day. Valid Garmin baseline low/high are shown only as a
-pair. GarminCoach never derives, normalizes, or fabricates a status from local
-overnight HRV; that separate local median comparison remains informational.
+The most recent non-empty Garmin `hrv_status` at or before the overnight
+endpoint is displayed as title-cased source text with its source day; future
+and incomplete-current-day source rows are excluded. Valid Garmin baseline
+low/high are shown only as a finite positive ordered pair. GarminCoach never
+derives, normalizes, or fabricates a status from local overnight HRV; that
+separate local median comparison remains informational. Dashboard reference
+lines are explicitly labeled Garmin baseline low/high or neutral sleep-hour
+references; they are never GarminCoach “good range” judgments.
 
 ## Authority and acceptance rules
 

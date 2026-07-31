@@ -177,7 +177,7 @@
       <strong class="trend-card-value">{{ card.recent if card.recent else 'No valid recent value' }}</strong>
       <p>{{ card.comparison }}</p>
       {% if card.baseline %}<p class="muted">Prior median: {{ card.baseline }}</p>{% endif %}
-      <p class="muted">{{ card.coverage }}{% if card.latest %} · Latest {{ card.latest }} ({{ card.latest_day }}){% endif %}</p>
+      <p class="muted">Coverage: {{ card.coverage_label }} · {{ card.coverage_text }}{% if card.latest %} · Latest {{ card.latest }} ({{ card.latest_day }}){% endif %}</p>
       {% if card.source_status %}<p class="muted">Garmin status: {{ card.source_status }}{% if card.source_day %} ({{ card.source_day }}){% endif %}{% if card.source_baseline %} · Garmin baseline {{ card.source_baseline }}{% endif %}</p>{% endif %}
     </article>
     {% endfor %}
@@ -189,7 +189,7 @@
       <p>{{ timing.comparison }}</p>
       {% if timing.baseline %}<p class="muted">Prior variability: {{ timing.baseline }}</p>{% endif %}
       {% if timing.bedtime or timing.wake_time %}<p class="muted">Recent median bedtime {{ timing.bedtime or '—' }} · wake time {{ timing.wake_time or '—' }}</p>{% endif %}
-      <p class="muted">{{ timing.coverage }}</p>
+      <p class="muted">Coverage: {{ timing.coverage_label }} · {{ timing.coverage_text }}</p>
     </article>
     {% endif %}
     {% if recovery_health_trends.body_battery %}
@@ -197,13 +197,14 @@
     <article class="card trend-card body-battery-trend" data-trend="body-battery">
       <h3>Body Battery <span class="info" tabindex="0" data-tip="Separate Garmin daily summary facts; no combined Body Battery score is calculated.">i</span></h3>
       <div class="body-battery-primary"><span><strong>High</strong> {{ battery.high.recent or '—' }}<small>{{ battery.high.comparison }}</small></span><span><strong>Low</strong> {{ battery.low.recent or '—' }}<small>{{ battery.low.comparison }}</small></span></div>
-      <p class="muted">High {{ battery.high.coverage }} · Low {{ battery.low.coverage }}</p>
-      <p class="muted">Charged: {{ battery.charged.recent or '—' }} ({{ battery.charged.comparison }}) · Drained: {{ battery.drained.recent or '—' }} ({{ battery.drained.comparison }})</p>
+      <p class="muted">High coverage: {{ battery.high.coverage_label }} · {{ battery.high.coverage_text }} · Low coverage: {{ battery.low.coverage_label }} · {{ battery.low.coverage_text }}</p>
+      <p class="muted">Charged: {{ battery.charged.recent or '—' }} ({{ battery.charged.comparison }}) · coverage {{ battery.charged.coverage_label }} · {{ battery.charged.coverage_text }}</p>
+      <p class="muted">Drained: {{ battery.drained.recent or '—' }} ({{ battery.drained.comparison }}) · coverage {{ battery.drained.coverage_label }} · {{ battery.drained.coverage_text }}</p>
     </article>
     {% endif %}
   </div>
   <div class="trend-movement-context">
-    <span class="eyebrow">Movement context</span><strong>Steps: {{ recovery_health_trends.movement.recent or 'No valid recent value' }}</strong> · {{ recovery_health_trends.movement.comparison }} · <span class="muted">{{ recovery_health_trends.movement.coverage }}</span>
+    <span class="eyebrow">Movement context</span><strong>Steps: {{ recovery_health_trends.movement.recent or 'No valid recent value' }}</strong> · {{ recovery_health_trends.movement.comparison }} · <span class="muted">Coverage: {{ recovery_health_trends.movement.coverage_label }} · {{ recovery_health_trends.movement.coverage_text }}</span>
   </div>
 </section>
 {% endif %}
@@ -332,11 +333,9 @@ if (window.ChartDataLabels) Chart.register(ChartDataLabels);
 
 const dashboardCharts = {};
 
-function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal = null) {
+function lineChart(id, labels, data, label, color, fmtVal, references = []) {
   const el = document.getElementById(id);
   if (!el) return;
-  const n = data.length;
-  
   const datasets = [{
     label, data,
     tension: 0.35,
@@ -351,11 +350,11 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
     pointHoverBackgroundColor: color,
   }];
 
-  if (minVal !== null) {
+  references.forEach((reference) => {
     datasets.push({
-      label: 'Min Good Range',
-      data: Array.isArray(minVal) ? minVal : Array(n).fill(minVal),
-      borderColor: '#8b98a5', // fully opaque
+      label: reference.label,
+      data: reference.values,
+      borderColor: '#8b98a5',
       borderWidth: 2,
       borderDash: [4, 4],
       pointRadius: 0,
@@ -363,22 +362,7 @@ function lineChart(id, labels, data, label, color, fmtVal, minVal = null, maxVal
       fill: false,
       datalabels: { display: false }
     });
-  }
-
-  
-  if (maxVal !== null) {
-    datasets.push({
-      label: 'Max Good Range',
-      data: Array.isArray(maxVal) ? maxVal : Array(n).fill(maxVal),
-      borderColor: '#8b98a5', // fully opaque
-      borderWidth: 2,
-      borderDash: [4, 4],
-      pointRadius: 0,
-      pointHoverRadius: 0,
-      fill: false,
-      datalabels: { display: false }
-    });
-  }
+  });
 
   const chart = new Chart(el, {
     type: 'line',
@@ -568,12 +552,20 @@ function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   dashboardCharts[canvasId] = chart;
 }
 
-lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#8bc7e8', round1, 7, 9);
-lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#00e676', round0, healthk.map(d => d.hrv_baseline_low), healthk.map(d => d.hrv_baseline_high));
-lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#ffb020', round0, 45, 65);
-lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#9b6dff', kSteps, healthk.map(d => d.step_goal), null);
+lineChart('sleepChart', sleek.map(d => d.day), sleek.map(d => d.hours), 'Hours', '#8bc7e8', round1, [
+  { label: '7-hour reference', values: Array(sleek.length).fill(7) },
+  { label: '9-hour reference', values: Array(sleek.length).fill(9) },
+]);
+lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '#00e676', round0, [
+  { label: 'Garmin baseline low', values: healthk.map(d => d.hrv_baseline_low) },
+  { label: 'Garmin baseline high', values: healthk.map(d => d.hrv_baseline_high) },
+]);
+lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#ffb020', round0);
+lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#9b6dff', kSteps, [
+  { label: 'Garmin step goal', values: healthk.map(d => d.step_goal) },
+]);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
-lineChart('stressChart', healthk.map(d => d.day), healthk.map(d => d.stress), 'Stress', '#ff6b6b', round0, 0, 100);
+lineChart('stressChart', healthk.map(d => d.day), healthk.map(d => d.stress), 'Stress', '#ff6b6b', round0);
 
 function bodyBatteryChart(labels, high, low) {
   const el = document.getElementById('bodyBatteryChart');
@@ -591,18 +583,15 @@ function bodyBatteryChart(labels, high, low) {
 }
 bodyBatteryChart(healthk.map(d => d.day), healthk.map(d => d.bb_high), healthk.map(d => d.bb_low));
 
-function updateLineChart(id, labels, data, minVal = null, maxVal = null) {
+function updateLineChart(id, labels, data, references = []) {
   const chart = dashboardCharts[id];
   if (!chart) return;
   chart.$rawLabels = labels;
   chart.data.labels = labels.map(fmtDay);
   chart.data.datasets[0].data = data;
-  if (chart.data.datasets[1]) {
-    chart.data.datasets[1].data = Array.isArray(minVal) ? minVal : Array(labels.length).fill(minVal);
-  }
-  if (chart.data.datasets[2]) {
-    chart.data.datasets[2].data = Array.isArray(maxVal) ? maxVal : Array(labels.length).fill(maxVal);
-  }
+  references.forEach((reference, index) => {
+    if (chart.data.datasets[index + 1]) chart.data.datasets[index + 1].data = reference.values;
+  });
   chart.update('none');
 }
 
@@ -610,22 +599,26 @@ function updateDashboardCharts(data) {
   const refreshedSleep = chartSlice(data.sleep_series || []);
   const refreshedHealth = chartSlice(data.health_series || []);
 
-  updateLineChart('sleepChart', refreshedSleep.map(d => d.day), refreshedSleep.map(d => d.hours), 7, 9);
+  updateLineChart('sleepChart', refreshedSleep.map(d => d.day), refreshedSleep.map(d => d.hours), [
+    { values: Array(refreshedSleep.length).fill(7) },
+    { values: Array(refreshedSleep.length).fill(9) },
+  ]);
   updateLineChart(
     'hrvChart',
     refreshedHealth.map(d => d.day),
     refreshedHealth.map(d => d.hrv),
-    refreshedHealth.map(d => d.hrv_baseline_low),
-    refreshedHealth.map(d => d.hrv_baseline_high),
+    [
+      { values: refreshedHealth.map(d => d.hrv_baseline_low) },
+      { values: refreshedHealth.map(d => d.hrv_baseline_high) },
+    ],
   );
-  updateLineChart('rhrChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.rhr), 45, 65);
-  updateLineChart('stressChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.stress), 0, 100);
+  updateLineChart('rhrChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.rhr));
+  updateLineChart('stressChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.stress));
   updateLineChart(
     'stepsChart',
     refreshedHealth.map(d => d.day),
     refreshedHealth.map(d => d.steps),
-    refreshedHealth.map(d => d.step_goal),
-    null,
+    [{ values: refreshedHealth.map(d => d.step_goal) }],
   );
 
   const calories = dashboardCharts.caloriesChart;

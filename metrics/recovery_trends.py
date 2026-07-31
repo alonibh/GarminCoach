@@ -9,11 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import Enum
-from math import isfinite
+from math import floor, isfinite
 from statistics import median
 from typing import Callable, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db import DailyHealth, Sleep
@@ -267,9 +267,25 @@ def build_trend(
     )
 
 
-def _time_observations(rows: Iterable[Sleep], start_day: date, end_day: date) -> list[tuple[date, datetime, datetime, float]]:
+@dataclass(frozen=True)
+class SleepTimingObservation:
+    day: date
+    start_offset_minutes: float
+    end_offset_minutes: float
+    midpoint_offset_minutes: float
+
+
+def clock_time_from_offset_minutes(value: float | None) -> time | None:
+    """Format a day-relative offset as a local clock time without timezone conversion."""
+    if value is None or not isfinite(value):
+        return None
+    total_minutes = floor(value + 0.5) % 1440
+    return (datetime.min + timedelta(minutes=total_minutes)).time()
+
+
+def _time_observations(rows: Iterable[Sleep], start_day: date, end_day: date) -> list[SleepTimingObservation]:
     """Return validated timing observations; duplicate days fail closed."""
-    grouped: dict[date, list[tuple[datetime, datetime, float]]] = {}
+    grouped: dict[date, list[SleepTimingObservation]] = {}
     for row in rows:
         start, finish = row.sleep_start_time, row.sleep_end_time
         if not start_day <= row.day <= end_day or not isinstance(start, datetime) or not isinstance(finish, datetime):
@@ -278,14 +294,18 @@ def _time_observations(rows: Iterable[Sleep], start_day: date, end_day: date) ->
             continue
         midnight = datetime.combine(row.day, time.min)
         midpoint = start + (finish - start) / 2
-        offset = (midpoint - midnight).total_seconds() / 60
-        grouped.setdefault(row.day, []).append((start, finish, offset))
-    return [(day, *values[0]) for day, values in grouped.items() if len(values) == 1]
+        grouped.setdefault(row.day, []).append(SleepTimingObservation(
+            day=row.day,
+            start_offset_minutes=(start - midnight).total_seconds() / 60,
+            end_offset_minutes=(finish - midnight).total_seconds() / 60,
+            midpoint_offset_minutes=(midpoint - midnight).total_seconds() / 60,
+        ))
+    return [values[0] for values in grouped.values() if len(values) == 1]
 
 
-def _timing_stats(values: list[tuple[date, datetime, datetime, float]], start_day: date, end_day: date) -> TrendWindowStats:
-    in_window = [value for value in values if start_day <= value[0] <= end_day]
-    offsets = sorted(value[3] for value in in_window)
+def _timing_stats(values: list[SleepTimingObservation], start_day: date, end_day: date) -> TrendWindowStats:
+    in_window = [value for value in values if start_day <= value.day <= end_day]
+    offsets = sorted(value.midpoint_offset_minutes for value in in_window)
     midpoint = float(median(offsets)) if offsets else None
     mad = float(median(sorted(abs(offset - midpoint) for offset in offsets))) if midpoint is not None else None
     return TrendWindowStats(start_day, end_day, len(offsets), (end_day - start_day).days + 1, mad, min(offsets) if offsets else None, max(offsets) if offsets else None)
@@ -301,30 +321,31 @@ def build_sleep_timing_trend(rows: Iterable[Sleep], *, end_day: date) -> SleepTi
     if recent.valid_days >= 4 and baseline.valid_days >= 10:
         delta = float(recent.median - baseline.median)  # type: ignore[operator]
         direction = TrendDirection.STABLE if abs(delta) < 15 else (TrendDirection.HIGHER if delta > 0 else TrendDirection.LOWER)
-    recent_values = [value for value in values if recent_start <= value[0] <= end_day]
-    bedtime = None
-    wake_time = None
-    if recent_values:
-        # Median datetime is not meaningful across arbitrary dates; median local clock minute is.
-        bedtime_minutes = median([v[1].hour * 60 + v[1].minute for v in recent_values])
-        wake_minutes = median([v[2].hour * 60 + v[2].minute for v in recent_values])
-        bedtime = (datetime.min + timedelta(minutes=bedtime_minutes)).time()
-        wake_time = (datetime.min + timedelta(minutes=wake_minutes)).time()
-    return SleepTimingTrend(recent, baseline, direction, delta, coverage, bedtime, wake_time, max((v[0] for v in values), default=None), INFORMATIONAL_NOTE)
+    recent_values = [value for value in values if recent_start <= value.day <= end_day]
+    bedtime = clock_time_from_offset_minutes(float(median([v.start_offset_minutes for v in recent_values])) if recent_values else None)
+    wake_time = clock_time_from_offset_minutes(float(median([v.end_offset_minutes for v in recent_values])) if recent_values else None)
+    return SleepTimingTrend(recent, baseline, direction, delta, coverage, bedtime, wake_time, max((v.day for v in values), default=None), INFORMATIONAL_NOTE)
 
 
-def _latest_hrv_source(session: Session) -> tuple[str | None, date | None, float | None, float | None]:
+def _latest_hrv_source(
+    session: Session, *, end_day: date,
+) -> tuple[str | None, date | None, float | None, float | None]:
     # A narrow latest-source query avoids treating an absent status as a capability claim.
     row = session.execute(
-        select(DailyHealth).where(DailyHealth.hrv_status.is_not(None)).order_by(DailyHealth.day.desc()).limit(1)
+        select(DailyHealth).where(
+            DailyHealth.day <= end_day,
+            DailyHealth.hrv_status.is_not(None),
+            func.trim(DailyHealth.hrv_status) != "",
+        ).order_by(DailyHealth.day.desc()).limit(1)
     ).scalar_one_or_none()
-    if row is None or not isinstance(row.hrv_status, str) or not row.hrv_status.strip():
+    if row is None or not isinstance(row.hrv_status, str):
         return None, None, None, None
+    status = row.hrv_status.strip()
     low = _valid_value("hrv_overnight", row.hrv_baseline_low)
     high = _valid_value("hrv_overnight", row.hrv_baseline_high)
-    if low is None or high is None:
+    if low is None or high is None or low > high:
         low = high = None
-    return row.hrv_status, row.day, low, high
+    return status, row.day, low, high
 
 
 def build_recovery_health_trend_report(
@@ -337,7 +358,9 @@ def build_recovery_health_trend_report(
     end_day = max(overnight_end_day, full_day_end_day)
     sleeps = list(session.execute(select(Sleep).where(Sleep.day >= start_day, Sleep.day <= overnight_end_day).order_by(Sleep.day)).scalars())
     health = list(session.execute(select(DailyHealth).where(DailyHealth.day >= start_day, DailyHealth.day <= end_day).order_by(DailyHealth.day)).scalars())
-    hrv_status, hrv_source_day, hrv_baseline_low, hrv_baseline_high = _latest_hrv_source(session)
+    hrv_status, hrv_source_day, hrv_baseline_low, hrv_baseline_high = _latest_hrv_source(
+        session, end_day=overnight_end_day,
+    )
 
     sleep_values = {
         "sleep_duration": [NumericObservation(row.day, (row.total_s or 0) / 3600) for row in sleeps],
