@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from coach.strength_progression import (
@@ -15,7 +15,7 @@ from coach.strength_progression_store import (
     load_current_evidence,
 )
 from db import (
-    Activity, ProgramSession, SessionExercise, StrengthProgressionEvidenceBoundary,
+    Activity, PlannedSession, ProgramSession, SessionExercise, StrengthProgressionEvidenceBoundary,
     StrengthProgressionEvidence, StrengthProgressionPolicy, TrainingProgram,
 )
 
@@ -69,6 +69,26 @@ def test_approved_weight_is_the_only_template_mutation_and_is_idempotent(session
     assert proposal.status == "applied" and proposal.approved_weight_grams == 72750 and proposal.current_pending_key is None
     assert approve_progression_proposal(session, proposal.proposal_id, entered_weight_kg="72.625", now=now).outcome == ProgressionActionOutcome.ALREADY_APPLIED
     assert approve_progression_proposal(session, proposal.proposal_id, entered_weight_kg="75", now=now).outcome == ProgressionActionOutcome.CONFLICT
+
+
+def test_approval_preserves_scheduled_workout_and_future_compile_uses_local_weight(session):
+    from coach.garmin_compiler import build_program_workout
+
+    now, exercise, proposal = _pending(session)
+    scheduled = PlannedSession(program_session_id=exercise.program_session_id, title="Existing",
+        activity_type="strength_training", target_date=date(2026, 8, 1), suggested_time="18:00",
+        status="approved", garmin_workout_id=7654, source="coach", notes="unchanged",
+        created_at=now, updated_at=now)
+    session.add(scheduled); session.flush()
+    scheduled_before = {name: getattr(scheduled, name) for name in (
+        "program_session_id", "title", "target_date", "suggested_time", "status",
+        "garmin_workout_id", "source", "notes", "created_at", "updated_at",
+    )}
+    assert approve_progression_proposal(session, proposal.proposal_id, entered_weight_kg="72.5", now=now).outcome == ProgressionActionOutcome.APPLIED
+    assert {name: getattr(scheduled, name) for name in scheduled_before} == scheduled_before
+    payload = build_program_workout(session, exercise.program_session_id, "19:00")
+    working = payload["workoutSegments"][0]["workoutSteps"][0]["workoutSteps"][0]
+    assert working["weightValue"] == 72.5
 
 
 def test_rejection_creates_one_cutoff_and_filters_old_evidence(session):
