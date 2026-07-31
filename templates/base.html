@@ -26,6 +26,7 @@
       <a href="/"{% if home_active %} class="active" aria-current="page"{% endif %}>{{ icon('home') }}<span>Overview</span></a>
       <a href="/calendar"{% if current_path.startswith('/calendar') %} class="active" aria-current="page"{% endif %}>{{ icon('calendar') }}<span>Calendar</span></a>
       <a href="/program"{% if current_path.startswith('/program') or current_path.startswith('/onboarding') %} class="active" aria-current="page"{% endif %}>{{ icon('plan') }}<span>Plan</span></a>
+      <a href="/progression"{% if current_path.startswith('/progression') %} class="active" aria-current="page"{% endif %}>{{ icon('activity') }}<span>Progression</span></a>
       <a href="/account"{% if current_path.startswith('/account') %} class="active" aria-current="page"{% endif %}>{{ icon('account') }}<span>Account</span></a>
     </nav>
     <div class="sidebar-footer">
@@ -49,6 +50,7 @@
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-heading"><div><span class="eyebrow">GarminCoach</span><h2 id="more-title">More</h2></div><button class="sheet-close" type="button" data-more-close aria-label="Close menu">×</button></div>
       <a class="sheet-link" href="/account">{{ icon('account') }}<span><b>Account</b><small>Connections, calendars and privacy</small></span>{{ icon('chevron') }}</a>
+      <a class="sheet-link" href="/progression">{{ icon('activity') }}<span><b>Progression</b><small>Review strength-weight proposals</small></span>{{ icon('chevron') }}</a>
       <form method="post" action="/auth/logout"><button class="sheet-link danger" type="submit">{{ icon('logout') }}<span><b>Sign out</b><small>End this GarminCoach session</small></span>{{ icon('chevron') }}</button></form>
     </section>
   </div>

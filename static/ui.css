@@ -66,6 +66,26 @@ h3 { font-size: 1rem; }
 .page-heading-actions { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
 .card, .tile, .add-session-panel { border: 1px solid var(--border-soft); border-radius: var(--radius); background: linear-gradient(145deg, rgba(31,37,43,.98), rgba(20,25,30,.98)); box-shadow: none; }
 .card { padding: 1.35rem; }
+.progression-page { max-width: 1050px; margin: 0 auto; }
+.progression-list { display: grid; gap: 1rem; }
+.progression-card-head, .progression-actions { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.progression-card h2 { margin: .3rem 0 0; }
+.progression-direction, .progression-result { padding: .4rem .7rem; border-radius: 999px; background: rgba(18,184,255,.12); color: var(--accent); font-weight: 750; }
+.progression-result { display: inline-block; }
+.progression-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin: 1rem 0; }
+.progression-stats div, .evidence-row { padding: .75rem; border-radius: 10px; background: rgba(255,255,255,.035); }
+.progression-stats dt, .evidence-row small { color: var(--muted); font-size: .78rem; }
+.progression-stats dd { margin: .2rem 0 0; font-weight: 800; }
+.progression-evidence summary { cursor: pointer; font-weight: 750; }
+.evidence-row { display: grid; gap: .3rem; margin-top: .65rem; }
+.evidence-row ul { margin: .25rem 0 0; padding-left: 1.1rem; }
+.evidence-row em { color: var(--accent); font-style: normal; font-size: .78rem; }
+.progression-actions { margin-top: 1rem; align-items: end; }
+.progression-actions form:first-child { display: grid; grid-template-columns: minmax(10rem, 1fr) auto; align-items: end; gap: .6rem; flex: 1; }
+.progression-actions label { grid-column: 1 / -1; font-weight: 700; }
+.progression-actions input { min-height: 44px; }
+.progression-history { margin-top: 2rem; }
+@media (max-width: 640px) { .progression-card-head, .progression-actions { flex-direction: column; } .progression-stats { grid-template-columns: 1fr; } .progression-actions, .progression-actions form, .progression-actions form:first-child { width: 100%; } .progression-actions form:first-child { grid-template-columns: 1fr; } .progression-actions button { width: 100%; } }
 .card:hover { border-color: #353d45; }
 .btn, .btn-secondary, .btn-ghost, .btn-danger-outline { min-height: 44px; border-radius: 999px; font-weight: 750; letter-spacing: -.01em; }
 .btn { border: 1px solid var(--accent); background: var(--accent); color: #001017; box-shadow: 0 8px 22px rgba(18,184,255,.16); }

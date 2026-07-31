@@ -21,6 +21,7 @@ from coach.strength_progression import (
     fingerprint,
 )
 from db import (
+    StrengthProgressionEvidenceBoundary,
     StrengthProgressionEvidence,
     StrengthProgressionEvidenceHead,
     StrengthProgressionPolicy,
@@ -114,6 +115,11 @@ def _pending_key(session_exercise_id: int, policy_version: str, prescription_fin
     return f"{session_exercise_id}:{policy_version}:{prescription_fingerprint}"
 
 
+def pending_key(session_exercise_id: int, policy_version: str, prescription_fingerprint: str) -> str:
+    """Public, deterministic current-proposal identity."""
+    return _pending_key(session_exercise_id, policy_version, prescription_fingerprint)
+
+
 def create_or_replace_pending_proposal(
     session: Session, *, session_exercise_id: int, proposal: ProposalResult,
     program_id: int | None = None, program_session_id: int | None = None,
@@ -169,7 +175,7 @@ def load_current_evidence(
     prescription_fingerprint: str,
 ) -> list[StrengthProgressionEvidence]:
     """Return only evidence selected by the immutable per-activity heads."""
-    return (
+    query = (
         session.query(StrengthProgressionEvidence)
         .join(
             StrengthProgressionEvidenceHead,
@@ -182,9 +188,93 @@ def load_current_evidence(
             StrengthProgressionEvidence.policy_version == policy_version,
             StrengthProgressionEvidence.prescription_fingerprint == prescription_fingerprint,
         )
-        .order_by(StrengthProgressionEvidence.appearance_at, StrengthProgressionEvidence.evidence_id)
-        .all()
     )
+    boundary = load_latest_rejection_boundary(session, session_exercise_id=session_exercise_id,
+        policy_version=policy_version, prescription_fingerprint=prescription_fingerprint)
+    if boundary is not None:
+        from sqlalchemy import and_, or_
+        query = query.filter(or_(
+            StrengthProgressionEvidence.appearance_at > boundary.cutoff_appearance_at,
+            and_(StrengthProgressionEvidence.appearance_at == boundary.cutoff_appearance_at,
+                 StrengthProgressionEvidence.evidence_id > boundary.cutoff_evidence_id),
+        ))
+    return query.order_by(StrengthProgressionEvidence.appearance_at, StrengthProgressionEvidence.evidence_id).all()
+
+
+def load_latest_rejection_boundary(
+    session: Session, *, session_exercise_id: int, policy_version: str, prescription_fingerprint: str,
+) -> StrengthProgressionEvidenceBoundary | None:
+    return (session.query(StrengthProgressionEvidenceBoundary)
+        .filter_by(session_exercise_id_snapshot=session_exercise_id, policy_version=policy_version,
+                   prescription_fingerprint=prescription_fingerprint)
+        .order_by(StrengthProgressionEvidenceBoundary.cutoff_appearance_at.desc(),
+                  StrengthProgressionEvidenceBoundary.cutoff_evidence_id.desc(),
+                  StrengthProgressionEvidenceBoundary.created_at.desc())
+        .first())
+
+
+def append_rejection_boundary(
+    session: Session, *, proposal: StrengthProgressionProposal,
+    cutoff: StrengthProgressionEvidence, now: datetime,
+) -> StrengthProgressionEvidenceBoundary:
+    """Append one proposal-owned immutable cutoff; a retry returns the same row."""
+    key = fingerprint({"proposal_id": proposal.proposal_id, "cause": "proposal_rejected"})
+    existing = session.query(StrengthProgressionEvidenceBoundary).filter_by(idempotency_key=key).one_or_none()
+    if existing:
+        return existing
+    row = StrengthProgressionEvidenceBoundary(
+        boundary_id=key, session_exercise_id=proposal.session_exercise_id,
+        session_exercise_id_snapshot=proposal.session_exercise_id_snapshot,
+        policy_version=proposal.policy_version, prescription_fingerprint=proposal.prescription_fingerprint,
+        proposal_id=proposal.proposal_id, cause="proposal_rejected",
+        cutoff_appearance_at=cutoff.appearance_at, cutoff_evidence_id=cutoff.evidence_id,
+        idempotency_key=key, created_at=now,
+    )
+    session.add(row)
+    return row
+
+
+def load_pending_proposal(session: Session, proposal_id: str) -> StrengthProgressionProposal | None:
+    row = session.get(StrengthProgressionProposal, proposal_id)
+    return row if row is not None and row.status == "pending" else None
+
+
+def list_proposal_history(session: Session, *, limit: int = 50) -> list[StrengthProgressionProposal]:
+    return (session.query(StrengthProgressionProposal)
+        .order_by(StrengthProgressionProposal.created_at.desc(), StrengthProgressionProposal.proposal_id.desc())
+        .limit(max(1, min(int(limit), 50))).all())
+
+
+def transition_pending_proposal(session: Session, proposal: StrengthProgressionProposal, *, status: str,
+                                now: datetime, approved_weight_grams: int | None = None) -> None:
+    if proposal.status != "pending" or status not in {"applied", "rejected", "stale", "superseded"}:
+        raise ValueError("invalid strength progression proposal transition")
+    proposal.status = status
+    proposal.current_pending_key = None
+    proposal.approved_weight_grams = approved_weight_grams if status == "applied" else None
+    proposal.resolved_at = now
+
+
+def reset_current_streak(session: Session, *, session_exercise_id: int, policy_version: str,
+                         prescription_fingerprint: str) -> None:
+    row = session.get(StrengthProgressionStreak, (session_exercise_id, policy_version, prescription_fingerprint))
+    if row is not None:
+        row.increase_count = row.decrease_count = 0
+        row.last_classification = "unscorable"
+        row.last_relevant_appearance_at = None
+        row.decisive_evidence_ids_json = "[]"
+
+
+def stale_other_pending_proposals(session: Session, *, session_exercise_id: int,
+                                  except_proposal_id: str, now: datetime) -> int:
+    rows = session.query(StrengthProgressionProposal).filter(
+        StrengthProgressionProposal.status == "pending",
+        StrengthProgressionProposal.session_exercise_id_snapshot == session_exercise_id,
+        StrengthProgressionProposal.proposal_id != except_proposal_id,
+    ).all()
+    for row in rows:
+        transition_pending_proposal(session, row, status="stale", now=now)
+    return len(rows)
 
 
 def stale_pending_proposals_for_exercises(

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Strength progression · GarminCoach{% endblock %}
+{% block content %}
+<section class="progression-page">
+  <header class="page-heading"><div><span class="eyebrow">Strength progression</span><h1>Review proposed weights</h1><p>Every change needs your confirmation. Approved local weights affect only future workout compilation; scheduled Garmin workouts stay unchanged.</p></div></header>
+  {% if result_message %}<p class="progression-result" role="status">{{ result_message }}</p>{% endif %}
+  {% if page.pending %}
+    <div class="progression-list">
+    {% for item in page.pending %}
+      <article class="card progression-card">
+        <div class="progression-card-head"><div><span class="card-kicker">{{ item.program_name }} · {{ item.session_name }}</span><h2>{{ item.exercise_name }}</h2></div><span class="progression-direction">{{ item.direction|capitalize }}</span></div>
+        <dl class="progression-stats"><div><dt>Current</dt><dd>{{ format_weight(item.current_weight_grams) }}</dd></div><div><dt>Suggested</dt><dd>{{ format_weight(item.suggested_weight_grams) }}</dd></div><div><dt>Global increment</dt><dd>{{ format_weight(item.global_increment_grams) }}</dd></div></dl>
+        <details class="progression-evidence" open><summary>Decisive evidence · two appearances</summary>
+          {% for evidence in item.evidence %}
+          <section class="evidence-row"><strong>{{ evidence.appearance_at.strftime('%Y-%m-%d %H:%M') }}</strong><span>{{ evidence.classification|replace('_', ' ')|capitalize }}</span><small>{{ evidence.prescribed_sets or '—' }} sets · {{ evidence.target_reps or '—' }} target reps</small>
+            {% if evidence.decisive_sets %}<ul>{% for row in evidence.decisive_sets %}<li>Set {{ row.get('set_index', '—') }}: {{ row.get('reps', '—') }} reps · source {{ row.get('source_weight_kg', row.get('weight_kg', '—')) }} · normalized {{ row.get('normalized_weight_grams', '—') }} g{% if row.get('edited') %} <em>Manual correction</em>{% endif %}{% if row.get('is_warmup') or row.get('is_rest') %} <em>Excluded</em>{% endif %}</li>{% endfor %}</ul>{% else %}<small>Evidence details unavailable.</small>{% endif %}
+          </section>{% endfor %}
+          <small>Evidence is valid only while its latest appearance remains within the 35-day rule. Policy {{ item.policy_version }} · prescription ref {{ item.prescription_reference }}.</small>
+        </details>
+        {% if item.actionable %}<div class="progression-actions"><form method="post" action="/progression/{{ item.proposal_id }}/approve"><label for="weight-{{ item.proposal_id }}">Final approved weight (kg)</label><input id="weight-{{ item.proposal_id }}" name="approved_weight_kg" type="number" min="0.25" max="500" step="0.25" required value="{{ item.suggested_weight_grams / 1000 }}"><button class="btn" type="submit">Approve weight</button></form><form method="post" action="/progression/{{ item.proposal_id }}/reject" onsubmit="return confirm('Reject this proposal?');"><button class="btn-danger-outline" type="submit">Reject proposal</button></form></div>{% else %}<p class="progression-unavailable">This proposal’s evidence is unavailable and cannot be acted on.</p>{% endif %}
+      </article>
+    {% endfor %}</div>
+  {% else %}<section class="card progression-empty"><h2>No current proposals</h2><p>Qualifying strength appearances will appear here for your review.</p></section>{% endif %}
+  <section class="progression-history"><h2>Recent decisions</h2>{% if page.history %}<div class="card"><ul>{% for item in page.history %}<li><strong>{{ item.exercise_name }}</strong> · {{ item.direction|capitalize }} · suggested {{ format_weight(item.suggested_weight_grams) }} · {{ item.status|capitalize }}{% if item.resolved_at %} · {{ item.resolved_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}</li>{% endfor %}</ul></div>{% else %}<p>No recent proposal history.</p>{% endif %}</section>
+</section>
+{% endblock %}

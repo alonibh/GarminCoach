@@ -47,6 +47,10 @@ from coach.onboarding import (
 )
 from coach.programs import PLAN_CHOICES, PROGRAMS, recommend_program, warmup_defaults
 from coach.exercises import catalog_for_ui, exercise_key, exercise_metadata, muscle_group_for
+from coach.strength_progression_actions import (
+    ProgressionActionOutcome, approve_progression_proposal, format_weight_grams,
+    list_progression_review, reject_progression_proposal,
+)
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import (
@@ -2270,6 +2274,49 @@ def get_program_page(
                 "exercise_catalog": catalog_for_ui(),
             },
         )
+
+
+@app.get("/progression", response_class=HTMLResponse)
+def get_progression_page(request: Request, result: str = ""):
+    messages = {
+        "applied": "Weight approved. Future workout compilation will use the new local template weight.",
+        "rejected": "Proposal rejected. Two new qualifying appearances are required before another proposal.",
+        "stale": "This proposal changed and is no longer available for review.",
+    }
+    with get_session() as session:
+        page = list_progression_review(session, now=datetime.utcnow())
+        return templates.TemplateResponse(request, "progression.html", {
+            "page": page, "result_message": messages.get(result), "format_weight": format_weight_grams,
+        })
+
+
+@app.post("/progression/{proposal_id}/approve")
+def approve_progression(proposal_id: str, approved_weight_kg: str = Form(...)):
+    with get_session() as session:
+        action = approve_progression_proposal(session, proposal_id,
+            entered_weight_kg=approved_weight_kg, now=datetime.utcnow())
+        if action.outcome in {ProgressionActionOutcome.APPLIED, ProgressionActionOutcome.ALREADY_APPLIED}:
+            return RedirectResponse("/progression?result=applied", status_code=303)
+        if action.outcome == ProgressionActionOutcome.STALE:
+            return RedirectResponse("/progression?result=stale", status_code=303)
+        if action.outcome == ProgressionActionOutcome.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        if action.outcome == ProgressionActionOutcome.INVALID_WEIGHT:
+            raise HTTPException(status_code=422, detail="Enter a valid final weight in the proposed direction")
+        raise HTTPException(status_code=409, detail="This proposal can no longer be changed")
+
+
+@app.post("/progression/{proposal_id}/reject")
+def reject_progression(proposal_id: str):
+    with get_session() as session:
+        action = reject_progression_proposal(session, proposal_id, now=datetime.utcnow())
+        if action.outcome in {ProgressionActionOutcome.REJECTED, ProgressionActionOutcome.ALREADY_REJECTED}:
+            return RedirectResponse("/progression?result=rejected", status_code=303)
+        if action.outcome == ProgressionActionOutcome.STALE:
+            return RedirectResponse("/progression?result=stale", status_code=303)
+        if action.outcome == ProgressionActionOutcome.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        raise HTTPException(status_code=409, detail="This proposal can no longer be changed")
 
 
 @app.post("/program/{program_id}/approve")

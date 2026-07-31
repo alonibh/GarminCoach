@@ -1,9 +1,11 @@
 # Strength-progression proposal contract
 
-**Status:** Phase 4B2 bounded local recalculation is implemented; review and notification stages remain future work.
+**Status:** Phase 4C web review and confirmed local action flow is implemented. Telegram notification remains future Phase 4D work.
 **Scope:** Deterministic, exercise-level proposals to change a future local template weight
 
-This is the canonical contract for Phase 4 strength progression. It specifies future behavior; it does **not** claim that any persistence, engine, page, notification, mutation, or Garmin integration described here exists today.
+This is the canonical contract for Phase 4 strength progression. Phase 4B
+persistence/recalculation and Phase 4C local web review/actions are implemented;
+unimplemented future stages are explicitly identified below.
 
 ## 1. Product boundary and authority
 
@@ -144,13 +146,19 @@ Future evaluation runs after strength sets finish syncing for a matched activity
 | Phase 4D | Deduplicated Telegram outbox summary; bounded sync/match/correction/editor/proposal triggers; stale/duplicate/retry/concurrency hardening; verify future compiler consumption of approved local weight. |
 | Later Phase 4 | Separate work for 28-day recovery/health trends, Fitness Age/VO2 max history, capability-aware Training Status, weekly-summary improvements, and compact aggregate AI context. |
 
-## 10. Phase 4B2 implementation boundary
+## 10. Phase 4B2/4C implementation boundary
 
 Phase 4B2 is event-driven and bounded: it evaluates only activities explicitly
 dirtied by newly resolved strength sets, a newly confident match, or an
 authoritative correction. Untouched pre-B2 historical activity/match/set rows
-are not broadly backfilled. Phase 4C confirmation/template mutation and Phase
-4D Telegram notification remain unimplemented.
+are not broadly backfilled. Phase 4C provides one tenant-local web review page
+with independent approve/edit-final-weight/reject actions. Approval mutates
+only the local `SessionExercise.weight_kg`; scheduled Garmin workouts remain
+unchanged. Rejection appends an immutable evidence boundary at the greatest
+current `(appearance_at, evidence_id)` key. Evidence at or before that boundary
+cannot contribute again under the unchanged prescription, so two entirely new
+qualifying appearances are required. Phase 4D Telegram notification remains
+unimplemented.
 
 ## 11. Explicit exclusions
 

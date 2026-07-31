@@ -468,6 +468,36 @@ class StrengthProgressionEvidenceHead(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class StrengthProgressionEvidenceBoundary(Base):
+    """An immutable rejection cutoff for one exact prescription."""
+    __tablename__ = "strength_progression_evidence_boundaries"
+
+    boundary_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_exercise_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("session_exercises.id", ondelete="SET NULL"), index=True
+    )
+    session_exercise_id_snapshot: Mapped[int] = mapped_column(Integer, index=True)
+    policy_version: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_policies.policy_version", ondelete="RESTRICT"), index=True
+    )
+    prescription_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    proposal_id: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_proposals.proposal_id", ondelete="RESTRICT"), index=True
+    )
+    cause: Mapped[str] = mapped_column(String(32), default="proposal_rejected")
+    cutoff_appearance_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    cutoff_evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT")
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_strength_boundary_exercise_policy_prescription", "session_exercise_id_snapshot", "policy_version", "prescription_fingerprint"),
+        Index("ix_strength_boundary_cutoff", "cutoff_appearance_at", "cutoff_evidence_id"),
+    )
+
+
 class StrengthProgressionStreak(Base):
     __tablename__ = "strength_progression_streaks"
 
@@ -796,6 +826,7 @@ _DEVICE_CAPABILITY_ADD_COLUMNS = {
 _CAPABILITY_SCOPE_MIGRATION_KEY = "metric_capabilities_scoped_identity_2026_07_30_v1"
 _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY = "body_composition_capability_contract_gate_2026_07_30_v1"
 _STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY = "strength_progression_foundation_2026_07_30_v1"
+_STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY = "strength_progression_review_actions_2026_07_31_v1"
 
 
 def _seed_strength_progression_policy(conn) -> None:
@@ -821,6 +852,21 @@ def _seed_strength_progression_policy(conn) -> None:
     )).scalar_one()
     if active_count != 1:
         raise RuntimeError("strength progression policy seed validation failed")
+
+
+def _validate_strength_progression_review_actions(conn) -> None:
+    """Validate the new immutable cutoff schema before recording its marker."""
+    columns = {row[1] for row in conn.execute(text("PRAGMA table_info('strength_progression_evidence_boundaries')"))}
+    expected = {
+        "boundary_id", "session_exercise_id", "session_exercise_id_snapshot", "policy_version",
+        "prescription_fingerprint", "proposal_id", "cause", "cutoff_appearance_at",
+        "cutoff_evidence_id", "idempotency_key", "created_at",
+    }
+    if not expected.issubset(columns):
+        raise RuntimeError("strength progression review-actions schema validation failed")
+    indexes = {row[1] for row in conn.execute(text("PRAGMA index_list('strength_progression_evidence_boundaries')"))}
+    if "ix_strength_boundary_exercise_policy_prescription" not in indexes:
+        raise RuntimeError("strength progression review-actions index validation failed")
 
 
 def _migrate_capability_scopes(conn) -> None:
@@ -1046,6 +1092,16 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             ), {"key": _STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY})
         else:
             _seed_strength_progression_policy(conn)
+
+        review_actions_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY},
+        ).first()
+        if not review_actions_applied:
+            _validate_strength_progression_review_actions(conn)
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY})
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}
