@@ -34,6 +34,14 @@ def load_active_policy(session: Session) -> ProgressionPolicy:
     if len(rows) != 1:
         raise RuntimeError("strength progression requires exactly one active policy")
     row = rows[0]
+    values = (
+        row.global_increment_grams, row.weight_quantum_grams,
+        row.required_consecutive, row.evidence_window_days,
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in values):
+        raise RuntimeError("strength progression active policy has invalid values")
+    if row.weight_quantum_grams != 250 or row.global_increment_grams % row.weight_quantum_grams:
+        raise RuntimeError("strength progression active policy has an invalid weight quantum")
     return ProgressionPolicy(row.policy_version, row.global_increment_grams, row.weight_quantum_grams, row.required_consecutive, row.evidence_window_days)
 
 
@@ -115,15 +123,18 @@ def create_or_replace_pending_proposal(
         return None
     key = _pending_key(session_exercise_id, proposal.policy_version, proposal.prescription_fingerprint)
     existing = session.query(StrengthProgressionProposal).filter_by(current_pending_key=key).one_or_none()
+    incoming = session.query(StrengthProgressionProposal).filter_by(idempotency_key=proposal.idempotency_key).one_or_none()
     if existing and existing.direction == proposal.direction.value and existing.suggested_weight_grams == proposal.suggested_weight_grams:
         return existing
+    # Idempotency applies to history too.  A replay of a superseded/stale row
+    # must never displace a valid current proposal or revive that historical
+    # row when there is no current proposal.
+    if incoming:
+        return existing if existing is not None else None
     if existing:
         existing.status = "superseded"
         existing.current_pending_key = None
         existing.resolved_at = datetime.utcnow()
-    row = session.query(StrengthProgressionProposal).filter_by(idempotency_key=proposal.idempotency_key).one_or_none()
-    if row:
-        return row
     row = StrengthProgressionProposal(
         proposal_id=proposal.idempotency_key, program_id=program_id, program_session_id=program_session_id,
         session_exercise_id=session_exercise_id, program_id_snapshot=program_id,

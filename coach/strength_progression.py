@@ -335,14 +335,28 @@ def prepare_working_sets(prescription: ExercisePrescription, group: CompletedExe
         matches_duration = prescription.warmup_duration_seconds is None or first.duration_seconds == prescription.warmup_duration_seconds
         matches_measure = has_template_measure and matches_reps and matches_duration
         try:
-            matches_weight = normalize_weight_grams(first.weight_kg) == normalize_weight_grams(prescription.warmup_weight_kg)
+            leading_weight = normalize_weight_grams(first.weight_kg)
+            template_weight = normalize_weight_grams(prescription.template_weight_kg)
         except ValueError:
-            matches_weight = False
-        if matches_measure and matches_weight:
-            working.pop(0)
-            payloads.append(_set_payload(first, excluded="inferred_warmup"))
-        elif not has_template_measure:
-            return PreparedSetsResult((), tuple(payloads), (ReasonCode.AMBIGUOUS_WARMUP,), True)
+            return PreparedSetsResult((), tuple(payloads), (ReasonCode.INVALID_WEIGHT,), True)
+        # A leading set at working weight (or above it) is deterministically a
+        # working attempt, even if a malformed template happens to describe a
+        # matching "warm-up" at that same/heavier weight.
+        if leading_weight >= template_weight:
+            pass
+        else:
+            try:
+                warmup_weight = normalize_weight_grams(prescription.warmup_weight_kg)
+            except ValueError:
+                warmup_weight = None
+            if matches_measure and leading_weight == warmup_weight:
+                working.pop(0)
+                payloads.append(_set_payload(first, excluded="inferred_warmup"))
+            else:
+                # A sub-template leading set that failed the exact warm-up match
+                # cannot safely be assigned as either a warm-up or a working set.
+                # It must not manufacture decrease evidence from a modified warm-up.
+                return PreparedSetsResult((), tuple(payloads), (ReasonCode.AMBIGUOUS_WARMUP,), True)
     selected = tuple(working[: prescription.prescribed_sets or 0])
     payloads.extend(_set_payload(item) for item in selected)
     return PreparedSetsResult(selected, tuple(sorted(payloads, key=lambda item: item["set_index"])), ())
@@ -375,7 +389,7 @@ def classify_appearance(appearance: AppearanceInput) -> AppearanceClassification
         return AppearanceClassificationResult(classification, current, None, payload, (reason,))
     weights: list[int] = []
     for attempt in attempts:
-        if not isinstance(attempt.reps, int) or isinstance(attempt.reps, bool) or attempt.reps < 0:
+        if not isinstance(attempt.reps, int) or isinstance(attempt.reps, bool) or attempt.reps <= 0:
             return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload, (ReasonCode.INVALID_REPS,))
         try:
             weights.append(normalize_weight_grams(attempt.weight_kg))
