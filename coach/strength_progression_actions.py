@@ -18,12 +18,12 @@ from coach.strength_progression import (
 from coach.strength_progression_integration import _prescription
 from coach.strength_progression_store import (
     append_rejection_boundary, evidence_record, load_active_policy, load_current_evidence,
-    pending_key, reset_current_streak, stale_other_pending_proposals,
+    pending_key, reset_current_streak, stale_other_pending_proposals, claim_pending_proposal,
     transition_pending_proposal,
 )
 from db import (
     ProgramSession, SessionExercise, StrengthProgressionEvidence,
-    StrengthProgressionEvidenceHead, StrengthProgressionProposal, TrainingProgram,
+    StrengthProgressionEvidenceHead, StrengthProgressionPolicy, StrengthProgressionProposal, TrainingProgram,
 )
 
 _MAX_WEIGHT_GRAMS = 500_000
@@ -46,12 +46,25 @@ class ProgressionActionOutcome(str, Enum):
 
 
 @dataclass(frozen=True)
+class EvidenceSetReviewItem:
+    set_index: int | None
+    set_number: int | None
+    set_type: str
+    reps: int | None
+    source_weight: str
+    normalized_weight: str
+    duration_seconds: int | None
+    edited: bool
+    excluded: str | None
+
+
+@dataclass(frozen=True)
 class EvidenceReviewItem:
     appearance_at: datetime
     classification: str
     prescribed_sets: int | None
     target_reps: int | None
-    decisive_sets: tuple[dict, ...]
+    decisive_sets: tuple[EvidenceSetReviewItem, ...]
 
 
 @dataclass(frozen=True)
@@ -63,12 +76,18 @@ class ProposalReviewItem:
     direction: str
     current_weight_grams: int
     suggested_weight_grams: int
-    global_increment_grams: int
+    approved_weight_grams: int | None
+    current_weight: str
+    suggested_weight: str
+    approved_weight: str
+    global_increment_grams: int | None
+    global_increment: str
     evidence: tuple[EvidenceReviewItem, ...]
     policy_version: str
     prescription_reference: str
     status: str
     resolved_at: datetime | None
+    status_label: str
     actionable: bool
     stale_reason: str | None = None
 
@@ -93,18 +112,61 @@ def format_weight_grams(grams: int | None) -> str:
     return f"{whole}{suffix if suffix is not None else f'.{fraction:03d}'} kg"
 
 
-def _safe_sets(raw: str) -> tuple[dict, ...] | None:
+def _safe_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _safe_sets(raw: str) -> tuple[EvidenceSetReviewItem, ...] | None:
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    if not isinstance(parsed, list) or not all(isinstance(row, dict) for row in parsed):
+    if not isinstance(parsed, list):
         return None
-    return tuple(parsed)
+    rows: list[EvidenceSetReviewItem] = []
+    for row in parsed:
+        if not isinstance(row, dict):
+            return None
+        source = row.get("weight_kg_source")
+        grams = _safe_int(row.get("weight_grams"))
+        excluded = row.get("excluded")
+        if excluded not in {None, "rest", "warmup", "inferred_warmup"}:
+            return None
+        set_type = row.get("set_type")
+        if set_type is not None and not isinstance(set_type, str):
+            return None
+        if source is not None and not isinstance(source, str):
+            return None
+        for key in ("set_index", "reps", "duration_seconds", "weight_grams"):
+            if row.get(key) is not None and _safe_int(row.get(key)) is None:
+                return None
+        if not isinstance(row.get("edited", False), bool):
+            return None
+        rows.append(EvidenceSetReviewItem(
+            set_index=_safe_int(row.get("set_index")),
+            set_number=(_safe_int(row.get("set_index")) + 1) if _safe_int(row.get("set_index")) is not None else None,
+            set_type=set_type or "Working set", reps=_safe_int(row.get("reps")),
+            source_weight="Unavailable" if source is None else f"{source} kg",
+            normalized_weight=format_weight_grams(grams),
+            duration_seconds=_safe_int(row.get("duration_seconds")), edited=bool(row.get("edited")),
+            excluded=excluded,
+        ))
+    return tuple(rows)
+
+
+def _policy_increment(session: Session, version: str) -> int | None:
+    row = session.get(StrengthProgressionPolicy, version)
+    if row is None:
+        return None
+    values = (row.global_increment_grams, row.weight_quantum_grams, row.required_consecutive, row.evidence_window_days)
+    if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in values):
+        return None
+    if row.weight_quantum_grams != 250 or row.global_increment_grams % 250:
+        return None
+    return row.global_increment_grams
 
 
 def _review_item(session: Session, proposal: StrengthProgressionProposal) -> ProposalReviewItem:
-    policy = load_active_policy(session)
     program = session.get(TrainingProgram, proposal.program_id) if proposal.program_id else None
     program_session = session.get(ProgramSession, proposal.program_session_id) if proposal.program_session_id else None
     exercise = session.get(SessionExercise, proposal.session_exercise_id) if proposal.session_exercise_id else None
@@ -123,33 +185,46 @@ def _review_item(session: Session, proposal: StrengthProgressionProposal) -> Pro
             sets = ()
         evidence.append(EvidenceReviewItem(row.appearance_at, row.classification, row.prescribed_sets,
             row.target_reps, sets))
+    increment = _policy_increment(session, proposal.policy_version)
     actionable = proposal.status == "pending" and valid_payload and len(evidence) == 2
+    status_label = {"applied": "Applied", "rejected": "Rejected", "stale": "Stale", "superseded": "Superseded", "pending": "Pending"}.get(proposal.status, "Unavailable")
     return ProposalReviewItem(
         proposal.proposal_id, program.name if program else "Unavailable program",
         program_session.name if program_session else "Unavailable session",
         exercise.exercise_name if exercise else "Unavailable exercise", proposal.direction,
-        proposal.current_weight_grams, proposal.suggested_weight_grams,
-        policy.global_increment_grams, tuple(evidence), proposal.policy_version,
-        proposal.prescription_fingerprint[:12], proposal.status, proposal.resolved_at, actionable,
+        proposal.current_weight_grams, proposal.suggested_weight_grams, proposal.approved_weight_grams,
+        format_weight_grams(proposal.current_weight_grams), format_weight_grams(proposal.suggested_weight_grams),
+        format_weight_grams(proposal.approved_weight_grams), increment, format_weight_grams(increment), tuple(evidence), proposal.policy_version,
+        proposal.prescription_fingerprint[:12], proposal.status, proposal.resolved_at, status_label, actionable,
         None if actionable else "evidence_unavailable",
     )
 
 
 def list_progression_review(session: Session, *, now: datetime, history_limit: int = 50) -> ProgressionReviewPage:
-    rows = (session.query(StrengthProgressionProposal)
-        .order_by(StrengthProgressionProposal.created_at.desc(), StrengthProgressionProposal.proposal_id.desc())
-        .limit(max(1, min(int(history_limit) + 50, 100))).all())
-    pending, history = [], []
+    """Build all current cards and separately capped immutable history."""
+    rows = (session.query(StrengthProgressionProposal).filter_by(status="pending")
+        .order_by(StrengthProgressionProposal.created_at.asc(), StrengthProgressionProposal.proposal_id.asc()).all())
+    pending, newly_stale = [], []
     for row in rows:
-        item = _review_item(session, row)
-        if row.status == "pending" and not item.actionable:
-            transition_pending_proposal(session, row, status="stale", now=now)
-            history.append(_review_item(session, row))
-        elif row.status == "pending":
-            pending.append(item)
-        elif len(history) < max(1, min(int(history_limit), 50)):
-            history.append(item)
-    return ProgressionReviewPage(tuple(pending), tuple(history))
+        # POST and GET share the same decisive check; stale cards never render
+        # as actionable merely because their persisted JSON happens to parse.
+        if _revalidate(session, row, now=now) is None:
+            _stale(session, row, now)
+            newly_stale.append(_review_item(session, row))
+        else:
+            item = _review_item(session, row)
+            if item.actionable:
+                pending.append(item)
+            else:
+                _stale(session, row, now)
+                newly_stale.append(_review_item(session, row))
+    history_rows = (session.query(StrengthProgressionProposal)
+        .filter(StrengthProgressionProposal.status != "pending")
+        .order_by(StrengthProgressionProposal.resolved_at.desc(), StrengthProgressionProposal.proposal_id.desc())
+        .limit(max(1, min(int(history_limit), 50))).all())
+    already_listed = {item.proposal_id for item in newly_stale}
+    history = newly_stale + [_review_item(session, row) for row in history_rows if row.proposal_id not in already_listed]
+    return ProgressionReviewPage(tuple(pending), tuple(history[:max(1, min(int(history_limit), 50))]))
 
 
 def _stale(session: Session, proposal: StrengthProgressionProposal, now: datetime) -> ProposalActionResult:
@@ -259,8 +334,13 @@ def approve_progression_proposal(session: Session, proposal_id: str, *, entered_
     if ((proposal.direction == "increase" and grams <= proposal.current_weight_grams)
             or (proposal.direction == "decrease" and not 0 < grams < proposal.current_weight_grams)):
         return ProposalActionResult(ProgressionActionOutcome.INVALID_WEIGHT, proposal_id)
+    if not claim_pending_proposal(session, proposal, status="applied", now=now, approved_weight_grams=grams):
+        latest = session.get(StrengthProgressionProposal, proposal_id)
+        if latest is not None:
+            return _terminal(latest, ProgressionAction.APPROVE, grams) or ProposalActionResult(ProgressionActionOutcome.CONFLICT, proposal_id)
+        return ProposalActionResult(ProgressionActionOutcome.NOT_FOUND)
+    # Claim succeeds before this sole permitted template mutation.
     exercise.weight_kg = grams / 1000
-    transition_pending_proposal(session, proposal, status="applied", now=now, approved_weight_grams=grams)
     stale_other_pending_proposals(session, session_exercise_id=exercise.id, except_proposal_id=proposal_id, now=now)
     return ProposalActionResult(ProgressionActionOutcome.APPLIED, proposal_id)
 
@@ -279,8 +359,12 @@ def reject_progression_proposal(session: Session, proposal_id: str, *, now: date
     if not current:
         return _stale(session, proposal, now)
     cutoff = max(current, key=lambda row: (row.appearance_at, row.evidence_id))
+    if not claim_pending_proposal(session, proposal, status="rejected", now=now):
+        latest = session.get(StrengthProgressionProposal, proposal_id)
+        if latest is not None:
+            return _terminal(latest, ProgressionAction.REJECT) or ProposalActionResult(ProgressionActionOutcome.CONFLICT, proposal_id)
+        return ProposalActionResult(ProgressionActionOutcome.NOT_FOUND)
     append_rejection_boundary(session, proposal=proposal, cutoff=cutoff, now=now)
-    transition_pending_proposal(session, proposal, status="rejected", now=now)
     reset_current_streak(session, session_exercise_id=exercise.id, policy_version=proposal.policy_version,
                          prescription_fingerprint=proposal.prescription_fingerprint)
     return ProposalActionResult(ProgressionActionOutcome.REJECTED, proposal_id)

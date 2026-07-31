@@ -865,7 +865,13 @@ def _validate_strength_progression_review_actions(conn) -> None:
     if not expected.issubset(columns):
         raise RuntimeError("strength progression review-actions schema validation failed")
     indexes = {row[1] for row in conn.execute(text("PRAGMA index_list('strength_progression_evidence_boundaries')"))}
-    if "ix_strength_boundary_exercise_policy_prescription" not in indexes:
+    expected_indexes = {
+        "ix_strength_boundary_exercise_policy_prescription",
+        "ix_strength_boundary_cutoff",
+        "ix_strength_progression_evidence_boundaries_idempotency_key",
+        "ix_strength_progression_evidence_boundaries_proposal_id",
+    }
+    if not expected_indexes.issubset(indexes):
         raise RuntimeError("strength progression review-actions index validation failed")
 
 

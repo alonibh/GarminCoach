@@ -5,7 +5,8 @@ from coach.strength_progression import (
     derive_streak,
 )
 from coach.strength_progression_actions import (
-    ProgressionActionOutcome, approve_progression_proposal, reject_progression_proposal,
+    ProgressionActionOutcome, approve_progression_proposal, list_progression_review,
+    reject_progression_proposal,
 )
 from coach.strength_progression_integration import _prescription
 from coach.strength_progression_store import (
@@ -33,8 +34,12 @@ def _pending(session):
     session.add_all(activities); session.flush()
     prescription = _prescription(exercise, program.id, program_session.id)
     now = datetime(2026, 7, 31, 12)
-    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000,
-        ({"set_index": 1, "reps": 10, "normalized_weight_grams": 70000},), ())
+    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000, (
+        {"set_index": 0, "set_type": "REST", "reps": None, "weight_kg_source": None,
+         "weight_grams": None, "duration_seconds": 60, "edited": False, "excluded": "rest"},
+        {"set_index": 1, "set_type": "WORK", "reps": 10, "weight_kg_source": "70.0",
+         "weight_grams": 70000, "duration_seconds": None, "edited": True},
+    ), ())
     evidence = [append_evidence(session, session_exercise_id=exercise.id, activity_id=activity.id,
         policy_version=policy.policy_version,
         prescription_fingerprint=__import__("coach.strength_progression", fromlist=["prescription_fingerprint"]).prescription_fingerprint(prescription),
@@ -74,3 +79,22 @@ def test_rejection_creates_one_cutoff_and_filters_old_evidence(session):
         prescription_fingerprint=proposal.prescription_fingerprint) == []
     assert reject_progression_proposal(session, proposal.proposal_id, now=now).outcome == ProgressionActionOutcome.ALREADY_REJECTED
     assert session.query(StrengthProgressionEvidenceBoundary).count() == 1
+
+
+def test_review_uses_typed_set_presentation_and_rejection_excludes_cutoff_revisions(session):
+    now, exercise, proposal = _pending(session)
+    page = list_progression_review(session, now=now)
+    row = page.pending[0].evidence[0].decisive_sets
+    assert row[0].excluded == "rest" and row[0].normalized_weight == "Unavailable"
+    assert row[1].source_weight == "70.0 kg" and row[1].normalized_weight == "70 kg" and row[1].edited
+    assert reject_progression_proposal(session, proposal.proposal_id, now=now).outcome == ProgressionActionOutcome.REJECTED
+    original = session.get(__import__("db", fromlist=["StrengthProgressionEvidence"]).StrengthProgressionEvidence,
+        proposal.decisive_evidence_two_id)
+    revised = append_evidence(session, session_exercise_id=exercise.id, activity_id=original.activity_id,
+        policy_version=proposal.policy_version, prescription_fingerprint=proposal.prescription_fingerprint,
+        source_fingerprint="post-rejection-correction", appearance_at=original.appearance_at,
+        result=AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000, (), ()),
+        program_id=original.program_id, program_session_id=original.program_session_id)
+    assert revised.evidence_id != original.evidence_id
+    assert load_current_evidence(session, session_exercise_id=exercise.id, policy_version=proposal.policy_version,
+        prescription_fingerprint=proposal.prescription_fingerprint) == []

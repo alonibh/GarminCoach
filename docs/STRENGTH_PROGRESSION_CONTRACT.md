@@ -154,8 +154,9 @@ authoritative correction. Untouched pre-B2 historical activity/match/set rows
 are not broadly backfilled. Phase 4C provides one tenant-local web review page
 with independent approve/edit-final-weight/reject actions. Approval mutates
 only the local `SessionExercise.weight_kg`; scheduled Garmin workouts remain
-unchanged. Rejection appends an immutable evidence boundary at the greatest
-current `(appearance_at, evidence_id)` key. Evidence at or before that boundary
+unchanged. Rejection records the greatest current `(appearance_at, evidence_id)`
+row for audit, but eligibility is strictly later **appearance timestamps**.
+Every evidence revision at or before the cutoff appearance remains excluded and
 cannot contribute again under the unchanged prescription, so two entirely new
 qualifying appearances are required. Phase 4D Telegram notification remains
 unimplemented.

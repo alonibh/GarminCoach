@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Collection, Iterable
 
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 from coach.strength_progression import (
     AppearanceClassificationResult,
@@ -192,12 +193,10 @@ def load_current_evidence(
     boundary = load_latest_rejection_boundary(session, session_exercise_id=session_exercise_id,
         policy_version=policy_version, prescription_fingerprint=prescription_fingerprint)
     if boundary is not None:
-        from sqlalchemy import and_, or_
-        query = query.filter(or_(
-            StrengthProgressionEvidence.appearance_at > boundary.cutoff_appearance_at,
-            and_(StrengthProgressionEvidence.appearance_at == boundary.cutoff_appearance_at,
-                 StrengthProgressionEvidence.evidence_id > boundary.cutoff_evidence_id),
-        ))
+        # A correction produces a new evidence id for the *same appearance*.
+        # It must never escape a rejection boundary by sorting after the
+        # original cutoff evidence id.
+        query = query.filter(StrengthProgressionEvidence.appearance_at > boundary.cutoff_appearance_at)
     return query.order_by(StrengthProgressionEvidence.appearance_at, StrengthProgressionEvidence.evidence_id).all()
 
 
@@ -253,6 +252,39 @@ def transition_pending_proposal(session: Session, proposal: StrengthProgressionP
     proposal.current_pending_key = None
     proposal.approved_weight_grams = approved_weight_grams if status == "applied" else None
     proposal.resolved_at = now
+
+
+def claim_pending_proposal(
+    session: Session, proposal: StrengthProgressionProposal, *, status: str, now: datetime,
+    approved_weight_grams: int | None = None,
+) -> bool:
+    """Atomically claim exactly the pending proposal that was revalidated.
+
+    A caller-owned transaction rolls this state transition back if any later
+    local mutation fails.  This is deliberately narrower than a generic
+    transition: every authoritative value is compared in the database.
+    """
+    if status not in {"applied", "rejected"} or proposal.current_pending_key is None:
+        return False
+    result = session.execute(update(StrengthProgressionProposal).where(
+        StrengthProgressionProposal.proposal_id == proposal.proposal_id,
+        StrengthProgressionProposal.status == "pending",
+        StrengthProgressionProposal.current_pending_key == proposal.current_pending_key,
+        StrengthProgressionProposal.policy_version == proposal.policy_version,
+        StrengthProgressionProposal.prescription_fingerprint == proposal.prescription_fingerprint,
+        StrengthProgressionProposal.current_weight_grams == proposal.current_weight_grams,
+        StrengthProgressionProposal.suggested_weight_grams == proposal.suggested_weight_grams,
+    ).values(
+        status=status, current_pending_key=None,
+        approved_weight_grams=approved_weight_grams if status == "applied" else None,
+        resolved_at=now,
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        session.expire(proposal)
+        return False
+    session.expire(proposal)
+    session.refresh(proposal)
+    return True
 
 
 def reset_current_streak(session: Session, *, session_exercise_id: int, policy_version: str,

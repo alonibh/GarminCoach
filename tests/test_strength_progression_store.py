@@ -186,7 +186,11 @@ def test_init_db_migrates_and_seeds_progression_foundation_idempotently(tmp_path
         assert conn.execute(text("SELECT value FROM durable_example")).scalar_one() == "keep"
         assert conn.execute(text("SELECT COUNT(*) FROM strength_progression_policies WHERE is_active = 1")).scalar_one() == 1
         assert conn.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = 'strength_progression_foundation_2026_07_30_v1'")).scalar_one() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = 'strength_progression_review_actions_2026_07_31_v1'")).scalar_one() == 1
         indexes = {item[1] for item in conn.execute(text("PRAGMA index_list('strength_progression_proposals')"))}
         assert "ix_strength_progression_proposals_current_pending_key" in indexes
+        boundary_indexes = {item[1] for item in conn.execute(text("PRAGMA index_list('strength_progression_evidence_boundaries')"))}
+        assert {"ix_strength_boundary_exercise_policy_prescription", "ix_strength_boundary_cutoff"}.issubset(boundary_indexes)
     assert "strength_progression_evidence" in inspect(engine).get_table_names()
+    assert "strength_progression_evidence_boundaries" in inspect(engine).get_table_names()
     engine.dispose()
