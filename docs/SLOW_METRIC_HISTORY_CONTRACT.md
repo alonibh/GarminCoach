@@ -12,6 +12,15 @@ An observation has a deterministic ID over canonical fields and a unique source 
 
 ## Forward-only behavior
 
+Existing numeric-series heads use the same canonical activity ordering as batch
+ingestion: local date, local time, numeric activity ID, then source key. The
+report applies its 60-point cap only after this canonical ordering. Training
+Status uses observed time for chronology, never its status hash; execution
+context is not source identity. Repeated identical status text is coalesced to
+its first immutable observation for that device/day, while a later changed text
+is a distinct transition. Fitness Age normalizes timestamp-shaped `lastUpdated`
+values to their source-local ISO date before storage.
+
 The writer orders a series by source-local date, source time when known, and stable source key. A retry of the same source fact is idempotent; a changed fact under the same source identity conflicts and fails closed. A value equal to the current head is not inserted. An older source never replaces the head. Values are immutable and are never compacted or deleted with an activity, device, or profile cache row. Same-day activity VO2 uses the activity start time and ID as deterministic source identity/order.
 
 No Garmin history scan, new endpoint, dashboard-time Garmin call, or raw-payload storage is permitted. Fitness Age uses the existing current/weekly fetch and supplied `lastUpdated` date (otherwise the supplied local sync date); VO2 uses existing incremental activity summaries; Training Status uses the existing capability-aware current/weekly path.

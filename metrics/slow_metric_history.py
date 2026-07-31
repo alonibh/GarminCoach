@@ -152,6 +152,31 @@ def _source_order_from_key(source_key: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _numeric_series_head(session: Session, *, metric: str, scope_kind: str, scope_key: str) -> SlowMetricObservation | None:
+    """Return a bounded canonical head without lexically ordering activity IDs."""
+    latest = session.query(SlowMetricObservation.observed_on).filter_by(
+        metric=metric, scope_kind=scope_kind, scope_key=scope_key,
+    ).order_by(SlowMetricObservation.observed_on.desc()).first()
+    if latest is None:
+        return None
+    rows = session.query(SlowMetricObservation).filter_by(
+        metric=metric, scope_kind=scope_kind, scope_key=scope_key, observed_on=latest[0],
+    ).all()
+    return max(rows, key=_row_order_key) if rows else None
+
+
+def _text_series_head(session: Session, *, metric: str, scope_kind: str, scope_key: str) -> SlowMetricObservation | None:
+    latest = session.query(SlowMetricObservation.observed_on).filter_by(
+        metric=metric, scope_kind=scope_kind, scope_key=scope_key,
+    ).order_by(SlowMetricObservation.observed_on.desc()).first()
+    if latest is None:
+        return None
+    rows = session.query(SlowMetricObservation).filter_by(
+        metric=metric, scope_kind=scope_kind, scope_key=scope_key, observed_on=latest[0],
+    ).all()
+    return max(rows, key=lambda row: (row.observed_on, row.observed_at or datetime.min, row.source_key)) if rows else None
+
+
 def _normal_numeric(value: NumericObservationInput, *, as_of_day: date | None) -> NumericObservationInput | None:
     scope_key = _clean_text(value.scope_key, 96)
     source_kind = _clean_text(value.source_kind, 48)
@@ -166,8 +191,9 @@ def _normal_numeric(value: NumericObservationInput, *, as_of_day: date | None) -
     numeric = float(value.value)
     if value.metric not in _NUMERIC_BOUNDS or not math.isfinite(numeric) or not 0 < numeric <= _NUMERIC_BOUNDS[value.metric]:
         return None
+    source_order = value.source_order if value.source_order is not None else _source_order_from_key(source_key)
     return NumericObservationInput(value.metric, value.scope_kind, scope_key, value.observed_on, value.observed_at,
-                                   numeric, source_kind, source_key, value.created_at, value.source_order)
+                                   numeric, source_kind, source_key, value.created_at, source_order)
 
 
 def _source_row(session: Session, value: NumericObservationInput | tuple) -> SlowMetricObservation | None:
@@ -183,10 +209,7 @@ def _record_numeric_normalized(session: Session, value: NumericObservationInput)
                 and existing.numeric_value == value.value and existing.text_value is None)
         return RecordObservationResult(RecordObservationOutcome.DUPLICATE_SOURCE if same else RecordObservationOutcome.CONFLICT,
                                        existing.observation_id)
-    head = session.query(SlowMetricObservation).filter_by(metric=value.metric, scope_kind=value.scope_kind,
-                                                           scope_key=value.scope_key).order_by(
-        SlowMetricObservation.observed_on.desc(), SlowMetricObservation.observed_at.desc(),
-        SlowMetricObservation.source_key.desc()).first()
+    head = _numeric_series_head(session, metric=value.metric, scope_kind=value.scope_kind, scope_key=value.scope_key)
     if head and _order_key(value.observed_on, value.observed_at, value.source_order, value.source_key) < _row_order_key(head):
         return RecordObservationResult(RecordObservationOutcome.OLDER_THAN_HEAD)
     if head and head.numeric_value == value.value and head.text_value is None:
@@ -265,11 +288,11 @@ def record_text_observation(session: Session, *, metric: str, scope_kind: str, s
     existing = _source_row(session, type("Source", (), {"metric": metric, "scope_kind": scope_kind, "scope_key": scope_key,
                                                            "source_kind": source_kind, "source_key": source_key})())
     if existing:
-        same = existing.observed_on == observed_on and existing.observed_at == observed_at and existing.text_value == text_value and existing.numeric_value is None
-        return RecordObservationResult(RecordObservationOutcome.DUPLICATE_SOURCE if same else RecordObservationOutcome.CONFLICT, existing.observation_id)
-    head = session.query(SlowMetricObservation).filter_by(metric=metric, scope_kind=scope_kind, scope_key=scope_key).order_by(
-        SlowMetricObservation.observed_on.desc(), SlowMetricObservation.observed_at.desc(), SlowMetricObservation.source_key.desc()).first()
-    if head and _order_key(observed_on, observed_at, None, source_key) < _row_order_key(head):
+        if existing.text_value == text_value and existing.numeric_value is None:
+            return RecordObservationResult(RecordObservationOutcome.DUPLICATE_SOURCE, existing.observation_id)
+        return RecordObservationResult(RecordObservationOutcome.CONFLICT, existing.observation_id)
+    head = _text_series_head(session, metric=metric, scope_kind=scope_kind, scope_key=scope_key)
+    if head and (observed_on, observed_at or datetime.min, source_key) < (head.observed_on, head.observed_at or datetime.min, head.source_key):
         return RecordObservationResult(RecordObservationOutcome.OLDER_THAN_HEAD)
     if head and head.text_value == text_value and head.numeric_value is None:
         return RecordObservationResult(RecordObservationOutcome.UNCHANGED, head.observation_id)
@@ -287,8 +310,9 @@ def _numeric_history(session: Session, metric: str, scope_key: str, as_of_day: d
     rows = session.query(SlowMetricObservation).filter(SlowMetricObservation.metric == metric,
         SlowMetricObservation.scope_kind == kind, SlowMetricObservation.scope_key == scope_key,
         SlowMetricObservation.observed_on <= as_of_day, SlowMetricObservation.observed_on >= as_of_day.fromordinal(as_of_day.toordinal() - 364),
-    ).order_by(SlowMetricObservation.observed_on.desc(), SlowMetricObservation.observed_at.desc(), SlowMetricObservation.source_key.desc()).limit(60).all()
+    ).all()
     rows.sort(key=_row_order_key)
+    rows = rows[-60:]
     points = tuple(NumericHistoryPoint(row.observed_on, float(row.numeric_value), row.scope_key, row.source_kind) for row in rows if row.numeric_value is not None)
     cap_metric = "fitness_age" if metric == "target_fitness_age" else metric
     cap = session.get(MetricCapability, (cap_metric, kind, scope_key))
@@ -312,8 +336,9 @@ def build_slow_metric_history_report(session: Session, *, as_of_day: date) -> Sl
         rows = session.query(SlowMetricObservation).filter(SlowMetricObservation.metric == "training_status",
             SlowMetricObservation.scope_kind == "device", SlowMetricObservation.scope_key == device_key,
             SlowMetricObservation.observed_on <= as_of_day, SlowMetricObservation.observed_on >= as_of_day.fromordinal(as_of_day.toordinal() - 364),
-        ).order_by(SlowMetricObservation.observed_on.desc(), SlowMetricObservation.observed_at.desc(), SlowMetricObservation.source_key.desc()).limit(60).all()
-        rows.sort(key=_row_order_key)
+        ).all()
+        rows.sort(key=lambda row: (row.observed_on, row.observed_at or datetime.min, row.source_key))
+        rows = rows[-60:]
         changes = tuple(StatusHistoryPoint(row.observed_on, row.text_value or "", device_key) for row in rows)
         presentation = "SUPPORTED_WITH_DATA" if state == "supported" and changes else "SUPPORTED_NO_DATA" if state == "supported" else "UNSUPPORTED" if state == "unsupported" else "UNKNOWN"
         training = TrainingStatusHistory(presentation, device_key, display.value if display else None, state,

@@ -93,6 +93,36 @@ def test_writer_rejects_datetime_future_aware_and_control_inputs(session):
         session, metric="fitness_age", scope_kind="account", scope_key="account", observed_on=datetime(2026, 7, 20),
         observed_at=None, value=35, source_kind="test", source_key="one", created_at=NOW,
     ).outcome == RecordObservationOutcome.INVALID
+
+
+def test_numeric_canonical_head_uses_integer_activity_id_not_source_text(session):
+    def record(activity_id, value):
+        return record_numeric_observation(
+            session, metric="vo2max", scope_kind="activity", scope_key="running", observed_on=date(2026, 7, 20),
+            observed_at=datetime(2026, 7, 20, 8), value=value, source_kind="test",
+            source_key=f"activity:{activity_id}:running:2026-07-20T08:00:00", created_at=NOW,
+        )
+    assert record(2, 42).outcome == RecordObservationOutcome.RECORDED
+    assert record(10, 50).outcome == RecordObservationOutcome.RECORDED
+    assert record(5, 45).outcome == RecordObservationOutcome.OLDER_THAN_HEAD
+    report = build_slow_metric_history_report(session, as_of_day=date(2026, 7, 31))
+    assert report.vo2_running.current_value == 50
+
+
+def test_status_uses_observation_time_not_fingerprint_order(session):
+    session.add(SyncState(key="garmin_device_model_key", value="watch_a"))
+    assert record_text_observation(
+        session, metric="training_status", scope_kind="device", scope_key="watch_a", observed_on=date(2026, 7, 20),
+        observed_at=datetime(2026, 7, 20, 9), value="Productive", source_kind="test", source_key="productive", created_at=NOW,
+    ).outcome == RecordObservationOutcome.RECORDED
+    assert record_text_observation(
+        session, metric="training_status", scope_kind="device", scope_key="watch_a", observed_on=date(2026, 7, 20),
+        observed_at=datetime(2026, 7, 20, 10), value="Recovery", source_kind="test", source_key="recovery", created_at=NOW,
+    ).outcome == RecordObservationOutcome.RECORDED
+    assert record_text_observation(
+        session, metric="training_status", scope_kind="device", scope_key="watch_a", observed_on=date(2026, 7, 20),
+        observed_at=datetime(2026, 7, 20, 8), value="Maintaining", source_kind="test", source_key="old", created_at=NOW,
+    ).outcome == RecordObservationOutcome.OLDER_THAN_HEAD
     assert record_numeric_observation(
         session, metric="fitness_age", scope_kind="account", scope_key="account", observed_on=date(2026, 8, 1),
         observed_at=None, value=35, source_kind="test\n", source_key="one", created_at=NOW, as_of_day=date(2026, 7, 31),

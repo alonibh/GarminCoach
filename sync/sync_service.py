@@ -777,8 +777,8 @@ def persist_current_training_status(
     fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
     result = record_text_observation(
         session, metric="training_status", scope_kind="device", scope_key=device.value, observed_on=observed_on,
-        observed_at=None, value=normalized, source_kind="garmin_training_status",
-        source_key=f"training_status:{device.value}:{observed_on.isoformat()}:{fingerprint}:{source_context}",
+        observed_at=observed_at, value=normalized, source_kind="garmin_training_status",
+        source_key=f"training_status:{device.value}:{observed_on.isoformat()}:{fingerprint}",
         created_at=observed_at, as_of_day=observed_on,
     )
     accepted = result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED, RecordObservationOutcome.DUPLICATE_SOURCE}
@@ -2449,8 +2449,9 @@ def _sync_current_fitness_age(session: Session, today: date, *, context: str = "
         if decision == "probe_unknown":
             note_capability_probe(session, "fitness_age", "empty")
         return True  # valid empty/current response settles a weekly attempt
-    observed = payload.get("lastUpdated")
-    if not isinstance(observed, str) or _parse_state_date(observed[:10]) is None:
+    raw_updated = payload.get("lastUpdated")
+    observed = raw_updated.strip()[:10] if isinstance(raw_updated, str) else ""
+    if _parse_state_date(observed) is None:
         observed = today.isoformat()
     from metrics.slow_metric_history import RecordObservationOutcome, record_numeric_observation
     observed_day = date.fromisoformat(observed)
