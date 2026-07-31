@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 import inspect
 import json
@@ -17,6 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import config
+
+logger = logging.getLogger(__name__)
+
 from db import (
     Activity,
     ActivityProgramMatch,
@@ -1691,8 +1695,21 @@ def edit_set(
         aid = st.activity_id
         s.flush()
         from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+        from coach.strength_progression_notifications import (
+            bridge_pending_progression_notifications, record_material_proposals,
+        )
         request_activity_recalculation(s, aid, cause=RecalculationCause.MANUAL_SET_CORRECTED)
-        process_activity_recalculation(s, aid, cause=RecalculationCause.MANUAL_SET_CORRECTED)
+        report = process_activity_recalculation(s, aid, cause=RecalculationCause.MANUAL_SET_CORRECTED)
+        if report.boundary_id and report.material_proposal_changes:
+            recorded = record_material_proposals(s, boundary_id=report.boundary_id,
+                changes=report.material_proposal_changes, now=datetime.utcnow())
+            if recorded.batch_id:
+                try:
+                    with s.begin_nested():
+                        bridge_pending_progression_notifications(s, now=datetime.utcnow(), limit=1,
+                            batch_ids=(recorded.batch_id,))
+                except Exception:
+                    logger.exception("strength progression notification bridge failed after set correction")
     return RedirectResponse(f"/workout/{aid}", status_code=303)
 
 

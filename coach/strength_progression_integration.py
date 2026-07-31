@@ -55,6 +55,21 @@ class InvalidationCause(str, Enum):
 
 
 @dataclass(frozen=True)
+class MaterialProposalChange:
+    """An immutable fact emitted only for a new material pending proposal."""
+    proposal_id: str
+    program_id: int
+    program_session_id: int
+    session_exercise_id: int
+    policy_version: str
+    prescription_fingerprint: str
+    direction: str
+    current_weight_grams: int
+    suggested_weight_grams: int
+    material_fingerprint: str
+
+
+@dataclass(frozen=True)
 class RecalculationReport:
     activity_id: int
     expected_noop: str | None = None
@@ -69,6 +84,8 @@ class RecalculationReport:
     dirty_key_cleared: bool = False
     dirty_key_retained: bool = False
     error: str | None = None
+    boundary_id: str | None = None
+    material_proposal_changes: tuple[MaterialProposalChange, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -76,6 +93,8 @@ class BatchRecalculationReport:
     processed: int
     reports: tuple[RecalculationReport, ...]
     malformed_keys: int = 0
+    boundary_id: str | None = None
+    material_proposal_changes: tuple[MaterialProposalChange, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,6 +109,43 @@ def _journal_key(activity_id: int) -> str:
 
 def _now() -> str:
     return datetime.utcnow().isoformat(timespec="microseconds")
+
+
+def _activity_boundary_id(session: Session, activity_id: int, cause: RecalculationCause) -> str:
+    """Stable across retries of one retained journal request, never random."""
+    causes = {cause.value}
+    first_requested_at: str | None = None
+    row = session.get(SyncState, _journal_key(activity_id))
+    if row is not None:
+        try:
+            payload = json.loads(row.value or "")
+            if isinstance(payload, dict) and isinstance(payload.get("causes"), list):
+                causes.update(str(item) for item in payload["causes"] if isinstance(item, str))
+                first_requested_at = str(payload.get("first_requested_at") or "") or None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return fingerprint({"kind": "strength_progression_activity_boundary", "activity_id": activity_id,
+                        "causes": sorted(causes), "first_requested_at": first_requested_at})
+
+
+def _batch_boundary_id(reports: Collection[RecalculationReport]) -> str | None:
+    components = sorted({report.boundary_id for report in reports if report.boundary_id})
+    return fingerprint({"kind": "strength_progression_batch_boundary", "components": components}) if components else None
+
+
+def _material_change(row: StrengthProgressionProposal) -> MaterialProposalChange | None:
+    if (row.program_id_snapshot is None or row.program_session_id_snapshot is None
+            or row.status != "pending"):
+        return None
+    material = fingerprint({"proposal_id": row.proposal_id, "policy_version": row.policy_version,
+        "prescription_fingerprint": row.prescription_fingerprint,
+        "session_exercise_id": row.session_exercise_id_snapshot, "direction": row.direction,
+        "current_weight_grams": row.current_weight_grams,
+        "suggested_weight_grams": row.suggested_weight_grams})
+    return MaterialProposalChange(row.proposal_id, row.program_id_snapshot,
+        row.program_session_id_snapshot, row.session_exercise_id_snapshot, row.policy_version,
+        row.prescription_fingerprint, row.direction, row.current_weight_grams,
+        row.suggested_weight_grams, material)
 
 
 def request_activity_recalculation(
@@ -215,24 +271,24 @@ def _unscorable(reason: ReasonCode, prescription: ExercisePrescription) -> Appea
     return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, weight, None, (), (reason,))
 
 
-def _process(session: Session, activity_id: int) -> RecalculationReport:
+def _process(session: Session, activity_id: int, *, boundary_id: str | None = None) -> RecalculationReport:
     activity = session.get(Activity, activity_id)
     if activity is None:
-        return RecalculationReport(activity_id, expected_noop="no_activity")
+        return RecalculationReport(activity_id, expected_noop="no_activity", boundary_id=boundary_id)
     if not _is_strength(activity):
-        return RecalculationReport(activity_id, expected_noop="non_strength_activity")
+        return RecalculationReport(activity_id, expected_noop="non_strength_activity", boundary_id=boundary_id)
     matches = session.query(ActivityProgramMatch).filter_by(activity_id=activity_id).all()
     if len(matches) != 1:
-        return RecalculationReport(activity_id, expected_noop="no_confident_match")
+        return RecalculationReport(activity_id, expected_noop="no_confident_match", boundary_id=boundary_id)
     match = matches[0]
     program = session.get(TrainingProgram, match.program_id)
     program_session = session.get(ProgramSession, match.program_session_id)
     if (program is None or not program.active or program.status != "active" or
             program_session is None or program_session.program_id != program.id):
-        return RecalculationReport(activity_id, expected_noop="inactive_or_mismatched_program")
+        return RecalculationReport(activity_id, expected_noop="inactive_or_mismatched_program", boundary_id=boundary_id)
     rows = session.query(SessionExercise).filter_by(program_session_id=program_session.id).order_by(SessionExercise.order_index, SessionExercise.id).all()
     if not rows:
-        return RecalculationReport(activity_id, expected_noop="no_session_exercises")
+        return RecalculationReport(activity_id, expected_noop="no_session_exercises", boundary_id=boundary_id)
     policy = load_active_policy(session)
     complete = session.get(SyncState, f"activity_strength_sets_checked:{activity_id}")
     payload_complete = bool(complete and complete.value == "complete")
@@ -250,6 +306,7 @@ def _process(session: Session, activity_id: int) -> RecalculationReport:
             # explicitly unscorable below.
             ambiguous.update(item.session_exercise_id for item in prescriptions)
     created = reused = heads = streaks = proposal_created = preserved = superseded = staled = 0
+    material_changes: list[MaterialProposalChange] = []
     appearance_at = activity.start_time or match.matched_at
     for prescription in prescriptions:
         # Ineligible rows have no normal evidence and cannot retain a current proposal.
@@ -308,16 +365,22 @@ def _process(session: Session, activity_id: int) -> RecalculationReport:
             preserved += 1
         else:
             superseded += 1
+        if proposal_row is not None and (before is None or before.proposal_id != proposal_row.proposal_id):
+            material = _material_change(proposal_row)
+            if material is not None:
+                material_changes.append(material)
     return RecalculationReport(activity_id, evidence_created=created, evidence_reused=reused,
         heads_moved=heads, streaks_updated=streaks, proposals_created=proposal_created,
-        proposals_preserved=preserved, proposals_superseded=superseded, proposals_staled=staled)
+        proposals_preserved=preserved, proposals_superseded=superseded, proposals_staled=staled,
+        boundary_id=boundary_id, material_proposal_changes=tuple(material_changes))
 
 
 def process_activity_recalculation(session: Session, activity_id: int, *, cause: RecalculationCause) -> RecalculationReport:
     """Process one requested activity in a savepoint; retain its key on failures."""
     try:
+        boundary_id = _activity_boundary_id(session, activity_id, cause)
         with session.begin_nested():
-            report = _process(session, activity_id)
+            report = _process(session, activity_id, boundary_id=boundary_id)
             _clear_request(session, activity_id)
         return RecalculationReport(**{**report.__dict__, "dirty_key_cleared": True})
     except Exception:
@@ -348,7 +411,9 @@ def process_pending_activity_recalculations(session: Session, *, limit: int = 50
         if wanted is not None and activity_id not in wanted:
             continue
         reports.append(process_activity_recalculation(session, activity_id, cause=RecalculationCause.RETRY))
-    return BatchRecalculationReport(len(reports), tuple(reports), malformed)
+    changes = tuple(change for report in reports for change in report.material_proposal_changes)
+    return BatchRecalculationReport(len(reports), tuple(reports), malformed,
+        _batch_boundary_id(reports), changes)
 
 
 def invalidate_session_exercises(session: Session, session_exercise_ids: Collection[int], *, cause: InvalidationCause) -> InvalidationReport:

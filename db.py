@@ -540,6 +540,46 @@ class StrengthProgressionProposal(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class StrengthProgressionNotificationBatch(Base):
+    """Durable, tenant-local intent for one recalculation boundary."""
+    __tablename__ = "strength_progression_notification_batches"
+
+    batch_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    boundary_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    batch_fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    payload_version: Mapped[str] = mapped_column(String(32), default="v1")
+    status: Mapped[str] = mapped_column(String(24), default="pending_outbox", index=True)
+    outbox_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("notification_outbox.id", ondelete="SET NULL"), index=True
+    )
+    outbox_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
+    proposal_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    queued_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    terminal_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    terminal_reason: Mapped[Optional[str]] = mapped_column(String(64))
+
+    __table_args__ = (
+        Index("ix_strength_notification_batch_status_created", "status", "created_at"),
+    )
+
+
+class StrengthProgressionNotificationReceipt(Base):
+    """One immutable receipt per proposal material state; never cascaded away."""
+    __tablename__ = "strength_progression_notification_receipts"
+
+    receipt_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_notification_batches.batch_id", ondelete="RESTRICT"), index=True
+    )
+    proposal_id: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_proposals.proposal_id", ondelete="RESTRICT"), index=True
+    )
+    proposal_id_snapshot: Mapped[str] = mapped_column(String(64), index=True)
+    material_fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class CoachMessage(Base):
     __tablename__ = "coach_messages"
 
@@ -827,6 +867,7 @@ _CAPABILITY_SCOPE_MIGRATION_KEY = "metric_capabilities_scoped_identity_2026_07_3
 _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY = "body_composition_capability_contract_gate_2026_07_30_v1"
 _STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY = "strength_progression_foundation_2026_07_30_v1"
 _STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY = "strength_progression_review_actions_2026_07_31_v1"
+_STRENGTH_PROGRESSION_TELEGRAM_NOTIFICATIONS_MIGRATION_KEY = "strength_progression_telegram_notifications_2026_07_31_v1"
 
 
 def _seed_strength_progression_policy(conn) -> None:
@@ -873,6 +914,28 @@ def _validate_strength_progression_review_actions(conn) -> None:
     }
     if not expected_indexes.issubset(indexes):
         raise RuntimeError("strength progression review-actions index validation failed")
+
+
+def _validate_strength_progression_telegram_notifications(conn) -> None:
+    """Validate tables and indexes before recording the Phase 4D marker."""
+    expected = {
+        "strength_progression_notification_batches": {
+            "batch_id", "boundary_id", "batch_fingerprint", "payload_version", "status",
+            "outbox_id", "outbox_id_snapshot", "proposal_count", "created_at", "queued_at",
+            "terminal_at", "terminal_reason",
+        },
+        "strength_progression_notification_receipts": {
+            "receipt_id", "batch_id", "proposal_id", "proposal_id_snapshot",
+            "material_fingerprint", "created_at",
+        },
+    }
+    for table, columns in expected.items():
+        actual = {row[1] for row in conn.execute(text(f"PRAGMA table_info('{table}')"))}
+        if not columns.issubset(actual):
+            raise RuntimeError("strength progression Telegram notification schema validation failed")
+    indexes = {row[1] for row in conn.execute(text("PRAGMA index_list('strength_progression_notification_receipts')"))}
+    if "ix_strength_progression_notification_receipts_material_fingerprint" not in indexes:
+        raise RuntimeError("strength progression Telegram notification index validation failed")
 
 
 def _migrate_capability_scopes(conn) -> None:
@@ -1108,6 +1171,16 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             conn.execute(text(
                 "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": _STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY})
+
+        notifications_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _STRENGTH_PROGRESSION_TELEGRAM_NOTIFICATIONS_MIGRATION_KEY},
+        ).first()
+        if not notifications_applied:
+            _validate_strength_progression_telegram_notifications(conn)
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _STRENGTH_PROGRESSION_TELEGRAM_NOTIFICATIONS_MIGRATION_KEY})
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}

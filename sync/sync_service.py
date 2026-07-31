@@ -478,9 +478,8 @@ def _sync_exercise_sets(session, activity_id: int) -> bool:
     if not sets:
         _set_state(session, key, "complete")
         session.flush()
-        from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+        from coach.strength_progression_integration import RecalculationCause, request_activity_recalculation
         request_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
-        process_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
         return True
 
     existing = (
@@ -516,9 +515,8 @@ def _sync_exercise_sets(session, activity_id: int) -> bool:
     # This trigger is intentionally only on a successful live resolution, not
     # the older "sets already exist" fast path, so deployment never backfills.
     session.flush()
-    from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+    from coach.strength_progression_integration import RecalculationCause, request_activity_recalculation
     request_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
-    process_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
     return True
 
 
@@ -2054,7 +2052,21 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
             return
         try:
             from coach.strength_progression_integration import process_pending_activity_recalculations
-            process_pending_activity_recalculations(session, limit=50)
+            from coach.strength_progression_notifications import (
+                bridge_pending_progression_notifications, record_material_proposals,
+            )
+            report = process_pending_activity_recalculations(session, limit=50)
+            if report.boundary_id and report.material_proposal_changes:
+                recorded = record_material_proposals(session, boundary_id=report.boundary_id,
+                    changes=report.material_proposal_changes, now=_utc_now().replace(tzinfo=None))
+                if recorded.batch_id:
+                    # Intent remains durable if this small bridge savepoint fails.
+                    try:
+                        with session.begin_nested():
+                            bridge_pending_progression_notifications(session, now=_utc_now().replace(tzinfo=None),
+                                limit=1, batch_ids=(recorded.batch_id,))
+                    except Exception:
+                        logger.exception("strength progression notification bridge failed")
         except Exception:
             # The integration normally contains per-activity failures.  This
             # guard keeps an unexpected local retry error out of Garmin sync.

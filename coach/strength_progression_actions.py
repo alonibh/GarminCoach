@@ -104,6 +104,17 @@ class ProposalActionResult:
     proposal_id: str | None = None
 
 
+@dataclass(frozen=True)
+class ActionableProgressionProposal:
+    """Minimal presentation fact for notification delivery; no mutation authority."""
+    proposal_id: str
+    exercise_name: str
+    program_session_order: int
+    exercise_order: int
+    current_weight_grams: int
+    suggested_weight_grams: int
+
+
 def format_weight_grams(grams: int | None) -> str:
     if grams is None:
         return "Unavailable"
@@ -307,6 +318,36 @@ def _revalidate(session: Session, proposal: StrengthProgressionProposal, *, now:
         proposal.decisive_evidence_one_id, proposal.decisive_evidence_two_id = calculated.decisive_evidence_ids
         proposal.reason_codes_json = canonical_json([reason.value for reason in calculated.reason_codes])
     return policy, exercise, current
+
+
+def revalidate_progression_proposals_for_notification(
+    session: Session, proposal_ids: tuple[str, ...], *, now: datetime,
+) -> tuple[ActionableProgressionProposal, ...]:
+    """Return only exact currently actionable proposal facts for the outbox.
+
+    This deliberately reuses Phase 4C's complete stale check and can refresh
+    harmless pending support, but it never changes a template weight.
+    """
+    result: list[ActionableProgressionProposal] = []
+    for proposal_id in sorted(set(proposal_ids)):
+        proposal = session.get(StrengthProgressionProposal, proposal_id)
+        if proposal is None or proposal.status != "pending":
+            continue
+        state = _revalidate(session, proposal, now=now)
+        if state is None:
+            continue
+        _, exercise, _ = state
+        program_session = session.get(ProgramSession, proposal.program_session_id)
+        if program_session is None:
+            continue
+        result.append(ActionableProgressionProposal(
+            proposal.proposal_id, exercise.exercise_name, int(program_session.sequence_order or 0),
+            int(exercise.order_index or 0), proposal.current_weight_grams,
+            proposal.suggested_weight_grams,
+        ))
+    return tuple(sorted(result, key=lambda item: (
+        item.program_session_order, item.exercise_order, item.proposal_id,
+    )))
 
 
 def _entered_weight(value: object) -> int | None:

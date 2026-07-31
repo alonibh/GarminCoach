@@ -109,6 +109,14 @@ def _decision_is_current(session: Session, row: NotificationOutbox) -> bool:
 
 def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tuple[str, dict | None] | None:
     payload = json.loads(row.payload_json)
+    if row.event_type == "strength_progression_ready":
+        from coach.strength_progression_notifications import materialize_progression_summary
+        materialized = materialize_progression_summary(session, batch_id=str(payload.get("batch_id", "")), now=now)
+        if materialized is None:
+            return None
+        # A three-tuple is intentionally narrow: existing event types retain
+        # their current Markdown/default transport behavior.
+        return materialized.text, materialized.reply_markup, materialized.parse_mode
     if row.event_type == "morning_briefing":
         if not _decision_is_current(session, row):
             day = row.due_at.date()
@@ -269,13 +277,19 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
         for interaction_id in json.loads(row.payload_json).get("interaction_ids", []):
             from coach.interactions import mark_delivery_failed
             mark_delivery_failed(session, [interaction_id], "revalidation_failed")
+        if row.event_type == "strength_progression_ready":
+            from coach.strength_progression_notifications import reconcile_progression_notification_outcome
+            reconcile_progression_notification_outcome(session, outbox_id=row.id, outcome="cancelled", now=now,
+                                                       reason="revalidation_failed")
         session.commit()
         logger.info("Cancelled notification row_id=%s event_type=%s", row.id, row.event_type)
         return "cancelled"
-    text, markup = materialized
+    text, markup = materialized[0], materialized[1]
+    parse_mode = materialized[2] if len(materialized) == 3 else None
     row.attempts += 1
     try:
-        delivered = send_message(text, reply_markup=markup)
+        delivered = (send_message(text, reply_markup=markup, parse_mode=parse_mode)
+                     if len(materialized) == 3 else send_message(text, reply_markup=markup))
     except Exception as exc:
         delivered = False
         row.last_error = type(exc).__name__
@@ -283,6 +297,9 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
         row.status = "sent"
         row.sent_at = now
         _reconcile_delivered_morning_brief(session, row, now)
+        if row.event_type == "strength_progression_ready":
+            from coach.strength_progression_notifications import reconcile_progression_notification_outcome
+            reconcile_progression_notification_outcome(session, outbox_id=row.id, outcome="sent", now=now)
         session.commit()
         logger.info("Sent notification row_id=%s event_type=%s", row.id, row.event_type)
         return "sent"
@@ -292,6 +309,10 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
         for interaction_id in json.loads(row.payload_json).get("interaction_ids", []):
             from coach.interactions import mark_delivery_failed
             mark_delivery_failed(session, [interaction_id], "telegram_delivery_failed")
+        if row.event_type == "strength_progression_ready":
+            from coach.strength_progression_notifications import reconcile_progression_notification_outcome
+            reconcile_progression_notification_outcome(session, outbox_id=row.id, outcome="failed", now=now,
+                                                       reason="telegram_delivery_failed")
         session.commit()
         logger.info("Failed notification row_id=%s event_type=%s", row.id, row.event_type)
         return "failed"
@@ -307,6 +328,14 @@ def process_due_notifications(now: datetime | None = None, *, limit: int = 25) -
     now = (now or get_local_now()).replace(tzinfo=None)
     result = {"sent": 0, "cancelled": 0, "failed": 0, "deferred": 0, "retry": 0}
     with get_session() as session:
+        # Retained local intent is retried by this existing tenant-scoped poller;
+        # a bridge failure must not stop unrelated notifications.
+        try:
+            from coach.strength_progression_notifications import bridge_pending_progression_notifications
+            with session.begin_nested():
+                bridge_pending_progression_notifications(session, now=now, limit=limit)
+        except Exception:
+            logger.exception("strength progression notification bridge failed")
         rows = (
             session.query(NotificationOutbox)
             .filter(

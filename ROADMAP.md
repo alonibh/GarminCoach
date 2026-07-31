@@ -96,13 +96,15 @@ the selected workout, and every mutation requires a current Telegram confirmatio
 - [x] Phase 4C: one web review page with independent edit/approve/reject,
   exact revalidation, local weight-only mutation, immutable history and
   rejection boundaries; scheduled workouts remain unchanged.
-- [ ] Phase 4D: deduplicated Telegram notification and bounded integration
-  triggers.
+- [x] Phase 4D: material proposal detection, one deduplicated Telegram summary
+  per recalculation boundary, durable batch/receipt intent with an outbox bridge,
+  delivery-time revalidation, and web-only decisions. Approved local weights are
+  consumed by future compilation; already scheduled workouts remain unchanged.
 - [ ] Later Phase 4: meaningful 28-day recovery/health trends.
 - [ ] Later Phase 4: Fitness Age and VO2 max history, capability-aware Training
   Status, weekly-summary improvements, and compact aggregate AI context.
 
-Phase 4B2 and 4C are complete; Phase 4D and later runtime stages remain unchecked.
+Phase 4B2, 4C, and 4D are complete; later runtime stages remain unchecked.
 Progression evidence has no authority from Garmin RPE, Garmin Feel,
 subjective feedback, biometrics, readiness, or recovery metrics. Any future
 approved change is limited to a local `SessionExercise.weight_kg`; it never

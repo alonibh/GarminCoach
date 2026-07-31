@@ -1,6 +1,6 @@
 # Strength-progression proposal contract
 
-**Status:** Phase 4C web review and confirmed local action flow is implemented. Telegram notification remains future Phase 4D work.
+**Status:** Phase 4D deduplicated Telegram notification flow is implemented.
 **Scope:** Deterministic, exercise-level proposals to change a future local template weight
 
 This is the canonical contract for Phase 4 strength progression. Phase 4B
@@ -158,8 +158,18 @@ unchanged. Rejection records the greatest current `(appearance_at, evidence_id)`
 row for audit, but eligibility is strictly later **appearance timestamps**.
 Every evidence revision at or before the cutoff appearance remains excluded and
 cannot contribute again under the unchanged prescription, so two entirely new
-qualifying appearances are required. Phase 4D Telegram notification remains
-unimplemented.
+qualifying appearances are required. Phase 4D records only newly created or
+materially replaced pending proposals as immutable, tenant-local material facts.
+A deterministic recalculation boundary creates at most one notification batch
+and one receipt per proposal material fingerprint; retries, support refreshes,
+stale transitions, approval, and rejection do not create a notification. The
+batch is bridged to exactly one ordinary outbox row using a stable idempotency
+key. The existing tenant-scoped outbox poller is the sole sender and revalidates
+each exact proposal at delivery time. Telegram sends plain-text summaries
+without progression action buttons; decisions remain web-only. A later
+notification is possible only for a genuinely new material proposal row.
+Approved local weight is used by future compilation, while already scheduled
+workouts remain unchanged.
 
 ## 11. Explicit exclusions
 
