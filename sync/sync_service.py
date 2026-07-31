@@ -2048,6 +2048,18 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
     summary = {"activities": 0, "program_matches": 0, "days": 0, "errors": [], "skipped": False}
     preflight = None
 
+    def drain_progression() -> None:
+        """Retry bounded local derived work on every safe successful path."""
+        if _is_in_cooldown(session)[0] or summary.get("code") == "authentication_required":
+            return
+        try:
+            from coach.strength_progression_integration import process_pending_activity_recalculations
+            process_pending_activity_recalculations(session, limit=50)
+        except Exception:
+            # The integration normally contains per-activity failures.  This
+            # guard keeps an unexpected local retry error out of Garmin sync.
+            logger.exception("strength progression retry batch failed")
+
     with get_session() as session:
         in_cooldown, cooldown_until = _is_in_cooldown(session)
         if in_cooldown:
@@ -2070,6 +2082,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
             if summary["activities"] or summary["days"]:
                 _set_state(session, "last_sync_at", _utc_now().isoformat(timespec="seconds"))
                 _clear_cooldown(session)
+            drain_progression()
             return summary
 
         resource_cursors = {
@@ -2090,6 +2103,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
                             _run_stage2_summary_backfill(session, today, summary)
                         if _is_in_cooldown(session)[0] or summary.get("code") == "authentication_required":
                             return summary
+                    drain_progression()
                     if not _maybe_run_weekly_slow_metrics(
                         session, today, summary, full=full, force=force, allow_backfill=allow_backfill,
                     ):
@@ -2139,11 +2153,7 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
             summary["errors"].append(f"Program reconciliation: {e}")
 
         # Drain only explicitly dirtied local activities; no historical scan.
-        try:
-            from coach.strength_progression_integration import process_pending_activity_recalculations
-            process_pending_activity_recalculations(session, limit=50)
-        except Exception:
-            logger.exception("strength progression retry batch failed")
+        drain_progression()
 
         if _workouts_due(session, full):
             try:

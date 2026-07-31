@@ -104,6 +104,60 @@ def test_set_valid_update_redirects(client):
     assert resp.status_code == 303
 
 
+def test_editor_preserves_submitted_exercise_id_for_rest_only_edit(client):
+    c, db_module = client
+    from db import ProgramSession, SessionExercise, TrainingProgram
+    with db_module.get_session() as s:
+        program = TrainingProgram(name="P", status="draft")
+        s.add(program); s.flush()
+        planned = ProgramSession(program_id=program.id, name="A")
+        s.add(planned); s.flush()
+        exercise = SessionExercise(program_session_id=planned.id, exercise_name="Goblet Squat",
+            exercise_key="SQUAT:GOBLET_SQUAT", garmin_category="SQUAT", garmin_name="GOBLET_SQUAT",
+            sets=2, reps=10, weight_kg=12, rest_seconds=60)
+        s.add(exercise); s.flush()
+        session_id, exercise_id = planned.id, exercise.id
+
+    response = c.post(f"/api/session/{session_id}/exercises", json=[{
+        "id": exercise_id, "exercise_name": "Goblet Squat", "exercise_key": "SQUAT:GOBLET_SQUAT",
+        "sets": 2, "reps": 10, "weight_kg": 12, "rest_seconds": 90,
+    }])
+
+    assert response.status_code == 200
+    with db_module.get_session() as s:
+        exercise = s.get(SessionExercise, exercise_id)
+        assert exercise is not None and exercise.rest_seconds == 90
+
+
+def test_delete_custom_session_stales_child_pending_proposal(client):
+    c, db_module = client
+    from db import ProgramSession, SessionExercise, StrengthProgressionProposal, TrainingProgram
+    with db_module.get_session() as s:
+        program = TrainingProgram(name="P", status="draft")
+        s.add(program); s.flush()
+        planned = ProgramSession(program_id=program.id, name="Custom", is_custom=True)
+        s.add(planned); s.flush()
+        exercise = SessionExercise(program_session_id=planned.id, exercise_name="Goblet Squat",
+            exercise_key="SQUAT:GOBLET_SQUAT", sets=2, reps=10, weight_kg=12)
+        s.add(exercise); s.flush()
+        proposal = StrengthProgressionProposal(proposal_id="pending-custom", session_exercise_id=exercise.id,
+            session_exercise_id_snapshot=exercise.id, policy_version="strength-progression-v1",
+            prescription_fingerprint="fp", direction="increase", current_weight_grams=12000,
+            suggested_weight_grams=14500, status="pending", decisive_evidence_one_id="a",
+            decisive_evidence_two_id="b", reason_codes_json="[]", idempotency_key="pending-custom",
+            current_pending_key=f"{exercise.id}:strength-progression-v1:fp")
+        s.add(proposal); s.flush()
+        program_id, session_id, exercise_id = program.id, planned.id, exercise.id
+
+    response = c.delete(f"/api/program/{program_id}/sessions/{session_id}")
+
+    assert response.status_code == 200
+    with db_module.get_session() as s:
+        proposal = s.get(StrengthProgressionProposal, "pending-custom")
+        assert proposal.status == "stale" and proposal.current_pending_key is None
+        assert proposal.session_exercise_id_snapshot == exercise_id
+
+
 def test_safe_next_blocks_open_redirect(client):
     import app as app_module
     assert app_module._safe_next("https://evil.com") == "/"
@@ -910,8 +964,6 @@ def test_completed_multi_user_onboarding_renders_questionnaire(monkeypatch, tmp_
         response = get_onboarding(request)
         assert response.status_code == 200
         assert "onboarding.html" in response.template.name
-
-
 
 
 

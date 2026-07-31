@@ -120,6 +120,27 @@ def test_delta_sync_skips_when_device_and_activity_unchanged(session, monkeypatc
     assert called["activities"] == 0
 
 
+def test_no_change_sync_drains_only_bounded_progression_journal(session, monkeypatch):
+    _wire_common(monkeypatch, session)
+    upload = datetime(2026, 7, 4, 6, 30, tzinfo=timezone.utc).isoformat(timespec="seconds")
+    _state(session, "last_sync_through", TEST_LOCAL_TODAY.isoformat())
+    _state(session, "last_processed_device_upload", upload)
+    _state(session, "last_seen_activity_id", "101")
+    _state(session, "last_seen_activity_start", "2026-07-03 18:00:00")
+    monkeypatch.setattr(svc.client, "device_last_used", lambda: _device_payload(datetime.fromisoformat(upload)))
+    monkeypatch.setattr(svc.client, "recent_activities", lambda limit=1: [{"activityId": 101, "startTimeLocal": "2026-07-03 18:00:00"}])
+    calls = []
+    monkeypatch.setattr(
+        "coach.strength_progression_integration.process_pending_activity_recalculations",
+        lambda supplied, *, limit: calls.append((supplied, limit)),
+    )
+
+    summary = svc.run_sync(full=False)
+
+    assert summary["skipped"] is True
+    assert calls == [(session, 50)]
+
+
 def test_forced_sync_bypasses_delta_skip_but_not_full_backfill(session, monkeypatch):
     _wire_common(monkeypatch, session)
     today = TEST_LOCAL_TODAY

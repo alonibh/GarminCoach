@@ -2459,6 +2459,9 @@ def delete_custom_program_session(program_id: int, session_id: int):
         if db.query(PlannedSession).filter_by(program_session_id=session_id, status="approved").first():
             raise HTTPException(status_code=422, detail="This session is already scheduled. Remove its scheduled workout first.")
         program = ps.program
+        from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
+        child_exercise_ids = [item.id for item in db.query(SessionExercise.id).filter_by(program_session_id=session_id)]
+        invalidate_session_exercises(db, child_exercise_ids, cause=InvalidationCause.EXERCISE_DELETED)
         db.delete(ps)
         db.flush()
         if program:
@@ -2488,12 +2491,25 @@ async def save_session_exercises(session_id: int, request: Request):
         if ps.session_role != "coach_strength":
             raise HTTPException(status_code=400, detail="Only coach strength sessions have exercise templates")
 
-        existing_generic = {
-            ex.exercise_name for ex in db.query(SessionExercise).filter_by(program_session_id=session_id)
-            if ex.is_generic
-        }
+        existing_rows = db.query(SessionExercise).filter_by(program_session_id=session_id).all()
+        existing_by_id = {ex.id: ex for ex in existing_rows}
+        existing_generic = {ex.exercise_name for ex in existing_rows if ex.is_generic}
+        submitted_ids: set[int] = set()
         validated = []
         for row in rows:
+            incoming_id = row.get("id")
+            if incoming_id not in (None, ""):
+                try:
+                    incoming_id = int(incoming_id)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=422, detail="Exercise ID must be a whole number.")
+                if incoming_id in submitted_ids:
+                    raise HTTPException(status_code=422, detail="An exercise may appear only once.")
+                if incoming_id not in existing_by_id:
+                    raise HTTPException(status_code=422, detail="Exercise does not belong to this session.")
+                submitted_ids.add(incoming_id)
+            else:
+                incoming_id = None
             name = str(row.get("exercise_name", "")).strip()
             meta = exercise_metadata(str(row.get("exercise_key") or name))
             is_generic = not meta and name in existing_generic
@@ -2531,35 +2547,42 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Warm-up time must be between 1 and 3600 seconds.")
             if warmup_weight is not None and not 0 <= warmup_weight <= 500:
                 raise HTTPException(status_code=422, detail="Warm-up weight must be between 0 and 500 kg.")
-            validated.append((row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration))
+            validated.append((incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration))
 
         from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
-        old_exercise_ids = [item.id for item in db.query(SessionExercise.id).filter_by(program_session_id=session_id)]
-        invalidate_session_exercises(db, old_exercise_ids, cause=InvalidationCause.TEMPLATE_REPLACED)
-        db.query(SessionExercise).filter_by(program_session_id=session_id).delete()
+        removed_ids = [item.id for item in existing_rows if item.id not in submitted_ids]
+        invalidate_session_exercises(db, removed_ids, cause=InvalidationCause.EXERCISE_DELETED)
+        for item in existing_rows:
+            if item.id in removed_ids:
+                db.delete(item)
 
-        for i, (row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration) in enumerate(validated):
-            ex = SessionExercise(
-                program_session_id=session_id,
-                exercise_name=(meta or {}).get("label", name),
-                exercise_key=(meta or {}).get("key", exercise_key(name)),
-                garmin_category=(meta or {}).get("category"),
-                garmin_name=(meta or {}).get("garmin_name"),
-                movement_pattern=pattern,
-                is_generic=is_generic,
-                sets=int(row["sets"]) if row.get("sets") not in (None, "") else None,
-                reps=reps,
-                duration_seconds=duration,
-                weight_kg=weight,
-                rest_seconds=max(0, min(600, int(row.get("rest_seconds") or 60))),
-                warmup_enabled=warmup_enabled,
-                warmup_reps=warmup_reps if warmup_enabled else None,
-                warmup_duration_seconds=warmup_duration if warmup_enabled else None,
-                warmup_weight_kg=warmup_weight if warmup_enabled else None,
-                order_index=i,
-                notes=str(row.get("notes", "")),
-            )
-            db.add(ex)
+        for i, (incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration) in enumerate(validated):
+            values = {
+                "exercise_name": (meta or {}).get("label", name),
+                "exercise_key": (meta or {}).get("key", exercise_key(name)),
+                "garmin_category": (meta or {}).get("category"),
+                "garmin_name": (meta or {}).get("garmin_name"),
+                "movement_pattern": pattern, "is_generic": is_generic,
+                "sets": int(row["sets"]) if row.get("sets") not in (None, "") else None,
+                "reps": reps, "duration_seconds": duration, "weight_kg": weight,
+                "rest_seconds": max(0, min(600, int(row.get("rest_seconds") or 60))),
+                "warmup_enabled": warmup_enabled,
+                "warmup_reps": warmup_reps if warmup_enabled else None,
+                "warmup_duration_seconds": warmup_duration if warmup_enabled else None,
+                "warmup_weight_kg": warmup_weight if warmup_enabled else None,
+                "order_index": i, "notes": str(row.get("notes", "")),
+            }
+            ex = existing_by_id.get(incoming_id) if incoming_id is not None else None
+            if ex is None:
+                db.add(SessionExercise(program_session_id=session_id, **values))
+                continue
+            from coach.strength_progression_integration import prescription_for_session_exercise
+            old_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)
+            for field, value in values.items():
+                setattr(ex, field, value)
+            new_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)
+            if old_fingerprint != new_fingerprint:
+                invalidate_session_exercises(db, [ex.id], cause=InvalidationCause.TEMPLATE_CHANGED)
 
         if not validated and ps.program and ps.program.active:
             raise HTTPException(
