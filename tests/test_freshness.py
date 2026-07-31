@@ -219,29 +219,29 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
     }
 
 
-def test_dashboard_sleep_chart_does_not_turn_missing_today_into_zero(monkeypatch):
+def test_dashboard_sleep_chart_does_not_turn_missing_today_into_zero():
     import app as app_module
 
-    today = date.today()
+    as_of_day = date(2026, 7, 19)
     rows = [
-        Sleep(day=today - timedelta(days=1), total_s=7 * 3600, score=80),
-        Sleep(day=today, total_s=None, score=None),
+        Sleep(day=as_of_day - timedelta(days=1), total_s=7 * 3600, score=80),
+        Sleep(day=as_of_day, total_s=None, score=None),
     ]
 
-    series = app_module._dashboard_sleep_series(rows, overnight_ready=False)
+    series = app_module._dashboard_sleep_series(rows, overnight_ready=False, as_of_day=as_of_day)
 
     assert series[-2]["hours"] == 7.0
     assert series[-1]["hours"] is None
 
 
-def test_dashboard_sleep_and_hrv_hide_today_until_overnight_ready(monkeypatch):
+def test_dashboard_sleep_and_hrv_hide_today_until_overnight_ready():
     import app as app_module
 
-    today = date.today()
-    sleep_rows = [Sleep(day=today, total_s=6 * 3600, score=75)]
+    as_of_day = date(2026, 7, 19)
+    sleep_rows = [Sleep(day=as_of_day, total_s=6 * 3600, score=75)]
     health_rows = [
         DailyHealth(
-            day=today,
+            day=as_of_day,
             hrv_overnight=42,
             hrv_baseline_low=40,
             hrv_baseline_high=60,
@@ -249,10 +249,59 @@ def test_dashboard_sleep_and_hrv_hide_today_until_overnight_ready(monkeypatch):
         )
     ]
 
-    sleep_series = app_module._dashboard_sleep_series(sleep_rows, overnight_ready=False)
-    health_series = app_module._dashboard_health_series(health_rows, overnight_ready=False)
+    sleep_series = app_module._dashboard_sleep_series(
+        sleep_rows, overnight_ready=False, as_of_day=as_of_day
+    )
+    health_series = app_module._dashboard_health_series(
+        health_rows, overnight_ready=False, as_of_day=as_of_day
+    )
 
     assert sleep_series[0]["hours"] is None
     assert health_series[0]["hrv"] is None
     assert health_series[0]["hrv_baseline_low"] is None
     assert health_series[0]["steps"] == 1200
+
+
+def test_dashboard_overnight_freshness_uses_athlete_local_day_at_timezone_boundary():
+    import app as app_module
+
+    host_day = date(2026, 7, 31)
+    athlete_day = date(2026, 8, 1)
+    sleep_rows = [
+        Sleep(day=host_day, total_s=6 * 3600, score=75),
+        Sleep(day=athlete_day, total_s=7 * 3600, score=80),
+    ]
+    health_rows = [
+        DailyHealth(
+            day=host_day,
+            hrv_overnight=42,
+            hrv_baseline_low=40,
+            hrv_baseline_high=60,
+            steps=1200,
+        ),
+        DailyHealth(
+            day=athlete_day,
+            hrv_overnight=44,
+            hrv_baseline_low=41,
+            hrv_baseline_high=61,
+            steps=1300,
+        ),
+    ]
+
+    sleep_series = app_module._dashboard_sleep_series(
+        sleep_rows, overnight_ready=False, as_of_day=athlete_day
+    )
+    health_series = app_module._dashboard_health_series(
+        health_rows, overnight_ready=False, as_of_day=athlete_day
+    )
+
+    assert sleep_series[0]["hours"] == 6.0
+    assert health_series[0]["hrv"] == 42
+    assert health_series[0]["hrv_baseline_low"] == 40
+    assert health_series[0]["hrv_baseline_high"] == 60
+    assert health_series[0]["steps"] == 1200
+    assert sleep_series[1]["hours"] is None
+    assert health_series[1]["hrv"] is None
+    assert health_series[1]["hrv_baseline_low"] is None
+    assert health_series[1]["hrv_baseline_high"] is None
+    assert health_series[1]["steps"] == 1300
