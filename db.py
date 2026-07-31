@@ -653,7 +653,7 @@ class SlowMetricObservation(Base):
             "(numeric_value IS NULL AND text_value IS NOT NULL)",
             name="ck_slow_metric_one_value",
         ),
-        CheckConstraint("numeric_value IS NULL OR numeric_value = numeric_value", name="ck_slow_metric_finite"),
+        CheckConstraint("numeric_value IS NULL OR (numeric_value = numeric_value AND abs(numeric_value) < 1.0e308)", name="ck_slow_metric_finite"),
         CheckConstraint("text_value IS NULL OR length(trim(text_value)) > 0", name="ck_slow_metric_text_nonempty"),
         CheckConstraint(
             "(metric IN ('fitness_age', 'target_fitness_age') AND scope_kind = 'account' AND scope_key = 'account') OR "
@@ -921,17 +921,54 @@ _SLOW_METRIC_HISTORY_MIGRATION_KEY = "slow_metric_history_2026_07_31_v1"
 
 def _validate_slow_metric_history(conn) -> None:
     """Validate the independently durable history schema before its marker."""
-    columns = {row[1] for row in conn.execute(text("PRAGMA table_info('slow_metric_observations')"))}
-    expected = {
-        "observation_id", "metric", "scope_kind", "scope_key", "observed_on", "observed_at",
-        "numeric_value", "text_value", "source_kind", "source_key", "created_at",
-    }
-    if not expected.issubset(columns):
+    columns = {row[1]: row for row in conn.execute(text("PRAGMA table_info('slow_metric_observations')"))}
+    expected = ("observation_id", "metric", "scope_kind", "scope_key", "observed_on", "observed_at",
+                "numeric_value", "text_value", "source_kind", "source_key", "created_at")
+    if tuple(columns) != expected:
         raise RuntimeError("slow metric history schema validation failed")
-    indexes = {row[1] for row in conn.execute(text("PRAGMA index_list('slow_metric_observations')"))}
-    required = {"ix_slow_metric_scope_date", "ix_slow_metric_metric_date", "uq_slow_metric_source"}
-    if not required.issubset(indexes):
-        raise RuntimeError("slow metric history index validation failed")
+    required_not_null = {"observation_id", "metric", "scope_kind", "scope_key", "observed_on", "source_kind", "source_key", "created_at"}
+    if any(not columns[name][3] for name in required_not_null) or columns["observation_id"][5] != 1:
+        raise RuntimeError("slow metric history nullability validation failed")
+    expected_indexes = {
+        "uq_slow_metric_source": (True, ("metric", "scope_kind", "scope_key", "source_kind", "source_key")),
+        "ix_slow_metric_scope_date": (False, ("metric", "scope_kind", "scope_key", "observed_on")),
+        "ix_slow_metric_metric_date": (False, ("metric", "observed_on")),
+    }
+    for name, (unique, indexed_columns) in expected_indexes.items():
+        row = conn.execute(text("SELECT * FROM pragma_index_list('slow_metric_observations') WHERE name = :name"), {"name": name}).first()
+        if not row or bool(row[2]) != unique:
+            raise RuntimeError("slow metric history index validation failed")
+        actual = tuple(item[2] for item in conn.execute(text(f"PRAGMA index_info('{name}')")))
+        if actual != indexed_columns:
+            raise RuntimeError("slow metric history index composition validation failed")
+    schema_sql = conn.execute(text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'slow_metric_observations'" )).scalar() or ""
+    normalized = " ".join(schema_sql.lower().split())
+    for required_fragment in ("ck_slow_metric_one_value", "ck_slow_metric_finite", "ck_slow_metric_text_nonempty", "ck_slow_metric_scope"):
+        if required_fragment not in normalized:
+            raise RuntimeError("slow metric history constraint validation failed")
+    if conn.execute(text("PRAGMA foreign_key_list('slow_metric_observations')")).first():
+        raise RuntimeError("slow metric history must not reference replaceable cache rows")
+    conn.execute(text("SAVEPOINT slow_metric_history_validation"))
+    try:
+        conn.execute(text("""INSERT INTO slow_metric_observations (
+            observation_id, metric, scope_kind, scope_key, observed_on, numeric_value,
+            text_value, source_kind, source_key, created_at
+        ) VALUES ('slow-history-validation-ok', 'fitness_age', 'account', 'account',
+            '2026-07-31', 35.5, NULL, 'validation', 'ok', CURRENT_TIMESTAMP)"""))
+        invalid_rejected = False
+        try:
+            conn.execute(text("""INSERT INTO slow_metric_observations (
+                observation_id, metric, scope_kind, scope_key, observed_on, numeric_value,
+                text_value, source_kind, source_key, created_at
+            ) VALUES ('slow-history-validation-bad', 'fitness_age', 'activity', 'running',
+                '2026-07-31', 35.5, NULL, 'validation', 'bad', CURRENT_TIMESTAMP)"""))
+        except Exception:
+            invalid_rejected = True
+        if not invalid_rejected:
+            raise RuntimeError("slow metric history constraint probe failed")
+    finally:
+        conn.execute(text("ROLLBACK TO slow_metric_history_validation"))
+        conn.execute(text("RELEASE slow_metric_history_validation"))
 
 
 def _seed_slow_metric_history(conn) -> None:

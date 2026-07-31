@@ -501,7 +501,10 @@ def test_stage1_resume_persists_activity_summary_vo2_without_refetch(session, mo
     svc.run_sync()
 
     assert session.get(SyncState, "stage1_bootstrap_activities").value == "complete"
-    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary").value == f"{(today - timedelta(days=2)).isoformat()}|47.2"
+    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary").value == (
+        f'{{"activity_id":1,"domain":"running","observed_at":"{(today - timedelta(days=2)).isoformat()}T08:00:00",'
+        f'"observed_on":"{(today - timedelta(days=2)).isoformat()}","value":47.2}}'
+    )
     assert session.get(SyncState, "stage1_bootstrap_vo2max") is None
     svc._set_state(session, "garmin_cooldown_until", "")
     session.commit()
@@ -532,7 +535,7 @@ def test_stage1_no_activity_summary_vo2_resolves_without_extra_request(session, 
     assert session.get(SyncState, "stage1_bootstrap_vo2max_summary") is None
 
 
-def test_stage1_vo2_marker_waits_for_snapshot_handling(session, monkeypatch):
+def test_stage1_malformed_vo2_marker_fails_closed(session, monkeypatch):
     _wire_common(monkeypatch, session)
     today = TEST_LOCAL_TODAY
     _state(session, "stage1_bootstrap_device", "complete")
@@ -543,14 +546,10 @@ def test_stage1_vo2_marker_waits_for_snapshot_handling(session, monkeypatch):
     _state(session, "stage1_bootstrap_activities", "complete")
     _state(session, "stage1_bootstrap_strength_sets", "complete")
     _state(session, "stage1_bootstrap_fitness_age", "complete")
-    _state(session, "stage1_bootstrap_vo2max_summary", f"{today.isoformat()}|47.2")
-    monkeypatch.setattr(svc, "_upsert_snapshot", lambda *_: (_ for _ in ()).throw(RuntimeError("snapshot failed")))
-
-    with pytest.raises(RuntimeError, match="snapshot failed"):
-        svc._sync_stage1(session, today, {"activities": 0, "days": 0, "errors": []})
-
-    assert session.get(SyncState, "stage1_bootstrap_vo2max") is None
-    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary").value == f"{today.isoformat()}|47.2"
+    _state(session, "stage1_bootstrap_vo2max_summary", "malformed")
+    assert svc._sync_stage1(session, today, {"activities": 0, "days": 0, "errors": []}) is True
+    assert session.get(SyncState, "stage1_bootstrap_vo2max").value == "complete"
+    assert session.get(SyncState, "stage1_bootstrap_vo2max_summary") is None
 
 
 def test_stage2_is_scheduled_only_and_runs_one_no_change_wellness_unit(session, monkeypatch):

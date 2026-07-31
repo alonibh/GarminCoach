@@ -7,6 +7,7 @@ activity is logged and skipped; the sync continues.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import math
 from dataclasses import dataclass
@@ -589,7 +590,7 @@ def _sync_workouts(session: Session) -> None:
 
 def _sync_activities(
     session: Session, start: date, end: date, *, strength_limit: int | None = None,
-    enrich: bool = True, vo2_values: list[tuple[str, float]] | None = None,
+    enrich: bool = True, vo2_values: list[dict] | None = None,
 ) -> int:
     try:
         raw_list = client.activities_by_date(start, end)
@@ -602,7 +603,7 @@ def _sync_activities(
         
     count = 0
     strength_ids: list[tuple[datetime, int]] = []
-    observed_vo2: list[tuple[str, float]] = []
+    vo2_candidates = []
     for raw in raw_list or []:
         raw_dur = raw.get("duration")
         if raw_dur is None or float(raw_dur) <= 0:
@@ -615,44 +616,41 @@ def _sync_activities(
             when = _parse_dt(raw.get("startTimeLocal") or raw.get("startTimeGMT")) or datetime.min
             strength_ids.append((when, act_id))
         value = _finite_number(raw.get("vO2MaxValue"))
-        try:
-            value_date = date.fromisoformat((raw.get("startTimeLocal") or "")[:10]).isoformat()
-        except (TypeError, ValueError):
-            value_date = None
-        if value is not None and value_date is not None:
-            observed_vo2.append((value_date, float(value)))
-            from metrics.freshness import note_capability_observed
-            # Activity summaries expose VO2 max by sport; never generalize a
-            # running observation into cycling (or vice versa).
-            from metrics.capability_registry import normalize_activity_domain
-            domain = normalize_activity_domain(activity_domain)
-            if domain:
-                from metrics.slow_metric_history import (
-                    RecordObservationOutcome,
-                    record_numeric_observation,
-                )
-                observed_at = _parse_dt(raw.get("startTimeLocal") or raw.get("startTimeGMT"))
-                result = record_numeric_observation(
-                    session, metric="vo2max", scope_kind="activity", scope_key=domain,
-                    observed_on=date.fromisoformat(value_date), observed_at=observed_at,
-                    value=value, source_kind="garmin_activity_summary",
-                    source_key=f"activity:{act_id}:{domain}:{observed_at.isoformat() if observed_at else value_date}",
-                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                )
-                if result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
-                    _record_snapshot(session, "vo2max", value_date, value)
-                note_capability_observed(session, "vo2max", activity_domain=domain)
-            if vo2_values is not None:
-                vo2_values.append((value_date, float(value)))
+        from metrics.capability_registry import normalize_activity_domain
+        domain = normalize_activity_domain(activity_domain)
+        local_start = _parse_dt(raw.get("startTimeLocal"))
+        raw_activity_id = raw.get("activityId")
+        if (value is not None and domain in {"running", "cycling"} and local_start is not None
+                and not isinstance(raw_activity_id, bool) and isinstance(raw_activity_id, int) and raw_activity_id > 0):
+            from metrics.slow_metric_history import NumericObservationInput
+            vo2_candidates.append(NumericObservationInput(
+                metric="vo2max", scope_kind="activity", scope_key=domain,
+                observed_on=local_start.date(), observed_at=local_start, value=value,
+                source_kind="garmin_activity_summary",
+                source_key=f"activity:{raw_activity_id}:{domain}:{local_start.isoformat()}",
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None), source_order=raw_activity_id,
+            ))
         count += 1
     if enrich:
         for _, act_id in sorted(strength_ids, reverse=True)[:strength_limit]:
             _sync_exercise_sets(session, act_id)
-    # Stage 1 records its resumable activity marker separately.  Every other
-    # normal activity window updates the local snapshot without another Garmin
-    # read, and forward-only history rejects older overlap observations.
-    if vo2_values is None and observed_vo2:
-        _record_snapshot(session, "vo2max", *max(observed_vo2))
+        # VO₂ history accepts only explicitly typed running/cycling activity
+        # summaries with a local start time and numeric activity identity.
+    if vo2_candidates:
+        from metrics.freshness import note_capability_observed
+        from metrics.slow_metric_history import RecordObservationOutcome, record_numeric_observation_batch
+        batch = record_numeric_observation_batch(session, observations=vo2_candidates, as_of_day=end)
+        accepted = [item.observation for item in batch.items if item.result.outcome in {
+            RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED,
+            RecordObservationOutcome.DUPLICATE_SOURCE,
+        }]
+        for candidate in accepted:
+            note_capability_observed(session, "vo2max", activity_domain=candidate.scope_key)
+        if accepted:
+            latest = max(accepted, key=lambda item: (item.observed_at, item.source_order, item.scope_key))
+            _update_vo2_snapshot(session, latest)
+            if vo2_values is not None:
+                vo2_values.append(_vo2_state_payload(latest))
     return count
 
 
@@ -756,6 +754,42 @@ class _SignalOutcome:
     state: str  # fresh, missing, or error
     error_code: str | None = None
     requested: bool = True
+
+
+@dataclass(frozen=True)
+class TrainingStatusPersistResult:
+    accepted: bool
+    outcome: str
+
+
+def persist_current_training_status(
+    session: Session, *, payload: object, observed_on: date, observed_at: datetime, source_context: str,
+) -> TrainingStatusPersistResult:
+    """Persist one already-fetched status only after identity and text validation."""
+    device = session.get(SyncState, "garmin_device_model_key")
+    if not device or not device.value:
+        return TrainingStatusPersistResult(False, "no_device_identity")
+    raw_status = payload.get("mostRecentTrainingStatus") if isinstance(payload, dict) else None
+    if not isinstance(raw_status, str):
+        return TrainingStatusPersistResult(False, "invalid")
+    normalized = raw_status.strip()
+    from metrics.slow_metric_history import RecordObservationOutcome, record_text_observation
+    fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+    result = record_text_observation(
+        session, metric="training_status", scope_kind="device", scope_key=device.value, observed_on=observed_on,
+        observed_at=None, value=normalized, source_kind="garmin_training_status",
+        source_key=f"training_status:{device.value}:{observed_on.isoformat()}:{fingerprint}:{source_context}",
+        created_at=observed_at, as_of_day=observed_on,
+    )
+    accepted = result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED, RecordObservationOutcome.DUPLICATE_SOURCE}
+    if not accepted:
+        return TrainingStatusPersistResult(False, result.outcome)
+    row = session.get(DailyHealth, observed_on) or DailyHealth(day=observed_on)
+    row.training_status = normalized
+    session.add(row)
+    from metrics.freshness import note_capability_observed
+    note_capability_observed(session, "training_status", scope_kind="device", scope_key=device.value, observed_at=observed_at)
+    return TrainingStatusPersistResult(True, result.outcome)
 
 
 def _set_hrv_outcomes(
@@ -1182,11 +1216,11 @@ def _sync_current_optional_health(
                 note_capability_probe(session, "training_status", current_probe_outcome)
             logger.warning("Training Status capability probe failed")
             status_data = None
-        if isinstance(status_data, dict) and isinstance(status_data.get("mostRecentTrainingStatus"), str):
-            row.training_status = status_data.get("mostRecentTrainingStatus")
-            if status_decision == "probe_unknown":
-                note_capability_observed(session, "training_status")
-        elif status_decision == "probe_unknown" and current_probe_outcome is None:
+        persisted_status = persist_current_training_status(
+            session, payload=status_data, observed_on=day,
+            observed_at=datetime.now(timezone.utc).replace(tzinfo=None), source_context=context,
+        )
+        if not persisted_status.accepted and status_decision == "probe_unknown" and current_probe_outcome is None:
             note_capability_probe(session, "training_status", "empty")
     session.add(row)
 
@@ -1293,19 +1327,19 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
             summary["days"] = completed
 
         # 5. 30 days of summaries; no per-activity enrichment in Stage 1.
-        vo2_values: list[tuple[str, float]] = []
+        vo2_values: list[dict] = []
         if not done("activities"):
             summary["activities"] = _sync_activities(
                 session, today - timedelta(days=29), today, strength_limit=0,
                 enrich=False, vo2_values=vo2_values,
             )
-            # Keep the newest activity-summary VO2 value across later Stage 1
-            # failures.  "none" is an intentional resolved absence, not a gap.
-            latest_vo2 = max(vo2_values) if vo2_values else None
+            # Bounded canonical state permits an interrupted Stage 1 to repair
+            # its generic compatibility tile without a new activity request.
+            latest_vo2 = vo2_values[-1] if vo2_values else None
             _set_state(
                 session,
                 _stage1_key("vo2max_summary"),
-                f"{latest_vo2[0]}|{latest_vo2[1]}" if latest_vo2 else "none",
+                json.dumps(latest_vo2, sort_keys=True, separators=(",", ":")) if latest_vo2 else "none",
             )
             _advance_resource_cursor(session, "activities", today)
             mark("activities")
@@ -1332,8 +1366,21 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
         if not done("vo2max"):
             saved_vo2 = _get_state(session, _stage1_key("vo2max_summary"))
             if saved_vo2 and saved_vo2 != "none":
-                value_date, value = saved_vo2.split("|", 1)
-                _upsert_snapshot(session, "vo2max", [(value_date, float(value))])
+                try:
+                    restored = json.loads(saved_vo2)
+                    from metrics.slow_metric_history import NumericObservationInput
+                    candidate = NumericObservationInput(
+                        metric="vo2max", scope_kind="activity", scope_key=restored["domain"],
+                        observed_on=date.fromisoformat(restored["observed_on"]),
+                        observed_at=datetime.fromisoformat(restored["observed_at"]), value=restored["value"],
+                        source_kind="garmin_activity_summary", source_key=(
+                            f"activity:{restored['activity_id']}:{restored['domain']}:{restored['observed_at']}"),
+                        created_at=datetime.now(timezone.utc).replace(tzinfo=None), source_order=restored["activity_id"],
+                    )
+                    if candidate.scope_key in {"running", "cycling"} and type(candidate.source_order) is int:
+                        _update_vo2_snapshot(session, candidate)
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    pass
             mark("vo2max")
             _clear_state(session, _stage1_key("vo2max_summary"))
 
@@ -2330,6 +2377,41 @@ def _record_snapshot(session: Session, metric: str, observed_date: str, value: o
     session.add(row)
 
 
+_VO2_SNAPSHOT_SOURCE_KEY = "vo2max_snapshot_source_v1"
+
+
+def _vo2_state_payload(candidate) -> dict:
+    return {"observed_on": candidate.observed_on.isoformat(), "observed_at": candidate.observed_at.isoformat(),
+            "activity_id": candidate.source_order, "domain": candidate.scope_key, "value": float(candidate.value)}
+
+
+def _update_vo2_snapshot(session: Session, candidate) -> None:
+    """Maintain the generic tile from the latest accepted verified activity."""
+    incoming = _vo2_state_payload(candidate)
+    state = session.get(SyncState, _VO2_SNAPSHOT_SOURCE_KEY)
+    previous = None
+    if state and state.value:
+        try:
+            parsed = json.loads(state.value)
+            if (isinstance(parsed, dict) and isinstance(parsed.get("observed_at"), str)
+                    and isinstance(parsed.get("activity_id"), int) and parsed.get("domain") in {"running", "cycling"}
+                    and isinstance(parsed.get("value"), (int, float))):
+                previous = parsed
+        except (TypeError, ValueError, json.JSONDecodeError):
+            previous = None
+    if previous is not None:
+        prior_order = (previous["observed_at"], previous["activity_id"], previous["domain"])
+        incoming_order = (incoming["observed_at"], incoming["activity_id"], incoming["domain"])
+        if incoming_order < prior_order:
+            return
+    elif (existing := session.get(MetricSnapshot, "vo2max")) and existing.value_date and incoming["observed_on"] < existing.value_date:
+        return
+    _record_snapshot(session, "vo2max", incoming["observed_on"], incoming["value"])
+    row = state or SyncState(key=_VO2_SNAPSHOT_SOURCE_KEY)
+    row.value = json.dumps(incoming, sort_keys=True, separators=(",", ":"))
+    session.add(row)
+
+
 def _upsert_snapshot(session: Session, metric: str, history: list[tuple]) -> None:
     """Compatibility entry point for existing Stage 1 callers and tests."""
     if not history:
@@ -2376,16 +2458,16 @@ def _sync_current_fitness_age(session: Session, today: date, *, context: str = "
     fitness_result = record_numeric_observation(
         session, metric="fitness_age", scope_kind="account", scope_key="account",
         observed_on=observed_day, observed_at=None, value=payload.get("fitnessAge"),
-        source_kind="garmin_fitness_age", source_key=f"fitness_age:{observed}", created_at=now,
+        source_kind="garmin_fitness_age", source_key=f"fitness_age:{observed}", created_at=now, as_of_day=today,
     )
     target_result = record_numeric_observation(
         session, metric="target_fitness_age", scope_kind="account", scope_key="account",
         observed_on=observed_day, observed_at=None, value=payload.get("achievableFitnessAge"),
-        source_kind="garmin_fitness_age", source_key=f"target_fitness_age:{observed}", created_at=now,
+        source_kind="garmin_fitness_age", source_key=f"target_fitness_age:{observed}", created_at=now, as_of_day=today,
     )
-    if fitness_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
+    if fitness_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED, RecordObservationOutcome.DUPLICATE_SOURCE}:
         _record_snapshot(session, "fitness_age", observed, payload.get("fitnessAge"))
-    if target_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
+    if target_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED, RecordObservationOutcome.DUPLICATE_SOURCE}:
         _record_snapshot(session, "target_fitness_age", observed, payload.get("achievableFitnessAge"))
     if fitness_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
         note_capability_observed(session, "fitness_age")
@@ -2396,7 +2478,7 @@ def _sync_current_fitness_age(session: Session, today: date, *, context: str = "
 
 def _sync_current_training_status(session: Session, today: date, *, context: str) -> None:
     """Fetch recognized current status only when supported or due to probe."""
-    from metrics.freshness import capability_fetch_decision, note_capability_observed, note_capability_probe
+    from metrics.freshness import capability_fetch_decision, note_capability_probe
     decision = capability_fetch_decision(session, "training_status", context)
     if decision in {"skip_unsupported", "skip_unknown_not_due"}:
         return
@@ -2419,23 +2501,11 @@ def _sync_current_training_status(session: Session, today: date, *, context: str
             note_capability_probe(session, "training_status", "ordinary_error")
         logger.warning("Training Status capability probe failed")
         return
-    status = payload.get("mostRecentTrainingStatus") if isinstance(payload, dict) else None
-    if isinstance(status, str) and status.strip():
-        row = session.get(DailyHealth, today) or DailyHealth(day=today)
-        row.training_status = status
-        session.add(row)
-        device_state = session.get(SyncState, "garmin_device_model_key")
-        if device_state and device_state.value:
-            from metrics.slow_metric_history import RecordObservationOutcome, record_text_observation
-            result = record_text_observation(
-                session, metric="training_status", scope_kind="device", scope_key=device_state.value,
-                observed_on=today, observed_at=None, value=status, source_kind="garmin_training_status",
-                source_key=f"training_status:{device_state.value}:{today.isoformat()}",
-                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            )
-            if result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
-                note_capability_observed(session, "training_status", scope_kind="device", scope_key=device_state.value)
-    elif decision == "probe_unknown":
+    persisted_status = persist_current_training_status(
+        session, payload=payload, observed_on=today,
+        observed_at=datetime.now(timezone.utc).replace(tzinfo=None), source_context=context,
+    )
+    if not persisted_status.accepted and decision == "probe_unknown":
         note_capability_probe(session, "training_status", "empty")
 
 

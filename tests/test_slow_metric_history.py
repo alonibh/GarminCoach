@@ -2,9 +2,11 @@ from datetime import date, datetime
 
 from db import MetricCapability, SlowMetricObservation, SyncState
 from metrics.slow_metric_history import (
+    NumericObservationInput,
     RecordObservationOutcome,
     build_slow_metric_history_report,
     record_numeric_observation,
+    record_numeric_observation_batch,
     record_text_observation,
 )
 
@@ -73,3 +75,25 @@ def test_report_keeps_domains_and_old_device_history_separate(session):
     assert report.vo2_cycling.current_value == 52.0
     assert report.vo2_legacy.legacy_unverified is True
     assert report.training_status.state == "SUPPORTED_NO_DATA"
+
+
+def test_numeric_batch_is_order_independent_and_uses_numeric_activity_ids(session):
+    observations = [
+        NumericObservationInput("vo2max", "activity", "running", date(2026, 7, 20), datetime(2026, 7, 20, 8), 55.0, "test", "activity:10:running:2026-07-20T08:00:00", NOW, 10),
+        NumericObservationInput("vo2max", "activity", "running", date(2026, 7, 20), datetime(2026, 7, 20, 8), 44.0, "test", "activity:2:running:2026-07-20T08:00:00", NOW, 2),
+    ]
+    first = record_numeric_observation_batch(session, observations=reversed(observations), as_of_day=date(2026, 7, 31))
+    assert [item.result.outcome for item in first.items] == [RecordObservationOutcome.RECORDED, RecordObservationOutcome.RECORDED]
+    assert [row.numeric_value for row in session.query(SlowMetricObservation).order_by(SlowMetricObservation.source_key)] == [55.0, 44.0]
+    assert record_numeric_observation_batch(session, observations=observations, as_of_day=date(2026, 7, 31)).items[-1].result.outcome == RecordObservationOutcome.DUPLICATE_SOURCE
+
+
+def test_writer_rejects_datetime_future_aware_and_control_inputs(session):
+    assert record_numeric_observation(
+        session, metric="fitness_age", scope_kind="account", scope_key="account", observed_on=datetime(2026, 7, 20),
+        observed_at=None, value=35, source_kind="test", source_key="one", created_at=NOW,
+    ).outcome == RecordObservationOutcome.INVALID
+    assert record_numeric_observation(
+        session, metric="fitness_age", scope_kind="account", scope_key="account", observed_on=date(2026, 8, 1),
+        observed_at=None, value=35, source_kind="test\n", source_key="one", created_at=NOW, as_of_day=date(2026, 7, 31),
+    ).outcome == RecordObservationOutcome.INVALID

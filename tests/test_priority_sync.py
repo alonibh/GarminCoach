@@ -7,6 +7,7 @@ from db import (
     DeviceCapability,
     MorningBriefState,
     ObservationFreshness,
+    SyncState,
 )
 from metrics import freshness
 import pytest
@@ -305,6 +306,8 @@ def test_optional_probe_current_empty_replaces_prior_ordinary_error(session, mon
 def test_optional_probe_valid_result_after_ordinary_error_promotes_support(session, monkeypatch, metric, endpoint, valid):
     other = "training_status" if metric == "training_readiness" else "training_readiness"
     freshness.set_capability_override(session, other, "unsupported")
+    if metric == "training_status":
+        session.add(SyncState(key="garmin_device_model_key", value="test_device"))
     responses = [TimeoutError(), valid]
     def endpoint_call(_day):
         value = responses.pop(0)

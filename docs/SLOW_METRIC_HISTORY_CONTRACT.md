@@ -16,10 +16,27 @@ The writer orders a series by source-local date, source time when known, and sta
 
 No Garmin history scan, new endpoint, dashboard-time Garmin call, or raw-payload storage is permitted. Fitness Age uses the existing current/weekly fetch and supplied `lastUpdated` date (otherwise the supplied local sync date); VO2 uses existing incremental activity summaries; Training Status uses the existing capability-aware current/weekly path.
 
+Verified activity VO2 is validated as a batch before mutation, partitioned by
+scope, and processed oldest-first by local datetime and numeric activity ID.
+Garmin response order therefore cannot affect the durable series or generic
+compatibility tile. That tile is the latest accepted verified running/cycling
+activity by time, numeric ID, then domain; it is not the largest numeric value.
+Stage 1 retains only this bounded canonical source representation for resume.
+
 ## Legacy migration
 
 Only local data is seeded. Valid MetricSnapshot current and previous Fitness Age facts become account observations. Valid MetricSnapshot VO2 facts become `legacy_unverified`, never running or cycling. Historic DailyHealth Training Status facts become `legacy_unverified_device` and are never presented as a current device status. Invalid dates or values are skipped. The migration marker is written only after table/index validation and initialization is idempotent.
 
 ## Dashboard and capability behavior
+
+Both Training Status fetch paths use one persistence helper: it requires a
+persisted device identity and valid source text before writing history, the
+daily compatibility field, or capability evidence. A status fingerprint allows
+same-day changes while retaining retry idempotency. Target Fitness Age shares
+the Fitness Age account capability and has no separate capability key. Public
+dates are plain `date` values; source/creation datetimes are naive local values
+and future dates are rejected when the caller supplies an as-of day. Migration
+validation checks table shape, index ordering, constraints, no foreign keys,
+and rolled-back representative probes.
 
 The current `MetricSnapshot` remains the compatibility/current-value cache. The dashboard separately shows local Fitness Age/target and running/cycling VO2 observations; legacy VO2 is explicitly labeled as activity type unverified. It shows current-device Training Status only, with `SUPPORTED_WITH_DATA`, `SUPPORTED_NO_DATA`, `UNSUPPORTED`, `UNKNOWN`, or `NO_DEVICE_IDENTITY`. Source wording remains neutral: “Garmin Training Status: …”. No status receives a score, trend, recommendation, or positive/negative interpretation.
