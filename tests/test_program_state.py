@@ -17,6 +17,7 @@ from db import (
     ProgramCursor,
     ProgramSession,
     SessionExercise,
+    SyncState,
     TrainingProgram,
 )
 import sync.sync_service as sync_service
@@ -152,6 +153,17 @@ def test_exact_garmin_provenance_advances_cursor_and_completes_plan(session):
     assert planned.completed_activity_id == 100
     assert planned.completion_match_method == "garmin_workout_id"
     assert session.query(ActivityProgramMatch).one().program_id == program.id
+
+
+def test_confident_match_only_records_progression_dirty_request_for_sync_drain(session):
+    program, source_sessions = _add_program(session)
+    initialize_program_cursor(session, program, activated_at=datetime(2026, 7, 3, 8))
+    _activity(session, 909, datetime(2026, 7, 4, 9), exercise_name="ONLY_0")
+
+    assert reconcile_active_program(session) == 1
+    request = session.get(SyncState, "strength_progression_recalc_activity:909")
+    assert request is not None
+    assert "activity_program_match_created" in request.value
 
 
 def test_cursor_survives_week_boundary_and_uses_rolling_rest(session):

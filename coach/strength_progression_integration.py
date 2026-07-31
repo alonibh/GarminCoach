@@ -113,19 +113,26 @@ def _now() -> str:
 
 def _activity_boundary_id(session: Session, activity_id: int, cause: RecalculationCause) -> str:
     """Stable across retries of one retained journal request, never random."""
-    causes = {cause.value}
+    causes: set[str] | None = None
     first_requested_at: str | None = None
     row = session.get(SyncState, _journal_key(activity_id))
     if row is not None:
         try:
             payload = json.loads(row.value or "")
             if isinstance(payload, dict) and isinstance(payload.get("causes"), list):
-                causes.update(str(item) for item in payload["causes"] if isinstance(item, str))
+                # The persisted request is the boundary authority. RETRY is an
+                # execution detail and must not alter its identity.
+                causes = {str(item) for item in payload["causes"] if isinstance(item, str)}
                 first_requested_at = str(payload.get("first_requested_at") or "") or None
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
+    if causes is None:
+        # Direct callers may have no journal. A retry alone carries no new
+        # authoritative request identity, so keep that fallback deterministic.
+        causes = set() if cause == RecalculationCause.RETRY else {cause.value}
     return fingerprint({"kind": "strength_progression_activity_boundary", "activity_id": activity_id,
-                        "causes": sorted(causes), "first_requested_at": first_requested_at})
+                        "causes": sorted(causes), "first_requested_at": first_requested_at,
+                        "schema": "v1"})
 
 
 def _batch_boundary_id(reports: Collection[RecalculationReport]) -> str | None:
@@ -377,15 +384,16 @@ def _process(session: Session, activity_id: int, *, boundary_id: str | None = No
 
 def process_activity_recalculation(session: Session, activity_id: int, *, cause: RecalculationCause) -> RecalculationReport:
     """Process one requested activity in a savepoint; retain its key on failures."""
+    boundary_id = _activity_boundary_id(session, activity_id, cause)
     try:
-        boundary_id = _activity_boundary_id(session, activity_id, cause)
         with session.begin_nested():
             report = _process(session, activity_id, boundary_id=boundary_id)
             _clear_request(session, activity_id)
         return RecalculationReport(**{**report.__dict__, "dirty_key_cleared": True})
     except Exception:
         logger.exception("strength progression recalculation failed for activity_id=%s", activity_id)
-        return RecalculationReport(activity_id, dirty_key_retained=True, error="recalculation_failed")
+        return RecalculationReport(activity_id, dirty_key_retained=True, error="recalculation_failed",
+                                   boundary_id=boundary_id)
 
 
 def process_pending_activity_recalculations(session: Session, *, limit: int = 50,

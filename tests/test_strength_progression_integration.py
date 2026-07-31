@@ -103,3 +103,36 @@ def test_journal_merges_requests_and_no_unrequested_rows_are_backfilled(session)
     report = process_pending_activity_recalculations(session, limit=1)
     assert report.processed == 1
     assert session.get(SyncState, f"strength_progression_recalc_activity:{old.id}") is None
+
+
+def test_retained_journal_boundary_is_stable_for_retry_and_ignores_retry_cause(session, monkeypatch):
+    import coach.strength_progression_integration as integration
+
+    request_activity_recalculation(session, 999, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
+    first = process_activity_recalculation(session, 999, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
+    # A no-activity request completes normally, so create one retained request
+    # by forcing the derived processing savepoint to fail.
+    request_activity_recalculation(session, 998, cause=RecalculationCause.ACTIVITY_PROGRAM_MATCH_CREATED)
+    original = integration._process
+    monkeypatch.setattr(integration, "_process", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("test")))
+    failed = process_activity_recalculation(session, 998, cause=RecalculationCause.ACTIVITY_PROGRAM_MATCH_CREATED)
+    monkeypatch.setattr(integration, "_process", original)
+    retried = process_activity_recalculation(session, 998, cause=RecalculationCause.RETRY)
+    assert first.boundary_id
+    assert failed.dirty_key_retained and failed.boundary_id == retried.boundary_id
+    journal = session.get(SyncState, "strength_progression_recalc_activity:998")
+    assert journal is None
+
+
+def test_journal_boundary_uses_merged_persisted_causes_in_request_order_independent_form(session):
+    import coach.strength_progression_integration as integration
+
+    request_activity_recalculation(session, 997, cause=RecalculationCause.MANUAL_SET_CORRECTED)
+    request_activity_recalculation(session, 997, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
+    first = integration._activity_boundary_id(session, 997, RecalculationCause.RETRY)
+    value = session.get(SyncState, "strength_progression_recalc_activity:997").value
+    session.get(SyncState, "strength_progression_recalc_activity:997").value = value.replace(
+        '["manual_set_corrected","strength_sets_resolved"]',
+        '["strength_sets_resolved","manual_set_corrected"]',
+    )
+    assert integration._activity_boundary_id(session, 997, RecalculationCause.RETRY) == first

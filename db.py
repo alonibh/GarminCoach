@@ -788,6 +788,12 @@ def dispose_engine() -> None:
 
 def init_db(target_engine: Engine | None = None) -> None:
     eng = target_engine or engine
+    # Test/upgrade engines are tenant-like SQLite databases too: migrations
+    # must validate under the same foreign-key policy as production sessions.
+    if eng.dialect.name == "sqlite" and eng is not engine:
+        event.listen(eng, "connect", _set_sqlite_pragmas)
+        with eng.begin() as conn:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(eng)
     _migrate_add_columns(eng)
     

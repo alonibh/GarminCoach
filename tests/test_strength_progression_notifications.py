@@ -1,5 +1,8 @@
 from datetime import datetime
 
+from sqlalchemy import create_engine, text
+from sqlalchemy import inspect
+
 from coach.strength_progression_integration import (
     RecalculationCause, process_activity_recalculation,
 )
@@ -63,3 +66,42 @@ def test_material_batch_receipt_bridge_and_plain_summary(session):
     assert message and message.parse_mode is None and message.reply_markup is None
     assert "Bench Press: 70 kg → 72.5 kg" in message.text
     assert "GarminCoach → Progression" in message.text
+
+
+def test_notification_migration_creates_validated_schema_idempotently(tmp_path):
+    import db
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'phase4c-upgrade.db'}", future=True)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE durable_phase4c_row (value TEXT)"))
+        conn.execute(text("INSERT INTO durable_phase4c_row VALUES ('keep')"))
+    db.init_db(engine); db.init_db(engine)
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA integrity_check")).scalar_one() == "ok"
+        assert conn.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
+        assert conn.execute(text("SELECT value FROM durable_phase4c_row")).scalar_one() == "keep"
+        assert conn.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = :key"), {
+            "key": "strength_progression_telegram_notifications_2026_07_31_v1",
+        }).scalar_one() == 1
+        tables = set(inspect(engine).get_table_names())
+        assert {"strength_progression_notification_batches", "strength_progression_notification_receipts"} <= tables
+        receipt_indexes = {row[1] for row in conn.execute(text("PRAGMA index_list('strength_progression_notification_receipts')"))}
+        assert "ix_strength_progression_notification_receipts_material_fingerprint" in receipt_indexes
+    engine.dispose()
+
+
+def test_notification_migration_does_not_write_marker_when_validation_fails(tmp_path, monkeypatch):
+    import db
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'validation-fail.db'}", future=True)
+    monkeypatch.setattr(db, "_validate_strength_progression_telegram_notifications",
+                        lambda _conn: (_ for _ in ()).throw(RuntimeError("forced")))
+    try:
+        db.init_db(engine)
+    except RuntimeError as exc:
+        assert str(exc) == "forced"
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = :key"), {
+            "key": "strength_progression_telegram_notifications_2026_07_31_v1",
+        }).scalar_one() == 0
+    engine.dispose()
