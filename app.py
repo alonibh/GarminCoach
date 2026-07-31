@@ -2556,6 +2556,7 @@ async def save_session_exercises(session_id: int, request: Request):
             if item.id in removed_ids:
                 db.delete(item)
 
+        final_exercises: list[SessionExercise] = []
         for i, (incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration) in enumerate(validated):
             values = {
                 "exercise_name": (meta or {}).get("label", name),
@@ -2574,7 +2575,9 @@ async def save_session_exercises(session_id: int, request: Request):
             }
             ex = existing_by_id.get(incoming_id) if incoming_id is not None else None
             if ex is None:
-                db.add(SessionExercise(program_session_id=session_id, **values))
+                ex = SessionExercise(program_session_id=session_id, **values)
+                db.add(ex)
+                final_exercises.append(ex)
                 continue
             from coach.strength_progression_integration import prescription_for_session_exercise
             old_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)
@@ -2583,21 +2586,28 @@ async def save_session_exercises(session_id: int, request: Request):
             new_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)
             if old_fingerprint != new_fingerprint:
                 invalidate_session_exercises(db, [ex.id], cause=InvalidationCause.TEMPLATE_CHANGED)
+            final_exercises.append(ex)
 
         if not validated and ps.program and ps.program.active:
             raise HTTPException(
                 status_code=422,
                 detail="An active Garmin session needs at least one exercise.",
             )
+        # New rows must have durable identities before the open browser page
+        # can submit another save without recreating them.
+        db.flush()
         if validated:
             from coach.garmin_compiler import build_program_workout
-            db.flush()
             try:
                 build_program_workout(db, ps.id, require_active=False)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+        response_exercises = [
+            {"id": item.id, "order_index": item.order_index}
+            for item in final_exercises
+        ]
 
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "exercises": response_exercises})
 
 
 @app.delete("/api/session/{session_id}/exercises/{exercise_id}")

@@ -132,7 +132,11 @@ async function saveSession(sessionId){
   const payload=[...document.querySelectorAll('#tbody-'+sessionId+' .exercise-row')].map((row,i)=>{const timed=row.querySelector('.ex-target-type').value==='time',target=row.querySelector('.ex-target').value,warmup=row.querySelector('.ex-warmup-enabled'),warmupTimed=row.querySelector('.ex-warmup-target-type').value==='time',warmupTarget=row.querySelector('.ex-warmup-target').value;return {id:row.dataset.id||null,exercise_key:row.dataset.key,exercise_name:row.querySelector('.exercise-name').textContent.trim(),sets:row.querySelector('.ex-sets').value||null,reps:timed?null:(target||null),duration_seconds:timed?(target||null):null,weight_kg:timed?null:(row.querySelector('.ex-weight').value||null),rest_seconds:row.querySelector('.ex-rest').value||60,warmup_enabled:warmup?warmup.checked:undefined,warmup_target_type:warmupTimed?'time':'reps',warmup_reps:warmupTimed?null:(warmupTarget||null),warmup_duration_seconds:warmupTimed?(warmupTarget||null):null,warmup_weight_kg:row.querySelector('.ex-warmup-weight')?.value||null,order_index:i}});
   status.textContent='Saving…';
   const res=await fetch('/api/session/'+sessionId+'/exercises',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  if(res.ok){status.textContent='✓ Saved';return true}const body=await res.json().catch(()=>({}));status.textContent=body.detail||'Could not save';return false
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok){status.textContent=body.detail||'Could not save';return false}
+  if(!Array.isArray(body.exercises)||body.exercises.length!==payload.length||body.exercises.some((item,i)=>!Number.isInteger(item?.id)||item.id<=0||item.order_index!==i)){status.textContent='Could not save: invalid exercise identities.';return false}
+  [...document.querySelectorAll('#tbody-'+sessionId+' .exercise-row')].forEach((row,i)=>{row.dataset.id=String(body.exercises[i].id)});
+  status.textContent='✓ Saved';return true
 }
 async function saveAllSessions(){
   const button=document.getElementById('save-all-button');

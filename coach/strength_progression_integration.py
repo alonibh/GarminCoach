@@ -155,13 +155,6 @@ def prescription_for_session_exercise(
     return prescription_fingerprint(_prescription(row, program_id, program_session_id))
 
 
-def prescription_for_session_exercise(
-    row: SessionExercise, program_id: int, program_session_id: int,
-) -> str:
-    """Expose the canonical prescription version for editor change detection."""
-    return prescription_fingerprint(_prescription(row, program_id, program_session_id))
-
-
 def _identity(value: str | None) -> str:
     return "" if not isinstance(value, str) else "".join(char for char in value.upper() if char.isalnum())
 

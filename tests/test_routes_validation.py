@@ -129,6 +129,51 @@ def test_editor_preserves_submitted_exercise_id_for_rest_only_edit(client):
         assert exercise is not None and exercise.rest_seconds == 90
 
 
+def test_new_editor_row_response_installs_id_for_idempotent_second_save(client):
+    c, db_module = client
+    from db import ProgramSession, SessionExercise, TrainingProgram
+    with db_module.get_session() as s:
+        program = TrainingProgram(name="P", status="draft")
+        s.add(program); s.flush()
+        planned = ProgramSession(program_id=program.id, name="Empty")
+        s.add(planned); s.flush()
+        session_id = planned.id
+    row = {"exercise_name": "Goblet Squat", "exercise_key": "SQUAT:GOBLET_SQUAT",
+           "sets": 2, "reps": 10, "weight_kg": 12, "rest_seconds": 60}
+
+    first = c.post(f"/api/session/{session_id}/exercises", json=[row])
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["ok"] is True and len(first_body["exercises"]) == 1
+    exercise_id = first_body["exercises"][0]["id"]
+    second = c.post(f"/api/session/{session_id}/exercises", json=[{**row, "id": exercise_id}])
+
+    assert second.status_code == 200
+    assert second.json()["exercises"] == [{"id": exercise_id, "order_index": 0}]
+    with db_module.get_session() as s:
+        rows = s.query(SessionExercise).filter_by(program_session_id=session_id).all()
+        assert [item.id for item in rows] == [exercise_id]
+
+
+def test_editor_rejects_duplicate_cross_session_and_malformed_ids(client):
+    c, db_module = client
+    from db import ProgramSession, SessionExercise, TrainingProgram
+    with db_module.get_session() as s:
+        program = TrainingProgram(name="P", status="draft")
+        s.add(program); s.flush()
+        first, other = ProgramSession(program_id=program.id, name="A"), ProgramSession(program_id=program.id, name="B")
+        s.add_all((first, other)); s.flush()
+        exercise = SessionExercise(program_session_id=first.id, exercise_name="Goblet Squat",
+            exercise_key="SQUAT:GOBLET_SQUAT", sets=2, reps=10, weight_kg=12)
+        s.add(exercise); s.flush()
+        first_id, other_id, exercise_id = first.id, other.id, exercise.id
+    row = {"id": exercise_id, "exercise_name": "Goblet Squat", "exercise_key": "SQUAT:GOBLET_SQUAT", "sets": 2, "reps": 10, "weight_kg": 12}
+
+    assert c.post(f"/api/session/{first_id}/exercises", json=[row, row]).status_code == 422
+    assert c.post(f"/api/session/{other_id}/exercises", json=[row]).status_code == 422
+    assert c.post(f"/api/session/{first_id}/exercises", json=[{**row, "id": "bad"}]).status_code == 422
+
+
 def test_delete_custom_session_stales_child_pending_proposal(client):
     c, db_module = client
     from db import ProgramSession, SessionExercise, StrengthProgressionProposal, TrainingProgram
@@ -964,7 +1009,6 @@ def test_completed_multi_user_onboarding_renders_questionnaire(monkeypatch, tmp_
         response = get_onboarding(request)
         assert response.status_code == 200
         assert "onboarding.html" in response.template.name
-
 
 
 
