@@ -236,6 +236,11 @@ def reconcile_active_program(session: Session) -> int:
         cursor.updated_at = datetime.now()
         matched += 1
         session.flush()
+        # A match is an explicit local prerequisite event; the integration
+        # handles incomplete details and owns a savepoint for derived writes.
+        from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+        request_activity_recalculation(session, activity.id, cause=RecalculationCause.ACTIVITY_PROGRAM_MATCH_CREATED)
+        process_activity_recalculation(session, activity.id, cause=RecalculationCause.ACTIVITY_PROGRAM_MATCH_CREATED)
     return matched
 
 

@@ -7,7 +7,7 @@ runtime sync or route code.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable
+from typing import Collection, Iterable
 
 from sqlalchemy.orm import Session
 
@@ -162,3 +162,54 @@ def mark_pending_proposal_stale(session: Session, *, session_exercise_id: int,
     if row:
         row.status, row.current_pending_key, row.resolved_at = status, None, datetime.utcnow()
     return row
+
+
+def load_current_evidence(
+    session: Session, *, session_exercise_id: int, policy_version: str,
+    prescription_fingerprint: str,
+) -> list[StrengthProgressionEvidence]:
+    """Return only evidence selected by the immutable per-activity heads."""
+    return (
+        session.query(StrengthProgressionEvidence)
+        .join(
+            StrengthProgressionEvidenceHead,
+            StrengthProgressionEvidence.evidence_id
+            == StrengthProgressionEvidenceHead.current_evidence_id,
+        )
+        .filter(
+            StrengthProgressionEvidenceHead.session_exercise_id == session_exercise_id,
+            StrengthProgressionEvidence.session_exercise_id_snapshot == session_exercise_id,
+            StrengthProgressionEvidence.policy_version == policy_version,
+            StrengthProgressionEvidence.prescription_fingerprint == prescription_fingerprint,
+        )
+        .order_by(StrengthProgressionEvidence.appearance_at, StrengthProgressionEvidence.evidence_id)
+        .all()
+    )
+
+
+def stale_pending_proposals_for_exercises(
+    session: Session, session_exercise_ids: Collection[int], *, status: str = "stale",
+) -> int:
+    """Stale current rows by stable snapshot id, including rows whose FK is NULL."""
+    ids = sorted({int(item) for item in session_exercise_ids})
+    if not ids:
+        return 0
+    rows = session.query(StrengthProgressionProposal).filter(
+        StrengthProgressionProposal.status == "pending",
+        StrengthProgressionProposal.session_exercise_id_snapshot.in_(ids),
+    ).all()
+    for row in rows:
+        row.status, row.current_pending_key, row.resolved_at = status, None, datetime.utcnow()
+    return len(rows)
+
+
+def stale_pending_proposals_for_program(
+    session: Session, program_id: int, *, status: str = "stale",
+) -> int:
+    rows = session.query(StrengthProgressionProposal).filter(
+        StrengthProgressionProposal.status == "pending",
+        StrengthProgressionProposal.program_id_snapshot == program_id,
+    ).all()
+    for row in rows:
+        row.status, row.current_pending_key, row.resolved_at = status, None, datetime.utcnow()
+    return len(rows)

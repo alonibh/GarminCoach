@@ -1,6 +1,6 @@
 # Strength-progression proposal contract
 
-**Status:** Approved Phase 4A product and system design; no runtime implementation
+**Status:** Phase 4B2 bounded local recalculation is implemented; review and notification stages remain future work.
 **Scope:** Deterministic, exercise-level proposals to change a future local template weight
 
 This is the canonical contract for Phase 4 strength progression. It specifies future behavior; it does **not** claim that any persistence, engine, page, notification, mutation, or Garmin integration described here exists today.
@@ -144,7 +144,15 @@ Future evaluation runs after strength sets finish syncing for a matched activity
 | Phase 4D | Deduplicated Telegram outbox summary; bounded sync/match/correction/editor/proposal triggers; stale/duplicate/retry/concurrency hardening; verify future compiler consumption of approved local weight. |
 | Later Phase 4 | Separate work for 28-day recovery/health trends, Fitness Age/VO2 max history, capability-aware Training Status, weekly-summary improvements, and compact aggregate AI context. |
 
-## 10. Explicit exclusions
+## 10. Phase 4B2 implementation boundary
+
+Phase 4B2 is event-driven and bounded: it evaluates only activities explicitly
+dirtied by newly resolved strength sets, a newly confident match, or an
+authoritative correction. Untouched pre-B2 historical activity/match/set rows
+are not broadly backfilled. Phase 4C confirmation/template mutation and Phase
+4D Telegram notification remain unimplemented.
+
+## 11. Explicit exclusions
 
 This documentation commit excludes runtime implementation; schema or migration work; remote Garmin replacement/update; changes to scheduled Garmin workouts; exercise/set/rep/rest/warm-up mutation; bodyweight, rep, or duration progression; subjective too-easy/too-hard flows; Garmin RPE/Feel authority; biometric/readiness/ACWR authority; LLM matching or decisions; private-calendar access; new Garmin endpoint calls; source-specific progression; deload logic; injury, medical, or nutrition claims; and dedicated rollback.
 

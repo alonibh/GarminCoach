@@ -307,6 +307,8 @@ def _apply_recent_strength_weights(session, proposal: dict) -> None:
 
 def _replace_program_sessions(session, program: TrainingProgram, routines: list[dict]) -> None:
     """Replace editable program sessions with the source-template proposal."""
+    from coach.strength_progression_integration import InvalidationCause, invalidate_program_proposals
+    invalidate_program_proposals(session, program.id, cause=InvalidationCause.TEMPLATE_REPLACED)
     for existing in session.query(ProgramSession).filter_by(program_id=program.id).all():
         session.delete(existing)
     session.flush()
@@ -329,6 +331,9 @@ def _replace_program_sessions(session, program: TrainingProgram, routines: list[
 
 def _replace_session_exercises(session, program_session: ProgramSession, exercises: list[dict]) -> None:
     """Restore one session's editable exercises without replacing the session itself."""
+    from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
+    old_ids = [item.id for item in session.query(SessionExercise.id).filter_by(program_session_id=program_session.id)]
+    invalidate_session_exercises(session, old_ids, cause=InvalidationCause.TEMPLATE_REPLACED)
     session.query(SessionExercise).filter_by(program_session_id=program_session.id).delete()
     for exercise_order, exercise in enumerate(exercises):
         session.add(
@@ -1680,6 +1685,10 @@ def edit_set(
             return HTMLResponse("Reps must be a whole number and weight a number.", status_code=400)
         st.edited = True
         aid = st.activity_id
+        s.flush()
+        from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+        request_activity_recalculation(s, aid, cause=RecalculationCause.MANUAL_SET_CORRECTED)
+        process_activity_recalculation(s, aid, cause=RecalculationCause.MANUAL_SET_CORRECTED)
     return RedirectResponse(f"/workout/{aid}", status_code=303)
 
 
@@ -2290,6 +2299,8 @@ def approve_program(program_id: int):
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=f"{planned.name}: {exc}") from exc
         for existing in session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).all():
+            from coach.strength_progression_integration import InvalidationCause, invalidate_program_proposals
+            invalidate_program_proposals(session, existing.id, cause=InvalidationCause.ACTIVE_PROGRAM_REPLACED)
             existing.active = False
             existing.status = "archived"
             existing.updated_at = datetime.now()
@@ -2522,6 +2533,9 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Warm-up weight must be between 0 and 500 kg.")
             validated.append((row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration))
 
+        from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
+        old_exercise_ids = [item.id for item in db.query(SessionExercise.id).filter_by(program_session_id=session_id)]
+        invalidate_session_exercises(db, old_exercise_ids, cause=InvalidationCause.TEMPLATE_REPLACED)
         db.query(SessionExercise).filter_by(program_session_id=session_id).delete()
 
         for i, (row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration) in enumerate(validated):
@@ -2572,6 +2586,8 @@ def delete_session_exercise(session_id: int, exercise_id: int):
         ).first()
         if not ex:
             raise HTTPException(status_code=404, detail="Exercise not found")
+        from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
+        invalidate_session_exercises(db, [ex.id], cause=InvalidationCause.EXERCISE_DELETED)
         db.delete(ex)
     return JSONResponse({"ok": True})
 

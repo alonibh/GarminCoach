@@ -245,6 +245,7 @@ def prescription_fingerprint(prescription: ExercisePrescription) -> str:
         "warmup_reps": prescription.warmup_reps,
         "warmup_duration_seconds": prescription.warmup_duration_seconds,
         "warmup_weight_grams": warmup_weight,
+        "order_index": prescription.order_index,
     })
 
 

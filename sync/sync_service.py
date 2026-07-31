@@ -477,6 +477,10 @@ def _sync_exercise_sets(session, activity_id: int) -> bool:
         return False
     if not sets:
         _set_state(session, key, "complete")
+        session.flush()
+        from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+        request_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
+        process_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
         return True
 
     existing = (
@@ -509,6 +513,12 @@ def _sync_exercise_sets(session, activity_id: int) -> bool:
             )
         )
     _set_state(session, key, "complete")
+    # This trigger is intentionally only on a successful live resolution, not
+    # the older "sets already exist" fast path, so deployment never backfills.
+    session.flush()
+    from coach.strength_progression_integration import RecalculationCause, process_activity_recalculation, request_activity_recalculation
+    request_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
+    process_activity_recalculation(session, activity_id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
     return True
 
 
@@ -2127,6 +2137,13 @@ def _run_sync(full: bool = False, force: bool = False, allow_backfill: bool = Fa
             summary["program_matches"] = reconcile_active_program(session)
         except Exception as e:
             summary["errors"].append(f"Program reconciliation: {e}")
+
+        # Drain only explicitly dirtied local activities; no historical scan.
+        try:
+            from coach.strength_progression_integration import process_pending_activity_recalculations
+            process_pending_activity_recalculations(session, limit=50)
+        except Exception:
+            logger.exception("strength progression retry batch failed")
 
         if _workouts_due(session, full):
             try:
