@@ -20,6 +20,12 @@
   They compare recent 7-day and preceding-21-day medians, never impute missing
   days, use product display thresholds only, and are informational. Daily
   intensity minutes retain their separate 7-day/28-day sum semantics.
+- Slow Fitness Age, target Fitness Age, VO₂ max, and Training Status history is
+  governed by [`SLOW_METRIC_HISTORY_CONTRACT.md`](SLOW_METRIC_HISTORY_CONTRACT.md).
+  It accumulates only forward from current/weekly/activity observations: account
+  scope for Fitness Age values, explicit running/cycling activity scope for VO₂,
+  and current-device scope for Garmin source-text Training Status. Legacy VO₂ is
+  permanently activity-unverified. These facts have no decision authority.
 
 ---
 

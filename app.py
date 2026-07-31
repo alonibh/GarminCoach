@@ -68,6 +68,7 @@ from metrics.recovery_trends import (
     TrendDirection,
     build_recovery_health_trend_report,
 )
+from metrics.slow_metric_history import build_slow_metric_history_report
 from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
 from auth_routes import router as auth_router
 from account_routes import router as account_router
@@ -1397,6 +1398,7 @@ def dashboard(request: Request, activity_page: int = 1):
             s, as_of_day=today, overnight_today_ready=_overnight_metrics_ready(s),
         )
         trend_presentation = _trend_presentation(trend_report)
+        slow_metric_history = build_slow_metric_history_report(s, as_of_day=today)
         intensity_summary = {
             "seven_day": _intensity_minutes_summary(s, today, 7),
             "twenty_eight_day": _intensity_minutes_summary(s, today, 28),
@@ -1462,6 +1464,7 @@ def dashboard(request: Request, activity_page: int = 1):
             "active_program": current_program,
             "intensity_summary": intensity_summary,
             "recovery_health_trends": trend_presentation,
+            "slow_metric_history": slow_metric_history,
             "recovery_panel": recovery_panel,
         },
     )

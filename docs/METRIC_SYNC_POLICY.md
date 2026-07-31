@@ -1,6 +1,6 @@
 # GarminCoach Metric and Sync Policy
 
-**Status:** Approved policy; Phase 2 sync foundation complete
+**Status:** Approved policy; Phase 2 sync foundation and Phase 4F slow-metric history implemented
 **Approved:** 2026-07-27  
 **Scope:** Product behavior and synchronization target. Runtime code may still differ until later phases are implemented.
 
@@ -293,7 +293,14 @@ Fetch current:
 - body composition when available;
 - bounded remaining gap chunks.
 
-Store only changed slow-moving values to build local history.
+Phase 4F implements changed-value local history under
+[`SLOW_METRIC_HISTORY_CONTRACT.md`](SLOW_METRIC_HISTORY_CONTRACT.md), while
+preserving the existing Stage 1, weekly, and incremental fetch policy. It adds
+no Garmin endpoint or historical Garmin scan. Fitness Age and target Fitness
+Age are account-scoped; VO₂ is explicit running/cycling activity-scoped (legacy
+local imports remain unverified); Training Status is current-device source text
+and capability-aware. Weekly-summary improvements and aggregate Ask Coach
+context remain future work and receive none of this history.
 
 ### Manual sync
 

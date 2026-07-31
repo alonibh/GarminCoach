@@ -164,6 +164,56 @@
 </div></section>
 {% endif %}
 
+{% if slow_metric_history is defined %}{% set slow = slow_metric_history %}
+<section class="slow-metric-history" aria-labelledby="slow-metric-history-title">
+  <div class="metric-section-heading"><div><span class="eyebrow">Local observations</span><h2 id="slow-metric-history-title">Long-term fitness history</h2></div></div>
+  <p class="trend-authority-note">Garmin-provided information only. It does not change a workout or recovery decision.</p>
+  <div class="slow-history-grid">
+    <article class="card slow-history-card">
+      <h3>Fitness Age</h3>
+      <p><strong>{{ '%.1f'|format(slow.fitness_age.current_value) if slow.fitness_age.current_value is not none else 'No local observation' }}</strong>{% if slow.fitness_age.current_value is not none %} yrs{% endif %}</p>
+      {% if slow.target_fitness_age.current_value is not none %}<p class="muted">Achievable Fitness Age: {{ '%.1f'|format(slow.target_fitness_age.current_value) }} yrs</p>{% endif %}
+      {% if slow.fitness_age.previous_value is not none %}<p class="muted">Previous changed value: {{ '%.1f'|format(slow.fitness_age.previous_value) }}</p>{% endif %}
+      {% if slow.fitness_age.points %}<div class="slow-chart-wrap"><canvas id="fitnessAgeHistoryChart"></canvas></div>{% endif %}
+      <p class="muted">Source: Garmin-provided estimate.</p>
+    </article>
+    {% for series, label, chart_id in [(slow.vo2_running, 'Running VO₂ max', 'runningVo2HistoryChart'), (slow.vo2_cycling, 'Cycling VO₂ max', 'cyclingVo2HistoryChart')] %}
+      {% if series.points or series.capability_state != 'unknown' %}
+      <article class="card slow-history-card">
+        <h3>{{ label }}</h3>
+        <p><strong>{{ '%.1f'|format(series.current_value) if series.current_value is not none else 'No local observation' }}</strong>{% if series.current_value is not none %} ml/kg/min{% endif %}</p>
+        {% if series.previous_value is not none %}<p class="muted">Previous changed value: {{ '%.1f'|format(series.previous_value) }}</p>{% endif %}
+        {% if series.points %}<div class="slow-chart-wrap"><canvas id="{{ chart_id }}"></canvas></div>{% endif %}
+      </article>
+      {% endif %}
+    {% endfor %}
+    {% if slow.vo2_legacy.points %}
+    <article class="card slow-history-card">
+      <h3>Legacy VO₂ max — activity type unverified</h3>
+      <p><strong>{{ '%.1f'|format(slow.vo2_legacy.current_value) if slow.vo2_legacy.current_value is not none else 'No local observation' }}</strong>{% if slow.vo2_legacy.current_value is not none %} ml/kg/min{% endif %}</p>
+      <p class="muted">This local legacy data is not running or cycling data.</p>
+    </article>
+    {% endif %}
+    <article class="card slow-history-card training-status-history">
+      <h3>Training Status</h3>
+      {% if slow.training_status.state == 'SUPPORTED_WITH_DATA' %}
+        <p>Garmin Training Status: <strong>{{ slow.training_status.current_status }}</strong></p>
+        <p class="muted">Observed {{ slow.training_status.current_day }}{% if slow.training_status.device_display_name %} · {{ slow.training_status.device_display_name }}{% endif %}</p>
+        <ul class="status-history-list">{% for point in slow.training_status.changes|reverse %}<li>{{ point.observed_on }} · {{ point.status }}</li>{% endfor %}</ul>
+      {% elif slow.training_status.state == 'SUPPORTED_NO_DATA' %}
+        <p>Training Status is supported for this device, but no current observation is stored.</p>
+      {% elif slow.training_status.state == 'UNSUPPORTED' %}
+        <p>Training Status is not supported for the current device.</p>
+      {% elif slow.training_status.state == 'NO_DEVICE_IDENTITY' %}
+        <p>Training Status is unavailable until Garmin device identity is known.</p>
+      {% else %}
+        <p>Training Status availability is unverified for the current device.</p>
+      {% endif %}
+    </article>
+  </div>
+</section>
+{% endif %}
+
 {% if recovery_health_trends %}
 <section class="recovery-health-trends" aria-labelledby="recovery-health-trends-title">
   <div class="metric-section-heading"><div><span class="eyebrow">Recent 7 days vs prior 21 days</span><h2 id="recovery-health-trends-title">28-day recovery and health trends</h2></div></div>
@@ -292,6 +342,20 @@
   {% endif %}
 </section>
 </div>
+
+{% if slow_metric_history is defined %}<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const slowLine = (id, points, label) => {
+    const canvas = document.getElementById(id);
+    if (!canvas || !points.length || typeof Chart === 'undefined') return;
+    new Chart(canvas, { type: 'line', data: { labels: points.map(p => p.day), datasets: [{ label, data: points.map(p => p.value), borderColor: '#12b8ff', backgroundColor: 'rgba(18,184,255,.12)', tension: .25, fill: false }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b98a5', maxRotation: 0 }, grid: { display: false } }, y: { ticks: { color: '#8b98a5' }, grid: { color: '#2a333d' } } } } });
+  };
+  slowLine('fitnessAgeHistoryChart', [{% for p in slow.fitness_age.points %}{ day: '{{ p.observed_on }}', value: {{ p.value }} }{% if not loop.last %}, {% endif %}{% endfor %}], 'Fitness Age');
+  slowLine('runningVo2HistoryChart', [{% for p in slow.vo2_running.points %}{ day: '{{ p.observed_on }}', value: {{ p.value }} }{% if not loop.last %}, {% endif %}{% endfor %}], 'Running VO₂ max');
+  slowLine('cyclingVo2HistoryChart', [{% for p in slow.vo2_cycling.points %}{ day: '{{ p.observed_on }}', value: {{ p.value }} }{% if not loop.last %}, {% endif %}{% endfor %}], 'Cycling VO₂ max');
+});
+</script>
+{% endif %}
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {

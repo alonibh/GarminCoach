@@ -105,8 +105,10 @@ the selected workout, and every mutation requires a current Telegram confirmatio
   exact missing-data coverage, show sleep-timing variability plus stress and
   separate Body Battery facts, and offer 7d/28d source charts. They make no
   Garmin request and have no workout, notification, or coaching authority.
-- [ ] Later Phase 4: Fitness Age and VO2 max history, capability-aware Training
-  Status, weekly-summary improvements, and compact aggregate AI context.
+- [x] Phase 4F: durable Fitness Age, target Fitness Age, activity-scoped VO₂ max,
+  and device-scoped Training Status history with capability-aware local UI.
+- [ ] Phase 4G: weekly-summary improvements using approved deterministic aggregates.
+- [ ] Phase 4H: compact aggregate Ask Coach context under a separate privacy contract.
 
 Phase 4B2, 4C, 4D, and 4E are complete; later runtime stages remain unchecked.
 Progression evidence has no authority from Garmin RPE, Garmin Feel,

@@ -12,6 +12,7 @@ from typing import Iterator, Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -625,6 +626,47 @@ class MetricSnapshot(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class SlowMetricObservation(Base):
+    """Immutable, scoped local observations for slow Garmin metrics.
+
+    This table intentionally has no relationship to raw activity/device rows:
+    those rows are replaceable caches, while observations are local history.
+    """
+
+    __tablename__ = "slow_metric_observations"
+
+    observation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    metric: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    scope_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    scope_key: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
+    observed_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    numeric_value: Mapped[Optional[float]] = mapped_column(Float)
+    text_value: Mapped[Optional[str]] = mapped_column(String(64))
+    source_kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(192), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(numeric_value IS NOT NULL AND text_value IS NULL) OR "
+            "(numeric_value IS NULL AND text_value IS NOT NULL)",
+            name="ck_slow_metric_one_value",
+        ),
+        CheckConstraint("numeric_value IS NULL OR numeric_value = numeric_value", name="ck_slow_metric_finite"),
+        CheckConstraint("text_value IS NULL OR length(trim(text_value)) > 0", name="ck_slow_metric_text_nonempty"),
+        CheckConstraint(
+            "(metric IN ('fitness_age', 'target_fitness_age') AND scope_kind = 'account' AND scope_key = 'account') OR "
+            "(metric = 'vo2max' AND scope_kind = 'activity' AND scope_key IN ('running', 'cycling', 'legacy_unverified')) OR "
+            "(metric = 'training_status' AND scope_kind = 'device' AND length(trim(scope_key)) > 0)",
+            name="ck_slow_metric_scope",
+        ),
+        Index("ix_slow_metric_scope_date", "metric", "scope_kind", "scope_key", "observed_on"),
+        Index("ix_slow_metric_metric_date", "metric", "observed_on"),
+        Index("uq_slow_metric_source", "metric", "scope_kind", "scope_key", "source_kind", "source_key", unique=True),
+    )
+
+
 class MetricCapability(Base):
     """Tri-state capability evidence, isolated by its durable source scope."""
 
@@ -874,6 +916,85 @@ _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY = "body_composition_capability_con
 _STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY = "strength_progression_foundation_2026_07_30_v1"
 _STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY = "strength_progression_review_actions_2026_07_31_v1"
 _STRENGTH_PROGRESSION_TELEGRAM_NOTIFICATIONS_MIGRATION_KEY = "strength_progression_telegram_notifications_2026_07_31_v1"
+_SLOW_METRIC_HISTORY_MIGRATION_KEY = "slow_metric_history_2026_07_31_v1"
+
+
+def _validate_slow_metric_history(conn) -> None:
+    """Validate the independently durable history schema before its marker."""
+    columns = {row[1] for row in conn.execute(text("PRAGMA table_info('slow_metric_observations')"))}
+    expected = {
+        "observation_id", "metric", "scope_kind", "scope_key", "observed_on", "observed_at",
+        "numeric_value", "text_value", "source_kind", "source_key", "created_at",
+    }
+    if not expected.issubset(columns):
+        raise RuntimeError("slow metric history schema validation failed")
+    indexes = {row[1] for row in conn.execute(text("PRAGMA index_list('slow_metric_observations')"))}
+    required = {"ix_slow_metric_scope_date", "ix_slow_metric_metric_date", "uq_slow_metric_source"}
+    if not required.issubset(indexes):
+        raise RuntimeError("slow metric history index validation failed")
+
+
+def _seed_slow_metric_history(conn) -> None:
+    """Import only existing local cache facts; no network or scope inference."""
+    from datetime import date as date_type
+    import hashlib
+    import json
+    import math
+
+    def valid_date(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return date_type.fromisoformat(value[:10]).isoformat()
+        except ValueError:
+            return None
+
+    def valid_numeric(metric: str, value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        ceiling = 100.0 if metric == "vo2max" else 120.0
+        return number if math.isfinite(number) and 0 < number <= ceiling else None
+
+    def insert(metric: str, kind: str, key: str, observed_on: str, numeric: float | None,
+               status: str | None, source_kind: str, source_key: str) -> None:
+        payload = json.dumps({"metric": metric, "scope_kind": kind, "scope_key": key,
+                              "observed_on": observed_on, "numeric": numeric, "text": status,
+                              "source_kind": source_kind, "source_key": source_key},
+                             sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        observation_id = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        conn.execute(text("""
+            INSERT OR IGNORE INTO slow_metric_observations (
+                observation_id, metric, scope_kind, scope_key, observed_on, observed_at,
+                numeric_value, text_value, source_kind, source_key, created_at
+            ) VALUES (:id, :metric, :kind, :key, :observed_on, NULL, :numeric, :status,
+                      :source_kind, :source_key, CURRENT_TIMESTAMP)
+        """), {"id": observation_id, "metric": metric, "kind": kind, "key": key,
+               "observed_on": observed_on, "numeric": numeric, "status": status,
+               "source_kind": source_kind, "source_key": source_key})
+
+    snapshot_rows = conn.execute(text("SELECT metric, value, value_date, prev_value, prev_date FROM metric_snapshot")).mappings().all()
+    for row in snapshot_rows:
+        metric = row["metric"]
+        if metric not in {"fitness_age", "target_fitness_age", "vo2max"}:
+            continue
+        scope_kind, scope_key = ("activity", "legacy_unverified") if metric == "vo2max" else ("account", "account")
+        for role, value_name, day_name in (("previous", "prev_value", "prev_date"), ("current", "value", "value_date")):
+            observed_on = valid_date(row[day_name])
+            value = valid_numeric(metric, row[value_name])
+            if observed_on and value is not None:
+                insert(metric, scope_kind, scope_key, observed_on, value, None,
+                       "legacy_metric_snapshot", f"{metric}:{role}:{observed_on}")
+    daily_health_columns = {row[1] for row in conn.execute(text("PRAGMA table_info('daily_health')"))}
+    if "training_status" in daily_health_columns:
+        for row in conn.execute(text("SELECT day, training_status FROM daily_health WHERE training_status IS NOT NULL")).mappings():
+            observed_on = valid_date(str(row["day"]))
+            status = row["training_status"]
+            if observed_on and isinstance(status, str):
+                status = status.strip()
+                if status and len(status) <= 64 and not any(ord(char) < 32 or ord(char) == 127 for char in status):
+                    insert("training_status", "device", "legacy_unverified_device", observed_on, None, status,
+                           "legacy_daily_health", f"training_status:{observed_on}")
 
 
 def _seed_strength_progression_policy(conn) -> None:
@@ -1187,6 +1308,18 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             conn.execute(text(
                 "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": _STRENGTH_PROGRESSION_TELEGRAM_NOTIFICATIONS_MIGRATION_KEY})
+
+        slow_history_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _SLOW_METRIC_HISTORY_MIGRATION_KEY},
+        ).first()
+        if not slow_history_applied:
+            _validate_slow_metric_history(conn)
+            _seed_slow_metric_history(conn)
+            _validate_slow_metric_history(conn)
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _SLOW_METRIC_HISTORY_MIGRATION_KEY})
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}

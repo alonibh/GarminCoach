@@ -627,6 +627,20 @@ def _sync_activities(
             from metrics.capability_registry import normalize_activity_domain
             domain = normalize_activity_domain(activity_domain)
             if domain:
+                from metrics.slow_metric_history import (
+                    RecordObservationOutcome,
+                    record_numeric_observation,
+                )
+                observed_at = _parse_dt(raw.get("startTimeLocal") or raw.get("startTimeGMT"))
+                result = record_numeric_observation(
+                    session, metric="vo2max", scope_kind="activity", scope_key=domain,
+                    observed_on=date.fromisoformat(value_date), observed_at=observed_at,
+                    value=value, source_kind="garmin_activity_summary",
+                    source_key=f"activity:{act_id}:{domain}:{observed_at.isoformat() if observed_at else value_date}",
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                )
+                if result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
+                    _record_snapshot(session, "vo2max", value_date, value)
                 note_capability_observed(session, "vo2max", activity_domain=domain)
             if vo2_values is not None:
                 vo2_values.append((value_date, float(value)))
@@ -1325,36 +1339,7 @@ def _sync_stage1(session: Session, today: date, summary: dict) -> bool:
 
         # 9. Training Status can self-discover with one Stage 1 probe.
         if not done("training_status"):
-            decision = capability_fetch_decision(session, "training_status", "stage1")
-            if decision in {"fetch_supported", "probe_unknown"}:
-                current_probe_outcome = None
-                try:
-                    status = client.training_status(today)
-                except GarminConnectTooManyRequestsError:
-                    if decision == "probe_unknown":
-                        note_capability_probe(session, "training_status", "rate_limited")
-                    raise
-                except GarminConnectAuthenticationError:
-                    if decision == "probe_unknown":
-                        note_capability_probe(session, "training_status", "authentication_error")
-                    raise
-                except Exception as exc:
-                    if _is_auth_error(exc):
-                        if decision == "probe_unknown":
-                            note_capability_probe(session, "training_status", "authentication_error")
-                        raise GarminConnectAuthenticationError("Garmin Connect authentication failed") from exc
-                    if decision == "probe_unknown":
-                        current_probe_outcome = "ordinary_error"
-                        note_capability_probe(session, "training_status", current_probe_outcome)
-                    logger.warning("Stage 1 Training Status probe failed")
-                    status = None
-                if isinstance(status, dict) and isinstance(status.get("mostRecentTrainingStatus"), str):
-                    row = session.get(DailyHealth, today) or DailyHealth(day=today)
-                    row.training_status = status.get("mostRecentTrainingStatus")
-                    session.add(row)
-                    note_capability_observed(session, "training_status")
-                elif decision == "probe_unknown" and current_probe_outcome is None:
-                    note_capability_probe(session, "training_status", "empty")
+            _sync_current_training_status(session, today, context="stage1")
             mark("training_status")
 
         _set_state(session, _STAGE1_COMPLETE, "complete")
@@ -2385,9 +2370,24 @@ def _sync_current_fitness_age(session: Session, today: date, *, context: str = "
     observed = payload.get("lastUpdated")
     if not isinstance(observed, str) or _parse_state_date(observed[:10]) is None:
         observed = today.isoformat()
-    _record_snapshot(session, "fitness_age", observed, payload.get("fitnessAge"))
-    _record_snapshot(session, "target_fitness_age", observed, payload.get("achievableFitnessAge"))
-    if _finite_number(payload.get("fitnessAge")) is not None:
+    from metrics.slow_metric_history import RecordObservationOutcome, record_numeric_observation
+    observed_day = date.fromisoformat(observed)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    fitness_result = record_numeric_observation(
+        session, metric="fitness_age", scope_kind="account", scope_key="account",
+        observed_on=observed_day, observed_at=None, value=payload.get("fitnessAge"),
+        source_kind="garmin_fitness_age", source_key=f"fitness_age:{observed}", created_at=now,
+    )
+    target_result = record_numeric_observation(
+        session, metric="target_fitness_age", scope_kind="account", scope_key="account",
+        observed_on=observed_day, observed_at=None, value=payload.get("achievableFitnessAge"),
+        source_kind="garmin_fitness_age", source_key=f"target_fitness_age:{observed}", created_at=now,
+    )
+    if fitness_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
+        _record_snapshot(session, "fitness_age", observed, payload.get("fitnessAge"))
+    if target_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
+        _record_snapshot(session, "target_fitness_age", observed, payload.get("achievableFitnessAge"))
+    if fitness_result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
         note_capability_observed(session, "fitness_age")
     elif decision == "probe_unknown":
         note_capability_probe(session, "fitness_age", "empty")
@@ -2424,7 +2424,17 @@ def _sync_current_training_status(session: Session, today: date, *, context: str
         row = session.get(DailyHealth, today) or DailyHealth(day=today)
         row.training_status = status
         session.add(row)
-        note_capability_observed(session, "training_status")
+        device_state = session.get(SyncState, "garmin_device_model_key")
+        if device_state and device_state.value:
+            from metrics.slow_metric_history import RecordObservationOutcome, record_text_observation
+            result = record_text_observation(
+                session, metric="training_status", scope_kind="device", scope_key=device_state.value,
+                observed_on=today, observed_at=None, value=status, source_kind="garmin_training_status",
+                source_key=f"training_status:{device_state.value}:{today.isoformat()}",
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            if result.outcome in {RecordObservationOutcome.RECORDED, RecordObservationOutcome.UNCHANGED}:
+                note_capability_observed(session, "training_status", scope_kind="device", scope_key=device_state.value)
     elif decision == "probe_unknown":
         note_capability_probe(session, "training_status", "empty")
 
