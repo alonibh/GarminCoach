@@ -183,8 +183,25 @@ textarea { min-height: 110px; }
 .chart-card { min-width: 0; margin: 0; padding: 1.35rem 1.45rem; border-radius: 20px; background: linear-gradient(145deg, rgba(23,28,34,.95), rgba(15,19,23,.95)); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 10px 30px rgba(0,0,0,.25); transition: all .18s ease; }
 .chart-card:hover { border-color: rgba(18,184,255,.32); box-shadow: 0 12px 35px rgba(0,0,0,.35), 0 0 20px rgba(18,184,255,.08); }
 .chart-card[data-chart="sleep"], .chart-card[data-chart="hrv"] { grid-column: span 3; }
-.chart-card[data-chart="rhr"], .chart-card[data-chart="steps"], .chart-card[data-chart="calories"] { grid-column: span 2; }
+.chart-card[data-chart="rhr"], .chart-card[data-chart="steps"], .chart-card[data-chart="calories"], .chart-card[data-chart="stress"], .chart-card[data-chart="body-battery"] { grid-column: span 2; }
 .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.chart-range-control { display: inline-flex; gap: .25rem; padding: .2rem; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; }
+.chart-range-control button { appearance: none; border: 0; border-radius: 7px; background: transparent; color: #9aacbc; cursor: pointer; font: inherit; font-size: .82rem; font-weight: 700; padding: .4rem .65rem; }
+.chart-range-control button[aria-pressed="true"] { background: rgba(18,184,255,.2); color: #dff6ff; }
+.chart-range-control button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.recovery-health-trends { display: grid; gap: .85rem; }
+.trend-authority-note { margin: 0; color: #dff6ff; font-weight: 700; }
+.trend-coverage-legend { margin: 0; font-size: .86rem; }
+.trend-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.trend-card { min-width: 0; padding: 1rem 1.1rem; }
+.trend-card h3 { margin: 0 0 .65rem; font-size: 1rem; }
+.trend-card p { margin: .45rem 0 0; font-size: .88rem; }
+.trend-card-value { display: block; font-size: 1.2rem; color: #f5fbff; }
+.body-battery-trend { grid-column: span 2; }
+.body-battery-primary { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.body-battery-primary span { display: grid; gap: .15rem; }
+.body-battery-primary small { color: #9aacbc; }
+.trend-movement-context { padding: .8rem 1rem; border-left: 3px solid rgba(155,109,255,.75); background: rgba(155,109,255,.08); border-radius: 8px; color: #dce6ef; }
 .chart-head h3 { margin: 0; color: #fff; font-size: 1.05rem; font-weight: 750; letter-spacing: -.015em; text-transform: none; display: flex; align-items: center; gap: .4rem; }
 .info { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(18,184,255,.35); background: rgba(18,184,255,.08); color: var(--accent-strong); font-size: .65rem; font-weight: 800; display: inline-grid; place-items: center; transition: all .15s ease; }
 .info:hover, .info:focus { background: rgba(18,184,255,.2); border-color: var(--accent); color: #fff; }
@@ -797,6 +814,10 @@ textarea { min-height: 110px; }
   .hero-recovery-signals, .hero-metric.sleep { grid-column: auto; width: 100%; }
   .hero-metric.sleep { border-top: 1px solid rgba(255,255,255,.14); padding-top: 1rem; justify-items: center; }
   .hero-metric.sleep .hero-metric-detail { white-space: nowrap; }
+  .trend-card-grid { grid-template-columns: minmax(0, 1fr); }
+  .body-battery-trend { grid-column: auto; }
+  .metric-section-heading { align-items: flex-start; }
+  .chart-range-control { flex-shrink: 0; }
   .calendar-header { grid-template-columns: auto minmax(0, 1fr) auto; margin: 0; padding: .5rem 0; }
   .calendar-header .btn-secondary { min-width: 0; }
   .exercise-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }

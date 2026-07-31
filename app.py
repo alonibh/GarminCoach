@@ -63,6 +63,11 @@ from sync.scheduler import (
     stop_schedulers,
 )
 from time_utils import get_local_date
+from metrics.recovery_trends import (
+    RecoveryHealthTrend,
+    TrendDirection,
+    build_recovery_health_trend_report,
+)
 from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
 from auth_routes import router as auth_router
 from account_routes import router as account_router
@@ -592,7 +597,7 @@ def _age_label(value_date: str | None) -> str | None:
     if not value_date:
         return None
     try:
-        age = (date.today() - date.fromisoformat(value_date)).days
+        age = (get_local_date() - date.fromisoformat(value_date)).days
     except ValueError:
         return None
     if age <= 0:
@@ -727,7 +732,7 @@ def _fitness_tiles() -> list[dict]:
         if bd_st and bd_st.value:
             try:
                 bd = date.fromisoformat(bd_st.value[:10])
-                today = date.today()
+                today = get_local_date()
                 age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
             except Exception:
                 pass
@@ -1089,11 +1094,11 @@ def _overnight_metrics_ready(session) -> bool:
         return False
 
 
-def _dashboard_health_series(health: list[DailyHealth], overnight_ready: bool) -> list[dict]:
-    today = date.today()
+def _dashboard_health_series(health: list[DailyHealth], overnight_ready: bool, as_of_day: date | None = None) -> list[dict]:
+    as_of_day = as_of_day or get_local_date()
     out = []
     for h in health:
-        today_unready = h.day == today and not overnight_ready
+        today_unready = h.day == as_of_day and not overnight_ready
         out.append(
             {
                 "day": h.day.isoformat(),
@@ -1101,8 +1106,13 @@ def _dashboard_health_series(health: list[DailyHealth], overnight_ready: bool) -
                 "hrv": None if today_unready else h.hrv_overnight,
                 "hrv_baseline_low": None if today_unready else h.hrv_baseline_low,
                 "hrv_baseline_high": None if today_unready else h.hrv_baseline_high,
+                "bb_high": h.body_battery_high,
                 "bb_low": h.body_battery_low,
-                        "steps": h.steps,
+                "bb_charged": h.body_battery_charged,
+                "bb_drained": h.body_battery_drained,
+                "stress": h.stress_avg,
+                "recovery_time": None if today_unready else h.recovery_time_minutes,
+                "steps": h.steps,
                 "step_goal": h.step_goal,
                 "total_kcal": h.total_kcal,
                 "active_kcal": h.active_kcal,
@@ -1112,12 +1122,12 @@ def _dashboard_health_series(health: list[DailyHealth], overnight_ready: bool) -
     return out
 
 
-def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[dict]:
-    today = date.today()
+def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool, as_of_day: date | None = None) -> list[dict]:
+    as_of_day = as_of_day or get_local_date()
     out = []
     for sl in sleep:
         hours = None
-        if sl.total_s and sl.total_s > 0 and (sl.day != today or overnight_ready):
+        if sl.total_s and sl.total_s > 0 and (sl.day != as_of_day or overnight_ready):
             hours = round(sl.total_s / 3600, 1)
         start_t = sl.sleep_start_time.strftime("%H:%M") if sl.sleep_start_time else None
         end_t = sl.sleep_end_time.strftime("%H:%M") if sl.sleep_end_time else None
@@ -1131,10 +1141,10 @@ def _dashboard_sleep_series(sleep: list[Sleep], overnight_ready: bool) -> list[d
     return out
 
 
-def _dashboard_chart_data(session) -> dict:
+def _dashboard_chart_data(session, *, as_of_day: date | None = None) -> dict:
     """Return the dashboard series used by the in-page chart refresh."""
-    today = date.today()
-    since = today - timedelta(days=90)
+    today = as_of_day or get_local_date()
+    since = today - timedelta(days=89)
     health_rows = (
         session.query(DailyHealth)
         .filter(DailyHealth.day >= since)
@@ -1160,8 +1170,8 @@ def _dashboard_chart_data(session) -> dict:
 
     overnight_ready = _overnight_metrics_ready(session)
     return {
-        "health_series": _dashboard_health_series(padded_health, overnight_ready),
-        "sleep_series": _dashboard_sleep_series(padded_sleep, overnight_ready),
+        "health_series": _dashboard_health_series(padded_health, overnight_ready, today),
+        "sleep_series": _dashboard_sleep_series(padded_sleep, overnight_ready, today),
     }
 
 
@@ -1187,6 +1197,87 @@ def _intensity_minutes_summary(session, end_day: date, days: int) -> dict:
         "moderate_minutes": sum(moderate_values) if moderate_values else None,
         "vigorous_minutes": sum(vigorous_values) if vigorous_values else None,
         "coverage_days": len(observed_days),
+    }
+
+
+def _format_trend_value(value: float | None, unit: str) -> str | None:
+    if value is None:
+        return None
+    if unit == "hours":
+        total_minutes = int(round(value * 60))
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours}h {minutes:02d}m"
+    if unit == "minutes":
+        return f"{int(round(value))} min"
+    if unit in {"points", "ms", "bpm", "steps"}:
+        return f"{int(round(value)):,} {unit}" if unit != "points" else f"{int(round(value))} points"
+    return f"{value:g} {unit}"
+
+
+def _trend_card(trend: RecoveryHealthTrend) -> dict:
+    comparison = {
+        TrendDirection.HIGHER: "Higher than prior 21-day median",
+        TrendDirection.LOWER: "Lower than prior 21-day median",
+        TrendDirection.STABLE: "Similar to prior 21-day median",
+        TrendDirection.INSUFFICIENT_DATA: "Not enough valid days to compare",
+    }[trend.direction]
+    return {
+        "key": trend.key,
+        "label": trend.label,
+        "recent": _format_trend_value(trend.recent.median, trend.unit),
+        "baseline": _format_trend_value(trend.baseline.median, trend.unit),
+        "comparison": comparison,
+        "coverage": f"{trend.recent.valid_days + trend.baseline.valid_days}/28 valid days",
+        "latest": _format_trend_value(trend.latest_value, trend.unit),
+        "latest_day": trend.latest_day.isoformat() if trend.latest_day else None,
+        "note": trend.informational_note,
+        "source_status": trend.source_status.replace("_", " ").title() if trend.source_status else None,
+        "source_day": trend.source_day.isoformat() if trend.source_day else None,
+        "source_baseline": (
+            f"{int(round(trend.source_baseline_low))}–{int(round(trend.source_baseline_high))} ms"
+            if trend.source_baseline_low is not None and trend.source_baseline_high is not None else None
+        ),
+    }
+
+
+def _trend_presentation(report) -> dict:
+    by_key = {trend.key: trend for trend in report.trends}
+    core_keys = ("sleep_duration", "sleep_score", "hrv_overnight", "resting_hr", "stress_avg")
+    cards = [_trend_card(by_key[key]) for key in core_keys]
+    recovery = by_key["recovery_time"]
+    if recovery.latest_value is not None:
+        cards.append(_trend_card(recovery))
+    timing = report.sleep_timing
+    timing_card = None
+    if timing is not None:
+        comparison = {
+            TrendDirection.HIGHER: "Higher variability than prior 21-day median",
+            TrendDirection.LOWER: "Lower variability than prior 21-day median",
+            TrendDirection.STABLE: "Similar variability to prior 21-day median",
+            TrendDirection.INSUFFICIENT_DATA: "Not enough valid nights to compare",
+        }[timing.direction]
+        timing_card = {
+            "recent": f"{int(round(timing.recent.median))} min variability" if timing.recent.median is not None else None,
+            "baseline": f"{int(round(timing.baseline.median))} min" if timing.baseline.median is not None else None,
+            "comparison": comparison,
+            "coverage": f"{timing.recent.valid_days + timing.baseline.valid_days}/28 valid nights",
+            "bedtime": timing.recent_bedtime.strftime("%H:%M") if timing.recent_bedtime else None,
+            "wake_time": timing.recent_wake_time.strftime("%H:%M") if timing.recent_wake_time else None,
+            "note": timing.informational_note,
+        }
+    body = report.body_battery
+    body_card = {
+        "high": _trend_card(body.high), "low": _trend_card(body.low),
+        "charged": _trend_card(body.charged), "drained": _trend_card(body.drained),
+    } if body else None
+    return {
+        "as_of_day": report.as_of_day.isoformat(),
+        "overnight_end_day": report.overnight_end_day.isoformat(),
+        "full_day_end_day": report.full_day_end_day.isoformat(),
+        "cards": cards,
+        "timing": timing_card,
+        "body_battery": body_card,
+        "movement": _trend_card(by_key["steps"]),
     }
 
 
@@ -1276,7 +1367,8 @@ def dashboard(request: Request, activity_page: int = 1):
         if needs_login:
             return RedirectResponse("/login", status_code=303)
 
-    since = date.today() - timedelta(days=90)
+    today = get_local_date()
+    since = today - timedelta(days=90)
     with get_session() as s:
         goal_row = s.get(Goal, 1)
         active_goal = goal_row.goal if goal_row and goal_row.goal else None
@@ -1298,16 +1390,20 @@ def dashboard(request: Request, activity_page: int = 1):
         activities = activity_query.order_by(Activity.start_time.desc()).offset(
             (activity_page - 1) * activity_page_size
         ).limit(activity_page_size).all()
-        chart_data = _dashboard_chart_data(s)
+        chart_data = _dashboard_chart_data(s, as_of_day=today)
+        trend_report = build_recovery_health_trend_report(
+            s, as_of_day=today, overnight_today_ready=_overnight_metrics_ready(s),
+        )
+        trend_presentation = _trend_presentation(trend_report)
         intensity_summary = {
-            "seven_day": _intensity_minutes_summary(s, get_local_date(), 7),
-            "twenty_eight_day": _intensity_minutes_summary(s, get_local_date(), 28),
+            "seven_day": _intensity_minutes_summary(s, today, 7),
+            "twenty_eight_day": _intensity_minutes_summary(s, today, 28),
         }
         # The recovery panel evaluates only stored local facts.  The evaluator
         # intentionally has no Garmin, calendar, scheduling, or compiler path.
         from coach.decision_engine import evaluate_selected_workout_recovery
         from coach.renderer import recovery_fact_lines, readiness_authority_explanation
-        recovery_result = evaluate_selected_workout_recovery(s, target=get_local_date())
+        recovery_result = evaluate_selected_workout_recovery(s, target=today)
         recovery_panel = {
             "outcome": recovery_result.decision_type.replace("_", " ").title(),
             "name": recovery_result.planned_session_name,
@@ -1363,6 +1459,7 @@ def dashboard(request: Request, activity_page: int = 1):
             "profile": profile,
             "active_program": current_program,
             "intensity_summary": intensity_summary,
+            "recovery_health_trends": trend_presentation,
             "recovery_panel": recovery_panel,
         },
     )

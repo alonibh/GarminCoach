@@ -100,11 +100,15 @@ the selected workout, and every mutation requires a current Telegram confirmatio
   per recalculation boundary, durable batch/receipt intent with an outbox bridge,
   delivery-time revalidation, and web-only decisions. Approved local weights are
   consumed by future compilation; already scheduled workouts remain unchanged.
-- [ ] Later Phase 4: meaningful 28-day recovery/health trends.
+- [x] Phase 4E: meaningful 28-day recovery/health trends. Local-only cards
+  compare recent 7-day medians with the preceding 21 calendar days, preserve
+  exact missing-data coverage, show sleep-timing variability plus stress and
+  separate Body Battery facts, and offer 7d/28d source charts. They make no
+  Garmin request and have no workout, notification, or coaching authority.
 - [ ] Later Phase 4: Fitness Age and VO2 max history, capability-aware Training
   Status, weekly-summary improvements, and compact aggregate AI context.
 
-Phase 4B2, 4C, and 4D are complete; later runtime stages remain unchecked.
+Phase 4B2, 4C, 4D, and 4E are complete; later runtime stages remain unchecked.
 Progression evidence has no authority from Garmin RPE, Garmin Feel,
 subjective feedback, biometrics, readiness, or recovery metrics. Any future
 approved change is limited to a local `SessionExercise.weight_kg`; it never

@@ -329,7 +329,7 @@ Later implementation must still verify factual account/API details with sanitize
 - whether the account has useful weight/body-fat data;
 - Training Status capability and response behavior.
 
-## 11. Verified Phase 3B recovery storage
+## 11. Verified Phase 3B recovery storage and implemented Phase 4E trends
 
 GarminCoach reads HRV Status from the existing daily HRV payload. Its weekly
 average and explicit status are Garmin source facts. `hrv_7d_coverage_days` is
@@ -345,6 +345,12 @@ Connect value to GarminCoach.
 
 HRV Status, Recovery Time, and Body Battery (including charged and drained
 summary values) are informational in V1 and have no direct workout authority.
+
+Phase 4E reads existing local `Sleep` and `DailyHealth` rows only for its
+bounded 28-calendar-day display trends. It adds no fetch target, endpoint,
+worker, backfill, or historical Training Readiness collection. The exact
+windows, validity, coverage, thresholds, local-date handling, and authority
+exclusions are in [`RECOVERY_HEALTH_TRENDS_CONTRACT.md`](RECOVERY_HEALTH_TRENDS_CONTRACT.md).
 
 For selected-workout presentation, the durable fact contract uses the existing
 freshness signal IDs: `sleep` is numeric hours rounded to one decimal,

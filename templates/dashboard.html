@@ -164,7 +164,51 @@
 </div></section>
 {% endif %}
 
-<section aria-labelledby="trends-title"><div class="metric-section-heading"><div><span class="eyebrow">Last seven days</span><h2 id="trends-title">Your trends</h2></div></div>
+{% if recovery_health_trends %}
+<section class="recovery-health-trends" aria-labelledby="recovery-health-trends-title">
+  <div class="metric-section-heading"><div><span class="eyebrow">Recent 7 days vs prior 21 days</span><h2 id="recovery-health-trends-title">28-day recovery and health trends</h2></div></div>
+  <p class="muted">As of {{ recovery_health_trends.as_of_day }}. Exact calendar-day coverage is shown for every metric; missing days are not treated as zero.</p>
+  <p class="trend-authority-note">Trends are informational and do not change your workout.</p>
+  <p class="trend-coverage-legend muted"><strong>Coverage:</strong> sufficient (20+ valid days and comparison coverage), partial (14–19), sparse (1–13), or none.</p>
+  <div class="trend-card-grid">
+    {% for card in recovery_health_trends.cards %}
+    <article class="card trend-card" data-trend="{{ card.key }}">
+      <h3>{{ card.label }} <span class="info" tabindex="0" data-tip="{{ card.note }}">i</span></h3>
+      <strong class="trend-card-value">{{ card.recent if card.recent else 'No valid recent value' }}</strong>
+      <p>{{ card.comparison }}</p>
+      {% if card.baseline %}<p class="muted">Prior median: {{ card.baseline }}</p>{% endif %}
+      <p class="muted">{{ card.coverage }}{% if card.latest %} · Latest {{ card.latest }} ({{ card.latest_day }}){% endif %}</p>
+      {% if card.source_status %}<p class="muted">Garmin status: {{ card.source_status }}{% if card.source_day %} ({{ card.source_day }}){% endif %}{% if card.source_baseline %} · Garmin baseline {{ card.source_baseline }}{% endif %}</p>{% endif %}
+    </article>
+    {% endfor %}
+    {% if recovery_health_trends.timing %}
+    {% set timing = recovery_health_trends.timing %}
+    <article class="card trend-card" data-trend="sleep-timing">
+      <h3>Sleep timing consistency <span class="info" tabindex="0" data-tip="Median absolute midpoint variation across valid stored sleep intervals; not a score.">i</span></h3>
+      <strong class="trend-card-value">{{ timing.recent if timing.recent else 'No valid recent value' }}</strong>
+      <p>{{ timing.comparison }}</p>
+      {% if timing.baseline %}<p class="muted">Prior variability: {{ timing.baseline }}</p>{% endif %}
+      {% if timing.bedtime or timing.wake_time %}<p class="muted">Recent median bedtime {{ timing.bedtime or '—' }} · wake time {{ timing.wake_time or '—' }}</p>{% endif %}
+      <p class="muted">{{ timing.coverage }}</p>
+    </article>
+    {% endif %}
+    {% if recovery_health_trends.body_battery %}
+    {% set battery = recovery_health_trends.body_battery %}
+    <article class="card trend-card body-battery-trend" data-trend="body-battery">
+      <h3>Body Battery <span class="info" tabindex="0" data-tip="Separate Garmin daily summary facts; no combined Body Battery score is calculated.">i</span></h3>
+      <div class="body-battery-primary"><span><strong>High</strong> {{ battery.high.recent or '—' }}<small>{{ battery.high.comparison }}</small></span><span><strong>Low</strong> {{ battery.low.recent or '—' }}<small>{{ battery.low.comparison }}</small></span></div>
+      <p class="muted">High {{ battery.high.coverage }} · Low {{ battery.low.coverage }}</p>
+      <p class="muted">Charged: {{ battery.charged.recent or '—' }} ({{ battery.charged.comparison }}) · Drained: {{ battery.drained.recent or '—' }} ({{ battery.drained.comparison }})</p>
+    </article>
+    {% endif %}
+  </div>
+  <div class="trend-movement-context">
+    <span class="eyebrow">Movement context</span><strong>Steps: {{ recovery_health_trends.movement.recent or 'No valid recent value' }}</strong> · {{ recovery_health_trends.movement.comparison }} · <span class="muted">{{ recovery_health_trends.movement.coverage }}</span>
+  </div>
+</section>
+{% endif %}
+
+<section aria-labelledby="trends-title"><div class="metric-section-heading"><div><span id="chart-range-heading" class="eyebrow">Last 28 days</span><h2 id="trends-title">Your charts</h2></div><div class="chart-range-control" role="group" aria-label="Chart date range"><button type="button" data-chart-range="7" aria-pressed="false">7 days</button><button type="button" data-chart-range="28" aria-pressed="true">28 days</button></div></div>
 
 {% if intensity_summary and (intensity_summary.seven_day.coverage_days or intensity_summary.twenty_eight_day.coverage_days) %}
 <div class="card" style="margin-bottom: 1rem; padding: 1rem 1.25rem;">
@@ -183,15 +227,15 @@
 
 <div class="chart-grid">
   <div class="card chart-card" data-chart="sleep">
-    <div class="chart-head"><h3>Sleep (hrs)<span class="info" tabindex="0" data-tip="Total sleep time from your watch. Aim for 7-9 hours consistently. Sleep quality and consistency matter more than occasional long nights.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
+    <div class="chart-head"><h3>Sleep (hrs)<span class="info" tabindex="0" data-tip="Stored total sleep time. Missing days stay blank.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="sleepChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="hrv">
-    <div class="chart-head"><h3>HRV (overnight)<span class="info" tabindex="0" data-tip="Heart rate variability: the variation in time between heartbeats, measured overnight. Higher HRV usually means better recovery and readiness.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
+    <div class="chart-head"><h3>HRV (overnight)<span class="info" tabindex="0" data-tip="Stored overnight HRV and Garmin-provided baseline source band. It is informational.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="hrvChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="rhr">
-    <div class="chart-head"><h3>Resting HR<span class="info" tabindex="0" data-tip="Your lowest sustained heart rate, typically measured during sleep. A spike above baseline can signal fatigue, stress, or dehydration.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
+    <div class="chart-head"><h3>Resting HR<span class="info" tabindex="0" data-tip="Stored Garmin resting-heart-rate observations. It is informational.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="rhrChart"></canvas></div>
   </div>
   <div class="card chart-card" data-chart="steps">
@@ -201,6 +245,14 @@
   <div class="card chart-card" data-chart="calories">
     <div class="chart-head"><h3>Calories<span class="info" tabindex="0" data-tip="Daily caloric expenditure. Shows resting calories (BMR) and active calories from workouts and movement.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="caloriesChart"></canvas></div>
+  </div>
+  <div class="card chart-card" data-chart="stress">
+    <div class="chart-head"><h3>Stress<span class="info" tabindex="0" data-tip="Stored daily Garmin stress average. Missing days stay blank.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
+    <div class="chart-wrap"><canvas id="stressChart"></canvas></div>
+  </div>
+  <div class="card chart-card" data-chart="body-battery">
+    <div class="chart-head"><h3>Body Battery<span class="info" tabindex="0" data-tip="Stored daily high and low source series. This chart does not create a readiness band.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
+    <div class="chart-wrap"><canvas id="bodyBatteryChart"></canvas></div>
   </div>
 </div>
 </section>
@@ -390,9 +442,30 @@ const round1 = (v) => (Math.round(v * 10) / 10).toString();          // 7.2
 const round0 = (v) => Math.round(v).toString();                       // 56
 const kSteps = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k' : round0(v); // 8.4k
 
-const lastWeek = (arr) => arr.slice(-7);
-const sleek = lastWeek(sleep);
-const healthk = lastWeek(health);
+const storedChartRange = Number(localStorage.getItem('dashboardChartRange'));
+let chartRange = storedChartRange === 7 ? 7 : 28;
+const chartSlice = (arr) => arr.slice(-chartRange);
+
+function applyChartRange() {
+  document.querySelectorAll('[data-chart-range]').forEach((button) => {
+    const selected = Number(button.dataset.chartRange) === chartRange;
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  const heading = document.getElementById('chart-range-heading');
+  if (heading) heading.textContent = `Last ${chartRange} days`;
+}
+
+document.querySelectorAll('[data-chart-range]').forEach((button) => {
+  button.addEventListener('click', () => {
+    chartRange = Number(button.dataset.chartRange) === 7 ? 7 : 28;
+    localStorage.setItem('dashboardChartRange', String(chartRange));
+    applyChartRange();
+    updateDashboardCharts({ health_series: health, sleep_series: sleep });
+  });
+});
+applyChartRange();
+const sleek = chartSlice(sleep);
+const healthk = chartSlice(health);
 
 function stackedBarChart(canvasId, labels, dataActive, dataBMR) {
   const ctx = document.getElementById(canvasId).getContext('2d');
@@ -500,6 +573,23 @@ lineChart('hrvChart', healthk.map(d => d.day), healthk.map(d => d.hrv), 'HRV', '
 lineChart('rhrChart', healthk.map(d => d.day), healthk.map(d => d.rhr), 'Resting HR', '#ffb020', round0, 45, 65);
 lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Steps', '#9b6dff', kSteps, healthk.map(d => d.step_goal), null);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
+lineChart('stressChart', healthk.map(d => d.day), healthk.map(d => d.stress), 'Stress', '#ff6b6b', round0, 0, 100);
+
+function bodyBatteryChart(labels, high, low) {
+  const el = document.getElementById('bodyBatteryChart');
+  if (!el) return;
+  const chart = new Chart(el, {
+    type: 'line',
+    data: { labels: labels.map(fmtDay), datasets: [
+      { label: 'High', data: high, borderColor: '#56ccff', backgroundColor: 'transparent', borderWidth: 2.5, tension: .35, spanGaps: false, pointRadius: 2.5 },
+      { label: 'Low', data: low, borderColor: '#9b6dff', backgroundColor: 'transparent', borderWidth: 2.5, tension: .35, spanGaps: false, pointRadius: 2.5 },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: true, labels: { color: '#9aacbc' } }, tooltip: { callbacks: { title: (items) => items[0]?.chart?.$rawLabels?.[items[0].dataIndex] || '' } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8b98a5', autoSkip: true, maxTicksLimit: 6, maxRotation: 0 } }, y: { min: 0, max: 100, grid: { color: '#2a333d' }, ticks: { color: '#8b98a5', maxTicksLimit: 4 } } } }
+  });
+  chart.$rawLabels = labels;
+  dashboardCharts.bodyBatteryChart = chart;
+}
+bodyBatteryChart(healthk.map(d => d.day), healthk.map(d => d.bb_high), healthk.map(d => d.bb_low));
 
 function updateLineChart(id, labels, data, minVal = null, maxVal = null) {
   const chart = dashboardCharts[id];
@@ -517,8 +607,8 @@ function updateLineChart(id, labels, data, minVal = null, maxVal = null) {
 }
 
 function updateDashboardCharts(data) {
-  const refreshedSleep = lastWeek(data.sleep_series || []);
-  const refreshedHealth = lastWeek(data.health_series || []);
+  const refreshedSleep = chartSlice(data.sleep_series || []);
+  const refreshedHealth = chartSlice(data.health_series || []);
 
   updateLineChart('sleepChart', refreshedSleep.map(d => d.day), refreshedSleep.map(d => d.hours), 7, 9);
   updateLineChart(
@@ -529,6 +619,7 @@ function updateDashboardCharts(data) {
     refreshedHealth.map(d => d.hrv_baseline_high),
   );
   updateLineChart('rhrChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.rhr), 45, 65);
+  updateLineChart('stressChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.stress), 0, 100);
   updateLineChart(
     'stepsChart',
     refreshedHealth.map(d => d.day),
@@ -545,6 +636,15 @@ function updateDashboardCharts(data) {
     calories.data.datasets[0].data = refreshedHealth.map(d => d.bmr_kcal);
     calories.data.datasets[1].data = refreshedHealth.map(d => d.active_kcal);
     calories.update('none');
+  }
+  const battery = dashboardCharts.bodyBatteryChart;
+  if (battery) {
+    const labels = refreshedHealth.map(d => d.day);
+    battery.$rawLabels = labels;
+    battery.data.labels = labels.map(fmtDay);
+    battery.data.datasets[0].data = refreshedHealth.map(d => d.bb_high);
+    battery.data.datasets[1].data = refreshedHealth.map(d => d.bb_low);
+    battery.update('none');
   }
 }
 

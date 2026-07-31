@@ -15,6 +15,11 @@
 - Training Status remains a capability-aware UI/weekly-summary metric.
 - ACWR remains descriptive UI data only and must not drive coaching or injury-risk claims.
 - The product is not a medical device and does not diagnose recovery, illness, or injury.
+- The implemented 28-day recovery/health trend semantics are specified in
+  [`RECOVERY_HEALTH_TRENDS_CONTRACT.md`](RECOVERY_HEALTH_TRENDS_CONTRACT.md).
+  They compare recent 7-day and preceding-21-day medians, never impute missing
+  days, use product display thresholds only, and are informational. Daily
+  intensity minutes retain their separate 7-day/28-day sum semantics.
 
 ---
 

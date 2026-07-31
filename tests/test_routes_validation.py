@@ -311,6 +311,19 @@ def test_dashboard_sync_updates_charts_without_page_reload(client):
     assert ".dashboard-actions [hidden] { display: none !important; }" in ui_css
 
 
+def test_dashboard_renders_local_informational_trend_surface(client):
+    c, _ = client
+    response = c.get("/")
+    assert response.status_code == 200
+    assert "28-day recovery and health trends" in response.text
+    assert "Trends are informational and do not change your workout." in response.text
+    assert 'data-chart-range="7"' in response.text
+    assert 'data-chart-range="28"' in response.text
+    assert "dashboardChartRange" in response.text
+    assert 'id="stressChart"' in response.text
+    assert 'id="bodyBatteryChart"' in response.text
+
+
 def test_workout_detail_renders_stored_hr_zones_without_garmin(client, monkeypatch):
     c, db_module = client
     from datetime import datetime
@@ -1009,6 +1022,5 @@ def test_completed_multi_user_onboarding_renders_questionnaire(monkeypatch, tmp_
         response = get_onboarding(request)
         assert response.status_code == 200
         assert "onboarding.html" in response.template.name
-
 
 
