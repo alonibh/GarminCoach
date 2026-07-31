@@ -13,7 +13,7 @@ from enum import Enum
 from sqlalchemy.orm import Session
 
 from coach.strength_progression import (
-    calculate_proposal, derive_streak, normalize_weight_grams,
+    calculate_proposal, canonical_json, derive_streak, normalize_weight_grams,
 )
 from coach.strength_progression_integration import _prescription
 from coach.strength_progression_store import (
@@ -276,19 +276,19 @@ def _revalidate(session: Session, proposal: StrengthProgressionProposal, *, now:
             or proposal.current_pending_key != pending_key(exercise.id, policy.policy_version, current_fingerprint)
             or proposal.direction not in {"increase", "decrease"}):
         return None
-    decisive = [session.get(StrengthProgressionEvidence, key) for key in
-                (proposal.decisive_evidence_one_id, proposal.decisive_evidence_two_id)]
-    if any(row is None or row.session_exercise_id_snapshot != exercise.id or row.policy_version != policy.policy_version
-           or row.prescription_fingerprint != current_fingerprint for row in decisive):
-        return None
     current = load_current_evidence(session, session_exercise_id=exercise.id, policy_version=policy.policy_version,
                                     prescription_fingerprint=current_fingerprint)
+    # The old proposal support is audit history, not a liveness condition: a
+    # correction intentionally replaces an activity's evidence head.  Validate
+    # every *current* row before deriving the fresh support instead.
+    for row in current:
+        if (row.session_exercise_id_snapshot != exercise.id or row.policy_version != policy.policy_version
+                or row.prescription_fingerprint != current_fingerprint or row.activity_id is None):
+            return None
+        head = session.get(StrengthProgressionEvidenceHead, (exercise.id, row.activity_id))
+        if head is None or head.current_evidence_id != row.evidence_id:
+            return None
     current_ids = {row.evidence_id for row in current}
-    if any(row.evidence_id not in current_ids or row.activity_id is None
-           or (session.get(StrengthProgressionEvidenceHead, (exercise.id, row.activity_id)) is None)
-           or session.get(StrengthProgressionEvidenceHead, (exercise.id, row.activity_id)).current_evidence_id != row.evidence_id
-           for row in decisive):
-        return None
     try:
         records = [evidence_record(row) for row in current]
         streak = derive_streak(policy, records, session_exercise_id=exercise.id,
@@ -298,13 +298,14 @@ def _revalidate(session: Session, proposal: StrengthProgressionProposal, *, now:
         return None
     if (calculated.direction is None or calculated.direction.value != proposal.direction
             or calculated.suggested_weight_grams != proposal.suggested_weight_grams
-            or len(calculated.decisive_evidence_ids) != 2):
+            or len(calculated.decisive_evidence_ids) != 2
+            or not set(calculated.decisive_evidence_ids).issubset(current_ids)):
         return None
     # A preserved pending row may receive newer decisive support. Refresh only
     # while pending; terminal audit rows are never rewritten.
     if tuple(calculated.decisive_evidence_ids) != (proposal.decisive_evidence_one_id, proposal.decisive_evidence_two_id):
         proposal.decisive_evidence_one_id, proposal.decisive_evidence_two_id = calculated.decisive_evidence_ids
-        proposal.reason_codes_json = json.dumps([reason.value for reason in calculated.reason_codes], separators=(",", ":"))
+        proposal.reason_codes_json = canonical_json([reason.value for reason in calculated.reason_codes])
     return policy, exercise, current
 
 
@@ -334,6 +335,9 @@ def approve_progression_proposal(session: Session, proposal_id: str, *, entered_
     if ((proposal.direction == "increase" and grams <= proposal.current_weight_grams)
             or (proposal.direction == "decrease" and not 0 < grams < proposal.current_weight_grams)):
         return ProposalActionResult(ProgressionActionOutcome.INVALID_WEIGHT, proposal_id)
+    # Persist a harmless-correction support refresh before comparing all of its
+    # values in the atomic claim below.
+    session.flush()
     if not claim_pending_proposal(session, proposal, status="applied", now=now, approved_weight_grams=grams):
         latest = session.get(StrengthProgressionProposal, proposal_id)
         if latest is not None:
@@ -359,6 +363,7 @@ def reject_progression_proposal(session: Session, proposal_id: str, *, now: date
     if not current:
         return _stale(session, proposal, now)
     cutoff = max(current, key=lambda row: (row.appearance_at, row.evidence_id))
+    session.flush()
     if not claim_pending_proposal(session, proposal, status="rejected", now=now):
         latest = session.get(StrengthProgressionProposal, proposal_id)
         if latest is not None:

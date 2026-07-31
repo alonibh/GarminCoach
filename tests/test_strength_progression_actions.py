@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+import pytest
 from coach.strength_progression import (
     AppearanceClassification, AppearanceClassificationResult, calculate_proposal,
     derive_streak,
@@ -15,7 +16,7 @@ from coach.strength_progression_store import (
 )
 from db import (
     Activity, ProgramSession, SessionExercise, StrengthProgressionEvidenceBoundary,
-    StrengthProgressionPolicy, TrainingProgram,
+    StrengthProgressionEvidence, StrengthProgressionPolicy, TrainingProgram,
 )
 
 
@@ -98,3 +99,36 @@ def test_review_uses_typed_set_presentation_and_rejection_excludes_cutoff_revisi
     assert revised.evidence_id != original.evidence_id
     assert load_current_evidence(session, session_exercise_id=exercise.id, policy_version=proposal.policy_version,
         prescription_fingerprint=proposal.prescription_fingerprint) == []
+
+
+@pytest.mark.parametrize("decisive_attribute", ["decisive_evidence_one_id", "decisive_evidence_two_id"])
+def test_harmless_correction_refreshes_pending_support_before_approval(session, decisive_attribute):
+    now, exercise, proposal = _pending(session)
+    original_id = getattr(proposal, decisive_attribute)
+    original = session.get(StrengthProgressionEvidence, original_id)
+    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000, (), ())
+    revised = append_evidence(session, session_exercise_id=exercise.id, activity_id=original.activity_id,
+        policy_version=proposal.policy_version, prescription_fingerprint=proposal.prescription_fingerprint,
+        source_fingerprint=f"harmless-correction-{original.activity_id}", appearance_at=original.appearance_at,
+        result=result, program_id=original.program_id, program_session_id=original.program_session_id)
+    assert revised.evidence_id != original.evidence_id
+    page = list_progression_review(session, now=now)
+    assert [item.proposal_id for item in page.pending] == [proposal.proposal_id]
+    assert revised.evidence_id in {proposal.decisive_evidence_one_id, proposal.decisive_evidence_two_id}
+    assert session.get(StrengthProgressionEvidence, original_id) is not None
+    assert approve_progression_proposal(session, proposal.proposal_id, entered_weight_kg="72.5", now=now).outcome == ProgressionActionOutcome.APPLIED
+    assert revised.evidence_id in {proposal.decisive_evidence_one_id, proposal.decisive_evidence_two_id}
+    assert session.query(__import__("db", fromlist=["StrengthProgressionProposal"]).StrengthProgressionProposal).count() == 1
+
+
+def test_material_correction_stales_instead_of_refreshing_pending_support(session):
+    now, exercise, proposal = _pending(session)
+    original = session.get(StrengthProgressionEvidence, proposal.decisive_evidence_one_id)
+    neutral = AppearanceClassificationResult(AppearanceClassification.NEUTRAL, 70000, None, (), ())
+    append_evidence(session, session_exercise_id=exercise.id, activity_id=original.activity_id,
+        policy_version=proposal.policy_version, prescription_fingerprint=proposal.prescription_fingerprint,
+        source_fingerprint="material-correction", appearance_at=original.appearance_at, result=neutral,
+        program_id=original.program_id, program_session_id=original.program_session_id)
+    page = list_progression_review(session, now=now)
+    assert not page.pending and proposal.status == "stale" and proposal.current_pending_key is None
+    assert proposal.decisive_evidence_one_id == original.evidence_id

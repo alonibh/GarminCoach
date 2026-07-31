@@ -274,6 +274,8 @@ def claim_pending_proposal(
         StrengthProgressionProposal.prescription_fingerprint == proposal.prescription_fingerprint,
         StrengthProgressionProposal.current_weight_grams == proposal.current_weight_grams,
         StrengthProgressionProposal.suggested_weight_grams == proposal.suggested_weight_grams,
+        StrengthProgressionProposal.decisive_evidence_one_id == proposal.decisive_evidence_one_id,
+        StrengthProgressionProposal.decisive_evidence_two_id == proposal.decisive_evidence_two_id,
     ).values(
         status=status, current_pending_key=None,
         approved_weight_grams=approved_weight_grams if status == "applied" else None,
