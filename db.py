@@ -386,6 +386,130 @@ class ActivityProgramMatch(Base):
     matched_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+# Phase 4B1 progression rows are deliberately independent of the mutable
+# program/activity relationships.  Nullable SET NULL foreign keys retain audit
+# history while the numeric snapshots retain the original ownership meaning.
+class StrengthProgressionPolicy(Base):
+    __tablename__ = "strength_progression_policies"
+
+    policy_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    global_increment_grams: Mapped[int] = mapped_column(Integer)
+    weight_quantum_grams: Mapped[int] = mapped_column(Integer)
+    required_consecutive: Mapped[int] = mapped_column(Integer)
+    evidence_window_days: Mapped[int] = mapped_column(Integer)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    __table_args__ = (
+        Index(
+            "uq_strength_progression_one_active_policy", "is_active", unique=True,
+            sqlite_where=(is_active.is_(True)),
+        ),
+    )
+
+
+class StrengthProgressionEvidence(Base):
+    __tablename__ = "strength_progression_evidence"
+
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    activity_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("activities.id", ondelete="SET NULL"), index=True
+    )
+    activity_program_match_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("activity_program_matches.id", ondelete="SET NULL"), index=True
+    )
+    program_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("training_programs.id", ondelete="SET NULL"), index=True
+    )
+    program_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("program_sessions.id", ondelete="SET NULL"), index=True
+    )
+    session_exercise_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("session_exercises.id", ondelete="SET NULL"), index=True
+    )
+    activity_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    activity_program_match_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
+    program_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
+    program_session_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
+    session_exercise_id_snapshot: Mapped[int] = mapped_column(Integer, index=True)
+    policy_version: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_policies.policy_version", ondelete="RESTRICT"), index=True
+    )
+    prescription_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    appearance_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    classification: Mapped[str] = mapped_column(String(32), index=True)
+    current_weight_grams: Mapped[Optional[int]] = mapped_column(Integer)
+    candidate_weight_grams: Mapped[Optional[int]] = mapped_column(Integer)
+    prescribed_sets: Mapped[Optional[int]] = mapped_column(Integer)
+    target_reps: Mapped[Optional[int]] = mapped_column(Integer)
+    decisive_sets_json: Mapped[str] = mapped_column(Text)
+    reason_codes_json: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    supersedes_evidence_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("strength_progression_evidence.evidence_id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_strength_evidence_exercise_policy_prescription", "session_exercise_id_snapshot", "policy_version", "prescription_fingerprint"),
+    )
+
+
+class StrengthProgressionEvidenceHead(Base):
+    __tablename__ = "strength_progression_evidence_heads"
+
+    session_exercise_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    activity_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    current_evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT"), unique=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class StrengthProgressionStreak(Base):
+    __tablename__ = "strength_progression_streaks"
+
+    session_exercise_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    policy_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    prescription_fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    increase_count: Mapped[int] = mapped_column(Integer, default=0)
+    decrease_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_classification: Mapped[str] = mapped_column(String(32), default="unscorable")
+    last_relevant_appearance_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    decisive_evidence_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class StrengthProgressionProposal(Base):
+    __tablename__ = "strength_progression_proposals"
+
+    proposal_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    program_id: Mapped[Optional[int]] = mapped_column(ForeignKey("training_programs.id", ondelete="SET NULL"), index=True)
+    program_session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("program_sessions.id", ondelete="SET NULL"), index=True)
+    session_exercise_id: Mapped[Optional[int]] = mapped_column(ForeignKey("session_exercises.id", ondelete="SET NULL"), index=True)
+    program_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
+    program_session_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
+    session_exercise_id_snapshot: Mapped[int] = mapped_column(Integer, index=True)
+    policy_version: Mapped[str] = mapped_column(String(64), index=True)
+    prescription_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    direction: Mapped[str] = mapped_column(String(16))
+    current_weight_grams: Mapped[int] = mapped_column(Integer)
+    suggested_weight_grams: Mapped[int] = mapped_column(Integer)
+    approved_weight_grams: Mapped[Optional[int]] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    decisive_evidence_one_id: Mapped[str] = mapped_column(ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT"))
+    decisive_evidence_two_id: Mapped[str] = mapped_column(ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT"))
+    reason_codes_json: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    current_pending_key: Mapped[Optional[str]] = mapped_column(String(196), unique=True, index=True)
+    supersedes_proposal_id: Mapped[Optional[str]] = mapped_column(ForeignKey("strength_progression_proposals.proposal_id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class CoachMessage(Base):
     __tablename__ = "coach_messages"
 
@@ -671,6 +795,32 @@ _DEVICE_CAPABILITY_ADD_COLUMNS = {
 
 _CAPABILITY_SCOPE_MIGRATION_KEY = "metric_capabilities_scoped_identity_2026_07_30_v1"
 _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY = "body_composition_capability_contract_gate_2026_07_30_v1"
+_STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY = "strength_progression_foundation_2026_07_30_v1"
+
+
+def _seed_strength_progression_policy(conn) -> None:
+    """Seed and validate the one initial policy inside the migration transaction."""
+    active = conn.execute(text(
+        "SELECT policy_version FROM strength_progression_policies WHERE is_active = 1"
+    )).all()
+    if len(active) > 1:
+        raise RuntimeError("strength progression requires exactly one active policy")
+    if not active:
+        conn.execute(text("""
+            INSERT INTO strength_progression_policies (
+                policy_version, global_increment_grams, weight_quantum_grams,
+                required_consecutive, evidence_window_days, is_active, created_at,
+                activated_at
+            ) VALUES (
+                'strength-progression-v1', 2500, 250, 2, 35, 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+        """))
+    active_count = conn.execute(text(
+        "SELECT COUNT(*) FROM strength_progression_policies WHERE is_active = 1"
+    )).scalar_one()
+    if active_count != 1:
+        raise RuntimeError("strength progression policy seed validation failed")
 
 
 def _migrate_capability_scopes(conn) -> None:
@@ -881,6 +1031,21 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             conn.execute(text(
                 "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": _BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY})
+
+        # New tables are supplied by metadata.create_all().  Keep this marker
+        # separate from the older capability/body-composition migrations and
+        # write it only after policy seeding and validation succeeds.
+        progression_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY},
+        ).first()
+        if not progression_applied:
+            _seed_strength_progression_policy(conn)
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY})
+        else:
+            _seed_strength_progression_policy(conn)
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}

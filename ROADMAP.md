@@ -88,8 +88,11 @@ the selected workout, and every mutation requires a current Telegram confirmatio
 - [x] Phase 4A: deterministic strength-progression contract. The approved
   documentation-only design is
   [`docs/STRENGTH_PROGRESSION_CONTRACT.md`](docs/STRENGTH_PROGRESSION_CONTRACT.md).
-- [ ] Phase 4B: durable evidence, streak, proposal, and audit persistence plus a
-  read-only deterministic proposal engine.
+- [x] Phase 4B1: durable policy/evidence/streak/proposal foundation and pure
+  deterministic read-only progression engine.
+- [ ] Phase 4B2: wire bounded incremental recalculation to activity sync/matching,
+  manual corrections, and template changes; maintain current proposals without UI
+  or notifications.
 - [ ] Phase 4C: web review/edit/approve/reject flow and confirmed local
   template-weight mutation.
 - [ ] Phase 4D: deduplicated Telegram notification and bounded integration
@@ -98,8 +101,8 @@ the selected workout, and every mutation requires a current Telegram confirmatio
 - [ ] Later Phase 4: Fitness Age and VO2 max history, capability-aware Training
   Status, weekly-summary improvements, and compact aggregate AI context.
 
-Only Phase 4A design/specification is complete. The later runtime stages remain
-unchecked. Progression evidence has no authority from Garmin RPE, Garmin Feel,
+Only Phase 4A and Phase 4B1 foundation are complete. The later runtime stages
+remain unchecked. Progression evidence has no authority from Garmin RPE, Garmin Feel,
 subjective feedback, biometrics, readiness, or recovery metrics. Any future
 approved change is limited to a local `SessionExercise.weight_kg`; it never
 automatically rewrites exercise structure or already scheduled Garmin workouts.
