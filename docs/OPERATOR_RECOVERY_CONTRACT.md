@@ -18,6 +18,13 @@ Resolved paths are case-insensitively deduplicated; symlink escapes, arbitrary
 `.db` files, sidecars, temporary, recovered, quarantine, and backup files are
 not targets. Active control user IDs map only to `tenant:<canonical-uuid>`.
 
+Discovery is explicit: the runtime profile includes control plus tenants in
+multi-user mode, or control plus the single-user database in single-user mode.
+The legacy migration/reset maintenance profile may include both configured
+families. Original path components are checked before resolution: symlinks,
+path escapes, a backup root equal to tenant storage, and symlinked artifacts
+are rejected.
+
 `operator_health` is read-only. It uses SQLite URI read-only mode, `quick_check`
 (and `integrity_check` only with `--deep`), foreign-key inspection, migration
 ledger facts, target/path safety, private POSIX permission checks, partial
@@ -48,6 +55,14 @@ per-target filename/size/SHA-256/deep integrity/schema fingerprint/migration
 markers/timestamps, and before/after anonymous user-ID-to-target mappings. The
 set is individually consistent SQLite snapshots, not a cross-database
 transaction; mapping change aborts publication.
+
+Verification parses the complete manifest before trusting any file: exactly one
+`000-control.sqlite` control entry, positive count, deterministic target names,
+UTC ordered timestamps, valid runtime provenance, exact marker objects, hashes,
+and identical UUID-to-tenant mappings are mandatory. An empty, partial, unknown,
+or internally inconsistent set is invalid even if every listed file hashes.
+`--against-current-config` additionally requires the runtime target set and the
+installed `garminconnect` distribution version to match.
 
 `verify_verified_backup` validates every manifest, file, checksum, simple
 filename, target relationship, tenant UUID, migration marker, schema

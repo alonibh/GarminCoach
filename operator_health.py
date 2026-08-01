@@ -11,7 +11,7 @@ import sqlite3
 from typing import Literal
 
 import config
-from operator_storage import active_user_target_mapping, discover_database_targets, inspect_sqlite, migration_markers
+from operator_storage import TargetProfile, active_user_target_mapping, discover_database_targets, inspect_sqlite, migration_markers
 from verified_backup import BackupError, validate_backup_root, verify_verified_backup
 
 Severity = Literal["healthy", "warning", "critical"]
@@ -54,7 +54,7 @@ def _add_sqlite_checks(checks: list[HealthCheck], target, deep: bool, show_paths
 def collect_health(*, deep: bool = False, show_paths: bool = False) -> tuple[Severity, list[HealthCheck]]:
     checks: list[HealthCheck] = [HealthCheck("configuration", "healthy", "Configuration loaded")]
     try:
-        targets = discover_database_targets()
+        targets = discover_database_targets(profile=TargetProfile.RUNTIME)
     except Exception:
         return "critical", checks + [HealthCheck("target_discovery", "critical", "Canonical database discovery failed")]
     checks.append(HealthCheck("target_discovery", "healthy", "Canonical database discovery succeeded"))
@@ -91,8 +91,11 @@ def collect_health(*, deep: bool = False, show_paths: bool = False) -> tuple[Sev
         else:
             latest = complete[-1]
             try:
-                verify_verified_backup(latest)
-                age = (datetime.now(timezone.utc) - datetime.fromtimestamp(latest.stat().st_mtime, timezone.utc)).total_seconds() / 3600
+                verified = verify_verified_backup(latest)
+                completed = datetime.fromisoformat(verified["completed_at"].replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - completed).total_seconds() / 3600
+                if age < -(5 / 60):
+                    raise BackupError("Backup completion timestamp is in the future")
                 checks.append(HealthCheck("verified_backup", "warning" if age > config.OPERATOR_BACKUP_WARN_AGE_HOURS else "healthy", "Latest verified backup is stale" if age > config.OPERATOR_BACKUP_WARN_AGE_HOURS else "Latest verified backup is valid"))
             except BackupError:
                 checks.append(HealthCheck("verified_backup", "critical", "Latest complete backup is invalid"))

@@ -1,266 +1,199 @@
-"""Explicit verified online SQLite backups; Phase 6A contains no restore path."""
+"""Explicit, atomic verified SQLite backups. Phase 6A has no restore mutation."""
 from __future__ import annotations
-
+from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
-import json
-import os
+import hashlib, json, os
 from pathlib import Path
-import secrets
-import shutil
-import sqlite3
-import subprocess
-import sys
+import re, secrets, shutil, sqlite3, subprocess, sys
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import config
-from operator_storage import (
-    DatabaseIntegrityError, DatabaseTarget, discover_database_targets,
-    active_user_target_mapping, inspect_sqlite, migration_markers, schema_fingerprint,
-)
+from operator_storage import (DatabaseIntegrityError, DatabaseTarget, TargetProfile,
+    active_user_target_mapping, canonical_user_id, discover_database_targets,
+    has_symlink_component, inspect_sqlite, migration_markers, safe_resolve, schema_fingerprint)
 
-BACKUP_FORMAT = "garmincoach-backup-v1"
+BACKUP_FORMAT="garmincoach-backup-v1"; _ID=re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$"); _HEX=re.compile(r"^[0-9a-f]{64}$")
+class BackupError(RuntimeError): pass
+@dataclass(frozen=True)
+class ValidatedBackup: manifest: dict[str,Any]; directory: Path
 
-
-class BackupError(RuntimeError):
-    pass
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def canonical_json(value: object) -> bytes:
-    """UTF-8, sorted keys, compact separators, one trailing LF."""
-    return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _private(path: Path, directory: bool = False) -> None:
+def _now()->str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
+def canonical_json(v:object)->bytes: return (json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False)+"\n").encode("utf-8")
+def _sha(p:Path)->str:
     try:
-        os.chmod(path, 0o700 if directory else 0o600)
+        h=hashlib.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda:f.read(1024*1024),b""): h.update(chunk)
+        return h.hexdigest()
+    except OSError as exc: raise BackupError("Backup file cannot be read") from exc
+def _private(p:Path,directory=False)->None:
+    try: os.chmod(p,0o700 if directory else 0o600)
     except OSError:
-        if os.name != "nt":
-            raise BackupError("Could not set private backup permissions")
-
-
-def _fsync(path: Path, directory: bool = False) -> None:
-    if os.name == "nt":
-        return
+        if os.name!="nt": raise BackupError("Could not set private backup permissions")
+def _fsync(p:Path,directory=False)->None:
+    if os.name=="nt": return
     try:
-        flags = os.O_RDONLY | (getattr(os, "O_DIRECTORY", 0) if directory else 0)
-        fd = os.open(path, flags)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-    except OSError:
-        pass
-
+        fd=os.open(p,os.O_RDONLY|(getattr(os,"O_DIRECTORY",0) if directory else 0)); os.fsync(fd); os.close(fd)
+    except OSError: pass
+def _runtime_version()->str:
+    try: return version("garminconnect")
+    except PackageNotFoundError as exc: raise BackupError("Required runtime distribution is unavailable") from exc
+def _timestamp(value:object)->datetime:
+    if not isinstance(value,str): raise BackupError("Backup timestamp is invalid")
+    try:
+        parsed=datetime.fromisoformat(value.replace("Z","+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset()!=timezone.utc.utcoffset(parsed): raise ValueError
+        return parsed
+    except ValueError as exc: raise BackupError("Backup timestamp is invalid") from exc
+def _commit()->str:
+    try: return subprocess.check_output(["git","rev-parse","HEAD"],cwd=config.PROJECT_ROOT,text=True,stderr=subprocess.DEVNULL,timeout=5).strip()
+    except (OSError,subprocess.SubprocessError): return "unknown"
 
 class BackupLock:
-    def __init__(self, root: Path):
-        self.path = root / ".garmincoach-backup.lock"
-        self.handle = None
-
+    def __init__(self,root:Path): self.path=root/".garmincoach-backup.lock"; self.handle=None
     def __enter__(self):
-        self.handle = self.path.open("a+b")
-        _private(self.path)
+        self.handle=self.path.open("a+b"); _private(self.path)
         try:
-            if os.name == "nt":
+            if os.name=="nt":
                 import msvcrt
                 self.handle.seek(0)
-                if self.handle.read(1) == b"":
-                    self.handle.write(b"\0"); self.handle.flush()
-                self.handle.seek(0); msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+                if not self.handle.read(1): self.handle.write(b"\0"); self.handle.flush()
+                self.handle.seek(0); msvcrt.locking(self.handle.fileno(),msvcrt.LK_NBLCK,1)
             else:
-                import fcntl
-                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            self.handle.close(); self.handle = None
-            raise BackupError("Another verified backup is active") from exc
+                import fcntl; fcntl.flock(self.handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError as exc: self.handle.close(); self.handle=None; raise BackupError("Another verified backup is active") from exc
         return self
-
-    def __exit__(self, *_exc):
-        if self.handle is None:
-            return
+    def __exit__(self,*_):
+        if not self.handle:return
         try:
-            if os.name == "nt":
-                import msvcrt
-                self.handle.seek(0); msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            if os.name=="nt":
+                import msvcrt; self.handle.seek(0); msvcrt.locking(self.handle.fileno(),msvcrt.LK_UNLCK,1)
             else:
-                import fcntl
-                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            self.handle.close(); self.handle = None
+                import fcntl; fcntl.flock(self.handle,fcntl.LOCK_UN)
+        finally:self.handle.close();self.handle=None
 
-
-def validate_backup_root(root: Path | str | None = None) -> Path:
-    selected = Path(root or config.OPERATOR_BACKUP_ROOT).expanduser()
-    selected = selected if selected.is_absolute() else config.PROJECT_ROOT / selected
-    selected = selected.resolve(strict=False)
-    targets = discover_database_targets()
-    for target in targets:
-        if selected == target.path or selected in target.path.parents or target.path in selected.parents:
-            raise BackupError("Backup root cannot overlap a configured database path")
-    tenant_root = Path(config.MULTI_USER_DATA_ROOT).resolve(strict=False)
-    if tenant_root in selected.parents:
-        raise BackupError("Backup root cannot be inside a tenant directory")
+def validate_backup_root(root:Path|str|None=None)->Path:
+    original=Path(root or config.OPERATOR_BACKUP_ROOT).expanduser(); original=original if original.is_absolute() else Path(config.PROJECT_ROOT)/original
+    if has_symlink_component(original): raise BackupError("Backup root may not be symlinked")
+    try: selected=original.resolve(strict=False); tenant_root=safe_resolve(config.MULTI_USER_DATA_ROOT)
+    except ValueError as exc: raise BackupError("Backup root configuration is unsafe") from exc
+    if selected==tenant_root or tenant_root in selected.parents: raise BackupError("Backup root cannot equal or be inside tenant storage")
+    try: targets=discover_database_targets(profile=TargetProfile.RUNTIME)
+    except ValueError as exc: raise BackupError("Canonical database discovery failed") from exc
+    for t in targets:
+        if selected==t.path or selected in t.path.parents or t.path in selected.parents: raise BackupError("Backup root cannot overlap a configured database")
     return selected
 
-
-def _commit() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=config.PROJECT_ROOT, text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
-    except Exception:
-        return "unknown"
-
-
-def create_verified_backup(output_root: Path | str | None = None) -> Path:
-    root = validate_backup_root(output_root)
-    root.mkdir(parents=True, exist_ok=True); _private(root, directory=True)
-    backup_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(4)
-    staging = root / f".partial-{backup_id}"
-    final = root / f"backup-{backup_id}"
-    if final.exists() or staging.exists():
-        raise BackupError("Backup identity collision")
+def _filename(index:int,t:DatabaseTarget)->str:
+    return f"{index:03d}-{'control' if t.kind=='control' else 'single-user' if t.kind=='single_user' else 'tenant-'+str(t.tenant_id)}.sqlite"
+def create_verified_backup(output_root:Path|str|None=None)->Path:
+    root=validate_backup_root(output_root); root.mkdir(parents=True,exist_ok=True); _private(root,True)
+    backup_id=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+secrets.token_hex(4); staging=root/f".partial-{backup_id}"; final=root/f"backup-{backup_id}"
+    if staging.exists() or final.exists(): raise BackupError("Backup identity collision")
     with BackupLock(root):
-        started = _now()
         try:
-            staging.mkdir(mode=0o700); _private(staging, directory=True)
-            targets = discover_database_targets()
-            control = next(target for target in targets if target.kind == "control")
-            before = active_user_target_mapping(control.path)
-            selected = tuple(target for target in targets if target.path.exists())
-            if any(target.required and not target.path.exists() for target in targets):
-                raise BackupError("A required source database is missing")
-            selected_keys = {target.target_key for target in selected}
-            if any(target_key not in selected_keys for _user_id, target_key in before):
-                raise BackupError("An active user database is missing")
-            for target in selected:
-                check = inspect_sqlite(target.path)
-                if not check.readable or not check.quick_check_ok:
-                    raise DatabaseIntegrityError("Source database failed read-only integrity inspection")
-            entries: list[dict[str, Any]] = []
-            for index, target in enumerate(selected):
-                filename = f"{index:03d}-{'control' if target.kind == 'control' else 'single-user' if target.kind == 'single_user' else 'tenant-' + str(target.tenant_id)}.sqlite"
-                destination = staging / filename
-                snapshot_started = _now()
-                source = sqlite3.connect(f"file:{target.path.as_posix()}?mode=ro", uri=True, timeout=30)
-                dest = sqlite3.connect(destination, timeout=30)
-                try:
-                    source.backup(dest, pages=256)
-                finally:
-                    dest.close(); source.close()
-                _private(destination)
-                check = inspect_sqlite(destination, deep=True)
-                if check.integrity_check_ok is not True:
-                    raise BackupError("Backup destination integrity verification failed")
-                entries.append({"target_key": target.target_key, "kind": target.kind, "tenant_id": target.tenant_id,
-                    "filename": filename, "size_bytes": destination.stat().st_size, "sha256": _sha256(destination),
-                    "integrity_check": "ok", "schema_fingerprint": schema_fingerprint(destination),
-                    "migration_markers": migration_markers(destination, target.kind), "snapshot_started_at": snapshot_started,
-                    "snapshot_completed_at": _now()})
-                _fsync(destination)
-            after = active_user_target_mapping(control.path)
-            if before != after:
-                raise BackupError("Control-user target mapping changed during backup")
-            manifest: dict[str, Any] = {"format_version": BACKUP_FORMAT, "backup_id": backup_id, "status": "complete",
-                "started_at": started, "completed_at": _now(), "application_commit": _commit(),
-                "python_version": sys.version.split()[0], "garminconnect_version": "0.3.7", "database_count": len(entries),
-                "control_user_tenant_mapping_before": [dict(user_id=user_id, target_key=key) for user_id, key in before],
-                "control_user_tenant_mapping_after": [dict(user_id=user_id, target_key=key) for user_id, key in after], "databases": entries}
-            bytes_ = canonical_json(manifest)
-            manifest_path = staging / "manifest.json"; manifest_path.write_bytes(bytes_); _private(manifest_path)
-            checksum = hashlib.sha256(bytes_).hexdigest() + "  manifest.json\n"
-            checksum_path = staging / "manifest.sha256"; checksum_path.write_text(checksum, encoding="ascii"); _private(checksum_path)
-            _fsync(manifest_path); _fsync(checksum_path); _fsync(staging, directory=True)
-            staging.replace(final); _private(final, directory=True); _fsync(root, directory=True)
-            return final
+            staging.mkdir(mode=0o700); _private(staging,True); started=_now(); targets=discover_database_targets(profile=TargetProfile.RUNTIME)
+            control=next(t for t in targets if t.kind=="control"); before=active_user_target_mapping(control.path)
+            selected=tuple(t for t in targets if t.path.exists())
+            if any(t.required and not t.path.exists() for t in targets) or any(key not in {t.target_key for t in selected} for _,key in before): raise BackupError("A required source database is missing")
+            for t in selected:
+                check=inspect_sqlite(t.path)
+                if not check.readable or not check.quick_check_ok: raise DatabaseIntegrityError("Source database failed read-only integrity inspection")
+            entries=[]
+            for index,t in enumerate(selected):
+                name=_filename(index,t); dest=staging/name; snapshot_started=_now(); source=sqlite3.connect(f"file:{t.path.as_posix()}?mode=ro",uri=True,timeout=30); target=sqlite3.connect(dest,timeout=30)
+                try: source.backup(target,pages=256)
+                finally: target.close();source.close()
+                _private(dest); check=inspect_sqlite(dest,deep=True)
+                if check.integrity_check_ok is not True: raise BackupError("Backup destination integrity verification failed")
+                entries.append({"target_key":t.target_key,"kind":t.kind,"tenant_id":t.tenant_id,"filename":name,"size_bytes":dest.stat().st_size,"sha256":_sha(dest),"integrity_check":"ok","schema_fingerprint":schema_fingerprint(dest),"migration_markers":migration_markers(dest,t.kind),"snapshot_started_at":snapshot_started,"snapshot_completed_at":_now()});_fsync(dest)
+            after=active_user_target_mapping(control.path)
+            if before!=after: raise BackupError("Control-user target mapping changed during backup")
+            m={"format_version":BACKUP_FORMAT,"backup_id":backup_id,"status":"complete","started_at":started,"completed_at":_now(),"application_commit":_commit(),"python_version":sys.version.split()[0],"garminconnect_version":_runtime_version(),"database_count":len(entries),"control_user_tenant_mapping_before":[{"user_id":u,"target_key":k} for u,k in before],"control_user_tenant_mapping_after":[{"user_id":u,"target_key":k} for u,k in after],"databases":entries}
+            data=canonical_json(m); (staging/"manifest.json").write_bytes(data); (staging/"manifest.sha256").write_text(hashlib.sha256(data).hexdigest()+"  manifest.json\n",encoding="ascii")
+            for p in (staging/"manifest.json",staging/"manifest.sha256"):_private(p);_fsync(p)
+            _fsync(staging,True);staging.replace(final);_private(final,True);_fsync(root,True);return final
         except Exception:
-            if staging.exists():
-                shutil.rmtree(staging)
+            if staging.exists(): shutil.rmtree(staging)
             raise
 
-
-def _read_manifest(directory: Path) -> tuple[dict[str, Any], bytes]:
-    if directory.is_symlink() or not directory.is_dir():
-        raise BackupError("Backup directory is not a safe directory")
-    manifest_path, checksum_path = directory / "manifest.json", directory / "manifest.sha256"
-    if not manifest_path.is_file() or manifest_path.is_symlink() or not checksum_path.is_file() or checksum_path.is_symlink():
-        raise BackupError("Backup manifest is missing")
-    raw = manifest_path.read_bytes()
+_TOP={"format_version","backup_id","status","started_at","completed_at","application_commit","python_version","garminconnect_version","database_count","control_user_tenant_mapping_before","control_user_tenant_mapping_after","databases"}
+_ENTRY={"target_key","kind","tenant_id","filename","size_bytes","sha256","integrity_check","schema_fingerprint","migration_markers","snapshot_started_at","snapshot_completed_at"}
+def _mapping(value:object)->set[str]:
+    if not isinstance(value,list): raise BackupError("Backup control-user mapping is invalid")
+    keys=set(); users=set()
+    for item in value:
+        if not isinstance(item,dict) or set(item)!={"user_id","target_key"} or not isinstance(item["user_id"],str) or not isinstance(item["target_key"],str): raise BackupError("Backup control-user mapping is invalid")
+        user=canonical_user_id(item["user_id"]); key=item["target_key"]
+        if key!=f"tenant:{user}" or user in users or key in keys: raise BackupError("Backup control-user mapping is invalid")
+        users.add(user);keys.add(key)
+    return keys
+def _markers(value:object,kind:str)->None:
+    ledger="migration_versions" if kind=="control" else "app_migrations"
+    if not isinstance(value,dict) or set(value)!={"ledger","keys","state"} or value.get("ledger")!=ledger or value.get("state") not in {"present","absent"} or not isinstance(value.get("keys"),list): raise BackupError("Backup migration markers are invalid")
+    keys=value["keys"]
+    if any(not isinstance(k,str) for k in keys) or keys!=sorted(set(keys)) or (value["state"]=="absent" and keys): raise BackupError("Backup migration markers are invalid")
+def _read(directory:Path)->dict[str,Any]:
+    if has_symlink_component(directory) or directory.is_symlink() or not directory.is_dir(): raise BackupError("Backup directory is not a safe directory")
+    manifest,checksum=directory/"manifest.json",directory/"manifest.sha256"
     try:
-        manifest = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BackupError("Backup manifest is invalid") from exc
-    if canonical_json(manifest) != raw:
-        raise BackupError("Backup manifest is not canonical")
-    expected = hashlib.sha256(raw).hexdigest() + "  manifest.json\n"
-    if checksum_path.read_text(encoding="ascii") != expected:
-        raise BackupError("Backup manifest checksum failed")
-    return manifest, raw
-
-
-def verify_verified_backup(directory: Path | str, *, against_current_config: bool = False) -> dict[str, Any]:
-    directory = Path(directory).resolve(strict=False)
-    manifest, _raw = _read_manifest(directory)
-    backup_id = str(manifest.get("backup_id", ""))
-    if manifest.get("format_version") != BACKUP_FORMAT or manifest.get("status") != "complete" or directory.name != f"backup-{backup_id}":
-        raise BackupError("Backup format, completion state, or identity is invalid")
-    entries = manifest.get("databases")
-    if not isinstance(entries, list) or manifest.get("database_count") != len(entries):
-        raise BackupError("Backup database count is invalid")
-    keys: set[str] = set(); listed: set[str] = {"manifest.json", "manifest.sha256"}
-    for entry in entries:
-        if not isinstance(entry, dict): raise BackupError("Backup entry is invalid")
-        key, filename, kind = entry.get("target_key"), entry.get("filename"), entry.get("kind")
-        if not isinstance(key, str) or key in keys or not isinstance(filename, str) or Path(filename).name != filename or filename in listed:
-            raise BackupError("Backup target or filename is invalid")
-        keys.add(key); listed.add(filename)
-        if kind not in {"control", "single_user", "tenant"} or (kind == "tenant") != key.startswith("tenant:"):
-            raise BackupError("Backup target kind is invalid")
-        expected_filename = "000-control.sqlite" if key == "control" else None
-        if key == "control" and filename != expected_filename:
-            raise BackupError("Backup control filename is invalid")
-        if key == "single-user" and (kind != "single_user" or not filename.endswith("-single-user.sqlite")):
-            raise BackupError("Backup single-user filename is invalid")
-        if kind == "tenant":
-            from operator_storage import canonical_user_id
-            tenant_id = canonical_user_id(str(entry.get("tenant_id")))
-            if tenant_id != key.split(":", 1)[1] or filename != f"{len(keys) - 1:03d}-tenant-{tenant_id}.sqlite":
-                raise BackupError("Backup tenant relationship is invalid")
-        file = directory / filename
-        if file.is_symlink() or not file.is_file() or file.stat().st_size != entry.get("size_bytes") or _sha256(file) != entry.get("sha256"):
-            raise BackupError("Backup file checksum or size failed")
-        if inspect_sqlite(file, deep=True).integrity_check_ok is not True or schema_fingerprint(file) != entry.get("schema_fingerprint"):
-            raise BackupError("Backup SQLite integrity or schema verification failed")
-        if migration_markers(file, str(kind)) != entry.get("migration_markers"):
-            raise BackupError("Backup migration markers failed")
-    unexpected = [item.name for item in directory.iterdir() if item.name not in listed and (item.suffix == ".sqlite" or item.name.startswith("manifest"))]
+        if any(has_symlink_component(p) or p.is_symlink() or not p.is_file() for p in (manifest,checksum)): raise BackupError("Backup manifest is missing")
+        raw=manifest.read_bytes(); m=json.loads(raw.decode("utf-8")); supplied=checksum.read_text(encoding="ascii")
+    except (OSError,UnicodeError,json.JSONDecodeError) as exc: raise BackupError("Backup manifest is invalid") from exc
+    if not isinstance(m,dict) or canonical_json(m)!=raw or supplied!=hashlib.sha256(raw).hexdigest()+"  manifest.json\n": raise BackupError("Backup manifest checksum failed")
+    return m
+def _strict(directory:Path)->ValidatedBackup:
+    m=_read(directory)
+    if set(m)!=_TOP or m.get("format_version")!=BACKUP_FORMAT or m.get("status")!="complete" or not isinstance(m.get("backup_id"),str) or not _ID.fullmatch(m["backup_id"]) or directory.name!=f"backup-{m['backup_id']}": raise BackupError("Backup manifest semantics are invalid")
+    start,end=_timestamp(m["started_at"]),_timestamp(m["completed_at"])
+    if end<start or not all(isinstance(m[k],str) and m[k] for k in ("application_commit","python_version","garminconnect_version")) or not re.fullmatch(r"\d+(?:\.\d+)+(?:[A-Za-z0-9.+-]*)",m["garminconnect_version"]) or not isinstance(m["database_count"],int) or m["database_count"]<=0 or not isinstance(m["databases"],list) or len(m["databases"])!=m["database_count"]: raise BackupError("Backup manifest semantics are invalid")
+    before,after=_mapping(m["control_user_tenant_mapping_before"]),_mapping(m["control_user_tenant_mapping_after"])
+    if before!=after: raise BackupError("Backup control-user mapping changed")
+    keys=set(); names=set(); tenant_keys=set(); control_count=0
+    for i,e in enumerate(m["databases"]):
+        if not isinstance(e,dict) or set(e)!=_ENTRY or not isinstance(e.get("target_key"),str) or not isinstance(e.get("kind"),str) or not isinstance(e.get("filename"),str) or not isinstance(e.get("size_bytes"),int) or e["size_bytes"]<0 or e.get("integrity_check")!="ok" or not all(isinstance(e.get(k),str) and _HEX.fullmatch(e[k]) for k in ("sha256","schema_fingerprint")): raise BackupError("Backup database entry is invalid")
+        key,kind,name=e["target_key"],e["kind"],e["filename"]
+        if key in keys or name in names or Path(name).name!=name: raise BackupError("Backup database entry is invalid")
+        keys.add(key);names.add(name);_markers(e["migration_markers"],kind); ss,se=_timestamp(e["snapshot_started_at"]),_timestamp(e["snapshot_completed_at"])
+        if se<ss or ss<start or se>end: raise BackupError("Backup snapshot timestamps are invalid")
+        if kind=="control":
+            if key!="control" or e["tenant_id"] is not None or i!=0: raise BackupError("Backup control target is invalid")
+            control_count+=1
+        elif kind=="single_user":
+            if key!="single-user" or e["tenant_id"] is not None: raise BackupError("Backup single-user target is invalid")
+        elif kind=="tenant":
+            if not isinstance(e["tenant_id"],str) or key!=f"tenant:{canonical_user_id(e['tenant_id'])}": raise BackupError("Backup tenant target is invalid")
+            tenant_keys.add(key)
+        else: raise BackupError("Backup target kind is invalid")
+        identity="control" if kind=="control" else "single-user" if kind=="single_user" else f"tenant-{e['tenant_id']}"
+        if name!=f"{i:03d}-{identity}.sqlite": raise BackupError("Backup filename is invalid")
+    if control_count!=1 or not before.issubset(tenant_keys): raise BackupError("Backup set is incomplete")
+    listed={"manifest.json","manifest.sha256",*names}
+    try: unexpected=[p.name for p in directory.iterdir() if p.name not in listed and (p.suffix==".sqlite" or p.name.startswith("manifest"))]
+    except OSError as exc: raise BackupError("Backup directory cannot be read") from exc
     if unexpected: raise BackupError("Backup contains unexpected files")
-    result: dict[str, Any] = {"backup_id": backup_id, "verified": True}
+    for e in m["databases"]:
+        try:
+            file=directory/e["filename"]
+            if has_symlink_component(file) or file.is_symlink() or not file.is_file() or file.stat().st_size!=e["size_bytes"] or _sha(file)!=e["sha256"]: raise BackupError("Backup file checksum or size failed")
+            if inspect_sqlite(file,deep=True).integrity_check_ok is not True or schema_fingerprint(file)!=e["schema_fingerprint"] or migration_markers(file,e["kind"])!=e["migration_markers"]: raise BackupError("Backup SQLite verification failed")
+        except (DatabaseIntegrityError,OSError,ValueError) as exc: raise BackupError("Backup SQLite verification failed") from exc
+    return ValidatedBackup(m,directory)
+
+def verify_verified_backup(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
+    try: validated=_strict(Path(directory))
+    except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc
+    result={"backup_id":validated.manifest["backup_id"],"completed_at":validated.manifest["completed_at"],"backup_integrity_valid":True,"verified":True}
     if against_current_config:
-        current = {target.target_key: target for target in discover_database_targets()}
-        result["missing_current_targets"] = sorted(keys - set(current))
-        result["new_current_targets"] = sorted(set(current) - keys)
-        result["configured_destinations"] = {key: str(target.path) for key, target in current.items() if key in keys}
+        try: current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
+        except (ValueError,OSError) as exc: raise BackupError("Current configuration is invalid") from exc
+        manifest_keys={e["target_key"] for e in validated.manifest["databases"]}; required={t.target_key for t in current.values() if t.required}
+        if not required.issubset(manifest_keys) or manifest_keys!=set(current) or validated.manifest["garminconnect_version"]!=_runtime_version(): raise BackupError("Backup is incompatible with current configuration")
+        result["compatible_with_current_configuration"]=True;result["configured_destinations"]={k:str(v.path) for k,v in current.items()}
     return result
-
-
-def restore_plan(directory: Path | str, *, against_current_config: bool = False) -> dict[str, Any]:
-    result = verify_verified_backup(directory, against_current_config=against_current_config)
-    manifest, _ = _read_manifest(Path(directory).resolve(strict=False))
-    current = {target.target_key: target for target in discover_database_targets()}
-    return {"format_version": "garmincoach-restore-plan-v1", "restorable": False,
-        "reason": "Phase 6A verification only", "operations": [
-            {"target_key": entry["target_key"], "backup_file": entry["filename"],
-             "configured_destination": str(current[entry["target_key"]].path) if entry["target_key"] in current else None,
-             "action": "would_replace"} for entry in manifest["databases"]]}
+def restore_plan(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
+    verified=verify_verified_backup(directory,against_current_config=against_current_config); m=_strict(Path(directory)).manifest
+    try: current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
+    except (ValueError,OSError) as exc: raise BackupError("Current configuration is invalid") from exc
+    return {"format_version":"garmincoach-restore-plan-v1","restorable":False,"reason":"Phase 6A verification only","operations":[{"target_key":e["target_key"],"backup_file":e["filename"],"configured_destination":str(current[e["target_key"]].path),"action":"would_replace"} for e in m["databases"]]}

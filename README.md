@@ -258,6 +258,11 @@ and Phase 6A has no restore command: the dry-run plan always reports
 automatically repaired, quarantined, or replaced. A destructive reset quarantine
 is forensic material, not a backup.
 
+Verified validation is strict: runtime target set, canonical manifest semantics,
+UUID-to-tenant mapping, SQLite integrity, schema fingerprint, migration markers,
+and checksums must agree. In multi-user mode stale `DB_PATH` is excluded; in
+single-user mode stale tenant directories are excluded.
+
 ## Explicit database reset
 
 Database corruption never triggers an automatic wipe. An operator may perform a

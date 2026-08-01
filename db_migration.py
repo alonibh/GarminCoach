@@ -30,9 +30,11 @@ def dispose_all_engines() -> None:
 
 def discover_database_paths() -> list[Path]:
     """Use the shared canonical target model without changing migration scope."""
-    from operator_storage import discover_database_targets
+    from operator_storage import TargetProfile, discover_database_targets
 
-    return [target.path for target in discover_database_targets()]
+    return [target.path for target in discover_database_targets(
+        profile=TargetProfile.ALL_CONFIGURED_MAINTENANCE
+    )]
 
 
 def _migration_completed(control_path: Path) -> bool:

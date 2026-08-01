@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from operator_health import render_health
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,7 +15,11 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return 64 if exc.code else 0
-    output, code = render_health(deep=args.deep, as_json=args.json, show_paths=args.show_paths)
+    try:
+        from operator_health import render_health
+        output, code = render_health(deep=args.deep, as_json=args.json, show_paths=args.show_paths)
+    except Exception:
+        output, code = "GarminCoach operator health: CRITICAL\n[critical] configuration: Configuration could not be loaded\nExit code: 2", 2
     print(output)
     return code
 

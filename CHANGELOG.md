@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Operator backup verification hardening
+
+- Split runtime and maintenance discovery, reject symlink/path escapes, and
+  require complete manifest, mapping, target-set, and provenance semantics.
+
 ## 2026-08-01 - Operator health and verified backups
 
 - Added fail-closed SQLite integrity preflight, read-only health diagnostics,
