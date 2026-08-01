@@ -11,7 +11,7 @@ import sqlite3
 from typing import Literal
 
 import config
-from operator_storage import TargetProfile, active_user_target_mapping, discover_database_targets, inspect_sqlite, migration_markers
+from operator_storage import TargetProfile, active_user_target_mapping, discover_database_targets, inspect_sqlite, migration_markers, migration_health_state, permission_health
 from verified_backup import BackupError, validate_backup_root, verify_verified_backup
 
 Severity = Literal["healthy", "warning", "critical"]
@@ -45,11 +45,12 @@ def _add_sqlite_checks(checks: list[HealthCheck], target, deep: bool, show_paths
     if deep:
         checks.append(HealthCheck("database_integrity", "healthy" if inspection.integrity_check_ok else "critical", "Integrity check ok" if inspection.integrity_check_ok else "Integrity check failed", target.target_key, path))
     checks.append(HealthCheck("database_foreign_keys", "healthy" if inspection.foreign_keys_ok else "warning", "Foreign keys ok" if inspection.foreign_keys_ok else "Foreign key violations found", target.target_key, path))
-    try:
-        markers = migration_markers(target.path, target.kind)
-        checks.append(HealthCheck("migration_ledger", "healthy" if markers["state"] == "present" else "warning", "Migration ledger present" if markers["state"] == "present" else "Migration ledger absent", target.target_key, path))
-    except Exception:
-        checks.append(HealthCheck("migration_ledger", "critical", "Migration ledger is malformed", target.target_key, path))
+    state = migration_health_state(target.path, target.kind)
+    checks.append(HealthCheck(state, "healthy" if state == "migration_ledger_valid" else "critical", state.replace("_", " "), target.target_key, path))
+    if os.name != "nt":
+        for code, candidate, directory in (("database_permissions", target.path, False), ("database_parent_permissions", target.path.parent, True)):
+            state = permission_health(candidate, directory=directory)
+            checks.append(HealthCheck(code, "healthy" if state == "private" else "warning", state.replace("_", " "), target.target_key, path))
 
 
 def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetime | None = None) -> tuple[Severity, list[HealthCheck]]:
@@ -62,9 +63,8 @@ def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetim
     checks.append(HealthCheck("target_discovery", "healthy", "Canonical database discovery succeeded"))
     for target in targets:
         _add_sqlite_checks(checks, target, deep, show_paths)
-        if os.name != "nt" and target.path.exists():
-            mode = target.path.stat().st_mode & 0o777
-            checks.append(HealthCheck("database_permissions", "warning" if mode & 0o077 else "healthy", "Database permissions are private" if not mode & 0o077 else "Database permissions are broader than private", target.target_key))
+        if os.name == "nt":
+            checks.append(HealthCheck("permission_platform", "healthy", "Windows mode-bit enforcement is not asserted"))
     root = Path(config.MULTI_USER_DATA_ROOT).resolve(strict=False)
     control = next(target for target in targets if target.kind == "control")
     try:

@@ -208,14 +208,17 @@ def _compatible(validated: ValidatedBackup) -> ValidatedBackup:
     return ValidatedBackup(manifest,validated.directory,validated.entries,True)
 
 def verify_verified_backup(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
-    try: validated=_strict(Path(directory))
-    except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc
-    result={"backup_id":validated.manifest["backup_id"],"completed_at":validated.manifest["completed_at"],"backup_integrity_valid":True,"verified":True}
-    if against_current_config:
-        validated=_compatible(validated)
-        current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
-        result["compatible_with_current_configuration"]=True;result["configured_destinations"]={k:str(v.path) for k,v in current.items()}
-    return result
+    try:
+        validated=_strict(Path(directory))
+        result={"backup_id":validated.manifest["backup_id"],"completed_at":validated.manifest["completed_at"],"backup_integrity_valid":True,"verified":True}
+        if against_current_config:
+            validated=_compatible(validated)
+            current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
+            result["compatible_with_current_configuration"]=True;result["configured_destinations"]={k:str(v.path) for k,v in current.items()}
+        return result
+    except BackupError: raise
+    except (DatabaseIntegrityError, ValueError, OSError, sqlite3.Error, UnicodeError, PackageNotFoundError) as exc:
+        raise BackupError("Backup verification failed") from exc
 def restore_plan(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
     try: validated=_strict(Path(directory)); validated=_compatible(validated) if against_current_config else validated; current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
     except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc

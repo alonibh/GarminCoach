@@ -160,6 +160,43 @@ def migration_markers(path: Path, kind: str) -> dict[str, object]:
     except (OSError, sqlite3.Error, ValueError) as exc: raise DatabaseIntegrityError("Migration ledger is malformed") from exc
 
 
+def required_migration_markers(kind: str) -> frozenset[str]:
+    """Read the repository's migration authority without opening a database."""
+    if kind == "control":
+        from db_migration import MIGRATION_VERSION
+        return frozenset((MIGRATION_VERSION,))
+    if kind not in {"single_user", "tenant"}:
+        raise ValueError("Unknown database kind")
+    import db
+    names = (
+        "_CAPABILITY_SCOPE_MIGRATION_KEY", "_BODY_COMPOSITION_CONTRACT_GATE_MIGRATION_KEY",
+        "_STRENGTH_PROGRESSION_FOUNDATION_MIGRATION_KEY", "_STRENGTH_PROGRESSION_REVIEW_ACTIONS_MIGRATION_KEY",
+        "_STRENGTH_PROGRESSION_TELEGRAM_NOTIFICATIONS_MIGRATION_KEY", "_SLOW_METRIC_HISTORY_MIGRATION_KEY",
+        "_SOURCE_PROGRESSION_MIGRATION_KEY", "_PROGRAM_DURATION_REVIEW_MIGRATION_KEY",
+    )
+    return frozenset(str(getattr(db, name)) for name in names)
+
+
+def migration_health_state(path: Path, kind: str) -> str:
+    try: markers = migration_markers(path, kind)
+    except DatabaseIntegrityError: return "migration_ledger_malformed"
+    if markers["state"] == "absent": return "migration_ledger_absent"
+    if not required_migration_markers(kind).issubset(frozenset(markers["keys"])):
+        return "required_migration_missing"
+    return "migration_ledger_valid"
+
+
+def permission_health(path: Path, *, directory: bool = False) -> str:
+    """Read-only private-mode inspection; Windows intentionally has no claim."""
+    if os.name == "nt": return "windows_mode_not_asserted"
+    try:
+        if path.is_symlink(): return "invalid_symlink"
+        mode = path.stat().st_mode & 0o777
+    except OSError: return "metadata_unreadable"
+    expected = 0o700 if directory else 0o600
+    return "private" if mode == expected else "permissions_too_broad"
+
+
 def active_user_target_mapping(control_path: Path) -> tuple[tuple[str, str], ...]:
     if not control_path.exists(): return ()
     try:
