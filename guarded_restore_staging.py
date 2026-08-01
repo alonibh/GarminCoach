@@ -80,25 +80,41 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
     identity="control" if kind=="control" else "single-user" if kind=="single_user" else f"tenant-{tenant}"
     final=stage/f"{index:03d}-{identity}.sqlite.staged"; partial=stage/f".{index:03d}-{identity}.partial"
     if final.exists() or partial.exists() or final.is_symlink() or partial.is_symlink(): raise StagingPersistenceError("Synthetic staging artifact already exists")
+    source_fd: int|None=None; partial_fd: int|None=None
     try:
-        source_fd=partial_fd=None; flags=os.O_RDONLY|getattr(os,"O_NOFOLLOW",0); source_fd=os.open(str(source),flags); source_stat=os.fstat(source_fd)
-        if not __import__('stat').S_ISREG(source_stat.st_mode) or source_stat.st_size!=size: os.close(source_fd); raise StagingSourceError("Validated staging source changed")
+        source_fd=os.open(str(source),os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)); before=os.fstat(source_fd)
+        import stat
+        identity=(before.st_dev,before.st_ino,stat.S_IFMT(before.st_mode),before.st_size,getattr(before,"st_mtime_ns",None))
+        if not stat.S_ISREG(before.st_mode) or before.st_size!=size: raise StagingSourceError("Validated staging source changed")
         partial_fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,"O_NOFOLLOW",0),0o600)
         h=hashlib.sha256(); count=0
-        with os.fdopen(source_fd,"rb") as inp, os.fdopen(partial_fd,"wb") as out:
-            source_fd=partial_fd=None
-            for chunk in iter(lambda:inp.read(1024*1024),b""):
-                h.update(chunk); count+=len(chunk); out.write(chunk)
-            out.flush(); os.fsync(out.fileno())
-        _private(partial)
-        # The source descriptor remains authoritative throughout the copy; the
-        # stream fstat below catches concurrent descriptor identity/size drift.
-        if count!=size or h.hexdigest()!=digest: raise StagingSourceError("Validated staging source changed")
-        os.replace(partial,final); _private(final); return final
+        while True:
+            chunk=os.read(source_fd,1024*1024)
+            if not chunk: break
+            h.update(chunk); count+=len(chunk); offset=0
+            while offset<len(chunk):
+                written=os.write(partial_fd,chunk[offset:])
+                if written<=0: raise OSError("staging write failed")
+                offset+=written
+        os.fsync(partial_fd); after=os.fstat(source_fd)
+        if identity!=(after.st_dev,after.st_ino,stat.S_IFMT(after.st_mode),after.st_size,getattr(after,"st_mtime_ns",None)) or count!=size or h.hexdigest()!=digest: raise StagingSourceError("Validated staging source changed")
+        os.close(source_fd); source_fd=None; os.close(partial_fd); partial_fd=None
+        if stage.is_symlink() or partial.is_symlink() or final.exists() or final.is_symlink() or partial.parent!=stage or final.parent!=stage: raise StagingPersistenceError("Synthetic staging artifact is unsafe")
+        os.replace(partial,final); _private(final)
+        final_fd=os.open(str(final),os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+        try:
+            state=os.fstat(final_fd)
+            if state.st_size!=size or (os.name!="nt" and (not stat.S_ISREG(state.st_mode) or (state.st_mode&0o777)!=0o600)): raise StagingPersistenceError("Synthetic staging artifact is unsafe")
+            os.fsync(final_fd)
+        finally: os.close(final_fd)
+        directory_fd=os.open(str(stage),os.O_RDONLY|getattr(os,"O_DIRECTORY",0));
+        try: os.fsync(directory_fd)
+        finally: os.close(directory_fd)
+        return final
     except StagingError: raise
     except OSError as exc: raise StagingPersistenceError("Synthetic staging copy failed") from exc
     finally:
-        for descriptor in (source_fd if 'source_fd' in locals() else None, partial_fd if 'partial_fd' in locals() else None):
+        for descriptor in (source_fd,partial_fd):
             if descriptor is not None:
                 try: os.close(descriptor)
                 except OSError: pass
