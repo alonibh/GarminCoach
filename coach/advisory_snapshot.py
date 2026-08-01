@@ -176,28 +176,31 @@ def _profile(session: Session, local_day: date) -> dict:
         return [_clean(item, 64) for item in data if _clean(item, 64)][:8] if isinstance(data, list) else None
     return {
         "age": age, "weight_kg": weight,
-        "goals": [_clean(item, 128) for item in ((profile.primary_goal, profile.goal_detail) if profile else ()) if _clean(item, 128)],
+        "goals": [_clean(item, 96) for item in ((profile.primary_goal, profile.goal_detail) if profile else ()) if _clean(item, 96)],
         "experience": _clean(profile.experience_level, 48) if profile else None,
         "preferred_activities": local_json(profile.preferred_activities) if profile else [],
         "equipment": local_json(profile.equipment_access) if profile else [],
         "training_preferences": {
             "training_type": _clean(profile.training_type, 48) if profile else None,
-            "availability": _clean(profile.availability, 128) if profile else None,
-            "scheduling": _clean(profile.scheduling_preferences, 128) if profile else None,
+            "availability": _clean(profile.availability, 96) if profile else None,
+            "scheduling": _clean(profile.scheduling_preferences, 96) if profile else None,
         },
     }
 
 
 def _current_recovery(session: Session, local_day: date, overnight_ready: bool) -> dict:
     sleep, health = session.get(Sleep, local_day), session.get(DailyHealth, local_day)
-    sleep_at = sleep.sleep_end_time if sleep and sleep.sleep_end_time else (datetime.combine(local_day, time.min, tzinfo=timezone.utc) if sleep else None)
-    health_at = datetime.combine(local_day, time.min, tzinfo=timezone.utc) if health else None
+    sleep_at = sleep.sleep_end_time if sleep else None
+    health_at = None
+    def observed(signal: str | None, fallback: datetime | None = None) -> datetime | None:
+        row = session.get(ObservationFreshness, (signal, local_day)) if signal else None
+        return (row.device_upload_at or row.fetched_at) if row else fallback
     def overnight(value, *, low=None, high=None, signal=None, capability="not_applicable", integer=False, text=False):
         state = _freshness_row(session, signal, local_day) if signal else None
         state = state or ("fresh" if overnight_ready and value is not None else ("expected_pending" if not overnight_ready else "missing"))
         if capability == "unsupported": state = "missing"
         checked = _text(value) if text else _number(value, low=low, high=high, integer=integer)
-        return _fact(checked, health_at if health else sleep_at, capability=capability, freshness=state)
+        return _fact(checked, observed(signal, health_at if health else sleep_at), capability=capability, freshness=state)
     def full_day(value, *, low=None, high=None, integer=False):
         state = "fresh" if value is not None else "missing"
         return _fact(_number(value, low=low, high=high, integer=integer), health_at, freshness=state)
@@ -209,19 +212,21 @@ def _current_recovery(session: Session, local_day: date, overnight_ready: bool) 
         "garmin_hrv_weekly_average": overnight(health.hrv_weekly_avg if health else None, low=0.01, signal="hrv_status", capability=_capability(session, "hrv_status")),
         "local_hrv_7_night_coverage": overnight(health.hrv_7d_coverage_days if health else None, low=0, high=7, integer=True),
         "resting_heart_rate": overnight(health.resting_hr if health else None, low=0.01),
-        "body_battery_current": _fact(None, None, capability=_capability(session, "body_battery"), freshness="expected_pending" if health else "missing"),
+        "body_battery_current": _fact(_number(health.body_battery_current, low=0, high=100) if health else None, observed(None), capability=_capability(session, "body_battery"), freshness="fresh" if health and health.body_battery_current is not None else "missing"),
         "body_battery_high": _fact(None, None, capability=_capability(session, "body_battery"), freshness="expected_pending" if health else "missing"),
-        "body_battery_charged": full_day(health.body_battery_charged if health else None, low=0, integer=True),
-        "body_battery_drained": full_day(health.body_battery_drained if health else None, low=0, integer=True),
-        "stress": full_day(health.stress_avg if health else None, low=0, high=100),
+        "body_battery_charged": _fact(None, None, capability=_capability(session, "body_battery"), freshness="expected_pending" if health else "missing"),
+        "body_battery_drained": _fact(None, None, capability=_capability(session, "body_battery"), freshness="expected_pending" if health else "missing"),
+        "stress": _fact(None, None, freshness="expected_pending" if health else "missing"),
         "garmin_training_readiness": overnight(health.training_readiness if health else None, low=0, high=100, signal="training_readiness", capability=_capability(session, "training_readiness"), integer=True),
-        "recovery_time_minutes": overnight(health.recovery_time_minutes if health else None, low=0, signal="recovery_time", capability=_capability(session, "recovery_time_device"), integer=True),
+        "recovery_time_minutes": _fact(_number(health.recovery_time_minutes, low=0, integer=True) if health else None, health.recovery_time_observed_at if health and health.recovery_time_observed_at else observed("recovery_time"), capability=_capability(session, "recovery_time_device"), freshness=_freshness_row(session, "recovery_time", local_day) or "missing"),
     }
 
 
 def _recent_activity_facts(session: Session, local_day: date, local_timezone: ZoneInfo) -> dict:
     start = local_day - timedelta(days=6)
-    rows = session.query(Activity).filter(Activity.start_time >= datetime.combine(start, time.min), Activity.start_time <= datetime.combine(local_day, time.max)).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(6).all()
+    query = session.query(Activity).filter(Activity.start_time >= datetime.combine(start, time.min), Activity.start_time <= datetime.combine(local_day, time.max))
+    total = query.count()
+    rows = query.order_by(Activity.start_time.desc(), Activity.id.desc()).limit(5).all()
     program = session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).order_by(TrainingProgram.id.desc()).first()
     ids = [row.id for row in rows]
     matches = session.query(ActivityProgramMatch, ProgramSession).join(ProgramSession, ActivityProgramMatch.program_session_id == ProgramSession.id).filter(ActivityProgramMatch.activity_id.in_(ids)).all() if ids else []
@@ -230,10 +235,10 @@ def _recent_activity_facts(session: Session, local_day: date, local_timezone: Zo
     for row in rows[:5]:
         duration = _number(row.duration_s, low=0)
         distance = _number(row.distance_m, low=0)
-        started = row.start_time.replace(tzinfo=timezone.utc).astimezone(local_timezone) if row.start_time.tzinfo is None else row.start_time.astimezone(local_timezone)
+        started = row.start_time.replace(tzinfo=local_timezone) if row.start_time.tzinfo is None else row.start_time.astimezone(local_timezone)
         matched = match_map.get(row.id)
         items.append({"domain": normalize_activity_domain(row.activity_type), "local_start_time": started.isoformat(), "duration_minutes": int(round(duration / 60)) if duration is not None else None, "distance_km": round(distance / 1000, 2) if distance is not None else None, "completed_active_program_session": matched is not None, "active_program_session_name": _clean(matched.name, 96) if matched else None})
-    return {"items": items, "truncated": len(rows) > 5, "omitted_count": max(0, len(rows) - 5)}
+    return {"items": items, "truncated": total > len(items), "omitted_count": max(0, total - len(items))}
 
 
 def _active_program(session: Session) -> dict | None:
@@ -242,24 +247,30 @@ def _active_program(session: Session) -> dict | None:
     cursor = session.get(ProgramCursor, program.id)
     next_session = session.get(ProgramSession, cursor.next_program_session_id) if cursor and cursor.next_program_session_id else None
     if next_session and next_session.program_id != program.id: next_session = None
-    session_rows = session.query(ProgramSession).filter(ProgramSession.program_id == program.id).order_by(ProgramSession.sequence_order, ProgramSession.id).limit(21).all()
+    session_query = session.query(ProgramSession).filter(ProgramSession.program_id == program.id)
+    session_total = session_query.count()
+    session_rows = session_query.order_by(ProgramSession.sequence_order, ProgramSession.id).limit(20).all()
     counts = dict(session.query(SessionExercise.program_session_id, __import__("sqlalchemy").func.count(SessionExercise.id)).filter(SessionExercise.program_session_id.in_([row.id for row in session_rows])).group_by(SessionExercise.program_session_id).all()) if session_rows else {}
     summaries = [{"name": _clean(row.name, 96), "duration_minutes": _number(row.duration_min, low=0, integer=True), "exercise_count": counts.get(row.id, 0)} for row in session_rows[:20]]
     exercises = []
     if next_session:
-        rows = session.query(SessionExercise).filter(SessionExercise.program_session_id == next_session.id).order_by(SessionExercise.order_index, SessionExercise.id).limit(21).all()
+        exercise_query = session.query(SessionExercise).filter(SessionExercise.program_session_id == next_session.id)
+        exercise_total = exercise_query.count()
+        rows = exercise_query.order_by(SessionExercise.order_index, SessionExercise.id).limit(20).all()
         exercises = [{"order": row.order_index + 1, "name": _clean(row.exercise_name, 64), "sets": _number(row.sets, low=0, integer=True), "reps": _number(row.reps, low=0, integer=True), "duration_seconds": _number(row.duration_seconds, low=0, integer=True), "rest_seconds": _number(row.rest_seconds, low=0, integer=True), "warmup": bool(row.warmup_enabled), "target_weight_kg": _number(row.weight_kg, low=0)} for row in rows[:20] if _clean(row.exercise_name, 64)]
-        exercise_meta = {"items": exercises, "truncated": len(rows) > 20, "omitted_count": max(0, len(rows) - 20)}
+        exercise_meta = {"items": exercises, "truncated": exercise_total > len(exercises), "omitted_count": max(0, exercise_total - len(exercises))}
     else:
         exercise_meta = {"items": [], "truncated": False, "omitted_count": 0}
-    return {"name": _clean(program.name, 96), "weekly_target": _number(program.days_per_week, low=1, integer=True), "session_count": len(session_rows), "sessions": {"items": summaries, "truncated": len(session_rows) > 20, "omitted_count": max(0, len(session_rows) - 20)}, "existing_cursor_target": _clean(next_session.name, 96) if next_session else None, "next_session_detail": {"name": _clean(next_session.name, 96), "duration_minutes": _number(next_session.duration_min, low=0, integer=True), "exercises": exercise_meta} if next_session else None}
+    return {"name": _clean(program.name, 96), "weekly_target": _number(program.days_per_week, low=1, integer=True), "session_count": session_total, "sessions": {"items": summaries, "truncated": session_total > len(summaries), "omitted_count": max(0, session_total - len(summaries))}, "existing_cursor_target": _clean(next_session.name, 96) if next_session else None, "next_session_detail": {"name": _clean(next_session.name, 96), "duration_minutes": _number(next_session.duration_min, low=0, integer=True), "exercises": exercise_meta} if next_session else None}
 
 
 def _planned_sessions(session: Session, local_day: date) -> dict:
     end = local_day + timedelta(days=6)
-    rows = session.query(PlannedSession, ProgramSession).outerjoin(ProgramSession, PlannedSession.program_session_id == ProgramSession.id).filter(PlannedSession.target_date >= local_day, PlannedSession.target_date <= end, PlannedSession.status.notin_(_INACTIVE)).order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id).limit(11).all()
+    query = session.query(PlannedSession, ProgramSession).outerjoin(ProgramSession, PlannedSession.program_session_id == ProgramSession.id).filter(PlannedSession.target_date >= local_day, PlannedSession.target_date <= end, PlannedSession.status.notin_(_INACTIVE))
+    total = query.count()
+    rows = query.order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id).limit(10).all()
     items = [{"title": _clean(planned.title, 96), "target_date": planned.target_date.isoformat(), "suggested_time": planned.suggested_time if isinstance(planned.suggested_time, str) and len(planned.suggested_time) == 5 and planned.suggested_time[2] == ":" else None, "duration_minutes": _number(planned.duration_min, low=0, integer=True), "session_type": _clean(planned.activity_type, 48), "status": _clean(planned.status, 32), "official_program_session": planned.program_session_id is not None} for planned, program in rows[:10]]
-    return {"items": items, "truncated": len(rows) > 10, "omitted_count": max(0, len(rows) - 10)}
+    return {"items": items, "truncated": total > len(items), "omitted_count": max(0, total - len(items))}
 
 
 def build_advisory_snapshot(session: Session, *, generated_at: datetime | None = None) -> dict:
@@ -282,7 +293,7 @@ def build_advisory_snapshot(session: Session, *, generated_at: datetime | None =
             "date_context": {"local_day": local_day.isoformat(), "overnight_today_ready": overnight_ready, "training_windows": {"recent_7_days": {"start": (local_day - timedelta(days=6)).isoformat(), "end": local_day.isoformat()}, "prior_7_days": {"start": (local_day - timedelta(days=13)).isoformat(), "end": (local_day - timedelta(days=7)).isoformat()}, "recent_28_days": {"start": (local_day - timedelta(days=27)).isoformat(), "end": local_day.isoformat()}}},
             "official_recommendation": recommendation, "data_freshness": _data_freshness(session, recommendation_at),
             "profile": _profile(session, local_day), "current_recovery": _current_recovery(session, local_day, overnight_ready),
-            "training_aggregates": {"recent_7_days": aggregate["recent_7_days"], "prior_7_days": aggregate["prior_7_days"], "recent_28_days": aggregate["recent_28_days"], "strength_highlights_14_days": aggregate["strength_highlights"]},
+            "training_aggregates": {"recent_7_days": aggregate["recent_7_days"], "prior_7_days": aggregate["prior_7_days"], "recent_28_days": aggregate["recent_28_days"], "strength_highlights_14_days": {"items": aggregate["strength_highlights"], "truncated": False, "omitted_count": 0}},
             "recovery_trends_28_days": {"items": aggregate["recovery_trends"], "truncated": False, "omitted_count": 0}, "slow_fitness_summary": {"items": aggregate["slow_fitness"], "truncated": False, "omitted_count": 0},
             "recent_activity_facts_7_days": _recent_activity_facts(session, local_day, local_timezone), "active_program": _active_program(session),
             "planned_sessions_next_7_days": _planned_sessions(session, local_day),
@@ -311,14 +322,19 @@ def serialize_advisory_snapshot(snapshot: dict) -> str:
     while len(dump()) > maximum and exercises and pop(exercises): pass
     sessions = (trimmed.get("active_program") or {}).get("sessions")
     while len(dump()) > maximum and sessions and pop(sessions): pass
-    for key in ("strength_highlights_14_days",):
-        while len(dump()) > maximum and trimmed["training_aggregates"][key]: trimmed["training_aggregates"][key].pop()
-    while len(dump()) > maximum and trimmed["recovery_trends_28_days"]["items"]: pop(trimmed["recovery_trends_28_days"])
+    recovery = trimmed["recovery_trends_28_days"]
+    while len(dump()) > maximum:
+        stable_index = next((index for index, item in enumerate(recovery["items"]) if item.get("direction") == "stable"), None)
+        if stable_index is None: break
+        recovery["items"].pop(stable_index); recovery["truncated"] = True; recovery["omitted_count"] += 1
     slow = trimmed["slow_fitness_summary"]
     while len(dump()) > maximum and any(item.get("previous_value") is not None for item in slow["items"]):
         for item in reversed(slow["items"]):
             if item.get("previous_value") is not None:
                 item["previous_value"] = item["previous_observed_on"] = None; break
+        slow["truncated"] = True; slow["omitted_count"] += 1
+    strength = trimmed["training_aggregates"]["strength_highlights_14_days"]
+    while len(dump()) > maximum and pop(strength): pass
     output = dump()
     if len(output) > maximum:
         raise AdvisorySnapshotSizeError("Ask Coach v3 mandatory snapshot exceeds effective privacy ceiling")
