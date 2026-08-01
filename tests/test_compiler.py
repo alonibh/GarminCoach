@@ -132,6 +132,57 @@ def test_execution_blocks_reject_malformed_superset_without_external_work(sessio
         build_execution_blocks([one])
 
 
+def test_legacy_program_payload_has_golden_execution_shape(session):
+    from coach.garmin_compiler import build_program_workout
+    routine = _active_session(session)
+    payload = build_program_workout(session, routine.id)
+    steps = payload["workoutSegments"][0]["workoutSteps"]
+    assert [(step["type"], step["stepOrder"], step["stepId"], step["childStepId"]) for step in steps] == [
+        ("ExecutableStepDTO", 1, 1, 1),
+        ("ExecutableStepDTO", 2, 2, 2),
+        ("RepeatGroupDTO", 3, 3, 3),
+        ("RepeatGroupDTO", 6, 6, 4),
+    ]
+    assert steps[2]["skipLastRestStep"] is False
+    assert [(child["description"], child["endConditionValue"], child["weightValue"]) for child in steps[2]["workoutSteps"]] == [("Bench Press", 12.0, 40), (None, 90.0, -1.0)]
+    assert [(child["description"], child["endConditionValue"]) for child in steps[3]["workoutSteps"]] == [("Curated Source Move", 10.0), (None, 60.0)]
+
+
+def test_step_limit_and_readback_reject_structural_changes(session):
+    from copy import deepcopy
+    from coach.garmin_compiler import _verify_uploaded_workout, build_program_workout
+    program = TrainingProgram(name="Limits", active=True, status="active")
+    session.add(program); session.flush()
+    routine = ProgramSession(program_id=program.id, name="Limits")
+    session.add(routine); session.flush()
+    for index in range(16):
+        session.add(SessionExercise(program_session_id=routine.id, exercise_name=f"Move {index}", sets=1, reps=10, rest_seconds=45, order_index=index))
+    session.flush()
+    exact = build_program_workout(session, routine.id)
+    flattened = deepcopy(exact)
+    flattened["workoutSegments"][0]["workoutSteps"][0] = flattened["workoutSegments"][0]["workoutSteps"][0]["workoutSteps"][0]
+    with pytest.raises(ValueError, match="details"):
+        _verify_uploaded_workout(exact, flattened)
+    session.add(SessionExercise(program_session_id=routine.id, exercise_name="Over", sets=1, reps=10, rest_seconds=45, order_index=16))
+    session.flush()
+    with pytest.raises(ValueError, match="Garmin limit is 50"):
+        build_program_workout(session, routine.id)
+
+
+def test_execution_metadata_changes_scheduling_version_not_progression_fingerprint(session):
+    from coach.interactions import program_version
+    from coach.strength_progression_integration import prescription_for_session_exercise
+    routine = _active_session(session)
+    exercise = session.query(SessionExercise).filter_by(program_session_id=routine.id).first()
+    fingerprint = prescription_for_session_exercise(exercise, routine.program_id, routine.id)
+    before = program_version(session)
+    exercise.superset_group = "pair"
+    exercise.transition_rest_seconds = 90
+    session.flush()
+    assert prescription_for_session_exercise(exercise, routine.program_id, routine.id) == fingerprint
+    assert program_version(session) != before
+
+
 def test_program_telegram_approval_uploads_verifies_schedules_and_is_idempotent(session, monkeypatch):
     import coach.garmin_compiler as compiler
     routine = _active_session(session)

@@ -66,8 +66,11 @@ single value or stated "sweet spot" takes precedence over that convention.
 | `upper_lower_4` | Rest as needed, with a 60-90 second rule of thumb; about 90 seconds for compounds and shorter rests for isolation/accessory work. | 90 seconds for compound lifts; 60 for isolation and accessory lifts. |
 | `shul_4` | Strength-day big lifts 3-5 minutes; strength accessories 90-120 seconds; hypertrophy compounds 60 seconds and isolations closer to 45. | 300 seconds for strength anchors, 120 for strength accessories, 60 for hypertrophy compounds, and 45 for hypertrophy isolations. |
 | `split_full_4` | 45 seconds between every set and exercise. | 45 seconds throughout. |
-| `muscle_strength_5` | Strength phase 2-3 minutes; size phase 60-90 seconds. Superset partners have no intervening rest, followed by the prescribed rest. | 180 seconds in both strength sessions and 90 in all three size sessions. Structural pairs: Wide/Narrow Grip Pull Down; Straight Arm Rope Pull Down/Lower Back Hyperextensions; Cable EZ Bar Upright Row/Rope Face Pull; Flat Machine Chest Press/Incline Dumbbell Fly; Seated Hamstring Curl/Leg Extension; Leg Press/Barbell Walking Lunge; Abductor/Adductor Machine; Seated Calf Raise/Single Leg Calf Press. Guarded migration preserves customized rows. |
-| `ppl_6` | 30-90 seconds, with a stated sweet spot of 45 seconds between sets and 90 seconds between exercises. | 45 seconds between sets plus a separate 90-second between-exercise transition timer. |
+| `muscle_strength_5` | Strength phase 2-3 minutes; size phase 60-90 seconds. Superset partners have no intervening rest, followed by the prescribed rest. | 180 seconds in both strength sessions and 90 in all three size sessions. Structural pairs: Wide/Narrow Grip Pull Down; Straight Arm Rope Pull Down/Lower Back Hyperextensions; Cable EZ Bar Upright Row/Rope Face Pull; Flat Machine Chest Press/Incline Dumbbell Fly; Seated Hamstring Curl/Leg Extension; Leg Press/Barbell Walking Lunge; Abductor/Adductor Machine; Seated Calf Raise/Single Leg Calf Press. Guarded migration skips customized structures. |
+| `ppl_6` | 30-90 seconds, with a stated sweet spot of 45 seconds between sets and 90 seconds between exercises. | 45 seconds between sets plus a separate 90-second between-exercise transition timer. Guarded migration is all-or-nothing per customized session. |
+
+These execution updates apply only to future compilation. Existing scheduled
+Garmin workouts and their local Garmin workout IDs remain unchanged.
 | `dumbbell_full_body_3` | 60 seconds between sets. | 60 seconds throughout. |
 
 Existing source-derived program rows are migrated once only when their program

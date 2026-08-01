@@ -126,16 +126,8 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
   between-exercise transition timers for `ppl_6`, with safe future-only Garmin
   compilation and no progression or coaching authority.
 
-## Phase 5: Source execution and longer-horizon program fidelity
-
-- [x] Phase 5A: source-template supersets for `muscle_strength_5` and separate
-  between-exercise transition timers for `ppl_6`, with safe future-only Garmin
-  compilation and no progression or coaching authority.
-
-
 ## Later product work
 
-- Source-template superset and transition-timer fidelity.
 - Source-specific progression proposals with confirmation.
 - Program-duration/deload review prompts.
 - Operator health and restore tooling.

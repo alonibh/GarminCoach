@@ -2737,6 +2737,25 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Warm-up weight must be between 0 and 500 kg.")
             validated.append((incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, group, transition))
 
+        # Validate the complete submitted execution structure before touching
+        # rows or progression state.  These detached values intentionally use
+        # the compiler's single source of truth for group invariants.
+        from types import SimpleNamespace
+        from coach.garmin_compiler import build_execution_blocks
+        provisional = [
+            SimpleNamespace(
+                id=incoming_id if incoming_id is not None else -(index + 1),
+                order_index=index, sets=sets, rest_seconds=max(0, min(600, int(row.get("rest_seconds") or 60))),
+                superset_group=group, transition_rest_seconds=transition,
+            )
+            for index, (incoming_id, row, _name, _meta, _is_generic, _pattern, _warmup_enabled, _warmup_reps, _warmup_duration, _warmup_weight, _weight, _reps, _duration, group, transition) in enumerate(validated)
+            for sets in [int(row["sets"]) if row.get("sets") not in (None, "") else None]
+        ]
+        try:
+            build_execution_blocks(provisional)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
         removed_ids = [item.id for item in existing_rows if item.id not in submitted_ids]
         invalidate_session_exercises(db, removed_ids, cause=InvalidationCause.EXERCISE_DELETED)
@@ -2809,6 +2828,11 @@ def delete_session_exercise(session_id: int, exercise_id: int):
         ).first()
         if not ex:
             raise HTTPException(status_code=404, detail="Exercise not found")
+        if ex.superset_group is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Clear or remove both superset members through one complete session save.",
+            )
         from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
         invalidate_session_exercises(db, [ex.id], cause=InvalidationCause.EXERCISE_DELETED)
         db.delete(ex)

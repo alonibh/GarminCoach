@@ -7,6 +7,7 @@ Two kinds of tables:
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterator, Optional
 
@@ -1589,24 +1590,42 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                         "WHERE program_id = :program_id"
                     ), {"program_id": program_id}).mappings().all()
 
-            def matching_rows(session_id: int, expected: list[dict], rest: int):
+            @dataclass(frozen=True)
+            class ExpectedExecutionRow:
+                exercise_name: str
+                order_index: int
+                sets: int
+                reps: int | None
+                duration_seconds: int | None
+                rest_seconds: int
+
+            def expected_rows(template_rows: list[dict], rest: int) -> tuple[ExpectedExecutionRow, ...]:
+                return tuple(ExpectedExecutionRow(
+                    exercise_name=row["exercise_name"], order_index=index,
+                    sets=row["sets"], reps=row["reps"],
+                    duration_seconds=row["duration_seconds"], rest_seconds=rest,
+                ) for index, row in enumerate(template_rows))
+
+            def session_rows(session_id: int):
                 rows = conn.execute(text(
-                    "SELECT id, exercise_name, order_index, rest_seconds, "
+                    "SELECT id, exercise_name, order_index, sets, reps, duration_seconds, rest_seconds, "
                     "superset_group, transition_rest_seconds, is_generic "
                     "FROM session_exercises WHERE program_session_id = :session_id "
-                    "ORDER BY order_index, id"
+                "ORDER BY order_index, id"
                 ), {"session_id": session_id}).mappings().all()
-                if len(rows) != len(expected):
-                    return None
-                if any(
-                    row["exercise_name"] != template["exercise_name"]
-                    or row["order_index"] != index
-                    or row["rest_seconds"] != rest
-                    or row["is_generic"]
-                    for index, (row, template) in enumerate(zip(rows, expected))
-                ):
-                    return None
                 return rows
+
+            def matches(row, expected: ExpectedExecutionRow) -> bool:
+                return bool(
+                    row is not None
+                    and row["exercise_name"] == expected.exercise_name
+                    and row["order_index"] == expected.order_index
+                    and row["sets"] == expected.sets
+                    and row["reps"] == expected.reps
+                    and row["duration_seconds"] == expected.duration_seconds
+                    and row["rest_seconds"] == expected.rest_seconds
+                    and not row["is_generic"]
+                )
 
             muscle = PROGRAMS["muscle_strength_5"]["sessions"]
             muscle_by_name = {item["name"]: item for item in muscle}
@@ -1619,20 +1638,32 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                 name = source_session["name"]
                 if source_session["is_custom"] or name not in pairs:
                     continue
-                expected = muscle_by_name[name]["exercises"]
-                rows = matching_rows(source_session["id"], expected, 90)
-                if rows is None:
-                    continue
+                expected = expected_rows(muscle_by_name[name]["exercises"], 90)
+                rows = session_rows(source_session["id"])
+                by_order: dict[int, object] = {}
+                duplicate_orders: set[int] = set()
+                for row in rows:
+                    if row["order_index"] in by_order:
+                        duplicate_orders.add(row["order_index"])
+                    by_order[row["order_index"]] = row
                 pair_indexes = {index for pair in pairs[name] for index in pair[:2]}
-                # Straight source rows get a transition only if they remain
-                # wholly source-shaped and unannotated.
-                for index, row in enumerate(rows):
-                    if index not in pair_indexes and row["superset_group"] is None and row["transition_rest_seconds"] is None:
+                # Straight rows are independently guarded so an unrelated
+                # customization cannot manufacture a malformed pair.
+                for index, expected_row in enumerate(expected):
+                    row = by_order.get(index)
+                    if (
+                        index not in pair_indexes and index not in duplicate_orders
+                        and matches(row, expected_row)
+                        and row["superset_group"] is None and row["transition_rest_seconds"] is None
+                    ):
                         conn.execute(text("UPDATE session_exercises SET transition_rest_seconds = 90 WHERE id = :id"), {"id": row["id"]})
                 for first, second, group in pairs[name]:
-                    left, right = rows[first], rows[second]
+                    left, right = by_order.get(first), by_order.get(second)
                     if (
-                        left["superset_group"] is None and right["superset_group"] is None
+                        first not in duplicate_orders and second not in duplicate_orders
+                        and matches(left, expected[first]) and matches(right, expected[second])
+                        and left["sets"] > 0 and left["sets"] == right["sets"]
+                        and left["superset_group"] is None and right["superset_group"] is None
                         and left["transition_rest_seconds"] is None and right["transition_rest_seconds"] is None
                     ):
                         conn.execute(text(
@@ -1645,12 +1676,14 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                 name = source_session["name"]
                 if source_session["is_custom"] or name not in ppl_by_name:
                     continue
-                rows = matching_rows(source_session["id"], ppl_by_name[name]["exercises"], 45)
+                expected = expected_rows(ppl_by_name[name]["exercises"], 45)
+                rows = session_rows(source_session["id"])
                 # PPL transitions are all-or-nothing per session so no source
                 # row receives mixed execution semantics.
-                if rows is not None and all(
-                    row["superset_group"] is None and row["transition_rest_seconds"] is None
-                    for row in rows
+                if len(rows) == len(expected) and all(
+                    matches(row, expected[index])
+                    and row["superset_group"] is None and row["transition_rest_seconds"] is None
+                    for index, row in enumerate(rows)
                 ):
                     conn.execute(text(
                         "UPDATE session_exercises SET transition_rest_seconds = 90 "
