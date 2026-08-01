@@ -137,8 +137,10 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
 - [x] Phase 6A: read-only operator health, fail-closed database integrity,
   verified online SQLite backups, and restore-plan verification with no restore
   mutation.
-- [ ] Phase 6B: separately reviewed guarded restore from a verified Phase 6A
-  backup.
+- [x] Phase 6B1: guarded-restore contract and threat model. The approved
+  design is [`docs/GUARDED_RESTORE_CONTRACT.md`](docs/GUARDED_RESTORE_CONTRACT.md).
+- [ ] Phase 6B2: offline restore engine and synthetic-fixture tests.
+- [ ] Phase 6B3: operator CLI and operational validation.
 
 ## Later product work
 

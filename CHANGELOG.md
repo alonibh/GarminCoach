@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Guarded verified restore design
+
+- Added the Phase 6B1 threat model and guarded-restore contract; no restore
+  engine or mutation is implemented.
+
 ## 2026-08-01 - Operator recovery acceptance
 
 - Added bounded backup-artifact and lock permission health inspection.

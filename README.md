@@ -267,6 +267,10 @@ Each backup also records its explicit runtime mode and runtime target set. The
 optional current-configuration check requires exact schema, migration-marker,
 mode, target-set, active-tenant mapping, and runtime-version compatibility.
 
+Phase 6B1 documents the separately reviewed future restore boundary in
+[`docs/GUARDED_RESTORE_CONTRACT.md`](docs/GUARDED_RESTORE_CONTRACT.md). Restore
+is not available yet; the document is a design contract, not an operator command.
+
 ## Explicit database reset
 
 Database corruption never triggers an automatic wipe. An operator may perform a
