@@ -244,7 +244,10 @@ recursive `BackupLock` acquisition occurs.
 
 Implementation requires separate approvals:
 
-1. **6B2A**: pure planning/state-machine/journal primitives; no replacement.
+1. **6B2A**: complete: pure planning/state-machine/journal primitives and a
+   dedicated restore lock in `guarded_restore.py`; they neither inspect nor
+   mutate databases, invoke backups, acquire application/backup locks, or
+   control services. No staging or replacement is included.
 2. **6B2B**: synthetic offline staging and verification.
 3. **6B2C**: guarded replacement and automatic rollback on temporary fixtures
    only.

@@ -121,6 +121,8 @@ DB_URL = f"sqlite:///{DB_PATH}"
 OPERATOR_BACKUP_ROOT = _expand(os.getenv("OPERATOR_BACKUP_ROOT", "operator_backups"))
 OPERATOR_BACKUP_WARN_AGE_HOURS = max(1, min(int(os.getenv("OPERATOR_BACKUP_WARN_AGE_HOURS", "36")), 24 * 365))
 OPERATOR_BACKUP_MIN_FREE_MIB = max(1, min(int(os.getenv("OPERATOR_BACKUP_MIN_FREE_MIB", "1024")), 1024 * 1024))
+# Guarded-restore journal metadata only. No restore engine consumes this yet.
+OPERATOR_RESTORE_ROOT = _expand(os.getenv("OPERATOR_RESTORE_ROOT", "operator_restore_operations"))
 
 # LLM code remains available for future reviewed features, but production must
 # opt in explicitly. Merely configuring a provider or API key never enables it.

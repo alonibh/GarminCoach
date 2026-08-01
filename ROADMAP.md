@@ -139,7 +139,10 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
   mutation.
 - [x] Phase 6B1: guarded-restore contract and threat model. The approved
   design is [`docs/GUARDED_RESTORE_CONTRACT.md`](docs/GUARDED_RESTORE_CONTRACT.md).
-- [ ] Phase 6B2: offline restore engine and synthetic-fixture tests.
+- [x] Phase 6B2A: guarded-restore planning, state-machine, journal, and
+  dedicated restore-lock primitives with no database staging or replacement.
+- [ ] Phase 6B2B: offline restore staging and verification with synthetic fixtures.
+- [ ] Phase 6B2C: guarded replacement and automatic rollback with temporary fixtures only.
 - [ ] Phase 6B3: operator CLI and operational validation.
 
 ## Later product work

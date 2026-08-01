@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Guarded restore planning foundation
+
+- Added Phase 6B2A immutable planning, confirmation hashes, strict journal
+  state machine, atomic journal persistence, and dedicated restore lock only.
+
 ## 2026-08-01 - Guarded restore lock lifecycle
 
 - Corrected the Phase 6B1 design so the public safety backup owns its own
