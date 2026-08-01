@@ -8,7 +8,7 @@ from typing import Literal
 import config
 from guarded_restore import RestoreJournalError, RestoreStage, TargetRestoreState, load_restore_journal, update_restore_journal
 from operator_storage import has_symlink_component, inspect_sqlite, migration_markers, permission_health, schema_fingerprint
-from verified_backup import ValidatedBackupSnapshot
+from verified_backup import ValidatedBackupSnapshot, load_validated_backup_snapshot
 
 class StagingError(RuntimeError): pass
 class StagingSourceError(StagingError): pass
@@ -58,8 +58,12 @@ def _entry_tuple(entry) -> tuple[str,str,str|None,str,int,str,str,tuple[str,tupl
 def _validate_inputs(operation_id: str, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path):
     journal=load_restore_journal(operation_id,root=journal_root)
     if journal.stage is not RestoreStage.CURRENT_SNAPSHOT_CREATED or not journal.safety_backup_id: raise StagingError("Restore journal is not ready for synthetic staging")
-    if type(validated) is not ValidatedBackupSnapshot or not validated._provenance or (validated.backup_id!=journal.selected_backup_id or validated.manifest_sha256!=journal.selected_backup_manifest_sha256 or validated.runtime_mode!=journal.runtime_mode or validated.target_keys!=journal.target_keys or (journal.expected_application_commit!="unknown" and validated.application_commit!=journal.expected_application_commit)):
+    if type(validated) is not ValidatedBackupSnapshot: raise StagingSourceError("Validated backup does not match restore journal")
+    try: fresh=load_validated_backup_snapshot(validated.directory)
+    except Exception as exc: raise StagingSourceError("Validated backup does not match restore journal") from exc
+    if fresh != validated or (fresh.backup_id!=journal.selected_backup_id or fresh.manifest_sha256!=journal.selected_backup_manifest_sha256 or fresh.runtime_mode!=journal.runtime_mode or fresh.target_keys!=journal.target_keys or (journal.expected_application_commit!="unknown" and fresh.application_commit!=journal.expected_application_commit)):
         raise StagingSourceError("Validated backup does not match restore journal")
+    validated=fresh
     root=_validate_fixture_root(Path(fixture_root),validated.directory)
     if len(destinations)!=len(journal.target_keys) or tuple(d.target_key for d in destinations)!=journal.target_keys or len({str(d.path.resolve(strict=False)) for d in destinations})!=len(destinations): raise SyntheticDestinationError("Synthetic destinations do not match restore journal")
     entries=tuple(_entry_tuple(e) for e in validated.entries)
@@ -77,20 +81,27 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
     final=stage/f"{index:03d}-{identity}.sqlite.staged"; partial=stage/f".{index:03d}-{identity}.partial"
     if final.exists() or partial.exists() or final.is_symlink() or partial.is_symlink(): raise StagingPersistenceError("Synthetic staging artifact already exists")
     try:
-        flags=os.O_RDONLY|getattr(os,"O_NOFOLLOW",0); source_fd=os.open(str(source),flags); source_stat=os.fstat(source_fd)
+        source_fd=partial_fd=None; flags=os.O_RDONLY|getattr(os,"O_NOFOLLOW",0); source_fd=os.open(str(source),flags); source_stat=os.fstat(source_fd)
         if not __import__('stat').S_ISREG(source_stat.st_mode) or source_stat.st_size!=size: os.close(source_fd); raise StagingSourceError("Validated staging source changed")
-        fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,"O_NOFOLLOW",0),0o600)
+        partial_fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,"O_NOFOLLOW",0),0o600)
         h=hashlib.sha256(); count=0
-        with os.fdopen(source_fd,"rb") as inp, os.fdopen(fd,"wb") as out:
+        with os.fdopen(source_fd,"rb") as inp, os.fdopen(partial_fd,"wb") as out:
+            source_fd=partial_fd=None
             for chunk in iter(lambda:inp.read(1024*1024),b""):
                 h.update(chunk); count+=len(chunk); out.write(chunk)
             out.flush(); os.fsync(out.fileno())
         _private(partial)
-        if count!=size or h.hexdigest()!=digest or os.stat(source).st_size!=size: raise StagingSourceError("Validated staging source changed")
+        # The source descriptor remains authoritative throughout the copy; the
+        # stream fstat below catches concurrent descriptor identity/size drift.
+        if count!=size or h.hexdigest()!=digest: raise StagingSourceError("Validated staging source changed")
         os.replace(partial,final); _private(final); return final
     except StagingError: raise
     except OSError as exc: raise StagingPersistenceError("Synthetic staging copy failed") from exc
     finally:
+        for descriptor in (source_fd if 'source_fd' in locals() else None, partial_fd if 'partial_fd' in locals() else None):
+            if descriptor is not None:
+                try: os.close(descriptor)
+                except OSError: pass
         if partial.exists():
             try: partial.unlink()
             except OSError: pass

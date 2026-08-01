@@ -26,7 +26,7 @@ class ValidatedBackupEntry:
     target_key:str; kind:str; tenant_id:str|None; filename:str; size_bytes:int; sha256:str; schema_fingerprint:str; migration_ledger:str; migration_keys:tuple[str,...]; migration_state:str
 @dataclass(frozen=True)
 class ValidatedBackupSnapshot:
-    backup_id:str; manifest_sha256:str; runtime_mode:str; application_commit:str; target_keys:tuple[str,...]; directory:Path=field(repr=False); entries:tuple[ValidatedBackupEntry,...]=(); _provenance:str=field(repr=False,default="")
+    backup_id:str; manifest_sha256:str; runtime_mode:str; application_commit:str; target_keys:tuple[str,...]; directory:Path=field(repr=False); entries:tuple[ValidatedBackupEntry,...]=()
 
 def _now()->str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
 def canonical_json(v:object)->bytes: return (json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False)+"\n").encode("utf-8")
@@ -240,8 +240,7 @@ def load_validated_backup_snapshot(directory: Path | str, *, against_current_con
     validated=load_validated_backup(directory,against_current_config=against_current_config)
     raw=(validated.directory/"manifest.json").read_bytes(); manifest=validated.manifest
     entries=tuple(ValidatedBackupEntry(e["target_key"],e["kind"],e["tenant_id"],e["filename"],e["size_bytes"],e["sha256"],e["schema_fingerprint"],e["migration_markers"]["ledger"],tuple(e["migration_markers"]["keys"]),e["migration_markers"]["state"]) for e in validated.entries)
-    token=hashlib.sha256(raw+b"\0garmincoach-staging-v1").hexdigest()
-    return ValidatedBackupSnapshot(manifest["backup_id"],hashlib.sha256(raw).hexdigest(),manifest["runtime_mode"],manifest["application_commit"],tuple(manifest["runtime_target_keys"]),validated.directory,entries,token)
+    return ValidatedBackupSnapshot(manifest["backup_id"],hashlib.sha256(canonical_json(manifest)).hexdigest(),manifest["runtime_mode"],manifest["application_commit"],tuple(manifest["runtime_target_keys"]),validated.directory,entries)
 def restore_plan(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
     try: validated=_strict(Path(directory)); validated=_compatible(validated) if against_current_config else validated; current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
     except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc

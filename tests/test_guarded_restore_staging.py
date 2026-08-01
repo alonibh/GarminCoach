@@ -2,6 +2,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 import pytest
+from dataclasses import replace
 import config
 from guarded_restore import RestoreStage, create_restore_journal, create_restore_plan, update_restore_journal
 from guarded_restore_staging import SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
@@ -29,3 +30,6 @@ def test_configured_destination_is_refused(tmp_path,monkeypatch):
     validated,journal,root,destinations=_prepared(tmp_path,monkeypatch)
     bad=(SyntheticRestoreTarget("control","control",config.CONTROL_DB_PATH),destinations[1])
     with pytest.raises(SyntheticDestinationError): stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=validated,destinations=bad,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+def test_forged_or_stale_snapshot_is_refused(tmp_path,monkeypatch):
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch)
+    with pytest.raises(Exception): stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=replace(validated,backup_id="20260801T120000Z-a1b2c3d4"),destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
