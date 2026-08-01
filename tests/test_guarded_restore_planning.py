@@ -121,6 +121,13 @@ def test_journal_rejects_malformed_bytes_and_preserves_previous(tmp_path, monkey
     path = root / f"operation-{journal.operation_id}" / "journal.json"; before = path.read_bytes()
     path.write_bytes(b"\xff")
     with pytest.raises(RestoreJournalError): load_restore_journal(journal.operation_id, root=root)
+    path.write_bytes(before)
+    payload = json.loads(before); payload["target_keys"] = ["single-user", "control"]
+    import guarded_restore
+    path.write_bytes(guarded_restore.canonical_json(payload))
+    with pytest.raises(RestoreJournalError): load_restore_journal(journal.operation_id, root=root)
+    path.write_bytes(before)
+    assert load_restore_journal(journal.operation_id, root=root) == journal
 
 
 def test_loaded_journal_identity_is_bound_to_requested_operation(tmp_path, monkeypatch):
@@ -201,6 +208,8 @@ def test_restore_lock_cleans_up_handle_after_permission_failure(tmp_path, monkey
 @pytest.mark.skipif(os.name == "nt", reason="POSIX modes are not asserted on Windows")
 def test_journal_temporary_file_is_private_from_creation(tmp_path, monkeypatch):
     root = _root(tmp_path, monkeypatch); journal = create_restore_journal(_plan(), root=root, operation_id="restore-20260801T120000Z-a1b2c3d4", now=TIME)
+    path = root / f"operation-{journal.operation_id}" / "journal.json"
+    before = path.read_bytes()
     import guarded_restore
     observed = []
     def fail_after_creation(source, destination):
@@ -209,10 +218,8 @@ def test_journal_temporary_file_is_private_from_creation(tmp_path, monkeypatch):
     monkeypatch.setattr(guarded_restore.os, "replace", fail_after_creation)
     with pytest.raises(RestoreJournalPersistenceError): update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.VERIFIED)
     assert observed == [0o600]
-    path.write_bytes(before)
-    payload = json.loads(before); payload["target_keys"] = ["single-user", "control"]
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(RestoreJournalError): load_restore_journal(journal.operation_id, root=root)
+    assert path.read_bytes() == before
+    assert not list(path.parent.glob("*.tmp"))
 
 
 def test_root_safety_and_atomic_write_failure_preserves_journal(tmp_path, monkeypatch):
