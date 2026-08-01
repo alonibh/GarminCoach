@@ -32,6 +32,15 @@ class StrengthComparisonResult:
     total_candidates: int
 
 
+@dataclass(frozen=True)
+class MovementAggregate:
+    steps_total: int | None
+    steps_valid_days: int
+    moderate_minutes: int | None
+    vigorous_minutes: int | None
+    intensity_valid_days: int
+
+
 def finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -129,3 +138,17 @@ def build_strength_comparisons(rows, *, current_start: date, current_end: date) 
         elif prior_start <= started.date() < current_start: prior[key] = max(prior.get(key, 0), weight)
     candidates = stable_strength_candidates(current, prior)
     return StrengthComparisonResult(candidates, len(candidates))
+
+
+def movement_aggregate(rows) -> MovementAggregate:
+    """Aggregate stored daily movement values; zero is observed, missing is not zero."""
+    steps = [nonnegative_integer(row.steps) for row in rows]
+    moderate = [nonnegative_integer(row.daily_moderate_intensity_minutes) for row in rows]
+    vigorous = [nonnegative_integer(row.daily_vigorous_intensity_minutes) for row in rows]
+    return MovementAggregate(
+        sum(value for value in steps if value is not None) if any(value is not None for value in steps) else None,
+        sum(value is not None for value in steps),
+        sum(value for value in moderate if value is not None) if any(value is not None for value in moderate) else None,
+        sum(value for value in vigorous if value is not None) if any(value is not None for value in vigorous) else None,
+        sum(left is not None or right is not None for left, right in zip(moderate, vigorous)),
+    )

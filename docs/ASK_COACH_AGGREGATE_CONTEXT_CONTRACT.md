@@ -93,6 +93,14 @@ cross-tenant context, no private calendar, no external request during building,
 and no authority change when aggregates change while the official decision is
 held fixed.
 
+Unsupported capability always suppresses its current value and observation time,
+even when a stored freshness state is fresh or stale. Recovery Time uses its
+persisted Connect/account source capability when available; an indistinguishable
+source remains unknown. Strength context retains the shared candidate total so
+its bounded wrapper reports exact omissions, while privacy trimming adds to
+that count. Shared movement validation treats zero as observed and never
+imputes missing days.
+
 The slow summary includes Fitness Age, target Fitness Age, running/cycling VO2,
 and neutral current-device Training Status (never legacy VO2). Recovery trends
 are limited to sleep duration/score, overnight HRV, resting HR, stress, Body

@@ -338,16 +338,11 @@ def build_weekly_summary_report(
     ).count()
     unmatched = sum(1 for row in activities if _domain(row.activity_type)[0] == "strength" and row.id not in any_matched_ids)
     health = session.query(DailyHealth).filter(DailyHealth.day >= start, DailyHealth.day <= week_end).all()
-    steps = [_nonnegative_integer(row.steps) for row in health]
-    moderate = [_nonnegative_integer(row.daily_moderate_intensity_minutes) for row in health]
-    vigorous = [_nonnegative_integer(row.daily_vigorous_intensity_minutes) for row in health]
-    intensity_days = sum(1 for a, b in zip(moderate, vigorous) if a is not None or b is not None)
+    shared_movement = shared.movement_aggregate(health)
     movement = WeeklyMovementAggregate(
-        sum(value for value in steps if value is not None) if any(value is not None for value in steps) else None,
-        sum(value is not None for value in steps),
-        sum(value for value in moderate if value is not None) if any(value is not None for value in moderate) else None,
-        sum(value for value in vigorous if value is not None) if any(value is not None for value in vigorous) else None,
-        intensity_days,
+        shared_movement.steps_total, shared_movement.steps_valid_days,
+        shared_movement.moderate_minutes, shared_movement.vigorous_minutes,
+        shared_movement.intensity_valid_days,
     )
     next_name = _next_session_name_read_only(session, program=program)
     return WeeklySummaryReport(

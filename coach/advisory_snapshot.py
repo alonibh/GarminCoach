@@ -114,6 +114,15 @@ def _capability(session: Session, metric: str, *, fallback: str = "unknown") -> 
     return value if value in {"supported", "unsupported", "unknown"} else "unknown"
 
 
+def _recovery_time_capability(session: Session, *, health: DailyHealth | None, local_day: date) -> str:
+    """Recovery Time is currently persisted by the Connect source path only."""
+    if health is None or health.recovery_time_minutes is None:
+        return "unknown"
+    row = session.get(MetricCapability, ("recovery_time_connect", "account", "account"))
+    value = (row.override_state or row.support_state) if row else "unknown"
+    return value if value in {"supported", "unsupported", "unknown"} else "unknown"
+
+
 def _official_recommendation(session: Session, local_day: date, local_timezone: ZoneInfo) -> tuple[dict, datetime | None]:
     record = session.query(DecisionRecord).order_by(DecisionRecord.evaluated_at.desc()).first()
     if record is None:
@@ -221,7 +230,7 @@ def _current_recovery(session: Session, local_day: date, overnight_ready: bool) 
         "body_battery_drained": _fact(None, None, capability=_capability(session, "body_battery"), freshness="expected_pending" if health else "missing"),
         "stress": _fact(None, None, freshness="expected_pending" if health else "missing"),
         "garmin_training_readiness": overnight(health.training_readiness if health else None, low=0, high=100, signal="training_readiness", capability=_capability(session, "training_readiness"), integer=True),
-        "recovery_time_minutes": _fact(_number(health.recovery_time_minutes, low=0, integer=True) if health else None, health.recovery_time_observed_at if health and health.recovery_time_observed_at else observed("recovery_time"), capability=_capability(session, "recovery_time_device"), freshness=_freshness_row(session, "recovery_time", local_day) or "missing"),
+        "recovery_time_minutes": _fact(_number(health.recovery_time_minutes, low=0, integer=True) if health else None, health.recovery_time_observed_at if health and health.recovery_time_observed_at else observed("recovery_time"), capability=_recovery_time_capability(session, health=health, local_day=local_day), freshness=_freshness_row(session, "recovery_time", local_day) or "missing"),
     }
 
 
@@ -296,7 +305,7 @@ def build_advisory_snapshot(session: Session, *, generated_at: datetime | None =
             "date_context": {"local_day": local_day.isoformat(), "overnight_today_ready": overnight_ready, "training_windows": {"recent_7_days": {"start": (local_day - timedelta(days=6)).isoformat(), "end": local_day.isoformat()}, "prior_7_days": {"start": (local_day - timedelta(days=13)).isoformat(), "end": (local_day - timedelta(days=7)).isoformat()}, "recent_28_days": {"start": (local_day - timedelta(days=27)).isoformat(), "end": local_day.isoformat()}}},
             "official_recommendation": recommendation, "data_freshness": _data_freshness(session, recommendation_at),
             "profile": _profile(session, local_day), "current_recovery": _current_recovery(session, local_day, overnight_ready),
-            "training_aggregates": {"recent_7_days": aggregate["recent_7_days"], "prior_7_days": aggregate["prior_7_days"], "recent_28_days": aggregate["recent_28_days"], "strength_highlights_14_days": {"items": aggregate["strength_highlights"], "truncated": False, "omitted_count": 0}},
+            "training_aggregates": {"recent_7_days": aggregate["recent_7_days"], "prior_7_days": aggregate["prior_7_days"], "recent_28_days": aggregate["recent_28_days"], "strength_highlights_14_days": {"items": aggregate["strength_highlights"]["items"], "truncated": aggregate["strength_highlights"]["total_count"] > len(aggregate["strength_highlights"]["items"]), "omitted_count": max(0, aggregate["strength_highlights"]["total_count"] - len(aggregate["strength_highlights"]["items"]))}},
             "recovery_trends_28_days": {"items": aggregate["recovery_trends"], "truncated": False, "omitted_count": 0}, "slow_fitness_summary": {"items": aggregate["slow_fitness"], "truncated": False, "omitted_count": 0},
             "recent_activity_facts_7_days": _recent_activity_facts(session, local_day, local_timezone), "active_program": _active_program(session),
             "planned_sessions_next_7_days": _planned_sessions(session, local_day),

@@ -57,6 +57,12 @@ class StrengthHighlight:
 
 
 @dataclass(frozen=True)
+class StrengthHighlights:
+    items: tuple[StrengthHighlight, ...]
+    total_count: int
+
+
+@dataclass(frozen=True)
 class RecoveryAggregateFact:
     key: str
     unit: str
@@ -102,7 +108,7 @@ class AskCoachAggregateContext:
     recent_7_days: AggregateWindow
     prior_7_days: AggregateWindow
     recent_28_days: AggregateWindow
-    strength_highlights: tuple[StrengthHighlight, ...]
+    strength_highlights: StrengthHighlights
     recovery_trends: tuple[RecoveryAggregateFact, ...]
     slow_fitness: tuple[SlowFitnessAggregate, ...]
 
@@ -170,28 +176,23 @@ def _aggregate_window(session: Session, start: date, end: date, program: Trainin
         domain = normalize_activity_domain(row.activity_type)
         domains[domain] = domains.get(domain, 0) + 1
     health = list(session.query(DailyHealth).filter(DailyHealth.day >= start, DailyHealth.day <= end).order_by(DailyHealth.day))
-    steps = [_nonnegative_integer(row.steps) for row in health]
-    moderate = [_nonnegative_integer(row.daily_moderate_intensity_minutes) for row in health]
-    vigorous = [_nonnegative_integer(row.daily_vigorous_intensity_minutes) for row in health]
+    movement = shared.movement_aggregate(health)
     return AggregateWindow(
         start, end, len(rows), len({day for row in rows if (day := _activity_day(row))}),
         int(round(sum(valid) / 60)) if valid else None, len(valid),
         tuple(DomainCount(key, count) for key, count in sorted(domains.items(), key=lambda item: (-item[1], item[0]))[:4]),
         len(program_matched) if program else None,
         sum(1 for row in rows if normalize_activity_domain(row.activity_type) == "strength" and row.id not in any_matched),
-        sum(item for item in steps if item is not None) if any(item is not None for item in steps) else None,
-        sum(item is not None for item in steps),
-        sum(item for item in moderate if item is not None) if any(item is not None for item in moderate) else None,
-        sum(item for item in vigorous if item is not None) if any(item is not None for item in vigorous) else None,
-        sum(left is not None or right is not None for left, right in zip(moderate, vigorous)),
+        movement.steps_total, movement.steps_valid_days, movement.moderate_minutes,
+        movement.vigorous_minutes, movement.intensity_valid_days,
     )
 
 
-def _strength_highlights(session: Session, start: date, end: date) -> tuple[StrengthHighlight, ...]:
+def _strength_highlights(session: Session, start: date, end: date) -> StrengthHighlights:
     prior_start = start - timedelta(days=7)
     rows = session.query(ExerciseSet, Activity.start_time).join(Activity, ExerciseSet.activity_id == Activity.id).filter(Activity.start_time >= datetime.combine(prior_start, time.min), Activity.start_time <= datetime.combine(end, time.max)).all()
     result = shared.build_strength_comparisons(rows, current_start=start, current_end=end)
-    return tuple(StrengthHighlight(item.label, item.reps, item.current_weight_kg, item.prior_weight_kg, item.delta_kg) for item in result.candidates[:3])
+    return StrengthHighlights(tuple(StrengthHighlight(item.label, item.reps, item.current_weight_kg, item.prior_weight_kg, item.delta_kg) for item in result.candidates[:3]), result.total_candidates)
 
 
 def _recovery(session: Session, as_of_day: date, overnight_today_ready: bool) -> tuple[RecoveryAggregateFact | SleepTimingAggregate, ...]:
