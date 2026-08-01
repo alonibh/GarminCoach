@@ -63,8 +63,8 @@ def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetim
     checks.append(HealthCheck("target_discovery", "healthy", "Canonical database discovery succeeded"))
     for target in targets:
         _add_sqlite_checks(checks, target, deep, show_paths)
-        if os.name == "nt":
-            checks.append(HealthCheck("permission_platform", "healthy", "Windows mode-bit enforcement is not asserted"))
+    if os.name == "nt":
+        checks.append(HealthCheck("permission_platform", "healthy", "Windows mode-bit enforcement is not asserted"))
     root = Path(config.MULTI_USER_DATA_ROOT).resolve(strict=False)
     control = next(target for target in targets if target.kind == "control")
     try:
@@ -85,6 +85,9 @@ def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetim
                 checks.append(HealthCheck("unexpected_tenant_directory", "warning", "Unexpected tenant directory ignored"))
     try:
         backup_root = validate_backup_root()
+        if os.name != "nt" and backup_root.exists():
+            state = permission_health(backup_root, directory=True)
+            checks.append(HealthCheck("backup_root_permissions", "healthy" if state == "private" else "warning", state.replace("_", " ")))
         partial = sorted(item for item in backup_root.glob(".partial-*") if item.is_dir()) if backup_root.exists() else []
         for item in partial:
             age = (now - datetime.fromtimestamp(item.stat().st_mtime, timezone.utc)).total_seconds()
@@ -96,6 +99,13 @@ def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetim
             latest = complete[-1]
             try:
                 verified = verify_verified_backup(latest)
+                if os.name != "nt":
+                    for code, candidate, directory in (("backup_directory_permissions", latest, True), ("backup_manifest_permissions", latest / "manifest.json", False), ("backup_checksum_permissions", latest / "manifest.sha256", False)):
+                        state = permission_health(candidate, directory=directory)
+                        checks.append(HealthCheck(code, "healthy" if state == "private" else "warning", state.replace("_", " ")))
+                    for entry in verified and __import__("json").loads((latest / "manifest.json").read_text(encoding="utf-8"))["databases"]:
+                        state = permission_health(latest / entry["filename"])
+                        checks.append(HealthCheck("backup_database_permissions", "healthy" if state == "private" else "warning", state.replace("_", " "), entry["target_key"]))
                 completed = datetime.fromisoformat(verified["completed_at"].replace("Z", "+00:00"))
                 age = (now - completed).total_seconds() / 3600
                 if age < -(5 / 60):
