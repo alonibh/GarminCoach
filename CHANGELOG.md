@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Guarded restore lock lifecycle
+
+- Corrected the Phase 6B1 design so the public safety backup owns its own
+  non-reentrant backup lock before restore takes the long-held backup lock.
+
 ## 2026-08-01 - Guarded verified restore design
 
 - Added the Phase 6B1 threat model and guarded-restore contract; no restore

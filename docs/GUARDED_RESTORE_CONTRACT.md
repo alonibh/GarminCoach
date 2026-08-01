@@ -31,8 +31,8 @@ Phase 6B may reuse, without changing their contracts:
   read-only `inspect_sqlite`, schema fingerprint, migration marker, permission,
   and active-user mapping helpers;
 - `verified_backup.verify_verified_backup(..., against_current_config=True)`,
-  strict manifest validation, `BackupLock`, canonical manifest checksums, and
-  Phase 6A online snapshot creation;
+  strict manifest validation, the non-reentrant `BackupLock`, canonical manifest
+  checksums, and the public Phase 6A online snapshot operation; and
 - `process_lock.acquire_process_lock` and `release_process_lock`; and
 - engine disposal primitives only after the service has been proven stopped.
 
@@ -50,8 +50,8 @@ a missing store, so it is not a restore discovery primitive.
 | --- | --- |
 | Wrong backup, unverified directory, changed backup after verification | Strictly reverify the selected directory, canonical manifest bytes/hash, every file hash, and all metadata immediately before staging; fail before mutation. |
 | Traversal, symlink replacement, wrong checkout | Validate every original component with `lstat` semantics, resolve under configured roots, revalidate destination identity immediately before replacement, and require the configured project root; fail safe. |
-| Mapping, mode, schema, marker, package, or target-set drift | Run current-config verification immediately before restore and again at replacement readiness; require exact runtime mode, ordering, mappings, schema fingerprints, markers, and runtime distribution; fail safe. |
-| Service/process starts or another backup/restore runs | Prove service stopped, then exclusively acquire application, backup, and restore locks in the specified order; any unavailable/uncertain lock or service state fails safe. |
+| Mapping, mode, schema, marker, package, or target-set drift | Verify immediately before the safety snapshot, then reverify after acquiring the long-held backup lock and before staging; require exact runtime mode, ordering, mappings, schema fingerprints, markers, source identity/hashes, and runtime distribution; fail safe. |
+| Service/process starts or another backup/restore runs | Prove service stopped; hold application and restore locks through the safety snapshot; then exclusively acquire the Phase 6A backup lock for the mutation-critical interval. Any unavailable/uncertain lock or service state fails safe. |
 | Disk or permission failure | Preflight bounded free space and private parent paths; stage/copy/fsync before replacement; fail safe without unlinking a destination. |
 | Interrupted copy or replacement; partial multi-file replacement | Use per-target same-filesystem staging and a durable journal. Roll back only from the new verified safety backup; ambiguous journal state requires manual recovery. |
 | Stale WAL/SHM sidecars | Never copy source sidecars. Handle a named target's sidecars only after exclusive service stop and immediately around replacement; never wildcard-delete. |
@@ -69,8 +69,9 @@ control-user-to-tenant mapping to match the source backup.
 
 It must also require sufficient free disk space for staging plus a complete
 safety backup; private, non-symlink destination parents; confirmed stopped
-service; exclusive locks; and a deterministic non-secret confirmation described
-below. A current malformed database is a refusal: Phase 6B2 must not silently
+service; exclusive application and restore locks before the safety snapshot;
+and later exclusive backup lock before staging; plus a deterministic non-secret
+confirmation described below. A current malformed database is a refusal: Phase 6B2 must not silently
 skip a safety backup or restore it anyway. A possible stronger-confirmation,
 no-automatic-rollback recovery mode is explicitly out of scope for this
 contract.
@@ -93,7 +94,11 @@ STAGED_VERIFIED -> REPLACEMENT_READY -> REPLACING -> REPLACED ->
 POSTCHECK_PASSED -> COMPLETED`.
 
 `PRECHECK` through `REPLACEMENT_READY` are mutation-free with respect to
-configured databases. An error before `REPLACING` becomes `FAILED_SAFE`.
+configured databases. Safety-backup creation and strict verification transition
+to `CURRENT_SNAPSHOT_CREATED`. Acquiring the long-held Phase 6A backup lock and
+the repeated compatibility checks are mandatory before `RESTORE_STAGED`; failure
+at that boundary becomes `FAILED_SAFE`. An error before `REPLACING` becomes
+`FAILED_SAFE`.
 An error during `REPLACING`, `REPLACED`, or postcheck becomes
 `ROLLBACK_REQUIRED`; a complete verified rollback becomes `ROLLED_BACK`, then
 `FAILED_SAFE`. A rollback error or an interrupted/unknown replacement state is
@@ -105,10 +110,25 @@ as replaced and only from the recorded verified safety backup.
 ## 6. Safety snapshot and staging
 
 After precheck and before any replacement, create a new verified Phase 6A-format
-backup of the complete current runtime state. It must have a distinct ID and
-directory, never overwrite an older backup, pass strict verification, and be
-recorded in the journal. It is the sole automatic rollback candidate. Failure
-to create or verify it refuses restoration.
+backup of the complete current runtime state through the existing public backup
+operation. Restore holds the application and restore locks, but **does not hold
+`BackupLock`** for this call: the public operation acquires and releases its own
+non-reentrant lock. The safety backup must have a distinct ID and directory,
+never overwrite an older backup, pass strict verification, and be recorded in
+the journal; its successful verification transitions to
+`CURRENT_SNAPSHOT_CREATED`. It is the sole automatic rollback candidate.
+Failure to create or verify it refuses restoration.
+
+Only after that boundary, acquire `BackupLock` again nonblockingly and hold it
+through final source/current compatibility verification, staging, staged
+verification, replacement, postcheck, automatic rollback if needed, and the
+final journal transition. If it cannot be acquired, record `FAILED_SAFE`, keep
+the valid safety backup, and perform no configured-database mutation. After
+acquisition, reverify current mappings, schema, markers, selected-backup
+identity, and selected-backup hashes because they may have changed while the
+safety backup was being made. This design does not assume recursive locking and
+does not introduce an unlocked backup helper; any future lock-token helper needs
+separate Phase 6B2 review.
 
 For each target, create a private deterministic staging file on the same
 filesystem as its final destination; never stage inside the selected backup.
@@ -149,18 +169,26 @@ not retries that assume ownership; they leave the journal for safe recovery.
 
 The concerns are distinct: the app process lock protects a running application,
 the Phase 6A backup lock protects backup creation, and a new restore lock
-protects restore operations. Future restore acquires them in this fixed order:
+protects restore operations. Future restore has this fixed lifecycle:
 
 1. prove the application service stopped using an explicitly reviewed local
    procedure (the engine does not stop or start it);
 2. acquire the application process lock exclusively, proving no app owns it;
-3. acquire the backup lock exclusively, preventing a new snapshot race;
-4. acquire the dedicated restore lock exclusively.
+3. acquire and hold the dedicated restore lock exclusively;
+4. invoke the ordinary public Phase 6A backup operation for the safety snapshot;
+   it alone acquires and releases `BackupLock`;
+5. acquire `BackupLock` again and hold it through final verification, staging,
+   replacement, postcheck, rollback, and final journal transition.
 
-Every acquisition is nonblocking and every failure releases earlier locks and
-fails safe. Phase 6B2 does not invoke `systemctl`, start/stop a service, or
-reuse the reset tool's service-control code. A Phase 6B3 wrapper, if approved,
-may document service verification before and after but not weaken these checks.
+Every acquisition is nonblocking. On every safe exit release in reverse order:
+backup lock, restore lock, then application process lock. This cannot deadlock:
+ordinary backup takes only `BackupLock`; restore holds application and restore
+locks while invoking ordinary backup; and no operation holding `BackupLock`
+waits for the restore lock. A competing backup after the safety snapshot simply
+makes the restore's nonblocking long-held acquisition fail safely before
+mutation. Phase 6B2 does not invoke `systemctl`, start/stop a service, or reuse
+the reset tool's service-control code. A Phase 6B3 wrapper, if approved, may
+document service verification before and after but not weaken these checks.
 
 ## 9. Confirmation boundary and future CLI
 
@@ -207,7 +235,12 @@ all held locks; service uncertainty; insufficient disk; safety-backup and
 staging failures; staged integrity failure; replacement failure at every target
 index; interruption at every state; rollback success/failure; stale sidecars;
 Windows locks; POSIX permissions; leakage; no source/older-backup mutation;
-permitted idempotent re-entry; and refusal of ambiguous journals.
+permitted idempotent re-entry; and refusal of ambiguous journals. It must also
+fault-inject a competing backup owning the long-held `BackupLock` after safety
+backup creation, prove the resulting failure precedes replacement, detect
+mapping/schema/marker drift between safety-backup completion and long-held lock
+acquisition, prove reverse lock release after safe failure, and prove no
+recursive `BackupLock` acquisition occurs.
 
 Implementation requires separate approvals:
 
