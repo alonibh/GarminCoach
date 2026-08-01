@@ -8,7 +8,7 @@ from typing import Literal
 import config
 from guarded_restore import RestoreJournalError, RestoreStage, TargetRestoreState, load_restore_journal, update_restore_journal
 from operator_storage import has_symlink_component, inspect_sqlite, migration_markers, permission_health, schema_fingerprint
-from verified_backup import ValidatedBackup
+from verified_backup import ValidatedBackupSnapshot
 
 class StagingError(RuntimeError): pass
 class StagingSourceError(StagingError): pass
@@ -53,15 +53,12 @@ def _validate_fixture_root(root: Path, backup: Path) -> Path:
     if any(resolved==p or resolved in p.parents or p in resolved.parents for p in protected): raise SyntheticDestinationError("Synthetic fixture root is unsafe")
     if os.name!="nt" and permission_health(resolved,directory=True)!="private": raise SyntheticDestinationError("Synthetic fixture root is unsafe")
     return resolved
-def _entry_tuple(entry: dict) -> tuple[str,str,str|None,str,int,str,str,tuple[str,tuple[str,...],str]]:
-    markers=entry["migration_markers"]
-    return (entry["target_key"],entry["kind"],entry["tenant_id"],entry["filename"],entry["size_bytes"],entry["sha256"],entry["schema_fingerprint"],(markers["ledger"],tuple(markers["keys"]),markers["state"]))
-def _validate_inputs(operation_id: str, validated: ValidatedBackup, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path):
+def _entry_tuple(entry) -> tuple[str,str,str|None,str,int,str,str,tuple[str,tuple[str,...],str]]:
+    return (entry.target_key,entry.kind,entry.tenant_id,entry.filename,entry.size_bytes,entry.sha256,entry.schema_fingerprint,(entry.migration_ledger,entry.migration_keys,entry.migration_state))
+def _validate_inputs(operation_id: str, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path):
     journal=load_restore_journal(operation_id,root=journal_root)
     if journal.stage is not RestoreStage.CURRENT_SNAPSHOT_CREATED or not journal.safety_backup_id: raise StagingError("Restore journal is not ready for synthetic staging")
-    manifest=validated.manifest
-    raw=(validated.directory/"manifest.json").read_bytes(); manifest_hash=hashlib.sha256(raw).hexdigest()
-    if (manifest["backup_id"]!=journal.selected_backup_id or manifest_hash!=journal.selected_backup_manifest_sha256 or manifest["runtime_mode"]!=journal.runtime_mode or tuple(manifest["runtime_target_keys"])!=journal.target_keys or (journal.expected_application_commit!="unknown" and manifest["application_commit"]!=journal.expected_application_commit)):
+    if type(validated) is not ValidatedBackupSnapshot or not validated._provenance or (validated.backup_id!=journal.selected_backup_id or validated.manifest_sha256!=journal.selected_backup_manifest_sha256 or validated.runtime_mode!=journal.runtime_mode or validated.target_keys!=journal.target_keys or (journal.expected_application_commit!="unknown" and validated.application_commit!=journal.expected_application_commit)):
         raise StagingSourceError("Validated backup does not match restore journal")
     root=_validate_fixture_root(Path(fixture_root),validated.directory)
     if len(destinations)!=len(journal.target_keys) or tuple(d.target_key for d in destinations)!=journal.target_keys or len({str(d.path.resolve(strict=False)) for d in destinations})!=len(destinations): raise SyntheticDestinationError("Synthetic destinations do not match restore journal")
@@ -75,19 +72,21 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
     key,kind,tenant,filename,size,digest,_,_=entry
     if Path(filename).name!=filename or "/" in filename or "\\" in filename: raise StagingSourceError("Validated staging filename is unsafe")
     source=backup/filename
-    if source.is_symlink() or has_symlink_component(source) or not source.is_file() or source.stat().st_size!=size or _sha(source)!=digest: raise StagingSourceError("Validated staging source changed")
+    if source.is_symlink() or has_symlink_component(source) or not source.is_file(): raise StagingSourceError("Validated staging source changed")
     identity="control" if kind=="control" else "single-user" if kind=="single_user" else f"tenant-{tenant}"
     final=stage/f"{index:03d}-{identity}.sqlite.staged"; partial=stage/f".{index:03d}-{identity}.partial"
     if final.exists() or partial.exists() or final.is_symlink() or partial.is_symlink(): raise StagingPersistenceError("Synthetic staging artifact already exists")
     try:
-        fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        flags=os.O_RDONLY|getattr(os,"O_NOFOLLOW",0); source_fd=os.open(str(source),flags); source_stat=os.fstat(source_fd)
+        if not __import__('stat').S_ISREG(source_stat.st_mode) or source_stat.st_size!=size: os.close(source_fd); raise StagingSourceError("Validated staging source changed")
+        fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,"O_NOFOLLOW",0),0o600)
         h=hashlib.sha256(); count=0
-        with source.open("rb") as inp, os.fdopen(fd,"wb") as out:
+        with os.fdopen(source_fd,"rb") as inp, os.fdopen(fd,"wb") as out:
             for chunk in iter(lambda:inp.read(1024*1024),b""):
                 h.update(chunk); count+=len(chunk); out.write(chunk)
             out.flush(); os.fsync(out.fileno())
         _private(partial)
-        if count!=size or h.hexdigest()!=digest: raise StagingSourceError("Validated staging source changed")
+        if count!=size or h.hexdigest()!=digest or os.stat(source).st_size!=size: raise StagingSourceError("Validated staging source changed")
         os.replace(partial,final); _private(final); return final
     except StagingError: raise
     except OSError as exc: raise StagingPersistenceError("Synthetic staging copy failed") from exc
@@ -102,7 +101,7 @@ def _verify(entry, staged: Path):
     inspected=inspect_sqlite(staged,deep=True)
     actual= migration_markers(staged,kind)
     if not inspected.readable or not inspected.quick_check_ok or not inspected.integrity_check_ok or not inspected.foreign_keys_ok or schema_fingerprint(staged)!=fingerprint or (actual["ledger"],tuple(actual["keys"]),actual["state"])!=markers: raise StagedVerificationError("Staged artifact verification failed")
-def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: ValidatedBackup,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->StagingResult:
+def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->StagingResult:
     try:
         journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root)
         update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.RESTORE_STAGED)

@@ -5,15 +5,15 @@ import pytest
 import config
 from guarded_restore import RestoreStage, create_restore_journal, create_restore_plan, update_restore_journal
 from guarded_restore_staging import SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
-from verified_backup import create_verified_backup, load_validated_backup
+from verified_backup import create_verified_backup, load_validated_backup_snapshot
 
 def _db(path: Path, ledger: str, key: str):
     path.parent.mkdir(parents=True,exist_ok=True); c=sqlite3.connect(path); c.execute("CREATE TABLE sample(id INTEGER PRIMARY KEY)"); c.execute(f"CREATE TABLE {ledger}({key} TEXT PRIMARY KEY)"); c.execute(f"INSERT INTO {ledger} VALUES ('base')"); c.commit(); c.close()
 def _prepared(tmp_path,monkeypatch):
     monkeypatch.setattr(config,"PROJECT_ROOT",tmp_path); monkeypatch.setattr(config,"CONTROL_DB_PATH",tmp_path/"data"/"control.db"); monkeypatch.setattr(config,"DB_PATH",tmp_path/"data"/"single.db"); monkeypatch.setattr(config,"MULTI_USER_DATA_ROOT",tmp_path/"data"/"users"); monkeypatch.setattr(config,"OPERATOR_BACKUP_ROOT",tmp_path/"backups"); monkeypatch.setattr(config,"OPERATOR_RESTORE_ROOT",tmp_path/"journals"); monkeypatch.setattr(config,"MULTI_USER_ENABLED",False)
     _db(config.CONTROL_DB_PATH,"migration_versions","version"); _db(config.DB_PATH,"app_migrations","migration_key")
-    backup=create_verified_backup(tmp_path/"backups"); validated=load_validated_backup(backup); import hashlib
-    plan=create_restore_plan(selected_backup_id=validated.manifest["backup_id"],selected_backup_manifest_sha256=hashlib.sha256((backup/"manifest.json").read_bytes()).hexdigest(),expected_application_commit=validated.manifest["application_commit"],runtime_mode="single_user",target_keys=("control","single-user"))
+    backup=create_verified_backup(tmp_path/"backups"); validated=load_validated_backup_snapshot(backup)
+    plan=create_restore_plan(selected_backup_id=validated.backup_id,selected_backup_manifest_sha256=validated.manifest_sha256,expected_application_commit=validated.application_commit,runtime_mode="single_user",target_keys=("control","single-user"))
     journal=create_restore_journal(plan,root=config.OPERATOR_RESTORE_ROOT); update_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT,stage=RestoreStage.VERIFIED); update_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT,stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,safety_backup_id="20260801T120001Z-a1b2c3d4")
     root=tmp_path/"fixture"; root.mkdir();
     if __import__('os').name!='nt': __import__('os').chmod(root,0o700)
