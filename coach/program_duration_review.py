@@ -107,7 +107,12 @@ def _source_sessions(session: Session, program: TrainingProgram, policy: Program
         .order_by(ProgramSession.sequence_order, ProgramSession.id)
         .all()
     )
-    source = [row for row in rows if not row.is_custom]
+    # The only non-source rows tolerated beside an exact curated template are
+    # athlete-created add-ons. A custom standalone day is a meaningful program
+    # edit and must fail closed rather than silently disappearing from review.
+    if any(row.is_custom and not row.is_addon for row in rows):
+        return None
+    source = [row for row in rows if not (row.is_custom and row.is_addon)]
     if len(source) != len(policy.session_names):
         return None
     if tuple(row.name for row in source) != policy.session_names:
@@ -237,14 +242,17 @@ def enqueue_due_program_duration_review_notifications(session: Session, *, local
     existing = session.query(NotificationOutbox).filter_by(idempotency_key=key).first()
     if existing is not None:
         return 0
-    enqueue_notification(
-        session,
-        event_type="program_duration_review",
-        due_at=now_utc,
-        payload={"review_id": review.id, "reminder_sequence": review.reminder_sequence,
-                 "review_fingerprint": review.review_fingerprint},
-        idempotency_key=key,
-    )
+    try:
+        with session.begin_nested():
+            enqueue_notification(
+                session, event_type="program_duration_review", due_at=now_utc,
+                payload={"review_id": review.id, "reminder_sequence": review.reminder_sequence,
+                         "review_fingerprint": review.review_fingerprint}, idempotency_key=key,
+            )
+    except IntegrityError:
+        if session.query(NotificationOutbox).filter_by(idempotency_key=key).first() is None:
+            raise
+        return 0
     return 1
 
 

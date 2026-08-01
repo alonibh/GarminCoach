@@ -55,7 +55,7 @@ def test_duration_policy_is_exact_and_rejects_bad_values():
 def test_facts_reconcile_due_boundary_and_custom_addon(session):
     program, sources = _program(session)
     session.add(ProgramSession(program_id=program.id, name="Optional Add On", sequence_order=99,
-        session_role="coach_strength", is_custom=True, is_addon=False))
+        session_role="coach_strength", is_custom=True, is_addon=True))
     facts = build_program_duration_review_facts(session, program)
     assert facts and facts.activated_local_date == date(2026, 1, 1)
     assert facts.due_on == date(2026, 2, 26)
@@ -64,6 +64,24 @@ def test_facts_reconcile_due_boundary_and_custom_addon(session):
     due = reconcile_program_duration_review(session, local_today=facts.due_on, now_utc=datetime(2026, 2, 26, 12))
     assert due.id == before.id and due.status == "pending" and due.first_due_at == datetime(2026, 2, 26, 12)
     assert len(sources) == due.source_session_count
+
+
+def test_only_custom_addons_can_coexist_with_exact_source_sessions(session):
+    program, sources = _program(session)
+    session.add(ProgramSession(program_id=program.id, name="Custom standalone", sequence_order=99,
+        session_role="coach_strength", is_custom=True, is_addon=False))
+    assert build_program_duration_review_facts(session, program) is None
+    session.rollback()
+
+    program, sources = _program(session)
+    sources[0].is_custom = True
+    assert build_program_duration_review_facts(session, program) is None
+    session.rollback()
+
+    program, _ = _program(session)
+    session.add(ProgramSession(program_id=program.id, name="Non custom add on", sequence_order=99,
+        session_role="coach_strength", is_custom=False, is_addon=True))
+    assert build_program_duration_review_facts(session, program) is None
 
 
 def test_naive_utc_anchor_and_identity_mismatch_fail_closed(session):

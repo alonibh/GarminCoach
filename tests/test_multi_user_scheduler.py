@@ -70,7 +70,7 @@ def test_inactive_user_never_runs_scheduled_work(monkeypatch, tmp_path):
     engine.dispose()
 
 
-def test_linked_user_gets_notification_jobs_and_unlinked_user_does_not(monkeypatch, tmp_path):
+def test_duration_review_maintenance_is_registered_for_linked_and_unlinked_users(monkeypatch, tmp_path):
     engine = create_control_engine(tmp_path / "control.db")
     ControlBase.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -115,6 +115,8 @@ def test_linked_user_gets_notification_jobs_and_unlinked_user_does_not(monkeypat
     assert any(job_id.endswith("morning_deadline") for job_id in linked_jobs)
     assert any(job_id.endswith("weekly_summary") for job_id in linked_jobs)
     assert any(job_id.endswith("notification_outbox") for job_id in linked_jobs)
-    assert len(unlinked_jobs) == 1
-    assert next(iter(unlinked_jobs)).endswith("sync_0")
+    assert any(job_id.endswith("program_duration_review_maintenance") for job_id in linked_jobs)
+    assert any(job_id.endswith("program_duration_review_maintenance") for job_id in unlinked_jobs)
+    assert any(job_id.endswith("sync_0") for job_id in unlinked_jobs)
+    assert not any(job_id.endswith("notification_outbox") for job_id in unlinked_jobs)
     engine.dispose()

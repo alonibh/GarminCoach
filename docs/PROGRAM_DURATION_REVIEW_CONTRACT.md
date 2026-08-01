@@ -4,7 +4,7 @@ Phase 5C creates a neutral **source-duration review point** for exactly these cu
 
 ## Eligibility, anchor, and durable state
 
-An eligible program is the one unambiguous current active row (`active=true`, `status=active`) resolving to one curated policy with its exact ordered, non-custom source-session identity. Athlete-created add-ons are ignored. A source identity mismatch fails closed and supersedes any live review without repairing the program.
+An eligible program is the one unambiguous current active row (`active=true`, `status=active`) resolving to one curated policy with its exact ordered source-session identity. Only `is_custom=true` and `is_addon=true` sessions may coexist and are excluded from source totals. A custom standalone session, custom replacement, non-custom add-on, or any source identity mismatch fails closed and supersedes any live review without repairing the program.
 
 The anchor is `TrainingProgram.activated_at`; only when it is absent may the same program's matching `ProgramCursor.created_at` be used. Naïve database datetimes are UTC; aware values retain their instant. The instant is converted with the athlete-local timezone helper, then `due_on = activated_local_date + timedelta(weeks=source_duration_weeks)`. There is no grace period.
 
@@ -18,7 +18,7 @@ The authenticated program page may display factual local context from exact `Act
 
 The only web decisions are continue unchanged, record that a deload/recovery week is planned, or snooze for seven local days; edit and choose-another-routine are navigation only. Every POST reloads tenant-local review and active-program facts and rejects stale state. `deload_planned` records athlete intent only: GarminCoach did not change workouts or schedule. GET routes do not create, resolve, snooze, or notify.
 
-The existing athlete-scoped outbox is the only notification path. A pending review yields one deterministic event per `review_id + reminder_sequence`; a snooze increments the sequence and clears only that sequence's delivery state. Delivery revalidates the review, sequence, active program, and fingerprint and settles stale rows without sending. Telegram has no action buttons, source URL, internal IDs, activity detail, biometric data, or calendar data.
+Daily athlete-local maintenance reconciles review state even without Telegram linkage; the minute outbox poller is delivery-only. The existing athlete-scoped outbox is the only notification path. A pending review yields one deterministic event per `review_id + reminder_sequence`; a snooze increments the sequence and clears only that sequence's delivery state. Concurrent insertion reuses its unique idempotency key. Delivery revalidates the review, sequence, active program, and fingerprint and settles stale rows without sending. Telegram has no action buttons, source URL, internal IDs, activity detail, biometric data, or calendar data.
 
 ## Authority and privacy boundaries
 

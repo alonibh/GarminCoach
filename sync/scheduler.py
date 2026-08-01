@@ -14,6 +14,25 @@ from tenant_context import TenantIdentity, tenant_scope
 _scheduler: BackgroundScheduler | None = None
 
 
+def _program_duration_review_maintenance(*, enqueue_notification: bool) -> None:
+    """Daily local review reconciliation; never authenticates or sends directly."""
+    from datetime import datetime
+    from time_utils import get_local_date
+    from coach.program_duration_review import (
+        enqueue_due_program_duration_review_notifications,
+        reconcile_program_duration_review,
+    )
+    with get_session() as session:
+        if enqueue_notification:
+            enqueue_due_program_duration_review_notifications(
+                session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+            )
+        else:
+            reconcile_program_duration_review(
+                session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+            )
+
+
 def _run_for_user(user_id: str) -> None:
     with get_control_session() as session:
         user = session.get(User, user_id)
@@ -33,11 +52,15 @@ def _run_for_user(user_id: str) -> None:
 def _run_user_notification_job(user_id: str, job: str) -> None:
     with get_control_session() as session:
         user = session.get(User, user_id)
-        if user is None or user.status != "active" or not user.telegram_linked:
+        if user is None or user.status != "active":
             return
         identity = TenantIdentity(user.id, role=user.role, timezone=user.timezone)
     with tenant_scope(identity):
-        if job == "morning_watch":
+        if job == "program_duration_review_maintenance":
+            _program_duration_review_maintenance(enqueue_notification=bool(user.telegram_linked))
+        elif not user.telegram_linked:
+            return
+        elif job == "morning_watch":
             _morning_watch()
         elif job == "morning_deadline":
             from notify.morning import morning_deadline
@@ -75,6 +98,13 @@ def refresh_user_jobs(user_id: str) -> None:
             id=f"{prefix}sync_{index}",
             replace_existing=True,
         )
+    _scheduler.add_job(
+        _run_user_notification_job,
+        CronTrigger(hour=7, minute=5, timezone=timezone),
+        kwargs={"user_id": user_id, "job": "program_duration_review_maintenance"},
+        id=f"{prefix}program_duration_review_maintenance",
+        replace_existing=True,
+    )
     with get_control_session() as session:
         refreshed_user = session.get(User, user_id)
         linked = bool(refreshed_user and refreshed_user.telegram_linked)
@@ -212,6 +242,13 @@ def start_scheduler() -> BackgroundScheduler:
         process_due_notifications,
         CronTrigger(minute="*", second=15),
         id="notification_outbox",
+        replace_existing=True,
+    )
+    sched.add_job(
+        _program_duration_review_maintenance,
+        CronTrigger(hour=7, minute=5),
+        kwargs={"enqueue_notification": bool(config.TELEGRAM_CHAT_ID)},
+        id="program_duration_review_maintenance",
         replace_existing=True,
     )
 

@@ -405,15 +405,6 @@ def process_due_notifications(now: datetime | None = None, *, limit: int = 25) -
     now = (now or get_local_now()).replace(tzinfo=None)
     result = {"sent": 0, "cancelled": 0, "failed": 0, "deferred": 0, "retry": 0}
     with get_session() as session:
-        # Existing tenant-scoped maintenance/poller path; this is only a local
-        # durable review reconciliation and outbox bridge, never direct send.
-        try:
-            from coach.program_duration_review import enqueue_due_program_duration_review_notifications
-            enqueue_due_program_duration_review_notifications(
-                session, local_today=now.date(), now_utc=datetime.utcnow(),
-            )
-        except Exception:
-            logger.exception("program duration review maintenance failed")
         # Retained local intent is retried by this existing tenant-scoped poller;
         # a bridge failure must not stop unrelated notifications.
         try:
