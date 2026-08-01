@@ -87,6 +87,13 @@ target keys, confirmation hash, current stage, per-target staged/replaced/
 rolled-back facts, timestamps, and final result. It contains no rows, emails,
 tokens, credentials, Garmin/Telegram payloads, or calendar data.
 
+The requested operation ID is validated before journal-path construction and
+must exactly equal the payload operation ID. Journal `updated_at` is monotonic
+(`>=` the prior value, allowing equality for deterministic rapid updates) and
+never earlier than `created_at`. A malformed identity or timestamp is rejected,
+never normalized. Dedicated restore-lock acquisition releases any opened handle
+on every failure and reports only a bounded lock error.
+
 Allowed stages are:
 
 `PRECHECK -> VERIFIED -> CURRENT_SNAPSHOT_CREATED -> RESTORE_STAGED ->
@@ -106,6 +113,11 @@ An error during `REPLACING`, `REPLACED`, or postcheck becomes
 may only inspect a journal whose state is unambiguous; it never guesses which
 files changed. Automatic rollback is permitted only for target files recorded
 as replaced and only from the recorded verified safety backup.
+
+`FAILED_MANUAL_RECOVERY_REQUIRED` preserves the exact known per-target facts at
+the failed rollback point: a mixture of `REPLACED`, `ROLLED_BACK`, and verified
+but never-replaced targets is valid. It is reachable only from
+`ROLLBACK_REQUIRED`, is terminal, and must not be rewritten as `FAILED_SAFE`.
 
 ## 6. Safety snapshot and staging
 

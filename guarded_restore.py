@@ -280,8 +280,14 @@ def _validate_journal(journal: RestoreJournal) -> None:
         raise RestoreJournalError("Invalid restore journal")
     if journal.stage in {RestoreStage.REPLACED, RestoreStage.POSTCHECK_PASSED, RestoreStage.COMPLETED} and any(s is not TargetRestoreState.REPLACED for s in states):
         raise RestoreJournalError("Invalid restore journal")
-    if journal.stage in {RestoreStage.ROLLED_BACK, RestoreStage.FAILED_SAFE, RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED} and TargetRestoreState.REPLACED in states:
+    if journal.stage in {RestoreStage.ROLLED_BACK, RestoreStage.FAILED_SAFE} and TargetRestoreState.REPLACED in states:
         raise RestoreJournalError("Invalid restore journal")
+    if journal.stage is RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED:
+        # Current facts intentionally retain the exact partial rollback point.
+        # The terminal stage itself proves the only legal entry was from
+        # ROLLBACK_REQUIRED; no invented historical normalization is allowed.
+        if any(state not in {TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK} for state in states) or not any(state in {TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK} for state in states):
+            raise RestoreJournalError("Invalid restore journal")
 
 
 def _operation_id() -> str:
@@ -340,8 +346,10 @@ def _write_journal(root: Path, journal: RestoreJournal) -> None:
     try:
         if temporary.exists() or temporary.is_symlink(): raise RestoreJournalPersistenceError("Restore journal temporary path is unsafe")
         data = canonical_json(_journal_payload(journal))
-        with temporary.open("xb") as handle:
-            created = True; handle.write(data); handle.flush(); os.fsync(handle.fileno())
+        descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data); handle.flush(); os.fsync(handle.fileno())
         _private(temporary)
         if destination.exists() and destination.is_symlink(): raise RestoreJournalPersistenceError("Restore journal path is unsafe")
         os.replace(temporary, destination); created = False; _private(destination); _fsync(operation, True)
@@ -355,7 +363,9 @@ def _write_journal(root: Path, journal: RestoreJournal) -> None:
 
 def create_restore_journal(plan: RestorePlan, *, root: Path | str | None = None, operation_id: str | None = None, now: str | None = None) -> RestoreJournal:
     if not isinstance(plan, RestorePlan): raise RestorePlanError("Invalid restore plan")
-    _ = create_restore_plan(selected_backup_id=plan.selected_backup_id, selected_backup_manifest_sha256=plan.selected_backup_manifest_sha256, expected_application_commit=plan.expected_application_commit, runtime_mode=plan.runtime_mode, target_keys=plan.target_keys, created_at=plan.created_at)
+    canonical_plan = create_restore_plan(selected_backup_id=plan.selected_backup_id, selected_backup_manifest_sha256=plan.selected_backup_manifest_sha256, expected_application_commit=plan.expected_application_commit, runtime_mode=plan.runtime_mode, target_keys=plan.target_keys, created_at=plan.created_at)
+    if plan != canonical_plan:
+        raise RestorePlanError("Invalid restore plan")
     selected = validate_restore_root(root); identifier = operation_id or _operation_id(); _safe(identifier, pattern=_OPERATION_ID, error=RestoreJournalError)
     timestamp = now or _now(); _timestamp(timestamp, RestoreJournalError)
     operation = _operation_directory(selected, identifier)
@@ -402,6 +412,7 @@ def _decode_journal(raw: bytes) -> object:
 
 
 def load_restore_journal(operation_id: str, *, root: Path | str | None = None) -> RestoreJournal:
+    _safe(operation_id, pattern=_OPERATION_ID, error=RestoreJournalError)
     selected = validate_restore_root(root); destination = _journal_path(selected, operation_id)
     if has_symlink_component(selected) or has_symlink_component(destination) or destination.is_symlink(): raise RestoreJournalError("Restore journal path is unsafe")
     try:
@@ -409,7 +420,10 @@ def load_restore_journal(operation_id: str, *, root: Path | str | None = None) -
         raw = destination.read_bytes(); payload = _decode_journal(raw)
     except RestoreJournalError: raise
     except OSError as exc: raise RestoreJournalError("Restore journal is invalid") from exc
-    return _from_payload(payload)
+    journal = _from_payload(payload)
+    if journal.operation_id != operation_id:
+        raise RestoreJournalError("Restore journal identity is invalid")
+    return journal
 
 
 def update_restore_journal(operation_id: str, *, root: Path | str | None = None, stage: RestoreStage | None = None, target_key: str | None = None, target_state: TargetRestoreState | None = None, safety_backup_id: str | None = None, now: str | None = None) -> RestoreJournal:
@@ -430,14 +444,19 @@ def update_restore_journal(operation_id: str, *, root: Path | str | None = None,
         key = _target_key(target_key, RestoreTransitionError); index = next((i for i, fact in enumerate(facts) if fact.target_key == key), None)
         if index is None or not isinstance(target_state, TargetRestoreState) or target_state not in _TARGET_TRANSITIONS[facts[index].state]: raise RestoreTransitionError("Illegal restore journal transition")
         facts[index] = TargetJournalFact(key, target_state)
-    result = _TERMINAL_RESULTS.get(new_stage); timestamp = now or _now(); _timestamp(timestamp, RestoreJournalError)
+    result = _TERMINAL_RESULTS.get(new_stage); timestamp = now or _now()
+    if _timestamp(timestamp, RestoreJournalError) < _timestamp(journal.updated_at, RestoreJournalError):
+        raise RestoreTransitionError("Illegal restore journal transition")
     updated = RestoreJournal(journal.format_version, journal.operation_id, journal.selected_backup_id, journal.selected_backup_manifest_sha256, safety, journal.expected_application_commit, journal.runtime_mode, journal.target_keys, journal.target_set_hash, journal.confirmation_value, new_stage, tuple(facts), journal.created_at, timestamp, result)
     _validate_journal(updated); _write_journal(validate_restore_root(root), updated); return updated
 
 
 class RestoreLock:
     """Explicit nonblocking dedicated restore lock; unrelated to app/backup locks."""
-    def __init__(self, root: Path | str | None = None): self.root = validate_restore_root(root); self.path = self.root / ".garmincoach-restore.lock"; self.handle = None
+    def __init__(self, root: Path | str | None = None):
+        try: self.root = validate_restore_root(root)
+        except RestoreJournalError as exc: raise RestoreLockError("Restore lock path is unsafe") from exc
+        self.path = self.root / ".garmincoach-restore.lock"; self.handle = None
     def __enter__(self):
         try:
             self.root.mkdir(parents=True, exist_ok=True); _private(self.root, True)
@@ -451,8 +470,10 @@ class RestoreLock:
             else:
                 import fcntl
                 fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except RestoreLockError: raise
-        except OSError as exc:
+        except RestoreLockError:
+            if self.handle: self.handle.close(); self.handle = None
+            raise
+        except (OSError, RestoreJournalPersistenceError) as exc:
             if self.handle: self.handle.close(); self.handle = None
             raise RestoreLockError("Another guarded restore is active") from exc
         return self

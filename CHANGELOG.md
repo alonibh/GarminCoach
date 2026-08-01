@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Guarded restore journal invariants
+
+- Bound journal identity to its operation path, made update timestamps monotonic,
+  and preserved partial rollback facts for manual recovery.
+
 ## 2026-08-01 - Guarded restore planning foundation
 
 - Added Phase 6B2A immutable planning, confirmation hashes, strict journal
