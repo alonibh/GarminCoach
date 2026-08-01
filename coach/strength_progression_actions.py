@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from coach.strength_progression import (
     calculate_proposal, canonical_json, derive_streak, normalize_weight_grams,
+    resolve_progression_rule_key, ResolvedProgressionRule,
 )
 from coach.strength_progression_integration import _prescription
 from coach.strength_progression_store import (
@@ -293,6 +294,8 @@ def _revalidate(session: Session, proposal: StrengthProgressionProposal, *, now:
             or proposal.direction not in {"increase", "decrease"}):
         return None
     if proposal.progression_rule_key != exercise.progression_rule_key:
+        return None
+    if resolve_progression_rule_key(exercise.progression_rule_key) == ResolvedProgressionRule.INVALID:
         return None
     current = load_current_evidence(session, session_exercise_id=exercise.id, policy_version=policy.policy_version,
                                     prescription_fingerprint=current_fingerprint)

@@ -99,7 +99,8 @@ def evidence_record(row: StrengthProgressionEvidence) -> EvidenceRecord:
     from coach.strength_progression import AppearanceClassification
     return EvidenceRecord(row.evidence_id, row.session_exercise_id_snapshot, row.policy_version,
         row.prescription_fingerprint, row.appearance_at, AppearanceClassification(row.classification), row.candidate_weight_grams,
-        row.progression_rule_key, row.source_increment_grams)
+        row.progression_rule_key, row.source_increment_grams, row.current_weight_grams,
+        row.observed_total_reps, row.target_total_reps)
 
 
 def upsert_streak(session: Session, *, session_exercise_id: int, policy_version: str,

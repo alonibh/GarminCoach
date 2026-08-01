@@ -1748,7 +1748,7 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                         "order_index, sets, reps, duration_seconds, rest_seconds, progression_rule_key "
                         "FROM session_exercises WHERE program_session_id = :id ORDER BY order_index, id"
                     ), {"id": source_session["id"]}).mappings().all()
-                    if not rows:
+                    if not rows or sum(1 for item in rows if item["order_index"] == 0) != 1:
                         continue
                     row = rows[0]
                     if (row["progression_rule_key"] is None and row["exercise_name"] == expected["exercise_name"]

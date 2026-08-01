@@ -4,6 +4,8 @@
 
 - Added deterministic, web-confirmed source rep-goal proposals for the six
   Powerbuilding PPL main lifts.
+- Hardened source-rule validation, incomplete-set audit totals, and read-only
+  editor/review presentation.
 
 ## 2026-08-01 - Source execution fidelity
 

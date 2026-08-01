@@ -190,8 +190,8 @@ def test_powerbuilding_source_proposal_uses_lower_of_two_tiers():
         progression_rule_key="powerbuilding_rep_goal_15_v1")
     fp = prescription_fingerprint(p)
     rows = [
-        EvidenceRecord("a", 3, policy.policy_version, fp, datetime(2026, 1, 1), AppearanceClassification.INCREASE_QUALIFIED, 73750, p.progression_rule_key, 1250),
-        EvidenceRecord("b", 3, policy.policy_version, fp, datetime(2026, 1, 2), AppearanceClassification.INCREASE_QUALIFIED, 74750, p.progression_rule_key, 2250),
+        EvidenceRecord("a", 3, policy.policy_version, fp, datetime(2026, 1, 1), AppearanceClassification.INCREASE_QUALIFIED, 73750, p.progression_rule_key, 1250, 72500, 15, 15),
+        EvidenceRecord("b", 3, policy.policy_version, fp, datetime(2026, 1, 2), AppearanceClassification.INCREASE_QUALIFIED, 74750, p.progression_rule_key, 2250, 72500, 19, 15),
     ]
     streak = derive_streak(policy, rows, session_exercise_id=3, prescription=fp, as_of=datetime(2026, 1, 2))
     proposal = calculate_proposal(policy, p, streak, rows)

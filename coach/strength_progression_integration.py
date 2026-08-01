@@ -20,6 +20,7 @@ from coach.strength_progression import (
     CompletedExerciseGroup, ExercisePrescription, ObservedSet, ReasonCode,
     canonical_json, calculate_proposal, classify_appearance, derive_streak,
     fingerprint, match_exercise_groups, prescription_fingerprint,
+    resolve_progression_rule_key, ResolvedProgressionRule,
 )
 from coach.strength_progression_store import (
     append_evidence, create_or_replace_pending_proposal, evidence_record,

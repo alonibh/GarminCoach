@@ -2796,7 +2796,7 @@ async def save_session_exercises(session_id: int, request: Request):
             old_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)
             # Source ownership survives cosmetic edits but fails closed when
             # its exact source structure is changed.
-            if ex.progression_rule_key and (values["exercise_key"] != ex.exercise_key
+            if ex.progression_rule_key == "powerbuilding_rep_goal_15_v1" and (values["exercise_key"] != ex.exercise_key
                     or values["garmin_category"] != ex.garmin_category or values["garmin_name"] != ex.garmin_name
                     or values["is_generic"] or values["sets"] != 5 or values["reps"] != 3
                     or values["duration_seconds"] is not None or i != 0 or ps.is_custom):

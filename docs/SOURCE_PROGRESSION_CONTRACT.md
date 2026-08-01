@@ -46,3 +46,10 @@ This deterministic local rule has no Garmin, biometric, AI, calendar, or
 scheduling authority. It never changes already compiled/scheduled workouts;
 approved local weights are consumed only by future compilation. All ordinary
 rows retain the generic contract and all other source systems remain unsupported.
+
+Unknown non-null persisted rule values fail closed: they are unscorable, do not
+fall back to generic progression, and can never produce a proposal or template
+mutation. A complete appearance with fewer than five valid attempts is neutral
+and stores its actual total; invalid reps or any non-matching weight is instead
+unscorable. Source proposal review defensively verifies every decisive audit
+record's rule, 15-rep target, tier, increment, and candidate arithmetic.
