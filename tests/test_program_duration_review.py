@@ -1,5 +1,7 @@
 import json
 from datetime import date, datetime, timedelta
+from datetime import timezone
+import pytz
 
 from sqlalchemy import create_engine, inspect, text
 
@@ -179,3 +181,29 @@ def test_duration_review_delivery_is_plain_once_and_stale_rows_cancel(session, m
         payload_json=outbox.payload_json, idempotency_key="stale-duration", created_at=datetime(2026, 3, 1))
     session.add(stale); session.flush()
     assert deliver_notification(session, stale, datetime(2026, 3, 1, 8)) == "cancelled"
+
+
+def test_aware_anchors_dst_and_cursor_fallback_fail_closed(session, monkeypatch):
+    monkeypatch.setattr("coach.program_duration_review.get_local_tz", lambda: pytz.timezone("Asia/Jerusalem"))
+    program, _ = _program(session, activated_at=datetime(2026, 1, 1, 22, 30, tzinfo=timezone.utc))
+    assert build_program_duration_review_facts(session, program).activated_local_date == date(2026, 1, 2)
+    program.activated_at = datetime(2026, 3, 27, 0, 30, tzinfo=timezone(timedelta(hours=-5)))
+    assert build_program_duration_review_facts(session, program).activated_local_date == date(2026, 3, 27)
+    program.activated_at = None
+    assert build_program_duration_review_facts(session, program) is not None
+    session.get(ProgramCursor, program.id).policy_version = "wrong"
+    assert build_program_duration_review_facts(session, program) is None
+    session.delete(session.get(ProgramCursor, program.id))
+    session.flush()
+    assert build_program_duration_review_facts(session, program) is None
+
+
+def test_replacement_supersedes_and_reactivation_has_new_fingerprint(session):
+    program, _ = _program(session)
+    first = reconcile_program_duration_review(session, local_today=date(2026, 1, 2), now_utc=datetime(2026, 1, 2))
+    program.active = False; program.status = "archived"
+    assert reconcile_program_duration_review(session, local_today=date(2026, 1, 3), now_utc=datetime(2026, 1, 3)) is None
+    assert first.status == "superseded"
+    program.active = True; program.status = "active"; program.activated_at = datetime(2026, 2, 1)
+    second = reconcile_program_duration_review(session, local_today=date(2026, 2, 2), now_utc=datetime(2026, 2, 2))
+    assert second.review_fingerprint != first.review_fingerprint and second.status == "scheduled"
