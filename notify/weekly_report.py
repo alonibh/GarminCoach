@@ -7,15 +7,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from math import isfinite
 import re
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from coach.exercises import exercise_key, exercise_metadata
 from coach.onboarding import active_program
 from coach.planned_session_status import INACTIVE_ORIGINAL_SESSION_STATUSES
-from coach.program_state import program_state_facts
 from db import (
     Activity, ActivityProgramMatch, DailyHealth, ExerciseSet, PlannedSession,
     ProgramCursor, ProgramSession,
@@ -27,6 +28,34 @@ from metrics.slow_metric_history import build_slow_metric_history_report
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SPACE = re.compile(r"\s+")
 _FOOTER = "Informational only; this summary does not change your workout."
+
+
+class WeeklySummaryValidationError(ValueError):
+    """A payload or local-date identity that is unsafe to summarize."""
+
+
+class WeeklySummaryStaleError(WeeklySummaryValidationError):
+    """A valid Saturday whose outbox delivery window has expired."""
+
+
+def validate_week_end(value: object, *, local_day: date) -> date:
+    """Validate one canonical, athlete-local Saturday identity without clocks."""
+    if type(local_day) is not date or type(value) is not date:
+        raise WeeklySummaryValidationError("invalid weekly date")
+    if value.weekday() != 5 or value > local_day:
+        raise WeeklySummaryValidationError("invalid weekly date")
+    if local_day > value + timedelta(days=6):
+        raise WeeklySummaryStaleError("expired weekly date")
+    return value
+
+
+def weekly_overnight_ready(session: Session, *, week_end: date, local_delivery_day: date) -> bool:
+    """Use freshness only for Saturday itself; historical weeks are complete."""
+    validate_week_end(week_end, local_day=local_delivery_day)
+    if week_end < local_delivery_day:
+        return True
+    from metrics.freshness import proactive_metrics_ready
+    return proactive_metrics_ready(session, day=week_end)
 
 
 @dataclass(frozen=True)
@@ -144,6 +173,34 @@ def _duration_minutes(activities: list[Activity]) -> int | None:
     return int(round(seconds / 60)) if any(value is not None and value >= 0 for value in valid) else None
 
 
+def _display_weight_kg(value: object) -> float | None:
+    """Round a finite positive stored kilogram value to the 250 g display grid."""
+    number = _finite(value)
+    if number is None or number <= 0:
+        return None
+    try:
+        units = (Decimal(str(number)) * Decimal("1000") / Decimal("250")).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP,
+        )
+        grams = units * Decimal("250")
+    except (InvalidOperation, ValueError):
+        return None
+    return float(grams / Decimal("1000"))
+
+
+def _next_session_name_read_only(session: Session, *, program) -> str | None:
+    """Read an existing cursor target without repairing program state."""
+    if program is None:
+        return None
+    cursor = session.get(ProgramCursor, program.id)
+    if cursor is None or cursor.next_program_session_id is None:
+        return None
+    item = session.get(ProgramSession, cursor.next_program_session_id)
+    if item is None or item.program_id != program.id:
+        return None
+    return _clean(item.name)
+
+
 def _activity_domains(activities: list[Activity]) -> tuple[ActivityDomainCount, ...]:
     counts: dict[tuple[str, str], int] = {}
     for activity in activities:
@@ -186,10 +243,15 @@ def _strength_highlights(session: Session, start: date, end: date) -> tuple[Week
                 current[key] = (weight, _clean((meta or {}).get("label", label)) or "Exercise")
         elif previous_start <= started.date() < start:
             prior[key] = max(prior.get(key, 0.0), weight)
-    highlights = [
-        WeeklyStrengthHighlight(key[0], label, key[1], weight, prior[key], weight - prior[key])
-        for key, (weight, label) in current.items() if key in prior and weight > prior[key]
-    ]
+    highlights = []
+    for key, (weight, label) in current.items():
+        prior_weight = prior.get(key)
+        current_display, prior_display = _display_weight_kg(weight), _display_weight_kg(prior_weight)
+        if current_display is None or prior_display is None or current_display <= prior_display:
+            continue
+        highlights.append(WeeklyStrengthHighlight(
+            key[0], label, key[1], current_display, prior_display, current_display - prior_display,
+        ))
     return tuple(sorted(highlights, key=lambda item: (-item.delta_kg, item.label.casefold(), item.reps))[:2])
 
 
@@ -272,21 +334,26 @@ def build_weekly_summary_report(
     session: Session, *, week_end: date, generated_at: datetime, overnight_today_ready: bool,
 ) -> WeeklySummaryReport:
     """Build one local report for exactly seven local dates; never writes."""
-    if type(week_end) is not date or not isinstance(generated_at, datetime) or generated_at.tzinfo is not None:
+    if not isinstance(generated_at, datetime) or generated_at.tzinfo is not None:
         raise ValueError("weekly summary requires a date and naive local datetime")
-    if week_end > generated_at.date():
-        raise ValueError("weekly summary week_end cannot be future")
+    week_end = validate_week_end(week_end, local_day=generated_at.date())
     start = week_end - timedelta(days=6)
     start_dt, end_dt = datetime.combine(start, time.min), datetime.combine(week_end, time.max)
     activities = session.query(Activity).filter(Activity.start_time >= start_dt, Activity.start_time <= end_dt).all()
     activity_ids = [row.id for row in activities]
     program = active_program(session)
-    matches = []
+    active_matches = []
+    all_matches = []
     if activity_ids and program:
-        matches = session.query(ActivityProgramMatch.activity_id).filter(
+        active_matches = session.query(ActivityProgramMatch.activity_id).filter(
             ActivityProgramMatch.activity_id.in_(activity_ids), ActivityProgramMatch.program_id == program.id,
         ).all()
-    matched_ids = {row[0] for row in matches}
+    if activity_ids:
+        all_matches = session.query(ActivityProgramMatch.activity_id).filter(
+            ActivityProgramMatch.activity_id.in_(activity_ids),
+        ).all()
+    matched_ids = {row[0] for row in active_matches}
+    any_matched_ids = {row[0] for row in all_matches}
     target: int | None = None
     if program:
         days = _positive_integer(program.days_per_week)
@@ -296,11 +363,16 @@ def build_weekly_summary_report(
                 ProgramSession.program_id == program.id, ProgramSession.session_role == "coach_strength",
                 ProgramSession.is_addon.is_(False),
             ).count() or None
-    incomplete = session.query(PlannedSession).filter(
+    incomplete = session.query(PlannedSession.id).outerjoin(
+        ProgramSession, PlannedSession.program_session_id == ProgramSession.id,
+    ).filter(
         PlannedSession.target_date >= start, PlannedSession.target_date <= week_end,
         PlannedSession.status.notin_(tuple(INACTIVE_ORIGINAL_SESSION_STATUSES)),
+        func.lower(PlannedSession.activity_type) != "rest",
+        func.lower(PlannedSession.intensity) != "recovery",
+        or_(ProgramSession.id.is_(None), func.lower(ProgramSession.session_role) != "optional_recovery"),
     ).count()
-    unmatched = sum(1 for row in activities if _domain(row.activity_type)[0] == "strength" and row.id not in matched_ids)
+    unmatched = sum(1 for row in activities if _domain(row.activity_type)[0] == "strength" and row.id not in any_matched_ids)
     health = session.query(DailyHealth).filter(DailyHealth.day >= start, DailyHealth.day <= week_end).all()
     steps = [_nonnegative_integer(row.steps) for row in health]
     moderate = [_nonnegative_integer(row.daily_moderate_intensity_minutes) for row in health]
@@ -313,12 +385,7 @@ def build_weekly_summary_report(
         sum(value for value in vigorous if value is not None) if any(value is not None for value in vigorous) else None,
         intensity_days,
     )
-    next_name = None
-    # program_state_facts initializes a cursor when absent, so only reuse it if
-    # the cursor already exists.  A summary must remain read-only.
-    if program and session.get(ProgramCursor, program.id) is not None:
-        state = program_state_facts(session, program, on_date=week_end)
-        next_name = _clean(state.get("next_session_name")) if state else None
+    next_name = _next_session_name_read_only(session, program=program)
     return WeeklySummaryReport(
         start, week_end,
         WeeklyTrainingAggregate(len(matched_ids), target, incomplete, unmatched, len(activities),

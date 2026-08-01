@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 _DELIVERY_LEASE = timedelta(minutes=2)
 
 
+def _payload_interaction_ids(row: NotificationOutbox) -> list:
+    """Malformed payloads cannot interfere with cancellation bookkeeping."""
+    try:
+        payload = json.loads(row.payload_json)
+    except (TypeError, ValueError):
+        return []
+    ids = payload.get("interaction_ids", []) if isinstance(payload, dict) else []
+    return ids if isinstance(ids, list) else []
+
+
 def enqueue_notification(
     session: Session,
     *,
@@ -210,28 +220,33 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
 
     if row.event_type == "weekly_summary":
         try:
+            if not isinstance(payload, dict):
+                return None
             raw_week_end = payload.get("week_end")
             if not isinstance(raw_week_end, str) or len(raw_week_end) != 10:
                 return None
             week_end = date.fromisoformat(raw_week_end)
-            if week_end.isoformat() != raw_week_end or week_end > now.date():
+            if week_end.isoformat() != raw_week_end:
                 return None
-            if now.date() > week_end + timedelta(days=6):
-                return None
-            from notify.weekly_report import build_weekly_summary_report, render_weekly_summary
-            # Only a same-day delivery can include an overnight observation for
-            # Saturday, and only when the existing freshness evidence permits it.
-            overnight_ready = False
-            if week_end == now.date():
-                from metrics.freshness import proactive_metrics_ready
-                overnight_ready = proactive_metrics_ready(session, day=week_end)
+            from notify.weekly_report import (
+                WeeklySummaryValidationError, build_weekly_summary_report,
+                render_weekly_summary, validate_week_end, weekly_overnight_ready,
+            )
+            week_end = validate_week_end(week_end, local_day=now.date())
+            overnight_ready = weekly_overnight_ready(
+                session, week_end=week_end, local_delivery_day=now.date(),
+            )
             report = build_weekly_summary_report(
                 session, week_end=week_end, generated_at=now, overnight_today_ready=overnight_ready,
             )
             return render_weekly_summary(report), None, None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, WeeklySummaryValidationError):
             # Delivery validation deliberately exposes neither malformed payload
             # data nor renderer exceptions to Telegram or logs.
+            return None
+        except Exception:
+            # A weekly read-model failure cancels this isolated durable intent;
+            # it cannot strand the leased row or block unrelated outbox work.
             return None
 
     if row.event_type == "late_material_update":
@@ -299,7 +314,7 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
     if not materialized:
         row.status = "cancelled"
         row.last_error = "revalidation_failed"
-        for interaction_id in json.loads(row.payload_json).get("interaction_ids", []):
+        for interaction_id in _payload_interaction_ids(row):
             from coach.interactions import mark_delivery_failed
             mark_delivery_failed(session, [interaction_id], "revalidation_failed")
         if row.event_type == "strength_progression_ready":
@@ -331,7 +346,7 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
     if row.attempts >= 5:
         row.status = "failed"
         row.last_error = row.last_error or "telegram_delivery_failed"
-        for interaction_id in json.loads(row.payload_json).get("interaction_ids", []):
+        for interaction_id in _payload_interaction_ids(row):
             from coach.interactions import mark_delivery_failed
             mark_delivery_failed(session, [interaction_id], "telegram_delivery_failed")
         if row.event_type == "strength_progression_ready":

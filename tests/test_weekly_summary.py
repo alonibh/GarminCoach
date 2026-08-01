@@ -1,8 +1,13 @@
 from datetime import date, datetime, timedelta
 
-from db import Activity, ActivityProgramMatch, DailyHealth, ExerciseSet, NotificationOutbox, ProgramSession, TrainingProgram
+import json
+
+from db import Activity, ActivityProgramMatch, DailyHealth, ExerciseSet, NotificationOutbox, PlannedSession, ProgramCursor, ProgramSession, TrainingProgram
 from notify.outbox import deliver_notification, enqueue_notification
-from notify.weekly_report import build_weekly_summary_report, render_weekly_summary
+from notify.weekly_report import (
+    WeeklySummaryStaleError, WeeklySummaryValidationError, build_weekly_summary_report,
+    render_weekly_summary, validate_week_end, weekly_overnight_ready,
+)
 
 
 END = date(2026, 7, 11)
@@ -126,3 +131,91 @@ def test_weekly_modules_do_not_directly_deliver_or_call_external_services():
     assert "process_due_notifications" not in weekly
     assert "send_message" not in weekly and "send_message" not in report
     assert "GarminClient" not in report and "Gemini" not in report
+
+
+def test_week_end_validation_requires_a_current_saturday_and_canonical_date():
+    assert validate_week_end(END, local_day=END) == END
+    for offset in range(1, 7):
+        try:
+            validate_week_end(END - timedelta(days=offset), local_day=END)
+        except WeeklySummaryValidationError:
+            pass
+        else:
+            raise AssertionError("non-Saturday accepted")
+    for value in (datetime(2026, 7, 11), None, "2026-07-11", [], 1, {}):
+        try:
+            validate_week_end(value, local_day=END)
+        except WeeklySummaryValidationError:
+            pass
+        else:
+            raise AssertionError("non-date accepted")
+    try:
+        validate_week_end(END, local_day=END + timedelta(days=7))
+    except WeeklySummaryStaleError:
+        pass
+    else:
+        raise AssertionError("stale Saturday accepted")
+
+
+def test_cursor_next_lookup_is_read_only_and_stale_cursor_is_omitted(session):
+    program, sessions = _program(session)
+    cursor = ProgramCursor(program_id=program.id, next_program_session_id=sessions[0].id,
+                           last_completed_program_session_id=None, last_completed_activity_id=None,
+                           last_completed_at=None, policy_version="unchanged",
+                           created_at=NOW, updated_at=NOW)
+    session.add(cursor)
+    session.commit()
+    before = (cursor.program_id, cursor.next_program_session_id, cursor.policy_version, cursor.created_at, cursor.updated_at)
+    assert _report(session).next_session_name == "Day 1"
+    assert render_weekly_summary(_report(session))
+    session.refresh(cursor)
+    assert before == (cursor.program_id, cursor.next_program_session_id, cursor.policy_version, cursor.created_at, cursor.updated_at)
+    other = TrainingProgram(name="Other", active=False, status="inactive")
+    session.add(other)
+    session.flush()
+    other_session = ProgramSession(program_id=other.id, name="Other day", session_role="coach_strength")
+    session.add(other_session)
+    session.flush()
+    cursor.next_program_session_id = other_session.id
+    session.commit()
+    assert _report(session).next_session_name is None
+    assert cursor.next_program_session_id == other_session.id
+
+
+def test_incomplete_excludes_rest_recovery_optional_and_unmatched_is_global(session):
+    program, sessions = _program(session)
+    old = TrainingProgram(name="Old", active=False, status="inactive")
+    session.add(old)
+    session.flush()
+    optional = ProgramSession(program_id=program.id, name="Optional", session_role="optional_recovery")
+    session.add(optional)
+    session.flush()
+    session.add_all([
+        PlannedSession(title="Normal", activity_type="strength_training", intensity="normal", target_date=END, status="planned"),
+        PlannedSession(title="Rest", activity_type="rest", intensity="normal", target_date=END, status="planned"),
+        PlannedSession(title="Recovery", activity_type="walking", intensity="recovery", target_date=END, status="planned"),
+        PlannedSession(title="Optional", activity_type="walking", intensity="normal", target_date=END, status="planned", program_session_id=optional.id),
+        PlannedSession(title="Done", activity_type="strength_training", intensity="normal", target_date=END, status="completed"),
+    ])
+    session.add(Activity(id=90, activity_type="strength_training", start_time=datetime(2026, 7, 10)))
+    session.flush()
+    session.add(ActivityProgramMatch(activity_id=90, program_id=old.id, program_session_id=sessions[0].id,
+                                     match_method="old", policy_version="test", matched_at=NOW))
+    report = _report(session)
+    assert report.training.incomplete_planned == 1
+    assert report.training.program_completed == 0
+    assert report.training.unmatched_strength == 0
+
+
+def test_historical_overnight_and_malformed_payload_cancel_without_telegram(session, monkeypatch):
+    assert weekly_overnight_ready(session, week_end=END, local_delivery_day=END + timedelta(days=1)) is True
+    sent = []
+    monkeypatch.setattr("notify.outbox.send_message", lambda *_args, **_kwargs: sent.append(True) or True)
+    for index, payload in enumerate((None, [], "bad", 1, {"week_end": []}, {"week_end": "2026-07-12"})):
+        row = NotificationOutbox(event_type="weekly_summary", due_at=NOW, quiet_hour_policy="allow",
+                                 payload_json=json.dumps(payload), status="pending", attempts=0,
+                                 idempotency_key=f"bad-weekly:{index}", created_at=NOW)
+        session.add(row)
+        session.flush()
+        assert deliver_notification(session, row, NOW) == "cancelled"
+    assert sent == []
