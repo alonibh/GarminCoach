@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Guarded restore staging verification
+
+- Added fixture-only offline staged-copy and strict SQLite verification through
+  `REPLACEMENT_READY`, with no destination replacement or rollback.
+
 ## 2026-08-01 - Guarded restore journal invariants
 
 - Bound journal identity to its operation path, made update timestamps monotonic,

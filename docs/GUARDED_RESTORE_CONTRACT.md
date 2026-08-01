@@ -260,7 +260,9 @@ Implementation requires separate approvals:
    dedicated restore lock in `guarded_restore.py`; they neither inspect nor
    mutate databases, invoke backups, acquire application/backup locks, or
    control services. No staging or replacement is included.
-2. **6B2B**: synthetic offline staging and verification.
+2. **6B2B**: complete: synthetic-fixture-only offline staging and strict
+   verification through `REPLACEMENT_READY`; configured destinations, replacement,
+   rollback, and serialized staging paths remain absent.
 3. **6B2C**: guarded replacement and automatic rollback on temporary fixtures
    only.
 4. **6B3**: operator CLI and documented manual service procedure.

@@ -219,6 +219,16 @@ def verify_verified_backup(directory:Path|str,*,against_current_config=False)->d
     except BackupError: raise
     except (DatabaseIntegrityError, ValueError, OSError, sqlite3.Error, UnicodeError, PackageNotFoundError) as exc:
         raise BackupError("Backup verification failed") from exc
+
+def load_validated_backup(directory: Path | str, *, against_current_config: bool = False) -> ValidatedBackup:
+    """Return the existing strictly validated immutable backup representation."""
+    try:
+        validated = _strict(Path(directory))
+        return _compatible(validated) if against_current_config else validated
+    except BackupError:
+        raise
+    except (DatabaseIntegrityError, ValueError, OSError, sqlite3.Error, UnicodeError, PackageNotFoundError) as exc:
+        raise BackupError("Backup verification failed") from exc
 def restore_plan(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
     try: validated=_strict(Path(directory)); validated=_compatible(validated) if against_current_config else validated; current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
     except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc
