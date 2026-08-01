@@ -64,6 +64,24 @@ or internally inconsistent set is invalid even if every listed file hashes.
 `--against-current-config` additionally requires the runtime target set and the
 installed `garminconnect` distribution version to match.
 
+Every backup records `runtime_mode` and an ordered `runtime_target_keys` set.
+Single-user backups contain exactly control and single-user targets with empty
+mappings. Multi-user backups contain control plus existing canonical tenant
+databases and no single-user target; active users whose tenant database is
+missing fail backup creation. Compatibility additionally requires exact current
+schema fingerprints, migration markers, runtime mappings, target set, mode, and
+runtime package version. A Phase 6A dry-run plan may show `null` for a target
+absent from the current configuration, but always remains `restorable: false`.
+
+Every backup records `runtime_mode` and an ordered `runtime_target_keys` set.
+Single-user backups contain exactly control and single-user targets with empty
+mappings. Multi-user backups contain control plus existing canonical tenant
+databases and no single-user target; active users whose tenant database is
+missing fail backup creation. Compatibility additionally requires exact current
+schema fingerprints, migration markers, runtime mappings, target set, mode, and
+runtime package version. A Phase 6A dry-run plan may show `null` for a target
+absent from the current configuration, but always remains `restorable: false`.
+
 `verify_verified_backup` validates every manifest, file, checksum, simple
 filename, target relationship, tenant UUID, migration marker, schema
 fingerprint, and full integrity check without modifying the backup or configured

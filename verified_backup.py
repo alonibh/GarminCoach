@@ -16,7 +16,11 @@ from operator_storage import (DatabaseIntegrityError, DatabaseTarget, TargetProf
 BACKUP_FORMAT="garmincoach-backup-v1"; _ID=re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$"); _HEX=re.compile(r"^[0-9a-f]{64}$")
 class BackupError(RuntimeError): pass
 @dataclass(frozen=True)
-class ValidatedBackup: manifest: dict[str,Any]; directory: Path
+class ValidatedBackup:
+    manifest: dict[str,Any]
+    directory: Path
+    entries: tuple[dict[str,Any], ...]
+    compatible: bool | None = None
 
 def _now()->str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
 def canonical_json(v:object)->bytes: return (json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False)+"\n").encode("utf-8")
@@ -110,7 +114,8 @@ def create_verified_backup(output_root:Path|str|None=None)->Path:
                 entries.append({"target_key":t.target_key,"kind":t.kind,"tenant_id":t.tenant_id,"filename":name,"size_bytes":dest.stat().st_size,"sha256":_sha(dest),"integrity_check":"ok","schema_fingerprint":schema_fingerprint(dest),"migration_markers":migration_markers(dest,t.kind),"snapshot_started_at":snapshot_started,"snapshot_completed_at":_now()});_fsync(dest)
             after=active_user_target_mapping(control.path)
             if before!=after: raise BackupError("Control-user target mapping changed during backup")
-            m={"format_version":BACKUP_FORMAT,"backup_id":backup_id,"status":"complete","started_at":started,"completed_at":_now(),"application_commit":_commit(),"python_version":sys.version.split()[0],"garminconnect_version":_runtime_version(),"database_count":len(entries),"control_user_tenant_mapping_before":[{"user_id":u,"target_key":k} for u,k in before],"control_user_tenant_mapping_after":[{"user_id":u,"target_key":k} for u,k in after],"databases":entries}
+            runtime_mode="multi_user" if config.MULTI_USER_ENABLED else "single_user"
+            m={"format_version":BACKUP_FORMAT,"backup_id":backup_id,"status":"complete","runtime_mode":runtime_mode,"runtime_target_keys":[t.target_key for t in selected],"started_at":started,"completed_at":_now(),"application_commit":_commit(),"python_version":sys.version.split()[0],"garminconnect_version":_runtime_version(),"database_count":len(entries),"control_user_tenant_mapping_before":[{"user_id":u,"target_key":k} for u,k in before],"control_user_tenant_mapping_after":[{"user_id":u,"target_key":k} for u,k in after],"databases":entries}
             data=canonical_json(m); (staging/"manifest.json").write_bytes(data); (staging/"manifest.sha256").write_text(hashlib.sha256(data).hexdigest()+"  manifest.json\n",encoding="ascii")
             for p in (staging/"manifest.json",staging/"manifest.sha256"):_private(p);_fsync(p)
             _fsync(staging,True);staging.replace(final);_private(final,True);_fsync(root,True);return final
@@ -118,7 +123,7 @@ def create_verified_backup(output_root:Path|str|None=None)->Path:
             if staging.exists(): shutil.rmtree(staging)
             raise
 
-_TOP={"format_version","backup_id","status","started_at","completed_at","application_commit","python_version","garminconnect_version","database_count","control_user_tenant_mapping_before","control_user_tenant_mapping_after","databases"}
+_TOP={"format_version","backup_id","status","runtime_mode","runtime_target_keys","started_at","completed_at","application_commit","python_version","garminconnect_version","database_count","control_user_tenant_mapping_before","control_user_tenant_mapping_after","databases"}
 _ENTRY={"target_key","kind","tenant_id","filename","size_bytes","sha256","integrity_check","schema_fingerprint","migration_markers","snapshot_started_at","snapshot_completed_at"}
 def _mapping(value:object)->set[str]:
     if not isinstance(value,list): raise BackupError("Backup control-user mapping is invalid")
@@ -145,7 +150,7 @@ def _read(directory:Path)->dict[str,Any]:
     return m
 def _strict(directory:Path)->ValidatedBackup:
     m=_read(directory)
-    if set(m)!=_TOP or m.get("format_version")!=BACKUP_FORMAT or m.get("status")!="complete" or not isinstance(m.get("backup_id"),str) or not _ID.fullmatch(m["backup_id"]) or directory.name!=f"backup-{m['backup_id']}": raise BackupError("Backup manifest semantics are invalid")
+    if set(m)!=_TOP or m.get("format_version")!=BACKUP_FORMAT or m.get("status")!="complete" or m.get("runtime_mode") not in {"single_user","multi_user"} or not isinstance(m.get("runtime_target_keys"),list) or not isinstance(m.get("backup_id"),str) or not _ID.fullmatch(m["backup_id"]) or directory.name!=f"backup-{m['backup_id']}": raise BackupError("Backup manifest semantics are invalid")
     start,end=_timestamp(m["started_at"]),_timestamp(m["completed_at"])
     if end<start or not all(isinstance(m[k],str) and m[k] for k in ("application_commit","python_version","garminconnect_version")) or not re.fullmatch(r"\d+(?:\.\d+)+(?:[A-Za-z0-9.+-]*)",m["garminconnect_version"]) or not isinstance(m["database_count"],int) or m["database_count"]<=0 or not isinstance(m["databases"],list) or len(m["databases"])!=m["database_count"]: raise BackupError("Backup manifest semantics are invalid")
     before,after=_mapping(m["control_user_tenant_mapping_before"]),_mapping(m["control_user_tenant_mapping_after"])
@@ -168,7 +173,12 @@ def _strict(directory:Path)->ValidatedBackup:
         else: raise BackupError("Backup target kind is invalid")
         identity="control" if kind=="control" else "single-user" if kind=="single_user" else f"tenant-{e['tenant_id']}"
         if name!=f"{i:03d}-{identity}.sqlite": raise BackupError("Backup filename is invalid")
-    if control_count!=1 or not before.issubset(tenant_keys): raise BackupError("Backup set is incomplete")
+    entry_keys=[e["target_key"] for e in m["databases"]]
+    if m["runtime_target_keys"] != entry_keys or len(entry_keys) != len(set(entry_keys)) or control_count!=1 or not before.issubset(tenant_keys): raise BackupError("Backup set is incomplete")
+    if m["runtime_mode"]=="single_user":
+        if entry_keys != ["control","single-user"] or before or tenant_keys: raise BackupError("Single-user backup set is incomplete")
+    elif "single-user" in entry_keys:
+        raise BackupError("Multi-user backup contains a single-user target")
     listed={"manifest.json","manifest.sha256",*names}
     try: unexpected=[p.name for p in directory.iterdir() if p.name not in listed and (p.suffix==".sqlite" or p.name.startswith("manifest"))]
     except OSError as exc: raise BackupError("Backup directory cannot be read") from exc
@@ -179,21 +189,34 @@ def _strict(directory:Path)->ValidatedBackup:
             if has_symlink_component(file) or file.is_symlink() or not file.is_file() or file.stat().st_size!=e["size_bytes"] or _sha(file)!=e["sha256"]: raise BackupError("Backup file checksum or size failed")
             if inspect_sqlite(file,deep=True).integrity_check_ok is not True or schema_fingerprint(file)!=e["schema_fingerprint"] or migration_markers(file,e["kind"])!=e["migration_markers"]: raise BackupError("Backup SQLite verification failed")
         except (DatabaseIntegrityError,OSError,ValueError) as exc: raise BackupError("Backup SQLite verification failed") from exc
-    return ValidatedBackup(m,directory)
+    return ValidatedBackup(m,directory,tuple(m["databases"]))
+
+def _compatible(validated: ValidatedBackup) -> ValidatedBackup:
+    try: current=discover_database_targets(profile=TargetProfile.RUNTIME)
+    except (ValueError,OSError) as exc: raise BackupError("Current configuration is invalid") from exc
+    current_by_key={t.target_key:t for t in current}; manifest=validated.manifest
+    expected_mode="multi_user" if config.MULTI_USER_ENABLED else "single_user"
+    if manifest["runtime_mode"]!=expected_mode or manifest["runtime_target_keys"] != [t.target_key for t in current] or manifest["garminconnect_version"]!=_runtime_version(): raise BackupError("Backup is incompatible with current configuration")
+    if expected_mode=="multi_user":
+        control=current_by_key.get("control")
+        if control is None or set(active_user_target_mapping(control.path)) != {(item["user_id"],item["target_key"]) for item in manifest["control_user_tenant_mapping_before"]}: raise BackupError("Backup is incompatible with current configuration")
+    for entry in validated.entries:
+        target=current_by_key.get(entry["target_key"])
+        if target is None or (target.required and not target.path.exists()): raise BackupError("Backup is incompatible with current configuration")
+        check=inspect_sqlite(target.path)
+        if not check.readable or not check.quick_check_ok or schema_fingerprint(target.path)!=entry["schema_fingerprint"] or migration_markers(target.path,target.kind)!=entry["migration_markers"]: raise BackupError("Backup is incompatible with current configuration")
+    return ValidatedBackup(manifest,validated.directory,validated.entries,True)
 
 def verify_verified_backup(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
     try: validated=_strict(Path(directory))
     except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc
     result={"backup_id":validated.manifest["backup_id"],"completed_at":validated.manifest["completed_at"],"backup_integrity_valid":True,"verified":True}
     if against_current_config:
-        try: current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
-        except (ValueError,OSError) as exc: raise BackupError("Current configuration is invalid") from exc
-        manifest_keys={e["target_key"] for e in validated.manifest["databases"]}; required={t.target_key for t in current.values() if t.required}
-        if not required.issubset(manifest_keys) or manifest_keys!=set(current) or validated.manifest["garminconnect_version"]!=_runtime_version(): raise BackupError("Backup is incompatible with current configuration")
+        validated=_compatible(validated)
+        current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
         result["compatible_with_current_configuration"]=True;result["configured_destinations"]={k:str(v.path) for k,v in current.items()}
     return result
 def restore_plan(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
-    verified=verify_verified_backup(directory,against_current_config=against_current_config); m=_strict(Path(directory)).manifest
-    try: current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
-    except (ValueError,OSError) as exc: raise BackupError("Current configuration is invalid") from exc
-    return {"format_version":"garmincoach-restore-plan-v1","restorable":False,"reason":"Phase 6A verification only","operations":[{"target_key":e["target_key"],"backup_file":e["filename"],"configured_destination":str(current[e["target_key"]].path),"action":"would_replace"} for e in m["databases"]]}
+    try: validated=_strict(Path(directory)); validated=_compatible(validated) if against_current_config else validated; current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}
+    except (BackupError,DatabaseIntegrityError,ValueError,OSError) as exc: raise exc if isinstance(exc,BackupError) else BackupError("Backup verification failed") from exc
+    return {"format_version":"garmincoach-restore-plan-v1","restorable":False,"reason":"Phase 6A verification only","operations":[{"target_key":e["target_key"],"backup_file":e["filename"],"configured_destination":str(current[e["target_key"]].path) if e["target_key"] in current else None,"action":"would_replace"} for e in validated.entries]}

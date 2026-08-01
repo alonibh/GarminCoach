@@ -75,8 +75,10 @@ def test_discovery_deduplicates_configured_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", shared)
     monkeypatch.setattr(config, "MULTI_USER_DATA_ROOT", tenant_root)
 
-    with pytest.raises(ValueError, match="Duplicate or ambiguous"):
-        database_reset.discover_reset_paths()
+    assert database_reset.discover_reset_paths() == [
+        shared.resolve(),
+        athlete.resolve(),
+    ]
 
 
 def test_reset_quarantines_databases_and_sidecars_then_recreates_schemas(

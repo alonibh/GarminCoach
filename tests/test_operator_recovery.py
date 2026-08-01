@@ -102,3 +102,27 @@ def test_multi_user_runtime_excludes_stale_single_user_database(tmp_path, monkey
     verified = verify_verified_backup(backup, against_current_config=True)
     assert verified["verified"] is True
     assert {entry["target_key"] for entry in __import__("json").loads((backup / "manifest.json").read_text())["databases"]} == {"control", f"tenant:{tenant}"}
+
+
+def test_restore_plan_cross_profile_is_safe_without_compatibility_mode(tmp_path, monkeypatch):
+    _configured(tmp_path, monkeypatch)
+    backup = create_verified_backup(tmp_path / "backups")
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    plan = restore_plan(backup)
+    assert plan["restorable"] is False
+    assert any(item["configured_destination"] is None for item in plan["operations"])
+    with pytest.raises(BackupError):
+        restore_plan(backup, against_current_config=True)
+
+
+def test_runtime_discovery_ignores_empty_tenant_but_backup_rejects_active_missing(tmp_path, monkeypatch):
+    control, _single, root = _configured(tmp_path, monkeypatch)
+    tenant = str(uuid4()); (root / tenant).mkdir(parents=True)
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    assert [t.target_key for t in discover_database_targets()] == ["control"]
+    connection = sqlite3.connect(control)
+    connection.execute("CREATE TABLE users(id TEXT, status TEXT)")
+    connection.execute("INSERT INTO users VALUES (?, 'active')", (tenant,))
+    connection.commit(); connection.close()
+    with pytest.raises(BackupError):
+        create_verified_backup(tmp_path / "backups")

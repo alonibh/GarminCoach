@@ -16,6 +16,7 @@ from verified_backup import BackupError, validate_backup_root, verify_verified_b
 
 Severity = Literal["healthy", "warning", "critical"]
 EXIT_CODES = {"healthy": 0, "warning": 1, "critical": 2}
+PARTIAL_STALE_SECONDS = 60 * 60
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,8 @@ def _add_sqlite_checks(checks: list[HealthCheck], target, deep: bool, show_paths
         checks.append(HealthCheck("migration_ledger", "critical", "Migration ledger is malformed", target.target_key, path))
 
 
-def collect_health(*, deep: bool = False, show_paths: bool = False) -> tuple[Severity, list[HealthCheck]]:
+def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetime | None = None) -> tuple[Severity, list[HealthCheck]]:
+    now = now or datetime.now(timezone.utc)
     checks: list[HealthCheck] = [HealthCheck("configuration", "healthy", "Configuration loaded")]
     try:
         targets = discover_database_targets(profile=TargetProfile.RUNTIME)
@@ -84,7 +86,9 @@ def collect_health(*, deep: bool = False, show_paths: bool = False) -> tuple[Sev
     try:
         backup_root = validate_backup_root()
         partial = sorted(item for item in backup_root.glob(".partial-*") if item.is_dir()) if backup_root.exists() else []
-        if partial: checks.append(HealthCheck("partial_backup", "warning", "Stale partial backup directory found"))
+        for item in partial:
+            age = (now - datetime.fromtimestamp(item.stat().st_mtime, timezone.utc)).total_seconds()
+            checks.append(HealthCheck("partial_backup", "warning" if age > PARTIAL_STALE_SECONDS else "healthy", "Stale partial backup directory found" if age > PARTIAL_STALE_SECONDS else "Recent partial backup directory found"))
         complete = sorted((item for item in backup_root.glob("backup-*") if item.is_dir()), key=lambda item: item.name)
         if not complete:
             checks.append(HealthCheck("verified_backup", "warning", "No complete verified backup found"))
@@ -93,7 +97,7 @@ def collect_health(*, deep: bool = False, show_paths: bool = False) -> tuple[Sev
             try:
                 verified = verify_verified_backup(latest)
                 completed = datetime.fromisoformat(verified["completed_at"].replace("Z", "+00:00"))
-                age = (datetime.now(timezone.utc) - completed).total_seconds() / 3600
+                age = (now - completed).total_seconds() / 3600
                 if age < -(5 / 60):
                     raise BackupError("Backup completion timestamp is in the future")
                 checks.append(HealthCheck("verified_backup", "warning" if age > config.OPERATOR_BACKUP_WARN_AGE_HOURS else "healthy", "Latest verified backup is stale" if age > config.OPERATOR_BACKUP_WARN_AGE_HOURS else "Latest verified backup is valid"))

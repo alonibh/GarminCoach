@@ -5,6 +5,11 @@
 - Split runtime and maintenance discovery, reject symlink/path escapes, and
   require complete manifest, mapping, target-set, and provenance semantics.
 
+## 2026-08-01 - Operator recovery final safety
+
+- Added explicit runtime-mode/target-set manifests and exact current schema,
+  migration, mapping, and package compatibility before a dry-run restore plan.
+
 ## 2026-08-01 - Operator health and verified backups
 
 - Added fail-closed SQLite integrity preflight, read-only health diagnostics,

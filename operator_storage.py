@@ -93,13 +93,20 @@ def discover_database_targets(*, profile: TargetProfile = TargetProfile.RUNTIME,
             except ValueError: continue
             if has_symlink_component(child): raise ValueError("Canonical tenant directory may not be symlinked")
             database = safe_resolve(child / "athlete.db", root=root)
+            # Runtime targets are real databases, not merely candidate folders.
+            if profile is TargetProfile.RUNTIME and not database.exists():
+                continue
             targets.append(DatabaseTarget(f"tenant:{tenant_id}", "tenant", database, tenant_id, False))
-    seen_keys: set[str] = set(); seen_paths: set[str] = set()
+    seen_keys: set[str] = set(); seen_paths: set[str] = set(); result: list[DatabaseTarget] = []
     for target in targets:
         key = os.path.normcase(str(target.path))
+        if key in seen_paths and profile is TargetProfile.ALL_CONFIGURED_MAINTENANCE:
+            # Established destructive-maintenance discovery deduplicates an
+            # intentionally shared legacy/control path.
+            continue
         if target.target_key in seen_keys or key in seen_paths: raise ValueError("Duplicate or ambiguous database target")
-        seen_keys.add(target.target_key); seen_paths.add(key)
-    return tuple(targets)
+        seen_keys.add(target.target_key); seen_paths.add(key); result.append(target)
+    return tuple(result)
 
 
 def inspect_sqlite(path: Path, *, deep: bool = False) -> SqliteInspection:

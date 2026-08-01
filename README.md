@@ -263,6 +263,10 @@ UUID-to-tenant mapping, SQLite integrity, schema fingerprint, migration markers,
 and checksums must agree. In multi-user mode stale `DB_PATH` is excluded; in
 single-user mode stale tenant directories are excluded.
 
+Each backup also records its explicit runtime mode and runtime target set. The
+optional current-configuration check requires exact schema, migration-marker,
+mode, target-set, active-tenant mapping, and runtime-version compatibility.
+
 ## Explicit database reset
 
 Database corruption never triggers an automatic wipe. An operator may perform a
