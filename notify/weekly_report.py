@@ -14,7 +14,7 @@ import re
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from coach.exercises import exercise_key, exercise_metadata
+from coach.exercises import exercise_metadata
 from coach.onboarding import active_program
 from coach.planned_session_status import INACTIVE_ORIGINAL_SESSION_STATUSES
 from db import (
@@ -201,6 +201,43 @@ def _next_session_name_read_only(session: Session, *, program) -> str | None:
     return _clean(item.name)
 
 
+_GENERIC_EXERCISE_IDENTITIES = frozenset({"exercise", "unknown", "other", "generic", "strength"})
+
+
+def _specific_exercise_source(value: object) -> tuple[str, str] | None:
+    """Return a bounded source token and display label, excluding placeholders."""
+    if not isinstance(value, str):
+        return None
+    cleaned = _SPACE.sub(" ", _CONTROL.sub(" ", value)).strip()
+    if not cleaned or len(cleaned) > 96:
+        return None
+    token = re.sub(r"[^a-z0-9]+", "_", cleaned.casefold()).strip("_")
+    if not token or token in _GENERIC_EXERCISE_IDENTITIES:
+        return None
+    return token, _clean(cleaned, 48) or ""
+
+
+def _weekly_exercise_identity(row: ExerciseSet) -> tuple[str, str] | None:
+    """Use catalog identity, or an unambiguous custom source composite only."""
+    name = _specific_exercise_source(row.exercise_name)
+    category = _specific_exercise_source(row.exercise_category)
+    for candidate in (row.exercise_name, row.exercise_category):
+        if isinstance(candidate, str):
+            meta = exercise_metadata(candidate)
+            if meta:
+                label = _clean(meta.get("label"), 48)
+                key = meta.get("key")
+                if isinstance(key, str) and label:
+                    return key, label
+    if name and category:
+        return f"custom:{category[0]}:{name[0]}", name[1]
+    if name:
+        return f"custom:name:{name[0]}", name[1]
+    if category:
+        return f"custom:category:{category[0]}", category[1]
+    return None
+
+
 def _activity_domains(activities: list[Activity]) -> tuple[ActivityDomainCount, ...]:
     counts: dict[tuple[str, str], int] = {}
     for activity in activities:
@@ -228,19 +265,14 @@ def _strength_highlights(session: Session, start: date, end: date) -> tuple[Week
         weight, reps = _finite(row.weight_kg), _positive_integer(row.reps)
         if weight is None or weight <= 0 or reps is None:
             continue
-        raw_name = row.exercise_name or row.exercise_category
-        label = _clean(raw_name)
-        if not label:
+        identity = _weekly_exercise_identity(row)
+        if identity is None:
             continue
-        canonical = exercise_key(label)
-        # Generic labels are intentionally not merged with another generic set.
-        if not canonical:
-            continue
+        canonical, label = identity
         key = (canonical, reps)
         if start <= started.date() <= end:
             if key not in current or weight > current[key][0]:
-                meta = exercise_metadata(canonical)
-                current[key] = (weight, _clean((meta or {}).get("label", label)) or "Exercise")
+                current[key] = (weight, label)
         elif previous_start <= started.date() < start:
             prior[key] = max(prior.get(key, 0.0), weight)
     highlights = []

@@ -219,3 +219,46 @@ def test_historical_overnight_and_malformed_payload_cancel_without_telegram(sess
         session.flush()
         assert deliver_notification(session, row, NOW) == "cancelled"
     assert sent == []
+
+
+def test_unknown_exercises_need_specific_identity_and_remain_deterministic(session):
+    session.add_all([
+        Activity(id=120, activity_type="strength_training", start_time=datetime(2026, 7, 2)),
+        Activity(id=121, activity_type="strength_training", start_time=datetime(2026, 7, 9)),
+    ])
+    session.flush()
+    session.add_all([
+        ExerciseSet(activity_id=120, set_index=1, set_type="ACTIVE", exercise_name="Exercise", reps=8, weight_kg=50),
+        ExerciseSet(activity_id=121, set_index=1, set_type="ACTIVE", exercise_name="Unknown", reps=8, weight_kg=80),
+        ExerciseSet(activity_id=120, set_index=2, set_type="ACTIVE", exercise_category="Custom A", exercise_name="Lift", reps=8, weight_kg=50),
+        ExerciseSet(activity_id=121, set_index=2, set_type="ACTIVE", exercise_category="Custom B", exercise_name="Lift", reps=8, weight_kg=80),
+        ExerciseSet(activity_id=120, set_index=3, set_type="ACTIVE", exercise_category="Custom", exercise_name="Cable Thing", reps=10, weight_kg=20),
+        ExerciseSet(activity_id=121, set_index=3, set_type="ACTIVE", exercise_category="Custom", exercise_name="Cable Thing", reps=10, weight_kg=22.5),
+    ])
+    highlights = _report(session).strength_highlights
+    assert [(item.label, item.reps, item.delta_kg) for item in highlights] == [("Cable Thing", 10, 2.5)]
+
+
+def test_unexpected_weekly_materialization_rolls_back_and_does_not_block_other_row(session, monkeypatch):
+    from sqlalchemy import text
+    import notify.outbox as outbox
+
+    weekly = enqueue_notification(session, event_type="weekly_summary", due_at=NOW,
+                                  payload={"week_end": END.isoformat()}, idempotency_key="weekly:broken")
+    other = enqueue_notification(session, event_type="calendar_conflict", due_at=NOW,
+                                 payload={"text": "Other notification"}, idempotency_key="other:due")
+    original = outbox._materialize
+
+    def materialize_with_real_db_failure(current, row, now):
+        if row.id == weekly.id:
+            current.execute(text("SELECT * FROM no_such_weekly_table"))
+        return original(current, row, now)
+
+    sent = []
+    monkeypatch.setattr(outbox, "_materialize", materialize_with_real_db_failure)
+    monkeypatch.setattr(outbox, "send_message", lambda text, **_kwargs: sent.append(text) or True)
+    assert outbox.deliver_notification(session, weekly, NOW) == "retry"
+    session.refresh(weekly)
+    assert weekly.status == "pending" and weekly.last_error == "weekly_materialization_failed"
+    assert outbox.deliver_notification(session, other, NOW) == "sent"
+    assert sent == ["Other notification"]

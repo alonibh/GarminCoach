@@ -244,10 +244,6 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
             # Delivery validation deliberately exposes neither malformed payload
             # data nor renderer exceptions to Telegram or logs.
             return None
-        except Exception:
-            # A weekly read-model failure cancels this isolated durable intent;
-            # it cannot strand the leased row or block unrelated outbox work.
-            return None
 
     if row.event_type == "late_material_update":
         if not _decision_is_current(session, row):
@@ -295,6 +291,24 @@ def _reconcile_delivered_morning_brief(session: Session, row: NotificationOutbox
     state.updated_at = now
 
 
+def _recover_weekly_materialization_failure(session: Session, *, row_id: int, now: datetime) -> str:
+    """Clear a failed weekly read transaction and repair only its claimed row."""
+    session.rollback()
+    row = session.get(NotificationOutbox, row_id)
+    if row is None or row.event_type != "weekly_summary" or row.status != "delivering":
+        return "retry"
+    row.attempts += 1
+    row.last_error = "weekly_materialization_failed"
+    if row.attempts >= 5:
+        row.status = "failed"
+        session.commit()
+        return "failed"
+    row.status = "pending"
+    row.due_at = now + timedelta(minutes=5)
+    session.commit()
+    return "retry"
+
+
 def deliver_notification(session: Session, row: NotificationOutbox, now: datetime) -> str:
     """Deliver one row and return sent/cancelled/failed/deferred/retry."""
     now = now.replace(tzinfo=None)
@@ -310,7 +324,12 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
             row.status = "pending"
             session.commit()
             return "deferred"
-    materialized = _materialize(session, row, now)
+    try:
+        materialized = _materialize(session, row, now)
+    except Exception:
+        if row.event_type == "weekly_summary":
+            return _recover_weekly_materialization_failure(session, row_id=row.id, now=now)
+        raise
     if not materialized:
         row.status = "cancelled"
         row.last_error = "revalidation_failed"
