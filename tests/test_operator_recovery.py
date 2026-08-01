@@ -126,3 +126,12 @@ def test_runtime_discovery_ignores_empty_tenant_but_backup_rejects_active_missin
     connection.commit(); connection.close()
     with pytest.raises(BackupError):
         create_verified_backup(tmp_path / "backups")
+
+
+def test_permission_artifact_helper_rejects_traversal_and_absolute_names(tmp_path):
+    from operator_health import _backup_artifact_permission_checks
+    outside = tmp_path.parent / "outside.sqlite"; outside.write_bytes(b"outside")
+    checks = _backup_artifact_permission_checks(tmp_path, ({"filename": "../../outside.sqlite", "target_key": "control"},), show_paths=False)
+    assert checks[0].code == "backup_artifact_permissions"
+    checks = _backup_artifact_permission_checks(tmp_path, ({"filename": str(outside), "target_key": "control"},), show_paths=False)
+    assert checks[0].code == "backup_artifact_permissions"

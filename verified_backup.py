@@ -210,7 +210,7 @@ def _compatible(validated: ValidatedBackup) -> ValidatedBackup:
 def verify_verified_backup(directory:Path|str,*,against_current_config=False)->dict[str,Any]:
     try:
         validated=_strict(Path(directory))
-        result={"backup_id":validated.manifest["backup_id"],"completed_at":validated.manifest["completed_at"],"backup_integrity_valid":True,"verified":True}
+        result={"backup_id":validated.manifest["backup_id"],"completed_at":validated.manifest["completed_at"],"entries":validated.entries,"backup_integrity_valid":True,"verified":True}
         if against_current_config:
             validated=_compatible(validated)
             current={t.target_key:t for t in discover_database_targets(profile=TargetProfile.RUNTIME)}

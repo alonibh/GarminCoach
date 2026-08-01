@@ -518,6 +518,7 @@ def test_confirm_progress_is_prompt_and_duplicate_taps_mutate_once(
     edits = []
     started = threading.Event()
     release = threading.Event()
+    completed = threading.Event()
     apply_calls = []
     claimed = False
     monkeypatch.setattr(
@@ -546,7 +547,8 @@ def test_confirm_progress_is_prompt_and_duplicate_taps_mutate_once(
             (identity.user_id, interaction_id, current_tenant())
         )
         started.set()
-        release.wait(timeout=2)
+        release.wait()
+        completed.set()
         return "applied", "Full Body 2 scheduled."
 
     monkeypatch.setattr(telegram_webhook, "_claim_garmin_callback", claim)
@@ -568,21 +570,23 @@ def test_confirm_progress_is_prompt_and_duplicate_taps_mutate_once(
         }
 
     async def exercise():
-        before = time.monotonic()
         first = await telegram_webhook.handle_telegram_update(payload(2002))
-        elapsed = time.monotonic() - before
+        assert first == {"status": "ok"}
         assert await asyncio.to_thread(started.wait, 1)
+        assert not release.is_set()
+        assert not completed.is_set()
         assert edits == ["Scheduling Full Body 2…"]
         second = await telegram_webhook.handle_telegram_update(payload(2003))
+        assert not release.is_set()
+        assert not completed.is_set()
         release.set()
-        while telegram_webhook._active_tasks:
-            await asyncio.sleep(0.01)
-        return first, second, elapsed
+        await asyncio.gather(*tuple(telegram_webhook._active_tasks))
+        assert completed.is_set()
+        return first, second
 
-    first, second, elapsed = asyncio.run(exercise())
+    first, second = asyncio.run(exercise())
 
     assert first == second == {"status": "ok"}
-    assert elapsed < 0.1
     assert len(apply_calls) == 1
     assert apply_calls[0][0:2] == (USER_ID, "interaction")
     assert apply_calls[0][2].user_id == USER_ID
