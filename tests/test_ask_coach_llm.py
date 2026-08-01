@@ -10,7 +10,14 @@ from coach.ask_coach_llm import AskCoachLLMError, AskCoachResponse
 
 
 def _snapshot(**extra):
-    return json.dumps({"snapshot_version": "ask-coach-v3", **extra})
+    required = {
+        "snapshot_version": "ask-coach-v3", "privacy_contract_version": "ask-coach-aggregate-context-v1",
+        "generated_at": "2026-08-01T00:00:00Z", "timezone": "UTC", "date_context": {},
+        "official_recommendation": {}, "data_freshness": {}, "profile": {}, "current_recovery": {},
+        "training_aggregates": {}, "recovery_trends_28_days": {}, "slow_fitness_summary": {},
+        "recent_activity_facts_7_days": {}, "active_program": None, "planned_sessions_next_7_days": {},
+    }
+    return json.dumps({**required, **extra})
 
 
 class FakeInteractions:

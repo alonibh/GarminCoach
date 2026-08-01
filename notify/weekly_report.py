@@ -23,6 +23,7 @@ from db import (
 )
 from metrics.recovery_trends import TrendCoverage, TrendDirection, build_recovery_health_trend_report
 from metrics.slow_metric_history import build_slow_metric_history_report
+from metrics import training_aggregates as shared
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -132,60 +133,29 @@ def _clean(value: object, maximum: int = 48) -> str | None:
 
 
 def _finite(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    value = float(value)
-    return value if isfinite(value) else None
+    return shared.finite(value)
 
 
 def _nonnegative_integer(value: object) -> int | None:
-    number = _finite(value)
-    if number is None or number < 0 or not number.is_integer():
-        return None
-    return int(number)
+    return shared.nonnegative_integer(value)
 
 
 def _positive_integer(value: object) -> int | None:
-    number = _nonnegative_integer(value)
-    return number if number and number > 0 else None
+    return shared.positive_integer(value)
 
 
 def _domain(value: object) -> tuple[str, str]:
-    token = _SPACE.sub("_", str(value or "").strip().lower().replace("-", "_")).strip("_")
-    if "strength" in token or "weight" in token:
-        return "strength", "strength"
-    if "run" in token:
-        return "running", "running"
-    if "cycl" in token or "bike" in token:
-        return "cycling", "cycling"
-    if "walk" in token or "hike" in token:
-        return "walking", "walking"
-    if "soccer" in token or "football" in token:
-        return "soccer", "soccer"
-    if "swim" in token:
-        return "swimming", "swimming"
-    return "other", "other"
+    key = shared.normalize_activity_domain(value)
+    return key, key
 
 
 def _duration_minutes(activities: list[Activity]) -> int | None:
-    valid = [_finite(row.duration_s) for row in activities]
-    seconds = sum(value for value in valid if value is not None and value >= 0)
-    return int(round(seconds / 60)) if any(value is not None and value >= 0 for value in valid) else None
+    return shared.duration_minutes(activities)[0]
 
 
 def _display_weight_kg(value: object) -> float | None:
     """Round a finite positive stored kilogram value to the 250 g display grid."""
-    number = _finite(value)
-    if number is None or number <= 0:
-        return None
-    try:
-        units = (Decimal(str(number)) * Decimal("1000") / Decimal("250")).quantize(
-            Decimal("1"), rounding=ROUND_HALF_UP,
-        )
-        grams = units * Decimal("250")
-    except (InvalidOperation, ValueError):
-        return None
-    return float(grams / Decimal("1000"))
+    return shared.display_weight_kg(value)
 
 
 def _next_session_name_read_only(session: Session, *, program) -> str | None:
@@ -223,30 +193,7 @@ def _specific_exercise_source(value: object) -> tuple[str, str] | None:
 
 def _weekly_exercise_identity(row: ExerciseSet) -> tuple[str, str] | None:
     """Use catalog identity, or an unambiguous custom source composite only."""
-    name = _specific_exercise_source(row.exercise_name)
-    category = _specific_exercise_source(row.exercise_category)
-    if name and category:
-        exact_key = f"{category[0].upper()}:{name[0].upper()}"
-        catalog = GARMIN_EXERCISES.get(exact_key)
-        if catalog:
-            label = _clean(catalog.get("label"), 48)
-            if label:
-                return exact_key, label
-        return f"custom:{category[0]}:{name[0]}", name[1]
-    if name:
-        # Name-only evidence is catalog evidence only if its Garmin enum is unique.
-        matches = [item for item in GARMIN_EXERCISES.values() if item.get("garmin_name") == name[0].upper()]
-        if len(matches) == 1:
-            item = matches[0]
-            label = _clean(item.get("label"), 48)
-            if label:
-                return item["key"], label
-        return f"custom:name:{name[0]}", name[1]
-    if category:
-        if category[0].upper() in _GARMIN_CATEGORIES:
-            return None
-        return f"custom:category:{category[0]}", category[1]
-    return None
+    return shared.exact_strength_identity(row)
 
 
 def _activity_domains(activities: list[Activity]) -> tuple[ActivityDomainCount, ...]:

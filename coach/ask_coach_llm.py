@@ -12,7 +12,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 import config
-from coach.advisory_snapshot import SNAPSHOT_VERSION
+from coach.advisory_snapshot import PRIVACY_CONTRACT_VERSION, SNAPSHOT_VERSION, effective_snapshot_max_chars
 from coach.privacy_logger import log_generation_metadata, log_sanitized_error
 
 
@@ -32,6 +32,14 @@ The supplied context is a compact aggregate read model, not a raw history.
 Missing days are not zero. Recovery/training/fitness aggregates and historical
 official recommendations are informational; they never create a custom score
 or change a workout, plan, progression, calendar, or Garmin data.
+Only an official_recommendation whose status is `current` is current; describe
+historical recommendations as historical. Partial or sparse coverage limits a
+comparison, and higher/lower/stable does not universally mean better or worse.
+Never combine facts into a readiness, recovery, fatigue, or health score, and
+do not infer injury risk, illness, dehydration, overtraining, or clearance.
+Garmin Training Status is neutral source text. Fitness Age and VO2 are
+descriptive; strength highlights compare recorded past work and never authorize
+progression.
 
 If no official recommendation is available, label the answer as best-effort
 advice and identify important missing inputs. You may disagree with an official
@@ -163,10 +171,15 @@ def _request_input(
         snapshot = json.loads(snapshot_json)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise AskCoachLLMError("invalid_snapshot") from exc
-    if not isinstance(snapshot, dict) or snapshot.get("snapshot_version") != SNAPSHOT_VERSION:
+    required = {"snapshot_version", "privacy_contract_version", "generated_at", "timezone", "date_context", "official_recommendation", "data_freshness", "profile", "current_recovery", "training_aggregates", "recovery_trends_28_days", "slow_fitness_summary", "recent_activity_facts_7_days", "active_program", "planned_sessions_next_7_days"}
+    if not isinstance(snapshot, dict) or snapshot.get("snapshot_version") != SNAPSHOT_VERSION or snapshot.get("privacy_contract_version") != PRIVACY_CONTRACT_VERSION or not required.issubset(snapshot):
         raise AskCoachLLMError("invalid_snapshot")
-    if len(snapshot_json) > 16_000:
+    if len(snapshot_json) > effective_snapshot_max_chars():
         raise AskCoachLLMError("snapshot_too_large")
+    if not isinstance(history, list) or len(history) > config.ASK_COACH_HISTORY_MAX_MESSAGES or any(not isinstance(item, dict) or item.get("role") not in {"user", "assistant"} or not isinstance(item.get("content"), str) for item in history) or sum(len(item["content"]) for item in history) > config.ASK_COACH_HISTORY_MAX_CHARS:
+        raise AskCoachLLMError("invalid_history")
+    if not isinstance(question, str) or not question.strip() or len(question) > 5000:
+        raise AskCoachLLMError("invalid_question")
     return json.dumps(
         {
             "untrusted_advisory_snapshot": snapshot,

@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from math import isfinite
 import re
 
 from sqlalchemy import func
@@ -18,6 +16,7 @@ from coach.exercises import GARMIN_EXERCISES
 from db import Activity, ActivityProgramMatch, DailyHealth, ExerciseSet, PlannedSession, ProgramSession, TrainingProgram
 from metrics.recovery_trends import build_recovery_health_trend_report
 from metrics.slow_metric_history import build_slow_metric_history_report
+from metrics import training_aggregates as shared
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SPACE = re.compile(r"\s+")
@@ -73,6 +72,22 @@ class RecoveryAggregateFact:
 
 
 @dataclass(frozen=True)
+class SleepTimingAggregate:
+    key: str
+    unit: str
+    recent_variability_median: float | None
+    baseline_variability_median: float | None
+    delta: float | None
+    direction: str
+    recent_valid_days: int
+    baseline_valid_days: int
+    coverage: str
+    latest_day: date | None
+    recent_median_bedtime: str | None
+    recent_median_wake_time: str | None
+
+
+@dataclass(frozen=True)
 class SlowFitnessAggregate:
     key: str
     capability_state: str
@@ -102,48 +117,23 @@ def _clean(value: object, maximum: int = 48) -> str | None:
 
 
 def _finite(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    value = float(value)
-    return value if isfinite(value) else None
+    return shared.finite(value)
 
 
 def _nonnegative_integer(value: object) -> int | None:
-    value = _finite(value)
-    return int(value) if value is not None and value >= 0 and value.is_integer() else None
+    return shared.nonnegative_integer(value)
 
 
 def _positive_integer(value: object) -> int | None:
-    value = _nonnegative_integer(value)
-    return value if value and value > 0 else None
+    return shared.positive_integer(value)
 
 
 def normalize_activity_domain(value: object) -> str:
-    token = _SPACE.sub("_", str(value or "").strip().lower().replace("-", "_")).strip("_")
-    if "strength" in token or "weight" in token:
-        return "strength"
-    if "run" in token:
-        return "running"
-    if "cycl" in token or "bike" in token:
-        return "cycling"
-    if "walk" in token or "hike" in token:
-        return "walking"
-    if "soccer" in token or "football" in token:
-        return "soccer"
-    if "swim" in token:
-        return "swimming"
-    return "other"
+    return shared.normalize_activity_domain(value)
 
 
 def _display_weight(value: object) -> float | None:
-    value = _finite(value)
-    if value is None or value <= 0:
-        return None
-    try:
-        units = (Decimal(str(value)) * Decimal("4")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-        return float(units / Decimal("4"))
-    except (InvalidOperation, ValueError):
-        return None
+    return shared.display_weight_kg(value)
 
 
 _GENERIC = frozenset({"exercise", "unknown", "other", "generic", "strength", "unknown_exercise", "other_exercise", "generic_exercise", "strength_exercise", "unnamed_exercise"})
@@ -160,19 +150,7 @@ def _source_identity(value: object) -> tuple[str, str] | None:
 
 def exact_strength_identity(row: ExerciseSet) -> tuple[str, str] | None:
     """Phase 4G exact catalog/custom identity, never a broad category guess."""
-    name, category = _source_identity(row.exercise_name), _source_identity(row.exercise_category)
-    if name and category:
-        key = f"{category[0].upper()}:{name[0].upper()}"
-        catalog = GARMIN_EXERCISES.get(key)
-        return (key, _clean(catalog.get("label"), 48) or name[1]) if catalog else (f"custom:{category[0]}:{name[0]}", name[1])
-    if name:
-        matches = [item for item in GARMIN_EXERCISES.values() if item.get("garmin_name") == name[0].upper()]
-        if len(matches) == 1:
-            return matches[0]["key"], _clean(matches[0].get("label"), 48) or name[1]
-        return f"custom:name:{name[0]}", name[1]
-    if category and category[0].upper() not in _CATEGORIES:
-        return f"custom:category:{category[0]}", category[1]
-    return None
+    return shared.exact_strength_identity(row)
 
 
 def _activity_day(row: Activity) -> date | None:
@@ -215,7 +193,7 @@ def _strength_highlights(session: Session, start: date, end: date) -> tuple[Stre
     current: dict[tuple[str, int], tuple[float, str]] = {}
     prior: dict[tuple[str, int], float] = {}
     for row, started in rows:
-        if not isinstance(started, datetime) or not isinstance(row.set_type, str) or row.set_type.strip().upper() not in {"ACTIVE", "WORK"}:
+        if not isinstance(started, datetime) or not shared.active_work_set(row):
             continue
         identity, weight, reps = exact_strength_identity(row), _finite(row.weight_kg), _positive_integer(row.reps)
         if identity is None or weight is None or weight <= 0 or reps is None:
@@ -225,25 +203,27 @@ def _strength_highlights(session: Session, start: date, end: date) -> tuple[Stre
             current[key] = weight, identity[1]
         elif prior_start <= started.date() < start:
             prior[key] = max(prior.get(key, 0.0), weight)
-    highlights = []
-    for key, (weight, label) in current.items():
-        previous = prior.get(key)
-        shown, old = _display_weight(weight), _display_weight(previous)
-        if shown is not None and old is not None and shown > old:
-            highlights.append(StrengthHighlight(label, key[1], shown, old, shown - old))
-    return tuple(sorted(highlights, key=lambda item: (-item.delta_kg, item.label.casefold(), item.reps))[:3])
+    return tuple(StrengthHighlight(item.label, item.reps, item.current_weight_kg, item.prior_weight_kg, item.delta_kg) for item in shared.stable_strength_candidates(current, prior)[:3])
 
 
-def _recovery(session: Session, as_of_day: date, overnight_today_ready: bool) -> tuple[RecoveryAggregateFact, ...]:
+def _recovery(session: Session, as_of_day: date, overnight_today_ready: bool) -> tuple[RecoveryAggregateFact | SleepTimingAggregate, ...]:
     report = build_recovery_health_trend_report(session, as_of_day=as_of_day, overnight_today_ready=overnight_today_ready)
-    allowed = {"sleep_duration", "sleep_score", "hrv_overnight", "resting_hr", "stress_avg", "body_battery_high", "body_battery_charged", "body_battery_drained", "recovery_time"}
-    return tuple(RecoveryAggregateFact(item.key, item.unit, item.recent.median, item.baseline.median, item.delta, item.direction.value, item.recent.valid_days, item.baseline.valid_days, item.coverage.value, item.latest_value, item.latest_day) for item in report.trends if item.key in allowed)
+    allowed = {"sleep_duration", "sleep_score", "hrv_overnight", "resting_hr", "stress_avg", "body_battery_high"}
+    result: list[RecoveryAggregateFact | SleepTimingAggregate] = [RecoveryAggregateFact(item.key, item.unit, item.recent.median, item.baseline.median, item.delta, item.direction.value, item.recent.valid_days, item.baseline.valid_days, item.coverage.value, item.latest_value, item.latest_day) for item in report.trends if item.key in allowed]
+    timing = report.sleep_timing
+    if timing:
+        result.append(SleepTimingAggregate("sleep_timing_variability", "minutes", timing.recent.median, timing.baseline.median, timing.delta, timing.direction.value, timing.recent.valid_days, timing.baseline.valid_days, timing.coverage.value, timing.latest_day, timing.recent_bedtime.isoformat() if timing.recent_bedtime else None, timing.recent_wake_time.isoformat() if timing.recent_wake_time else None))
+    return tuple(result)
 
 
 def _slow_fitness(session: Session, as_of_day: date) -> tuple[SlowFitnessAggregate, ...]:
     report = build_slow_metric_history_report(session, as_of_day=as_of_day)
-    numeric = (("fitness_age", report.fitness_age), ("vo2_running", report.vo2_running), ("vo2_cycling", report.vo2_cycling))
-    result = [SlowFitnessAggregate(key, history.capability_state.lower(), history.current_value, history.points[-1].observed_on if history.points else None, history.previous_value, history.points[-2].observed_on if len(history.points) > 1 else None) for key, history in numeric]
+    numeric = (("fitness_age", report.fitness_age), ("target_fitness_age", report.target_fitness_age), ("vo2_running", report.vo2_running), ("vo2_cycling", report.vo2_cycling))
+    result = []
+    for key, history in numeric:
+        current_day = next((point.observed_on for point in reversed(history.points) if point.value == history.current_value), None)
+        previous_day = next((point.observed_on for point in reversed(history.points) if point.value == history.previous_value and point.observed_on != current_day), None)
+        result.append(SlowFitnessAggregate(key, history.capability_state.lower(), history.current_value, current_day, history.previous_value, previous_day))
     status = report.training_status
     result.append(SlowFitnessAggregate("training_status", status.capability_state.lower(), status.current_status if status.state == "SUPPORTED_WITH_DATA" else None, status.current_day, None, None))
     return tuple(result)

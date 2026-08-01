@@ -92,3 +92,14 @@ Acceptance requires deterministic bounded tenant-local reads, no writes, no
 cross-tenant context, no private calendar, no external request during building,
 and no authority change when aggregates change while the official decision is
 held fixed.
+
+The slow summary includes Fitness Age, target Fitness Age, running/cycling VO2,
+and neutral current-device Training Status (never legacy VO2). Recovery trends
+are limited to sleep duration/score, overnight HRV, resting HR, stress, Body
+Battery high, and typed sleep-timing variability. Both weekly and Ask Coach
+use `metrics.training_aggregates` for identity, duration, domain, set, rounding,
+and stable strength ordering. Activity, program, and planned-session lists are
+bounded wrappers with exact omission counts. The effective ceiling is the lower
+of configured maximum and 16,000; compact sorted-key serialization trims oldest
+activity, farthest planned, next exercises, extra sessions, recovery items,
+slow previous values, then strength highlights.
