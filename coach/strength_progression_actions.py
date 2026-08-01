@@ -65,6 +65,8 @@ class EvidenceReviewItem:
     prescribed_sets: int | None
     target_reps: int | None
     decisive_sets: tuple[EvidenceSetReviewItem, ...]
+    observed_total_reps: int | None = None
+    target_total_reps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,8 @@ class ProposalReviewItem:
     status_label: str
     actionable: bool
     stale_reason: str | None = None
+    progression_rule_key: str | None = None
+    source_increment_grams: int | None = None
 
 
 @dataclass(frozen=True)
@@ -141,7 +145,7 @@ def _safe_sets(raw: str) -> tuple[EvidenceSetReviewItem, ...] | None:
         source = row.get("weight_kg_source")
         grams = _safe_int(row.get("weight_grams"))
         excluded = row.get("excluded")
-        if excluded not in {None, "rest", "warmup", "inferred_warmup"}:
+        if excluded not in {None, "rest", "warmup", "inferred_warmup", "extra"}:
             return None
         set_type = row.get("set_type")
         if set_type is not None and not isinstance(set_type, str):
@@ -195,7 +199,7 @@ def _review_item(session: Session, proposal: StrengthProgressionProposal) -> Pro
             valid_payload = False
             sets = ()
         evidence.append(EvidenceReviewItem(row.appearance_at, row.classification, row.prescribed_sets,
-            row.target_reps, sets))
+            row.target_reps, sets, row.observed_total_reps, row.target_total_reps))
     increment = _policy_increment(session, proposal.policy_version)
     actionable = proposal.status == "pending" and valid_payload and len(evidence) == 2
     status_label = {"applied": "Applied", "rejected": "Rejected", "stale": "Stale", "superseded": "Superseded", "pending": "Pending"}.get(proposal.status, "Unavailable")
@@ -207,7 +211,8 @@ def _review_item(session: Session, proposal: StrengthProgressionProposal) -> Pro
         format_weight_grams(proposal.current_weight_grams), format_weight_grams(proposal.suggested_weight_grams),
         format_weight_grams(proposal.approved_weight_grams), increment, format_weight_grams(increment), tuple(evidence), proposal.policy_version,
         proposal.prescription_fingerprint[:12], proposal.status, proposal.resolved_at, status_label, actionable,
-        None if actionable else "evidence_unavailable",
+        None if actionable else "evidence_unavailable", proposal.progression_rule_key,
+        proposal.source_increment_grams,
     )
 
 
@@ -287,6 +292,8 @@ def _revalidate(session: Session, proposal: StrengthProgressionProposal, *, now:
             or proposal.current_pending_key != pending_key(exercise.id, policy.policy_version, current_fingerprint)
             or proposal.direction not in {"increase", "decrease"}):
         return None
+    if proposal.progression_rule_key != exercise.progression_rule_key:
+        return None
     current = load_current_evidence(session, session_exercise_id=exercise.id, policy_version=policy.policy_version,
                                     prescription_fingerprint=current_fingerprint)
     # The old proposal support is audit history, not a liveness condition: a
@@ -309,6 +316,8 @@ def _revalidate(session: Session, proposal: StrengthProgressionProposal, *, now:
         return None
     if (calculated.direction is None or calculated.direction.value != proposal.direction
             or calculated.suggested_weight_grams != proposal.suggested_weight_grams
+            or calculated.progression_rule_key != proposal.progression_rule_key
+            or calculated.source_increment_grams != proposal.source_increment_grams
             or len(calculated.decisive_evidence_ids) != 2
             or not set(calculated.decisive_evidence_ids).issubset(current_ids)):
         return None

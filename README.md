@@ -5,6 +5,11 @@ Garmin data into a local SQLite database, presents the data in a FastAPI web
 app, manages a source-reviewed strength program, and sends concise Telegram
 recommendations through a deterministic evidence-rule engine.
 
+Powerbuilding PPL's six tagged main lifts can create deterministic 15-rep-goal
+weight proposals after two qualifying local appearances. Every proposal remains
+web-reviewed; GarminCoach never changes a weight automatically or rewrites an
+already scheduled workout.
+
 The product is deliberately not a simulated human coach. It communicates in a
 cold, short, factual style; explains the decisive data; and requires explicit
 confirmation before scheduling, cancelling, or rescheduling a workout.

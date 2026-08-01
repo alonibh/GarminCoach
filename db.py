@@ -311,6 +311,8 @@ class SessionExercise(Base):
     # straight-set compiler semantics.
     superset_group: Mapped[Optional[str]] = mapped_column(String(32))
     transition_rest_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    # Server-owned source progression metadata; NULL is the generic policy.
+    progression_rule_key: Mapped[Optional[str]] = mapped_column(String(64))
     warmup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     warmup_reps: Mapped[Optional[int]] = mapped_column(Integer)
     warmup_duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
@@ -450,6 +452,10 @@ class StrengthProgressionEvidence(Base):
     candidate_weight_grams: Mapped[Optional[int]] = mapped_column(Integer)
     prescribed_sets: Mapped[Optional[int]] = mapped_column(Integer)
     target_reps: Mapped[Optional[int]] = mapped_column(Integer)
+    progression_rule_key: Mapped[Optional[str]] = mapped_column(String(64))
+    observed_total_reps: Mapped[Optional[int]] = mapped_column(Integer)
+    target_total_reps: Mapped[Optional[int]] = mapped_column(Integer)
+    source_increment_grams: Mapped[Optional[int]] = mapped_column(Integer)
     decisive_sets_json: Mapped[str] = mapped_column(Text)
     reason_codes_json: Mapped[str] = mapped_column(Text)
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -538,6 +544,8 @@ class StrengthProgressionProposal(Base):
     decisive_evidence_one_id: Mapped[str] = mapped_column(ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT"))
     decisive_evidence_two_id: Mapped[str] = mapped_column(ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT"))
     reason_codes_json: Mapped[str] = mapped_column(Text)
+    progression_rule_key: Mapped[Optional[str]] = mapped_column(String(64))
+    source_increment_grams: Mapped[Optional[int]] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     current_pending_key: Mapped[Optional[str]] = mapped_column(String(196), unique=True, index=True)
     supersedes_proposal_id: Mapped[Optional[str]] = mapped_column(ForeignKey("strength_progression_proposals.proposal_id", ondelete="SET NULL"))
@@ -1239,6 +1247,7 @@ _SESSION_EXERCISES_CREATE = """
         rest_seconds INTEGER NOT NULL DEFAULT 60,
         superset_group VARCHAR(32),
         transition_rest_seconds INTEGER,
+        progression_rule_key VARCHAR(64),
         warmup_enabled INTEGER NOT NULL DEFAULT 0,
         warmup_reps INTEGER,
         warmup_duration_seconds INTEGER,
@@ -1262,7 +1271,17 @@ _SESSION_EXERCISE_ADD_COLUMNS = {
     "warmup_reps": "INTEGER",
     "warmup_duration_seconds": "INTEGER",
     "warmup_weight_kg": "FLOAT",
+    "progression_rule_key": "VARCHAR(64)",
 }
+
+_STRENGTH_EVIDENCE_ADD_COLUMNS = {
+    "progression_rule_key": "VARCHAR(64)", "observed_total_reps": "INTEGER",
+    "target_total_reps": "INTEGER", "source_increment_grams": "INTEGER",
+}
+_STRENGTH_PROPOSAL_ADD_COLUMNS = {
+    "progression_rule_key": "VARCHAR(64)", "source_increment_grams": "INTEGER",
+}
+_SOURCE_PROGRESSION_MIGRATION_KEY = "source_progression_powerbuilding_rep_goal_2026_08_01_v1"
 
 
 def _migrate_add_columns(target_engine: Engine | None = None) -> None:
@@ -1271,6 +1290,15 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
     eng = target_engine or engine
     insp = inspect(eng)
     with eng.begin() as conn:
+        # Additive Phase 5B fields are nullable so existing generic audit rows
+        # retain their original meaning and hashes.
+        for table, columns in (("session_exercises", _SESSION_EXERCISE_ADD_COLUMNS),
+                               ("strength_progression_evidence", _STRENGTH_EVIDENCE_ADD_COLUMNS),
+                               ("strength_progression_proposals", _STRENGTH_PROPOSAL_ADD_COLUMNS)):
+            existing = {c["name"] for c in insp.get_columns(table)}
+            for col, sqltype in columns.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {sqltype}"))
         # Migrate activities
         existing_act = {c["name"] for c in insp.get_columns("activities")}
         missing_act = {k: v for k, v in _ACTIVITY_ADD_COLUMNS.items() if k not in existing_act}
@@ -1692,6 +1720,47 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             conn.execute(text(
                 "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": execution_fidelity_migration})
+
+        # Phase 5B is deliberately a guarded, tenant-local catalog migration.
+        # It assigns no rule to customized, generic, or structurally divergent
+        # rows and never replaces an exercise row or touches planned workouts.
+        source_progression_applied = conn.execute(text(
+            "SELECT 1 FROM app_migrations WHERE migration_key = :key"
+        ), {"key": _SOURCE_PROGRESSION_MIGRATION_KEY}).first()
+        if not source_progression_applied:
+            from coach.programs import PROGRAMS
+            import json as _json
+            template = {row["name"]: row["exercises"][0]
+                        for row in PROGRAMS["powerbuilding_ppl_6"]["sessions"]}
+            programs = conn.execute(text(
+                "SELECT id FROM training_programs WHERE goal_tags = :tags"
+            ), {"tags": _json.dumps(["powerbuilding_ppl_6"])}).mappings().all()
+            for program in programs:
+                sessions = conn.execute(text(
+                    "SELECT id, name, is_custom FROM program_sessions WHERE program_id = :program_id"
+                ), {"program_id": program["id"]}).mappings().all()
+                for source_session in sessions:
+                    expected = template.get(source_session["name"])
+                    if source_session["is_custom"] or expected is None:
+                        continue
+                    rows = conn.execute(text(
+                        "SELECT id, exercise_name, exercise_key, garmin_category, garmin_name, is_generic, "
+                        "order_index, sets, reps, duration_seconds, rest_seconds, progression_rule_key "
+                        "FROM session_exercises WHERE program_session_id = :id ORDER BY order_index, id"
+                    ), {"id": source_session["id"]}).mappings().all()
+                    if not rows:
+                        continue
+                    row = rows[0]
+                    if (row["progression_rule_key"] is None and row["exercise_name"] == expected["exercise_name"]
+                            and row["exercise_key"] == expected["exercise_key"]
+                            and row["garmin_category"] == expected["garmin_category"]
+                            and row["garmin_name"] == expected["garmin_name"] and not row["is_generic"]
+                            and row["order_index"] == 0 and row["sets"] == 5 and row["reps"] == 3
+                            and row["duration_seconds"] is None and row["rest_seconds"] == expected["rest_seconds"]):
+                        conn.execute(text("UPDATE session_exercises SET progression_rule_key = :rule WHERE id = :id"),
+                                     {"rule": "powerbuilding_rep_goal_15_v1", "id": row["id"]})
+            conn.execute(text("INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"),
+                         {"key": _SOURCE_PROGRESSION_MIGRATION_KEY})
 
         purge_empty_migration = "purge_empty_activities_2026_07_25_v1"
         already_applied = conn.execute(

@@ -54,6 +54,7 @@ def append_evidence(
     program_id: int | None = None, program_session_id: int | None = None,
     activity_program_match_id: int | None = None, evidence_id: str | None = None,
     prescribed_sets: int | None = None, target_reps: int | None = None,
+    progression_rule_key: str | None = None,
 ) -> StrengthProgressionEvidence:
     """Append a revision only once for a deterministic source input."""
     key = fingerprint({"session_exercise_id": session_exercise_id, "activity_id": activity_id,
@@ -77,6 +78,9 @@ def append_evidence(
         appearance_at=appearance_at, classification=result.classification.value,
         current_weight_grams=result.current_weight_grams, candidate_weight_grams=result.candidate_weight_grams,
         prescribed_sets=prescribed_sets, target_reps=target_reps, decisive_sets_json=canonical_json(result.decisive_sets),
+        progression_rule_key=progression_rule_key,
+        observed_total_reps=result.observed_total_reps, target_total_reps=result.target_total_reps,
+        source_increment_grams=result.source_increment_grams,
         reason_codes_json=canonical_json([reason.value for reason in result.reason_codes]),
         idempotency_key=key, supersedes_evidence_id=prior,
     )
@@ -94,7 +98,8 @@ def append_evidence(
 def evidence_record(row: StrengthProgressionEvidence) -> EvidenceRecord:
     from coach.strength_progression import AppearanceClassification
     return EvidenceRecord(row.evidence_id, row.session_exercise_id_snapshot, row.policy_version,
-        row.prescription_fingerprint, row.appearance_at, AppearanceClassification(row.classification), row.candidate_weight_grams)
+        row.prescription_fingerprint, row.appearance_at, AppearanceClassification(row.classification), row.candidate_weight_grams,
+        row.progression_rule_key, row.source_increment_grams)
 
 
 def upsert_streak(session: Session, *, session_exercise_id: int, policy_version: str,
@@ -151,6 +156,8 @@ def create_or_replace_pending_proposal(
         suggested_weight_grams=proposal.suggested_weight_grams, status="pending",
         decisive_evidence_one_id=proposal.decisive_evidence_ids[0], decisive_evidence_two_id=proposal.decisive_evidence_ids[1],
         reason_codes_json=canonical_json([reason.value for reason in proposal.reason_codes]),
+        progression_rule_key=proposal.progression_rule_key,
+        source_increment_grams=proposal.source_increment_grams,
         idempotency_key=proposal.idempotency_key, current_pending_key=key,
         supersedes_proposal_id=existing.proposal_id if existing else None,
     )

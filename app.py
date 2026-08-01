@@ -365,6 +365,7 @@ def _replace_session_exercises(session, program_session: ProgramSession, exercis
                 rest_seconds=exercise["rest_seconds"],
                 superset_group=exercise.get("superset_group"),
                 transition_rest_seconds=exercise.get("transition_rest_seconds"),
+                progression_rule_key=exercise.get("progression_rule_key"),
                 warmup_enabled=exercise["warmup_enabled"],
                 warmup_reps=exercise["warmup_reps"],
                 warmup_duration_seconds=exercise["warmup_duration_seconds"],
@@ -2331,6 +2332,7 @@ def get_program_page(
                     "rest_seconds": ex.rest_seconds,
                     "superset_group": ex.superset_group,
                     "transition_rest_seconds": ex.transition_rest_seconds,
+                    "progression_rule_key": ex.progression_rule_key,
                     "warmup_enabled": ex.warmup_enabled,
                     "warmup_reps": ex.warmup_reps,
                     "warmup_duration_seconds": ex.warmup_duration_seconds,
@@ -2667,6 +2669,8 @@ async def save_session_exercises(session_id: int, request: Request):
         submitted_ids: set[int] = set()
         validated = []
         for row in rows:
+            if row.get("progression_rule_key") not in (None, ""):
+                raise HTTPException(status_code=422, detail="Source progression is server-owned and cannot be changed here.")
             incoming_id = row.get("id")
             if incoming_id not in (None, ""):
                 try:
@@ -2790,6 +2794,13 @@ async def save_session_exercises(session_id: int, request: Request):
                 continue
             from coach.strength_progression_integration import prescription_for_session_exercise
             old_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)
+            # Source ownership survives cosmetic edits but fails closed when
+            # its exact source structure is changed.
+            if ex.progression_rule_key and (values["exercise_key"] != ex.exercise_key
+                    or values["garmin_category"] != ex.garmin_category or values["garmin_name"] != ex.garmin_name
+                    or values["is_generic"] or values["sets"] != 5 or values["reps"] != 3
+                    or values["duration_seconds"] is not None or i != 0 or ps.is_custom):
+                ex.progression_rule_key = None
             for field, value in values.items():
                 setattr(ex, field, value)
             new_fingerprint = prescription_for_session_exercise(ex, ps.program_id, ps.id)

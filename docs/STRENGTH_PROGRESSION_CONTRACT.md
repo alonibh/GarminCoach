@@ -7,6 +7,11 @@ This is the canonical contract for Phase 4 strength progression. Phase 4B
 persistence/recalculation and Phase 4C local web review/actions are implemented;
 unimplemented future stages are explicitly identified below.
 
+Ordinary rows remain governed by this generic contract. The sole source-specific
+exception is the server-owned Powerbuilding PPL 15-rep rule, whose additional
+requirements and safety overlay are authoritative in
+[`SOURCE_PROGRESSION_CONTRACT.md`](SOURCE_PROGRESSION_CONTRACT.md).
+
 ## 1. Product boundary and authority
 
 The web application is the sole review surface. It will show all current proposals on one page, while every `SessionExercise` is reviewed, approved, rejected, edited, and mutated independently. There is no batch approval or “Approve all” action.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Source rep-goal progression
+
+- Added deterministic, web-confirmed source rep-goal proposals for the six
+  Powerbuilding PPL main lifts.
+
 ## 2026-08-01 - Source execution fidelity
 
 - Added source-template supersets for `muscle_strength_5` and separate PPL

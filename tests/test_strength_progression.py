@@ -169,3 +169,30 @@ def test_proposal_boundaries_and_invalid_working_sets():
     for invalid_weight in ("NaN", "Infinity"):
         bad_weight = _group(ObservedSet(0, "ACTIVE", 10, invalid_weight), ObservedSet(1, "ACTIVE", 10, 72.5), ObservedSet(2, "ACTIVE", 10, 72.5))
         assert classify_appearance(AppearanceInput(p, bad_weight, True, datetime.now())).classification == AppearanceClassification.UNSCORABLE
+
+
+def test_powerbuilding_source_rep_goal_tiers_and_strict_weight():
+    p = _prescription(prescribed_sets=5, target_reps=3, order_index=0,
+        progression_rule_key="powerbuilding_rep_goal_15_v1")
+    low = _group(*[ObservedSet(index, "ACTIVE", 3, 72.5) for index in range(5)], order_index=0)
+    result = classify_appearance(AppearanceInput(p, low, True, datetime.now()))
+    assert (result.classification, result.observed_total_reps, result.source_increment_grams) == (
+        AppearanceClassification.INCREASE_QUALIFIED, 15, 1250)
+    high = _group(*[ObservedSet(index, "ACTIVE", reps, 72.5) for index, reps in enumerate((4, 4, 4, 4, 3))], order_index=0)
+    assert classify_appearance(AppearanceInput(p, high, True, datetime.now())).source_increment_grams == 2250
+    mismatch = _group(*[ObservedSet(index, "ACTIVE", 3, 72.5 if index else 70) for index in range(5)], order_index=0)
+    assert classify_appearance(AppearanceInput(p, mismatch, True, datetime.now())).classification == AppearanceClassification.UNSCORABLE
+
+
+def test_powerbuilding_source_proposal_uses_lower_of_two_tiers():
+    policy = ProgressionPolicy()
+    p = _prescription(prescribed_sets=5, target_reps=3, order_index=0,
+        progression_rule_key="powerbuilding_rep_goal_15_v1")
+    fp = prescription_fingerprint(p)
+    rows = [
+        EvidenceRecord("a", 3, policy.policy_version, fp, datetime(2026, 1, 1), AppearanceClassification.INCREASE_QUALIFIED, 73750, p.progression_rule_key, 1250),
+        EvidenceRecord("b", 3, policy.policy_version, fp, datetime(2026, 1, 2), AppearanceClassification.INCREASE_QUALIFIED, 74750, p.progression_rule_key, 2250),
+    ]
+    streak = derive_streak(policy, rows, session_exercise_id=3, prescription=fp, as_of=datetime(2026, 1, 2))
+    proposal = calculate_proposal(policy, p, streak, rows)
+    assert (proposal.direction, proposal.suggested_weight_grams, proposal.source_increment_grams) == (ProposalDirection.INCREASE, 73750, 1250)

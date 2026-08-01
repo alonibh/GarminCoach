@@ -33,6 +33,11 @@ class ProposalDirection(str, Enum):
     DECREASE = "decrease"
 
 
+class ProgressionRuleKey(str, Enum):
+    """Server-owned source rule keys; persisted generic rows remain NULL."""
+    POWERBUILDING_REP_GOAL_15 = "powerbuilding_rep_goal_15_v1"
+
+
 class ReasonCode(str, Enum):
     INELIGIBLE_WEIGHT = "ineligible_weight"
     INELIGIBLE_BODYWEIGHT = "ineligible_bodyweight"
@@ -53,6 +58,11 @@ class ReasonCode(str, Enum):
     STREAK_NOT_READY = "streak_not_ready"
     DECREASE_FLOOR = "decrease_floor"
     EVIDENCE_MISMATCH = "evidence_mismatch"
+    SOURCE_REP_GOAL_LOW_TIER = "source_rep_goal_low_tier"
+    SOURCE_REP_GOAL_HIGH_TIER = "source_rep_goal_high_tier"
+    SOURCE_REP_GOAL_NOT_MET = "source_rep_goal_not_met"
+    SOURCE_WEIGHT_MISMATCH = "source_weight_mismatch"
+    SOURCE_RULE_INELIGIBLE = "source_rule_ineligible"
 
 
 @dataclass(frozen=True)
@@ -84,6 +94,7 @@ class ExercisePrescription:
     warmup_duration_seconds: int | None = None
     warmup_weight_kg: object | None = None
     order_index: int = 0
+    progression_rule_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +149,9 @@ class AppearanceClassificationResult:
     candidate_weight_grams: int | None
     decisive_sets: tuple[dict[str, Any], ...]
     reason_codes: tuple[ReasonCode, ...]
+    observed_total_reps: int | None = None
+    target_total_reps: int | None = None
+    source_increment_grams: int | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +163,8 @@ class EvidenceRecord:
     appearance_at: datetime
     classification: AppearanceClassification
     candidate_weight_grams: int | None = None
+    progression_rule_key: str | None = None
+    source_increment_grams: int | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +187,8 @@ class ProposalResult:
     prescription_fingerprint: str
     idempotency_key: str | None
     reason_codes: tuple[ReasonCode, ...]
+    progression_rule_key: str | None = None
+    source_increment_grams: int | None = None
 
 
 def _canonical(value: Any) -> str:
@@ -227,7 +245,7 @@ def prescription_fingerprint(prescription: ExercisePrescription) -> str:
         warmup_weight = normalize_weight_grams(prescription.warmup_weight_kg)
     except ValueError:
         warmup_weight = None
-    return fingerprint({
+    payload = {
         "program_id": prescription.program_id,
         "program_session_id": prescription.program_session_id,
         "session_exercise_id": prescription.session_exercise_id,
@@ -246,7 +264,11 @@ def prescription_fingerprint(prescription: ExercisePrescription) -> str:
         "warmup_duration_seconds": prescription.warmup_duration_seconds,
         "warmup_weight_grams": warmup_weight,
         "order_index": prescription.order_index,
-    })
+    }
+    # Preserve byte-for-byte Phase 4 fingerprints for every generic row.
+    if prescription.progression_rule_key is not None:
+        payload["progression_rule_key"] = prescription.progression_rule_key
+    return fingerprint(payload)
 
 
 def match_exercise_groups(
@@ -360,11 +382,16 @@ def prepare_working_sets(prescription: ExercisePrescription, group: CompletedExe
                 return PreparedSetsResult((), tuple(payloads), (ReasonCode.AMBIGUOUS_WARMUP,), True)
     selected = tuple(working[: prescription.prescribed_sets or 0])
     payloads.extend(_set_payload(item) for item in selected)
+    # Later real working sets are audit-only: no source or generic rule may
+    # substitute them for one of the first prescribed chronological sets.
+    payloads.extend(_set_payload(item, excluded="extra") for item in working[prescription.prescribed_sets or 0:])
     return PreparedSetsResult(selected, tuple(sorted(payloads, key=lambda item: item["set_index"])), ())
 
 
 def classify_appearance(appearance: AppearanceInput) -> AppearanceClassificationResult:
     prescription = appearance.prescription
+    if prescription.progression_rule_key == ProgressionRuleKey.POWERBUILDING_REP_GOAL_15.value:
+        return classify_powerbuilding_rep_goal_15(appearance)
     if prescription.is_generic:
         return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, None, None, (), (ReasonCode.INELIGIBLE_GENERIC,))
     if prescription.bodyweight:
@@ -407,6 +434,54 @@ def classify_appearance(appearance: AppearanceInput) -> AppearanceClassification
     return AppearanceClassificationResult(AppearanceClassification.NEUTRAL, current, None, payload, (ReasonCode.NEUTRAL_PERFORMANCE,))
 
 
+def classify_powerbuilding_rep_goal_15(appearance: AppearanceInput) -> AppearanceClassificationResult:
+    """Pure source-specific five-working-set rep-goal classification."""
+    p = appearance.prescription
+    if (p.progression_rule_key != ProgressionRuleKey.POWERBUILDING_REP_GOAL_15.value or p.is_generic
+            or p.order_index != 0 or p.prescribed_sets != 5 or p.target_reps != 3
+            or p.duration_seconds is not None):
+        return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, None, None, (),
+            (ReasonCode.SOURCE_RULE_INELIGIBLE,), target_total_reps=15)
+    try:
+        current = normalize_weight_grams(p.template_weight_kg)
+    except ValueError:
+        return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, None, None, (),
+            (ReasonCode.INELIGIBLE_WEIGHT,), target_total_reps=15)
+    if appearance.group is None or appearance.group.is_generic:
+        return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, (),
+            (ReasonCode.AMBIGUOUS_MATCH,), target_total_reps=15)
+    prepared = prepare_working_sets(p, appearance.group)
+    payload = prepared.decisive_sets
+    if prepared.unscorable or not appearance.strength_payload_complete:
+        return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload,
+            prepared.reason_codes if prepared.unscorable else (ReasonCode.INCOMPLETE_PAYLOAD,), target_total_reps=15)
+    attempts = prepared.working_sets
+    if len(attempts) < 5:
+        return AppearanceClassificationResult(AppearanceClassification.NEUTRAL, current, None, payload,
+            (ReasonCode.SOURCE_REP_GOAL_NOT_MET,), 0, 15)
+    weights: list[int] = []
+    for attempt in attempts:
+        if not isinstance(attempt.reps, int) or isinstance(attempt.reps, bool) or attempt.reps <= 0:
+            return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload,
+                (ReasonCode.INVALID_REPS,), target_total_reps=15)
+        try:
+            weights.append(normalize_weight_grams(attempt.weight_kg))
+        except ValueError:
+            return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload,
+                (ReasonCode.INVALID_WEIGHT,), target_total_reps=15)
+    total = sum(int(item.reps) for item in attempts)
+    if any(weight != current for weight in weights):
+        return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload,
+            (ReasonCode.SOURCE_WEIGHT_MISMATCH,), total, 15)
+    increment = 2250 if total >= 19 else 1250 if total >= 15 else None
+    if increment is None:
+        return AppearanceClassificationResult(AppearanceClassification.NEUTRAL, current, None, payload,
+            (ReasonCode.SOURCE_REP_GOAL_NOT_MET,), total, 15)
+    reason = ReasonCode.SOURCE_REP_GOAL_HIGH_TIER if increment == 2250 else ReasonCode.SOURCE_REP_GOAL_LOW_TIER
+    return AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, current, current + increment,
+        payload, (reason,), total, 15, increment)
+
+
 def derive_streak(policy: ProgressionPolicy, evidence: Iterable[EvidenceRecord], *, session_exercise_id: int, prescription: str, as_of: datetime) -> StreakResult:
     unique: dict[str, EvidenceRecord] = {}
     for row in evidence:
@@ -437,7 +512,8 @@ def derive_streak(policy: ProgressionPolicy, evidence: Iterable[EvidenceRecord],
 
 def calculate_proposal(policy: ProgressionPolicy, prescription: ExercisePrescription, streak: StreakResult, evidence: Iterable[EvidenceRecord]) -> ProposalResult:
     current = normalize_weight_grams(prescription.template_weight_kg)
-    expected = ProposalDirection.INCREASE if streak.increase_count >= policy.required_consecutive else ProposalDirection.DECREASE if streak.decrease_count >= policy.required_consecutive else None
+    source_rule = prescription.progression_rule_key == ProgressionRuleKey.POWERBUILDING_REP_GOAL_15.value
+    expected = ProposalDirection.INCREASE if streak.increase_count >= policy.required_consecutive else (None if source_rule else ProposalDirection.DECREASE if streak.decrease_count >= policy.required_consecutive else None)
     if expected is None or len(streak.decisive_evidence_ids) != policy.required_consecutive:
         return ProposalResult(None, current, None, (), policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.STREAK_NOT_READY,))
     by_id = {row.evidence_id: row for row in evidence}
@@ -447,8 +523,15 @@ def calculate_proposal(policy: ProgressionPolicy, prescription: ExercisePrescrip
     if expected == ProposalDirection.INCREASE:
         if any(row.classification != AppearanceClassification.INCREASE_QUALIFIED or row.candidate_weight_grams is None for row in decisive):
             return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.EVIDENCE_MISMATCH,))
-        proven = min(row.candidate_weight_grams for row in decisive)
-        suggested = proven if proven > current else current + policy.global_increment_grams
+        if source_rule:
+            if any(row.progression_rule_key != prescription.progression_rule_key or row.source_increment_grams not in {1250, 2250} for row in decisive):
+                return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.EVIDENCE_MISMATCH,))
+            source_increment = min(int(row.source_increment_grams) for row in decisive)
+            suggested = current + source_increment
+        else:
+            source_increment = None
+            proven = min(row.candidate_weight_grams for row in decisive)
+            suggested = proven if proven > current else current + policy.global_increment_grams
     else:
         if any(row.classification != AppearanceClassification.MATERIALLY_UNDER_TARGET for row in decisive):
             return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.EVIDENCE_MISMATCH,))
@@ -456,4 +539,6 @@ def calculate_proposal(policy: ProgressionPolicy, prescription: ExercisePrescrip
         if suggested <= 0:
             return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.DECREASE_FLOOR,))
     key = fingerprint({"session_exercise_id": prescription.session_exercise_id, "policy_version": policy.policy_version, "prescription_fingerprint": prescription_fingerprint(prescription), "direction": expected.value, "current_weight_grams": current, "suggested_weight_grams": suggested, "decisive_evidence_ids": streak.decisive_evidence_ids})
-    return ProposalResult(expected, current, suggested, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), key, ())
+    return ProposalResult(expected, current, suggested, streak.decisive_evidence_ids, policy.policy_version,
+                          prescription_fingerprint(prescription), key, (), prescription.progression_rule_key,
+                          source_increment if expected == ProposalDirection.INCREASE else None)

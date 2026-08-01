@@ -230,6 +230,10 @@ These are roadmap items, not claims that Phase 1 documentation changed runtime b
 
 ## 11. Evidence governance
 
+Source progression is a deterministic local policy owned by exact source-tagged
+`SessionExercise` rows. It has no biometric, AI, calendar, Garmin, or scheduler
+authority; web confirmation changes only a future local template weight.
+
 Every future prescriptive rule needs a versioned registry entry with population,
 inputs, required history, freshness, output, exclusions, citation, evidence
 grade, review date, and boundary/conflict tests.

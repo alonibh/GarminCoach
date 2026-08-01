@@ -190,6 +190,7 @@ def _exercise(
     duration: int | None = None,
     superset_group: str | None = None,
     transition_rest_seconds: int | None = None,
+    progression_rule_key: str | None = None,
 ) -> dict[str, Any]:
     meta = exercise_metadata(name)
     exercise = {
@@ -207,6 +208,7 @@ def _exercise(
         "garmin_name": (meta or {}).get("garmin_name"),
         "is_generic": meta is None,
         "notes": notes,
+        "progression_rule_key": progression_rule_key,
     }
     exercise.update(warmup_defaults(name, meta, reps, duration))
     return exercise
@@ -732,12 +734,12 @@ PROGRAMS.update({
     ),
     "powerbuilding_ppl_6": _program(
         "Powerbuilding PPL · 6 days", "https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan", "six_to_twenty_four_months", [
-            _session("Push A", "push", [_exercise("Barbell Bench Press", 5, 3, rest=120), _exercise("Seated Overhead Press", 3, 8), _exercise("Weighted Dips", 3, 10, movement="vertical_push")], 60),
-            _session("Pull A", "pull", [_exercise("Deadlift", 5, 3, rest=120), _exercise("Chin Up", 3, 8, notes="Add weight when appropriate"), _exercise("Chest Supported Machine Row", 3, 10)], 60),
-            _session("Legs A", "lower body", [_exercise("Barbell Back Squat", 5, 3, movement="knee_dominant", rest=120), _exercise("Good Morning", 3, 8, movement="hip_hinge"), _exercise("Leg Press", 3, 10)], 60),
-            _session("Push B", "push", [_exercise("Standing Overhead Barbell Press", 5, 3, rest=120), _exercise("Incline Bench Press", 3, 8), _exercise("Narrow Grip Bench Press", 3, 10)], 60),
-            _session("Pull B", "pull", [_exercise("Deadlift", 5, 3, rest=120, notes="Use the source snatch-grip variation"), _exercise("Barbell Row", 3, 8), _exercise("Pull Up", 3, 10, notes="Add weight when appropriate")], 60),
-            _session("Legs B", "lower body", [_exercise("Front Squat", 5, 3, rest=120), _exercise("Romanian Deadlift", 3, 8), _exercise("Barbell Hip Thrust", 3, 10)], 60),
+            _session("Push A", "push", [_exercise("Barbell Bench Press", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Seated Overhead Press", 3, 8), _exercise("Weighted Dips", 3, 10, movement="vertical_push")], 60),
+            _session("Pull A", "pull", [_exercise("Deadlift", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Chin Up", 3, 8, notes="Add weight when appropriate"), _exercise("Chest Supported Machine Row", 3, 10)], 60),
+            _session("Legs A", "lower body", [_exercise("Barbell Back Squat", 5, 3, movement="knee_dominant", rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Good Morning", 3, 8, movement="hip_hinge"), _exercise("Leg Press", 3, 10)], 60),
+            _session("Push B", "push", [_exercise("Standing Overhead Barbell Press", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Incline Bench Press", 3, 8), _exercise("Narrow Grip Bench Press", 3, 10)], 60),
+            _session("Pull B", "pull", [_exercise("Deadlift", 5, 3, rest=120, notes="Use the source snatch-grip variation", progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Barbell Row", 3, 8), _exercise("Pull Up", 3, 10, notes="Add weight when appropriate")], 60),
+            _session("Legs B", "lower body", [_exercise("Front Squat", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Romanian Deadlift", 3, 8), _exercise("Barbell Hip Thrust", 3, 10)], 60),
         ], "Heavy, medium, and lighter rep-goal PPL sessions are represented as editable starting targets.",
     ),
     "low_volume_high_intensity_6": _program(

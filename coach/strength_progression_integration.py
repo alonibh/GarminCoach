@@ -148,7 +148,9 @@ def _material_change(row: StrengthProgressionProposal) -> MaterialProposalChange
         "prescription_fingerprint": row.prescription_fingerprint,
         "session_exercise_id": row.session_exercise_id_snapshot, "direction": row.direction,
         "current_weight_grams": row.current_weight_grams,
-        "suggested_weight_grams": row.suggested_weight_grams})
+        "suggested_weight_grams": row.suggested_weight_grams,
+        "progression_rule_key": row.progression_rule_key,
+        "source_increment_grams": row.source_increment_grams})
     return MaterialProposalChange(row.proposal_id, row.program_id_snapshot,
         row.program_session_id_snapshot, row.session_exercise_id_snapshot, row.policy_version,
         row.prescription_fingerprint, row.direction, row.current_weight_grams,
@@ -208,6 +210,7 @@ def _prescription(row: SessionExercise, program_id: int, program_session_id: int
         bodyweight=row.weight_kg is None, warmup_enabled=bool(row.warmup_enabled),
         warmup_reps=row.warmup_reps, warmup_duration_seconds=row.warmup_duration_seconds,
         warmup_weight_kg=row.warmup_weight_kg, order_index=row.order_index,
+        progression_rule_key=row.progression_rule_key,
     )
 
 
@@ -266,6 +269,7 @@ def _source_fingerprint(activity: Activity, match: ActivityProgramMatch, complet
                               "duration": row.duration_seconds, "edited": row.edited} for row in item.sets]}
                    for item in groups],
         "prescription": prescription_fingerprint(prescription),
+        "progression_rule_key": prescription.progression_rule_key,
     })
 
 
@@ -340,9 +344,10 @@ def _process(session: Session, activity_id: int, *, boundary_id: str | None = No
         evidence = append_evidence(session, session_exercise_id=prescription.session_exercise_id,
             activity_id=activity.id, policy_version=policy.policy_version,
             prescription_fingerprint=prescription_fingerprint(prescription), source_fingerprint=source,
-            appearance_at=appearance_at, result=result, program_id=program.id,
+        appearance_at=appearance_at, result=result, program_id=program.id,
             program_session_id=program_session.id, activity_program_match_id=match.id,
-            prescribed_sets=prescription.prescribed_sets, target_reps=prescription.target_reps)
+            prescribed_sets=prescription.prescribed_sets, target_reps=prescription.target_reps,
+            progression_rule_key=prescription.progression_rule_key)
         if existing is None:
             created += 1
         else:

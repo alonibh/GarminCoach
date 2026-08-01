@@ -206,6 +206,17 @@ source template. Each policy contains:
 Program duration and deload behavior remain metadata until separately approved.
 They must not silently stop, reset, or modify the active program.
 
+## Powerbuilding PPL source progression
+
+The published Powerbuilding PPL source gives the first five-set compound lift a
+15-rep total goal and describes lower and higher pound tiers. GarminCoach
+supports only its six exact first rows, converts the conservative lower bounds
+to +1.25 kg and +2.25 kg with decimal quarter-kilogram rounding, and requires
+two local qualifying appearances plus web confirmation as a safety overlay.
+This overlay is GarminCoach policy, not source text. Back-off, rest-pause,
+accessory, subjective, and all other routine progression systems remain
+unsupported; all other rows use generic progression.
+
 ## Removed templates
 
 The following routines were removed from selectable defaults on 2026-07-22:
