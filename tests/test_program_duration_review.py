@@ -11,6 +11,7 @@ from coach.program_duration_review import (
     materialize_program_duration_review_notification,
     reconcile_program_duration_review,
 )
+from notify.outbox import deliver_notification, process_due_notifications
 from coach.program_policy import PROGRAM_POLICIES, validate_program_policies
 from coach.programs import PROGRAMS
 from db import (
@@ -146,3 +147,35 @@ def test_duration_review_migration_is_tenant_schema_only_and_idempotent(tmp_path
             {"key": "program_duration_reviews_2026_08_01_v1"}).scalar_one() == 1
         assert conn.execute(text("PRAGMA foreign_key_list('program_duration_reviews')")).first() is not None
     engine.dispose()
+
+
+def test_minute_poller_does_not_reconcile_or_enqueue_duration_reviews(session, monkeypatch):
+    _program(session, activated_at=datetime(2025, 1, 1))
+    from contextlib import contextmanager
+    @contextmanager
+    def current_session():
+        yield session
+    monkeypatch.setattr("notify.outbox.get_session", current_session)
+    monkeypatch.setattr("notify.outbox.send_message", lambda *_args, **_kwargs: True)
+    process_due_notifications(datetime(2026, 3, 1, 12))
+    process_due_notifications(datetime(2026, 3, 1, 12))
+    assert session.query(ProgramDurationReview).count() == 0
+    assert session.query(NotificationOutbox).filter_by(event_type="program_duration_review").count() == 0
+
+
+def test_duration_review_delivery_is_plain_once_and_stale_rows_cancel(session, monkeypatch):
+    _program(session)
+    review = reconcile_program_duration_review(session, local_today=date(2026, 3, 1), now_utc=datetime(2026, 3, 1))
+    enqueue_due_program_duration_review_notifications(session, local_today=date(2026, 3, 1), now_utc=datetime(2026, 3, 1, 8))
+    outbox = session.query(NotificationOutbox).one()
+    received = []
+    monkeypatch.setattr("notify.outbox.send_message", lambda text, reply_markup=None, parse_mode=None: received.append((text, reply_markup)) or True)
+    assert deliver_notification(session, outbox, datetime(2026, 3, 1, 8)) == "sent"
+    assert review.notified_at and len(received) == 1 and received[0][1] is None
+    assert "http" not in received[0][0] and str(review.id) not in received[0][0]
+    assert deliver_notification(session, outbox, datetime(2026, 3, 1, 8)) == "retry"
+    review.status = "snoozed"
+    stale = NotificationOutbox(event_type="program_duration_review", due_at=datetime(2026, 3, 1, 8),
+        payload_json=outbox.payload_json, idempotency_key="stale-duration", created_at=datetime(2026, 3, 1))
+    session.add(stale); session.flush()
+    assert deliver_notification(session, stale, datetime(2026, 3, 1, 8)) == "cancelled"
