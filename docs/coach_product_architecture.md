@@ -12,6 +12,15 @@ source-template/compiler concern only. It has no biometric, decision,
 progression, coaching, or automatic scheduling authority, and changes only
 future Garmin compilation after the existing confirmation boundary.
 
+Source-duration review facts are pure local eligibility facts derived from one
+active curated program, its reviewed policy duration, activation anchor, and
+exact source-session identity. Durable review rows are reconciled through the
+existing tenant-local scheduler/outbox path. The authenticated web card may
+record continue, a planned deload/recovery week, or a seven-day reminder; these
+are not biometric, AI, or calendar decisions and never change a cursor, planned
+session, Garmin workout, program, or progression state. Telegram delivery is
+outbox-only and independently deduplicated/revalidated.
+
 ## 1. Product contract
 
 GarminCoach is a factual training assistant, not a simulated human coach or a

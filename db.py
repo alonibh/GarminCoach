@@ -813,6 +813,54 @@ class NotificationOutbox(Base):
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class ProgramDurationReview(Base):
+    """Durable, athlete-controlled source-duration review state.
+
+    This intentionally snapshots the source facts needed to explain a review.
+    It never owns program, cursor, scheduling, Garmin, or progression state.
+    """
+
+    __tablename__ = "program_duration_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    program_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("training_programs.id", ondelete="SET NULL"), index=True
+    )
+    program_id_snapshot: Mapped[int] = mapped_column(Integer, index=True)
+    program_name_snapshot: Mapped[str] = mapped_column(String(255))
+    program_key: Mapped[str] = mapped_column(String(64), index=True)
+    policy_version: Mapped[str] = mapped_column(String(64))
+    source_duration_weeks: Mapped[int] = mapped_column(Integer)
+    activated_at_snapshot: Mapped[datetime] = mapped_column(DateTime)
+    activated_local_date: Mapped[date] = mapped_column(Date)
+    due_on: Mapped[date] = mapped_column(Date, index=True)
+    source_session_count: Mapped[int] = mapped_column(Integer)
+    review_fingerprint: Mapped[str] = mapped_column(String(128), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="scheduled", index=True)
+    decision: Mapped[Optional[str]] = mapped_column(String(32))
+    reminder_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    snooze_until: Mapped[Optional[date]] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    first_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('scheduled', 'pending', 'snoozed', 'resolved', 'superseded')",
+                        name="ck_program_duration_review_status"),
+        CheckConstraint("decision IS NULL OR decision IN ('continue_unchanged', 'deload_planned')",
+                        name="ck_program_duration_review_decision"),
+        CheckConstraint("source_duration_weeks > 0", name="ck_program_duration_review_positive_duration"),
+        CheckConstraint("source_session_count > 0", name="ck_program_duration_review_positive_sessions"),
+        CheckConstraint("reminder_sequence >= 0", name="ck_program_duration_review_sequence"),
+        Index("ix_program_duration_review_active_due", "status", "due_on"),
+        Index("ix_program_duration_review_program_fingerprint", "program_id_snapshot", "review_fingerprint"),
+    )
+
+
 # The web request threads and the background sync thread both write to this
 # SQLite file. Without a busy timeout an overlapping write fails immediately
 # with "database is locked"; WAL mode lets readers and a writer coexist.
@@ -1282,6 +1330,7 @@ _STRENGTH_PROPOSAL_ADD_COLUMNS = {
     "progression_rule_key": "VARCHAR(64)", "source_increment_grams": "INTEGER",
 }
 _SOURCE_PROGRESSION_MIGRATION_KEY = "source_progression_powerbuilding_rep_goal_2026_08_01_v1"
+_PROGRAM_DURATION_REVIEW_MIGRATION_KEY = "program_duration_reviews_2026_08_01_v1"
 
 
 def _migrate_add_columns(target_engine: Engine | None = None) -> None:
@@ -1394,6 +1443,18 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             conn.execute(text(
                 "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": _SLOW_METRIC_HISTORY_MIGRATION_KEY})
+
+        # Phase 5C is schema-only at migration time. Runtime reconciliation is
+        # deliberately responsible for observing active programs later; startup
+        # must not inspect or mutate athlete program state here.
+        duration_review_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": _PROGRAM_DURATION_REVIEW_MIGRATION_KEY},
+        ).first()
+        if not duration_review_applied:
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": _PROGRAM_DURATION_REVIEW_MIGRATION_KEY})
 
         # Migrate athlete_profile
         existing_profile = {c["name"] for c in insp.get_columns("athlete_profile")}

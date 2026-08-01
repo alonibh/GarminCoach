@@ -130,6 +130,14 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
         # A three-tuple is intentionally narrow: existing event types retain
         # their current Markdown/default transport behavior.
         return materialized.text, materialized.reply_markup, materialized.parse_mode
+    if row.event_type == "program_duration_review":
+        from coach.program_duration_review import materialize_program_duration_review_notification
+        return materialize_program_duration_review_notification(
+            session,
+            review_id=payload.get("review_id"),
+            reminder_sequence=payload.get("reminder_sequence"),
+            fingerprint=payload.get("review_fingerprint"),
+        )
     if row.event_type == "morning_briefing":
         if not _decision_is_current(session, row):
             day = row.due_at.date()
@@ -356,6 +364,16 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
         row.status = "sent"
         row.sent_at = now
         _reconcile_delivered_morning_brief(session, row, now)
+        if row.event_type == "program_duration_review":
+            try:
+                payload = json.loads(row.payload_json)
+                from coach.program_duration_review import record_program_duration_review_delivery
+                record_program_duration_review_delivery(
+                    session, review_id=payload.get("review_id"),
+                    reminder_sequence=payload.get("reminder_sequence"), now_utc=now,
+                )
+            except (TypeError, ValueError):
+                pass
         if row.event_type == "strength_progression_ready":
             from coach.strength_progression_notifications import reconcile_progression_notification_outcome
             reconcile_progression_notification_outcome(session, outbox_id=row.id, outcome="sent", now=now)
@@ -387,6 +405,15 @@ def process_due_notifications(now: datetime | None = None, *, limit: int = 25) -
     now = (now or get_local_now()).replace(tzinfo=None)
     result = {"sent": 0, "cancelled": 0, "failed": 0, "deferred": 0, "retry": 0}
     with get_session() as session:
+        # Existing tenant-scoped maintenance/poller path; this is only a local
+        # durable review reconciliation and outbox bridge, never direct send.
+        try:
+            from coach.program_duration_review import enqueue_due_program_duration_review_notifications
+            enqueue_due_program_duration_review_notifications(
+                session, local_today=now.date(), now_utc=datetime.utcnow(),
+            )
+        except Exception:
+            logger.exception("program duration review maintenance failed")
         # Retained local intent is retried by this existing tenant-scoped poller;
         # a bridge failure must not stop unrelated notifications.
         try:

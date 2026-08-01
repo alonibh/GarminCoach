@@ -286,3 +286,10 @@ def validate_program_policies(programs: Mapping[str, dict]) -> None:
             policy.minimum_rest_days_after, policy.preferred_rest_days_after
         )):
             raise ValueError(f"Preferred rest cannot be shorter than minimum rest: {key}")
+        duration = policy.source_duration_weeks
+        if duration is not None and (
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
+            or not 1 <= duration <= 52
+        ):
+            raise ValueError(f"Program policy source duration is invalid: {key}")

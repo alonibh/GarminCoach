@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-01 - Source-duration review prompts
+
+- Added durable, neutral source-duration review points for eligible curated
+  programs, with exact local match-cycle context, web-only decisions, and
+  outbox-only notification delivery.
+
+## 2026-08-01 - Source-duration review prompts
+
+- Added durable, neutral source-duration review points for eligible curated
+  programs, with exact local match-cycle context, web-only decisions, and
+  outbox-only notification delivery.
+
+## 2026-08-01 - Source-duration review prompts
+
+- Added durable, neutral source-duration review points for eligible curated
+  programs, with exact local match-cycle context, web-only decisions, and
+  outbox-only notification delivery.
+
 ## 2026-08-01 - Source rep-goal progression
 
 - Added deterministic, web-confirmed source rep-goal proposals for the six

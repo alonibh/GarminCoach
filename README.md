@@ -10,6 +10,11 @@ weight proposals after two qualifying local appearances. Every proposal remains
 web-reviewed; GarminCoach never changes a weight automatically or rewrites an
 already scheduled workout.
 
+Eligible curated routines also receive a neutral source-duration review point
+after their reviewed elapsed duration. The web card shows factual exact-match
+context and can record continue, a planned lighter week, or a seven-day
+reminder; it never changes the program, workouts, schedule, or progression.
+
 The product is deliberately not a simulated human coach. It communicates in a
 cold, short, factual style; explains the decisive data; and requires explicit
 confirmation before scheduling, cancelling, or rescheduling a workout.
@@ -267,8 +272,9 @@ but are explicitly not valid backups.
 - The five-day source program's supersets and PPL's separate between-exercise
   transition timer are not yet represented structurally; current templates use
   straight sets and one rest field per exercise.
-- Program duration, deload prompts, and source progression rules are metadata
-  only. The system does not automatically increase target weights.
+- A source-duration review is informational and athlete-controlled. It does not
+  declare a program complete or change a workout; source progression remains
+  explicitly web-confirmed.
 - Optional LLM answers are informational and may be unavailable without a
   configured provider; deterministic coaching and notifications continue to
   work without them.

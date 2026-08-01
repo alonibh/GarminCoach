@@ -196,15 +196,22 @@ source template. Each policy contains:
 - ordered immutable session keys;
 - `minimum_rest_days_after` and, where different, preferred rest days;
 - whether a user-confirmed exception is allowed;
-- source duration as display metadata;
+- reviewed source duration metadata, used only for a neutral elapsed
+  source-duration review point when the exact curated source identity remains valid;
 - progression and substitution rules supported by the application;
 - optional recovery activity, source text location, evidence status, and
   approved wording constraints;
 - omitted source components and the catalog's adaptation label;
 - a session identity fingerprint used only inside the currently active program.
 
-Program duration and deload behavior remain metadata until separately approved.
-They must not silently stop, reset, or modify the active program.
+The duration map is `dumbbell_full_body_3` (8 weeks), `phul_4` (12),
+`dumbbell_upper_lower_4` (12), `barbell_no_rack_4` (8),
+`barbell_upper_lower_4` (10), `maul_5` (12), `dumbbell_split_5` (12),
+`powerbuilding_ppl_6` (12), `low_volume_high_intensity_6` (6),
+`built_different_ppl_6` (10), and `muscle_mania_6` (10). All `NULL` duration
+metadata remains ineligible. Elapsed time is not completion; exact local
+match/cycle counts are context only. A recorded deload choice changes no
+workout, program, cursor, scheduling, or progression state.
 
 ## Powerbuilding PPL source progression
 

@@ -55,6 +55,7 @@ from coach.strength_progression_actions import (
     ProgressionActionOutcome, approve_progression_proposal, format_weight_grams,
     list_progression_review, reject_progression_proposal,
 )
+from coach.program_duration_review import pending_program_duration_review_card
 from metrics.engine import acwr_label
 from sync.garmin_client import client
 from sync.scheduler import (
@@ -2278,6 +2279,7 @@ def get_program_page(
     proposal: int | None = None,
     view: str = "",
     approved: int = 0,
+    review_result: str = "",
 ):
     with get_session() as session:
         profile = session.get(AthleteProfile, 1)
@@ -2396,9 +2398,46 @@ def get_program_page(
                 "exercises_by_session": exercises_by_session,
                 "session_ready": session_ready,
                 "planned": planned,
+                "duration_review": (
+                    {
+                        "review": card[0], "context": card[1], "facts": card[2],
+                        "elapsed_days": max(0, (get_local_date() - card[2].activated_local_date).days),
+                    }
+                    if (card := pending_program_duration_review_card(session)) else None
+                ),
+                "duration_review_result": review_result,
                 "exercise_catalog": catalog_for_ui(),
             },
         )
+
+
+@app.post("/program/duration-review/{review_id}/{action}")
+def post_program_duration_review_action(
+    review_id: int,
+    action: str,
+    review_fingerprint: str = Form(...),
+):
+    """Record a web-only duration-review decision without changing training state."""
+    from coach.program_duration_review import apply_program_duration_review_action
+
+    with get_session() as session:
+        outcome = apply_program_duration_review_action(
+            session,
+            review_id=review_id,
+            fingerprint=review_fingerprint,
+            action=action,
+            local_today=get_local_date(),
+            now_utc=datetime.utcnow(),
+        )
+        if outcome in {"applied", "already"}:
+            if action == "deload_planned":
+                return RedirectResponse("/program?view=active&review_result=deload-recorded", status_code=303)
+            if action == "snooze":
+                return RedirectResponse("/program?view=active&review_result=snoozed", status_code=303)
+            return RedirectResponse("/program?view=active&review_result=continued", status_code=303)
+        if outcome == "invalid":
+            raise HTTPException(status_code=422, detail="Unknown source-duration review action.")
+        raise HTTPException(status_code=409, detail="This source-duration review is no longer current.")
 
 
 @app.get("/progression", response_class=HTMLResponse)
@@ -2482,6 +2521,10 @@ def approve_program(program_id: int):
         program.updated_at = program.activated_at
         from coach.program_state import initialize_program_cursor
         initialize_program_cursor(session, program, activated_at=program.activated_at)
+        from coach.program_duration_review import reconcile_program_duration_review
+        reconcile_program_duration_review(
+            session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+        )
     # If this morning was deferred because no program was active—or an older
     # NO_ACTION brief was already sent—activation immediately produces the
     # authoritative recommendation or a clearly labelled correction.
@@ -2523,6 +2566,10 @@ def reset_program_to_template(program_id: int):
         program.days_per_week = proposal["days_per_week"]
         program.rationale = proposal["rationale"]
         program.updated_at = datetime.now()
+        from coach.program_duration_review import reconcile_program_duration_review
+        reconcile_program_duration_review(
+            session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+        )
         target = f"/program?proposal={program.id}" if program.status == "draft" else "/program?view=active"
     return RedirectResponse(url=target, status_code=303)
 

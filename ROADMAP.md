@@ -128,11 +128,12 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
 - [x] Phase 5B: deterministic source rep-goal progression proposals for the six
   `powerbuilding_ppl_6` main lifts, using two local qualifying appearances and
   explicit web confirmation, with no automatic or scheduled-workout mutation.
+- [x] Phase 5C: durable source-duration review prompts for eligible curated
+  programs, with factual local completion context, outbox notification, web-only
+  acknowledgement/snooze, and no automatic deload or workout mutation.
 
 ## Later product work
 
-- Source-specific progression proposals with confirmation.
-- Program-duration/deload review prompts.
 - Operator health and restore tooling.
 - Additional evidence rules only after separate review and boundary tests.
 
