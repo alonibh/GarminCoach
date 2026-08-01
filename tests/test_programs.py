@@ -241,6 +241,35 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
     } == {60}
 
 
+def test_phase5a_source_execution_metadata_matches_the_audited_templates():
+    expected_pairs = {
+        "Back & Shoulders Size": [
+            ("Wide Grip Pull Down", "Narrow Grip Pull Down"),
+            ("Straight Arm Rope Pull Down", "Lower Back Hyperextensions"),
+            ("Cable EZ Bar Upright Row", "Rope Face Pull"),
+        ],
+        "Chest & Arms Size": [("Flat Machine Chest Press", "Incline Dumbbell Fly")],
+        "Legs Size": [
+            ("Seated Hamstring Curl", "Leg Extension"),
+            ("Leg Press", "Barbell Walking Lunge"),
+            ("Abductor Machine", "Adductor Machine"),
+            ("Seated Calf Raise", "Single Leg Calf Press"),
+        ],
+    }
+    assert sum(map(len, expected_pairs.values())) == 8
+    for session_name, pairs in expected_pairs.items():
+        exercises = next(item["exercises"] for item in PROGRAMS["muscle_strength_5"]["sessions"] if item["name"] == session_name)
+        for first, second in pairs:
+            first_index = next(index for index, item in enumerate(exercises) if item["exercise_name"] == first)
+            left, right = exercises[first_index:first_index + 2]
+            assert right["exercise_name"] == second
+            assert left["superset_group"] == right["superset_group"]
+            assert left["transition_rest_seconds"] == right["transition_rest_seconds"] == 90
+        assert all(item["transition_rest_seconds"] == 90 for item in exercises)
+    assert all(item["transition_rest_seconds"] is None for session in PROGRAMS["muscle_strength_5"]["sessions"][:2] for item in session["exercises"])
+    assert all(item["superset_group"] is None and item["transition_rest_seconds"] == 90 for session in PROGRAMS["ppl_6"]["sessions"] for item in session["exercises"])
+
+
 def test_major_region_gate_ignores_focus_labels_and_arm_isolation():
     from coach.programs import _program
 

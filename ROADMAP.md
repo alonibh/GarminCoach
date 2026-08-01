@@ -120,6 +120,18 @@ subjective feedback, biometrics, readiness, or recovery metrics. Any future
 approved change is limited to a local `SessionExercise.weight_kg`; it never
 automatically rewrites exercise structure or already scheduled Garmin workouts.
 
+## Phase 5: Source execution and longer-horizon program fidelity
+
+- [x] Phase 5A: source-template supersets for `muscle_strength_5` and separate
+  between-exercise transition timers for `ppl_6`, with safe future-only Garmin
+  compilation and no progression or coaching authority.
+
+## Phase 5: Source execution and longer-horizon program fidelity
+
+- [x] Phase 5A: source-template supersets for `muscle_strength_5` and separate
+  between-exercise transition timers for `ppl_6`, with safe future-only Garmin
+  compilation and no progression or coaching authority.
+
 
 ## Later product work
 

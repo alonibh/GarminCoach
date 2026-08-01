@@ -1,11 +1,16 @@
 # GarminCoach Product and System Architecture
 
 **Status:** Approved target architecture; current runtime differs where noted  
-**Updated:** 2026-07-27
+**Updated:** 2026-08-01
 
 The detailed metric catalog and synchronization contract are defined in
 [`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md). Formula semantics are defined
 in [`METRICS.md`](METRICS.md).
+
+Source execution structure (superset membership and transition timers) is a
+source-template/compiler concern only. It has no biometric, decision,
+progression, coaching, or automatic scheduling authority, and changes only
+future Garmin compilation after the existing confirmation boundary.
 
 ## 1. Product contract
 

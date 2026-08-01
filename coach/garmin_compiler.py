@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from enum import Enum
 from contextvars import ContextVar
 import os
+from typing import Sequence
 from sqlalchemy.orm import Session
 from garminconnect import GarminConnectAuthenticationError
 
@@ -246,6 +247,68 @@ def build_repeat_group(sets: int, interval_step: dict, rest_step: dict) -> dict:
         "smartRepeat": False
     }
 
+
+@dataclass(frozen=True)
+class StraightExerciseBlock:
+    exercise: SessionExercise
+
+
+@dataclass(frozen=True)
+class SupersetBlock:
+    members: tuple[SessionExercise, SessionExercise]
+    sets: int
+    round_rest_seconds: int
+    transition_rest_seconds: int | None
+
+
+ExecutionBlock = StraightExerciseBlock | SupersetBlock
+
+
+def build_execution_blocks(exercises: Sequence[SessionExercise]) -> tuple[ExecutionBlock, ...]:
+    """Return validated, deterministic execution blocks without mutating rows."""
+    ordered = sorted(exercises, key=lambda exercise: (exercise.order_index, exercise.id or 0))
+    blocks: list[ExecutionBlock] = []
+    index = 0
+    seen_groups: set[str] = set()
+    while index < len(ordered):
+        exercise = ordered[index]
+        group = exercise.superset_group
+        if group is None:
+            blocks.append(StraightExerciseBlock(exercise))
+            index += 1
+            continue
+        if not isinstance(group, str) or not 1 <= len(group) <= 32 or any(
+            not (character.isascii() and (character.isalnum() or character in "_-"))
+            for character in group
+        ):
+            raise ValueError("Superset group must use 1-32 ASCII letters, digits, underscores, or hyphens")
+        if group in seen_groups:
+            raise ValueError(f"Superset group {group!r} must appear in one consecutive pair")
+        if index + 1 >= len(ordered) or ordered[index + 1].superset_group != group:
+            raise ValueError(f"Superset group {group!r} must contain exactly two consecutive exercises")
+        partner = ordered[index + 1]
+        if partner.order_index != exercise.order_index + 1:
+            raise ValueError(f"Superset group {group!r} must use consecutive order indexes")
+        if not isinstance(exercise.sets, int) or exercise.sets <= 0 or exercise.sets != partner.sets:
+            raise ValueError(f"Superset group {group!r} must have matching positive set counts")
+        if exercise.rest_seconds != partner.rest_seconds:
+            raise ValueError(f"Superset group {group!r} must have matching rest values")
+        if exercise.transition_rest_seconds != partner.transition_rest_seconds:
+            raise ValueError(f"Superset group {group!r} must have matching transition rests")
+        for member in (exercise, partner):
+            transition = member.transition_rest_seconds
+            if transition is not None and (isinstance(transition, bool) or not isinstance(transition, int) or not 0 <= transition <= 600):
+                raise ValueError("Transition rest must be a whole number from 0 to 600 seconds")
+        blocks.append(SupersetBlock((exercise, partner), exercise.sets, exercise.rest_seconds, exercise.transition_rest_seconds))
+        seen_groups.add(group)
+        index += 2
+    for block in blocks:
+        if isinstance(block, StraightExerciseBlock):
+            transition = block.exercise.transition_rest_seconds
+            if transition is not None and (isinstance(transition, bool) or not isinstance(transition, int) or not 0 <= transition <= 600):
+                raise ValueError("Transition rest must be a whole number from 0 to 600 seconds")
+    return tuple(blocks)
+
 def reindex_steps(workout_steps: list) -> list:
     """Re-index stepOrder and stepId continuously."""
     step_order = 1
@@ -288,25 +351,55 @@ def build_program_workout(
     exercises = (
         session.query(SessionExercise)
         .filter_by(program_session_id=program_session_id)
-        .order_by(SessionExercise.order_index)
+        .order_by(SessionExercise.order_index, SessionExercise.id)
         .all()
     )
     if not exercises:
         raise ValueError("Program session has no exercises")
+    blocks = build_execution_blocks(exercises)
     steps = []
-    for exercise in exercises:
-        if exercise.warmup_enabled:
-            steps.append(build_generic_step(
-                f"Warm-up: {exercise.exercise_name}", exercise.warmup_reps,
-                exercise.warmup_weight_kg, exercise.garmin_name, exercise.garmin_category,
-                exercise.warmup_duration_seconds, "warmup",
-            ))
-            steps.append(build_rest_step(exercise.rest_seconds))
-        working = build_generic_step(
-            exercise.exercise_name, exercise.reps, exercise.weight_kg,
-            exercise.garmin_name, exercise.garmin_category, exercise.duration_seconds,
-        )
-        steps.append(build_repeat_group(exercise.sets or 1, working, build_rest_step(exercise.rest_seconds)))
+    for block_index, block in enumerate(blocks):
+        members = (block.exercise,) if isinstance(block, StraightExerciseBlock) else block.members
+        # Warm-ups are independent preparation steps, always before their
+        # block and never repeated as a superset round.
+        for exercise in members:
+            if exercise.warmup_enabled:
+                steps.append(build_generic_step(
+                    f"Warm-up: {exercise.exercise_name}", exercise.warmup_reps,
+                    exercise.warmup_weight_kg, exercise.garmin_name, exercise.garmin_category,
+                    exercise.warmup_duration_seconds, "warmup",
+                ))
+                steps.append(build_rest_step(exercise.rest_seconds))
+        has_next = block_index + 1 < len(blocks)
+        if isinstance(block, StraightExerciseBlock):
+            exercise = block.exercise
+            group = build_repeat_group(
+                exercise.sets or 1,
+                build_generic_step(exercise.exercise_name, exercise.reps, exercise.weight_kg,
+                                   exercise.garmin_name, exercise.garmin_category, exercise.duration_seconds),
+                build_rest_step(exercise.rest_seconds),
+            )
+            # Strict legacy parity: an absent transition leaves the original
+            # group and its final rest untouched.
+            if exercise.transition_rest_seconds is not None:
+                group["skipLastRestStep"] = True
+            steps.append(group)
+            if has_next and exercise.transition_rest_seconds and exercise.transition_rest_seconds > 0:
+                steps.append(build_rest_step(exercise.transition_rest_seconds))
+            continue
+        children = [
+            build_generic_step(member.exercise_name, member.reps, member.weight_kg,
+                               member.garmin_name, member.garmin_category, member.duration_seconds)
+            for member in block.members
+        ]
+        children.append(build_rest_step(block.round_rest_seconds))
+        group = build_repeat_group(block.sets, children[0], children[-1])
+        group["workoutSteps"] = children
+        if block.transition_rest_seconds is not None:
+            group["skipLastRestStep"] = True
+        steps.append(group)
+        if has_next and block.transition_rest_seconds and block.transition_rest_seconds > 0:
+            steps.append(build_rest_step(block.transition_rest_seconds))
     nested_steps = sum(1 + len(step.get("workoutSteps", [])) for step in steps)
     if nested_steps > 50:
         raise ValueError(f"Workout has {nested_steps} steps; Garmin limit is 50")
@@ -326,6 +419,7 @@ def _verify_uploaded_workout(expected: dict, uploaded: dict) -> None:
         condition = step.get("endCondition") or {}
         return (
             step.get("type"), step.get("numberOfIterations"),
+            step.get("skipLastRestStep"),
             (step.get("stepType") or {}).get("stepTypeKey"), step.get("description"),
             condition.get("conditionTypeKey"), float(step.get("endConditionValue") or 0),
             float(step.get("weightValue") or -1), step.get("category"), step.get("exerciseName"),

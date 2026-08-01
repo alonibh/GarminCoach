@@ -306,6 +306,10 @@ class SessionExercise(Base):
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     weight_kg: Mapped[Optional[float]] = mapped_column(Float)  # None = bodyweight
     rest_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    # Execution metadata.  NULL deliberately retains the pre-Phase-5A
+    # straight-set compiler semantics.
+    superset_group: Mapped[Optional[str]] = mapped_column(String(32))
+    transition_rest_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     warmup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     warmup_reps: Mapped[Optional[int]] = mapped_column(Integer)
     warmup_duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
@@ -1232,6 +1236,8 @@ _SESSION_EXERCISES_CREATE = """
         duration_seconds INTEGER,
         weight_kg FLOAT,
         rest_seconds INTEGER NOT NULL DEFAULT 60,
+        superset_group VARCHAR(32),
+        transition_rest_seconds INTEGER,
         warmup_enabled INTEGER NOT NULL DEFAULT 0,
         warmup_reps INTEGER,
         warmup_duration_seconds INTEGER,
@@ -1249,6 +1255,8 @@ _SESSION_EXERCISE_ADD_COLUMNS = {
     "is_generic": "INTEGER NOT NULL DEFAULT 0",
     "duration_seconds": "INTEGER",
     "rest_seconds": "INTEGER NOT NULL DEFAULT 60",
+    "superset_group": "VARCHAR(32)",
+    "transition_rest_seconds": "INTEGER",
     "warmup_enabled": "INTEGER NOT NULL DEFAULT 0",
     "warmup_reps": "INTEGER",
     "warmup_duration_seconds": "INTEGER",
@@ -1557,6 +1565,100 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                 ),
                 {"key": source_rest_migration},
             )
+
+        # Phase 5A is deliberately a tenant-local, source-catalog migration.
+        # It never touches planned sessions or makes an external call.  Rows
+        # are only changed when their source identity, order, and prior catalog
+        # rest are still intact; user edits therefore stay authoritative.
+        execution_fidelity_migration = "session_exercise_execution_fidelity_2026_08_01_v1"
+        execution_fidelity_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": execution_fidelity_migration},
+        ).first()
+        if not execution_fidelity_applied:
+            from coach.programs import PROGRAMS
+            import json as _json
+
+            def source_sessions(program_key: str):
+                program_ids = [row[0] for row in conn.execute(text(
+                    "SELECT id FROM training_programs WHERE goal_tags = :goal_tags"
+                ), {"goal_tags": _json.dumps([program_key])}).all()]
+                for program_id in program_ids:
+                    yield from conn.execute(text(
+                        "SELECT id, name, is_custom FROM program_sessions "
+                        "WHERE program_id = :program_id"
+                    ), {"program_id": program_id}).mappings().all()
+
+            def matching_rows(session_id: int, expected: list[dict], rest: int):
+                rows = conn.execute(text(
+                    "SELECT id, exercise_name, order_index, rest_seconds, "
+                    "superset_group, transition_rest_seconds, is_generic "
+                    "FROM session_exercises WHERE program_session_id = :session_id "
+                    "ORDER BY order_index, id"
+                ), {"session_id": session_id}).mappings().all()
+                if len(rows) != len(expected):
+                    return None
+                if any(
+                    row["exercise_name"] != template["exercise_name"]
+                    or row["order_index"] != index
+                    or row["rest_seconds"] != rest
+                    or row["is_generic"]
+                    for index, (row, template) in enumerate(zip(rows, expected))
+                ):
+                    return None
+                return rows
+
+            muscle = PROGRAMS["muscle_strength_5"]["sessions"]
+            muscle_by_name = {item["name"]: item for item in muscle}
+            pairs = {
+                "Back & Shoulders Size": ((0, 1, "superset_1"), (4, 5, "superset_2"), (10, 11, "superset_3")),
+                "Chest & Arms Size": ((1, 2, "superset_1"),),
+                "Legs Size": ((0, 1, "superset_1"), (3, 4, "superset_2"), (5, 6, "superset_3"), (9, 10, "superset_4")),
+            }
+            for source_session in source_sessions("muscle_strength_5"):
+                name = source_session["name"]
+                if source_session["is_custom"] or name not in pairs:
+                    continue
+                expected = muscle_by_name[name]["exercises"]
+                rows = matching_rows(source_session["id"], expected, 90)
+                if rows is None:
+                    continue
+                pair_indexes = {index for pair in pairs[name] for index in pair[:2]}
+                # Straight source rows get a transition only if they remain
+                # wholly source-shaped and unannotated.
+                for index, row in enumerate(rows):
+                    if index not in pair_indexes and row["superset_group"] is None and row["transition_rest_seconds"] is None:
+                        conn.execute(text("UPDATE session_exercises SET transition_rest_seconds = 90 WHERE id = :id"), {"id": row["id"]})
+                for first, second, group in pairs[name]:
+                    left, right = rows[first], rows[second]
+                    if (
+                        left["superset_group"] is None and right["superset_group"] is None
+                        and left["transition_rest_seconds"] is None and right["transition_rest_seconds"] is None
+                    ):
+                        conn.execute(text(
+                            "UPDATE session_exercises SET superset_group = :group, transition_rest_seconds = 90 "
+                            "WHERE id IN (:left, :right)"
+                        ), {"group": group, "left": left["id"], "right": right["id"]})
+
+            ppl_by_name = {item["name"]: item for item in PROGRAMS["ppl_6"]["sessions"]}
+            for source_session in source_sessions("ppl_6"):
+                name = source_session["name"]
+                if source_session["is_custom"] or name not in ppl_by_name:
+                    continue
+                rows = matching_rows(source_session["id"], ppl_by_name[name]["exercises"], 45)
+                # PPL transitions are all-or-nothing per session so no source
+                # row receives mixed execution semantics.
+                if rows is not None and all(
+                    row["superset_group"] is None and row["transition_rest_seconds"] is None
+                    for row in rows
+                ):
+                    conn.execute(text(
+                        "UPDATE session_exercises SET transition_rest_seconds = 90 "
+                        "WHERE program_session_id = :session_id"
+                    ), {"session_id": source_session["id"]})
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": execution_fidelity_migration})
 
         purge_empty_migration = "purge_empty_activities_2026_07_25_v1"
         already_applied = conn.execute(

@@ -25,6 +25,7 @@ from db import (
     PlannedSession,
     ProgramCursor,
     ProgramSession,
+    SessionExercise,
     SyncState,
 )
 from time_utils import get_local_date, get_local_now
@@ -83,6 +84,9 @@ def program_version(session: Session) -> str:
         .order_by(ProgramSession.sequence_order, ProgramSession.id)
         .all()
     )
+    exercises = session.query(SessionExercise).join(ProgramSession).filter(
+        ProgramSession.program_id == program.id
+    ).order_by(SessionExercise.program_session_id, SessionExercise.order_index, SessionExercise.id).all()
     return _hash({
         "program": program.id,
         "updated_at": program.updated_at,
@@ -92,6 +96,14 @@ def program_version(session: Session) -> str:
             "policy": cursor.policy_version if cursor else None,
         },
         "sessions": [(item.id, item.sequence_order, item.name) for item in sessions],
+        "execution": [
+            (item.id, item.program_session_id, item.order_index, item.exercise_key,
+             item.sets, item.reps, item.duration_seconds, item.weight_kg,
+             item.rest_seconds, item.superset_group, item.transition_rest_seconds,
+             item.warmup_enabled, item.warmup_reps, item.warmup_duration_seconds,
+             item.warmup_weight_kg)
+            for item in exercises
+        ],
     })
 
 

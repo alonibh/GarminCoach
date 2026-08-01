@@ -80,7 +80,9 @@ The complete authority model and decision order are documented in
 - Ten selectable Muscle & Strength routines covering two through six training
   days per cycle.
 - Source-reviewed exercise order, rolling session sequence, required recovery
-  intervals, optional recovery guidance, exclusions, and between-set timers.
+  intervals, optional recovery guidance, exclusions, between-set timers, and
+  audited structural supersets. `ppl_6` uses 45-second set rests and 90-second
+  between-exercise transitions; guarded catalog migration preserves custom rows.
 - Source ranges resolve to concrete Garmin timers using the documented upper-
   bound convention; timers can be skipped early on the watch.
 - Warm-up steps are added deterministically by movement and joint exposure.

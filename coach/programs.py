@@ -9,7 +9,7 @@ from coach.exercises import CATALOG_VERSION, exercise_key, exercise_metadata
 
 ACSM_SOURCE_URL = "https://acsm.org/resistance-training-guidelines-update-2026/"
 ACSM_ATTRIBUTION = "Muscle & Strength routine reviewed against ACSM 2026 resistance-training guidance."
-ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+default-routines-2026-07-22-25"
+ROUTINE_CATALOG_VERSION = f"{CATALOG_VERSION}+default-routines-2026-08-01-26"
 
 # These are direct translations of Muscle & Strength's published Training
 # Level. Never infer or relabel a routine from its exercises or frequency.
@@ -188,6 +188,8 @@ def _exercise(
     rest: int = 60,
     notes: str = "",
     duration: int | None = None,
+    superset_group: str | None = None,
+    transition_rest_seconds: int | None = None,
 ) -> dict[str, Any]:
     meta = exercise_metadata(name)
     exercise = {
@@ -198,6 +200,8 @@ def _exercise(
         "weight_kg": None,
         "duration_seconds": duration,
         "rest_seconds": rest,
+        "superset_group": superset_group,
+        "transition_rest_seconds": transition_rest_seconds,
         "movement_pattern": movement or (meta or {}).get("movement_pattern", "other"),
         "garmin_category": (meta or {}).get("category"),
         "garmin_name": (meta or {}).get("garmin_name"),
@@ -461,26 +465,26 @@ PROGRAMS: dict[str, dict[str, Any]] = {
                 _exercise("Standing Calf Raise", 4, 6, rest=180), _exercise("Seated Calf Raise", 2, 6, rest=180),
             ], 90),
             _session("Back & Shoulders Size", "pull", [
-                _exercise("Wide Grip Pull Down", 4, 12, rest=90), _exercise("Narrow Grip Pull Down", 4, 12, rest=90),
-                _exercise("Chest Supported Machine Row", 4, 12, rest=90), _exercise("Narrow Grip Low Pulley Cable Row", 2, 12, rest=90),
-                _exercise("Straight Arm Rope Pull Down", 2, 12, rest=90), _exercise("Lower Back Hyperextensions", 2, 12, rest=90),
-                _exercise("Dumbbell Shoulder Press", 4, 12, rest=90), _exercise("Standing Dumbbell Side Lateral Raise", 2, 12, rest=90),
-                _exercise("Standing EZ Bar Front Raise", 2, 12, rest=90), _exercise("Dumbbell Rear Delt Lateral Raise", 2, 12, rest=90),
-                _exercise("Cable EZ Bar Upright Row", 2, 12, rest=90), _exercise("Rope Face Pull", 2, 12, rest=90),
+                _exercise("Wide Grip Pull Down", 4, 12, rest=90, superset_group="superset_1", transition_rest_seconds=90), _exercise("Narrow Grip Pull Down", 4, 12, rest=90, superset_group="superset_1", transition_rest_seconds=90),
+                _exercise("Chest Supported Machine Row", 4, 12, rest=90, transition_rest_seconds=90), _exercise("Narrow Grip Low Pulley Cable Row", 2, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Straight Arm Rope Pull Down", 2, 12, rest=90, superset_group="superset_2", transition_rest_seconds=90), _exercise("Lower Back Hyperextensions", 2, 12, rest=90, superset_group="superset_2", transition_rest_seconds=90),
+                _exercise("Dumbbell Shoulder Press", 4, 12, rest=90, transition_rest_seconds=90), _exercise("Standing Dumbbell Side Lateral Raise", 2, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Standing EZ Bar Front Raise", 2, 12, rest=90, transition_rest_seconds=90), _exercise("Dumbbell Rear Delt Lateral Raise", 2, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Cable EZ Bar Upright Row", 2, 12, rest=90, superset_group="superset_3", transition_rest_seconds=90), _exercise("Rope Face Pull", 2, 12, rest=90, superset_group="superset_3", transition_rest_seconds=90),
             ], 90),
             _session("Chest & Arms Size", "push", [
-                _exercise("Incline Barbell Bench Press", 4, 12, rest=90), _exercise("Flat Machine Chest Press", 2, 12, rest=90),
-                _exercise("Incline Dumbbell Fly", 2, 12, rest=90), _exercise("Cable Crossover", 2, 12, rest=90),
-                _exercise("Narrow Grip Bench Press", 2, 12, rest=90), _exercise("Seated Overhead EZ Bar Tricep Extension", 2, 12, rest=90),
-                _exercise("Single Arm Cable Press Down", 2, 12, rest=90), _exercise("EZ Bar Preacher Curl", 2, 12, rest=90),
-                _exercise("Standing Alternating Dumbbell Hammer Curl", 2, 12, rest=90), _exercise("High Pulley Single Arm Bicep Curl", 2, 12, rest=90),
+                _exercise("Incline Barbell Bench Press", 4, 12, rest=90, transition_rest_seconds=90), _exercise("Flat Machine Chest Press", 2, 12, rest=90, superset_group="superset_1", transition_rest_seconds=90),
+                _exercise("Incline Dumbbell Fly", 2, 12, rest=90, superset_group="superset_1", transition_rest_seconds=90), _exercise("Cable Crossover", 2, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Narrow Grip Bench Press", 2, 12, rest=90, transition_rest_seconds=90), _exercise("Seated Overhead EZ Bar Tricep Extension", 2, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Single Arm Cable Press Down", 2, 12, rest=90, transition_rest_seconds=90), _exercise("EZ Bar Preacher Curl", 2, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Standing Alternating Dumbbell Hammer Curl", 2, 12, rest=90, transition_rest_seconds=90), _exercise("High Pulley Single Arm Bicep Curl", 2, 12, rest=90, transition_rest_seconds=90),
             ], 90),
             _session("Legs Size", "lower body", [
-                _exercise("Seated Hamstring Curl", 4, 12, rest=90), _exercise("Leg Extension", 4, 12, rest=90), _exercise("Front Squat", 4, 12, rest=90),
-                _exercise("Leg Press", 4, 12, rest=90), _exercise("Barbell Walking Lunge", 4, 12, rest=90, notes="Each side"),
-                _exercise("Abductor Machine", 2, 12, movement="hip_hinge", rest=90), _exercise("Adductor Machine", 2, 12, movement="hip_hinge", rest=90),
-                _exercise("Glute Kick Backs", 2, 12, rest=90, notes="Each side"), _exercise("Donkey Calf Raise", 4, 12, rest=90),
-                _exercise("Seated Calf Raise", 4, 12, rest=90), _exercise("Single Leg Calf Press", 4, 12, rest=90, notes="Each side"),
+                _exercise("Seated Hamstring Curl", 4, 12, rest=90, superset_group="superset_1", transition_rest_seconds=90), _exercise("Leg Extension", 4, 12, rest=90, superset_group="superset_1", transition_rest_seconds=90), _exercise("Front Squat", 4, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Leg Press", 4, 12, rest=90, superset_group="superset_2", transition_rest_seconds=90), _exercise("Barbell Walking Lunge", 4, 12, rest=90, notes="Each side", superset_group="superset_2", transition_rest_seconds=90),
+                _exercise("Abductor Machine", 2, 12, movement="hip_hinge", rest=90, superset_group="superset_3", transition_rest_seconds=90), _exercise("Adductor Machine", 2, 12, movement="hip_hinge", rest=90, superset_group="superset_3", transition_rest_seconds=90),
+                _exercise("Glute Kick Backs", 2, 12, rest=90, notes="Each side", transition_rest_seconds=90), _exercise("Donkey Calf Raise", 4, 12, rest=90, transition_rest_seconds=90),
+                _exercise("Seated Calf Raise", 4, 12, rest=90, superset_group="superset_4", transition_rest_seconds=90), _exercise("Single Leg Calf Press", 4, 12, rest=90, notes="Each side", superset_group="superset_4", transition_rest_seconds=90),
             ], 90),
         ],
         "Each major region has strength and size exposures; original lower-bound set ranges retained.",
@@ -767,6 +771,13 @@ PROGRAMS.update({
         ], "Advanced upper/lower rotation trains every major muscle group three times weekly.",
     ),
 })
+
+# The Planet Fitness source distinguishes the set timer from the transition to
+# the next exercise.  This is template data, not a compiler source-name rule.
+for _ppl_session in PROGRAMS["ppl_6"]["sessions"]:
+    for _ppl_exercise in _ppl_session["exercises"]:
+        _ppl_exercise["transition_rest_seconds"] = 90
+        _ppl_exercise["superset_group"] = None
 
 # Policy and source-template drift is a correctness failure, not a runtime
 # coaching choice. Validate it when the catalog is loaded.

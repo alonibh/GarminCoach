@@ -129,6 +129,35 @@ def test_editor_preserves_submitted_exercise_id_for_rest_only_edit(client):
         assert exercise is not None and exercise.rest_seconds == 90
 
 
+def test_editor_round_trips_execution_fields_and_rejects_broken_groups(client):
+    c, db_module = client
+    from db import ProgramSession, SessionExercise, TrainingProgram
+    with db_module.get_session() as s:
+        program = TrainingProgram(name="P", status="draft")
+        s.add(program); s.flush()
+        routine = ProgramSession(program_id=program.id, name="A")
+        s.add(routine); s.flush()
+        rows = [
+            SessionExercise(program_session_id=routine.id, exercise_name="Goblet Squat", exercise_key="SQUAT:GOBLET_SQUAT", sets=2, reps=10, rest_seconds=60, order_index=0),
+            SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Row", exercise_key="ROW:DUMBBELL_ROW", sets=2, reps=10, rest_seconds=60, order_index=1),
+        ]
+        s.add_all(rows); s.flush()
+        session_id, ids = routine.id, [row.id for row in rows]
+    payload = [
+        {"id": ids[0], "exercise_name": "Goblet Squat", "exercise_key": "SQUAT:GOBLET_SQUAT", "sets": 2, "reps": 10, "rest_seconds": 60, "superset_group": "pair_1", "transition_rest_seconds": 90},
+        {"id": ids[1], "exercise_name": "Dumbbell Row", "exercise_key": "ROW:DUMBBELL_ROW", "sets": 2, "reps": 10, "rest_seconds": 60, "superset_group": "pair_1", "transition_rest_seconds": 90},
+    ]
+    response = c.post(f"/api/session/{session_id}/exercises", json=payload)
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["exercises"]] == ids
+    with db_module.get_session() as s:
+        assert [(s.get(SessionExercise, item).superset_group, s.get(SessionExercise, item).transition_rest_seconds) for item in ids] == [("pair_1", 90), ("pair_1", 90)]
+    broken = [payload[0], {**payload[1], "superset_group": None, "transition_rest_seconds": None}]
+    assert c.post(f"/api/session/{session_id}/exercises", json=broken).status_code == 422
+    with db_module.get_session() as s:
+        assert s.get(SessionExercise, ids[1]).superset_group == "pair_1"
+
+
 def test_new_editor_row_response_installs_id_for_idempotent_second_save(client):
     c, db_module = client
     from db import ProgramSession, SessionExercise, TrainingProgram
@@ -705,6 +734,41 @@ def test_existing_source_template_rest_defaults_are_migrated_without_touching_cu
             expected for *_, expected in fixtures
         ]
         assert s.get(SessionExercise, custom_exercise_id).rest_seconds == 61
+
+
+def test_execution_fidelity_source_migration_is_guarded_and_idempotent(client):
+    _, db_module = client
+    from coach.programs import PROGRAMS
+    from db import ProgramSession, SessionExercise, TrainingProgram
+    from sqlalchemy import text
+    with db_module.get_session() as s:
+        muscle = TrainingProgram(name="Muscle", goal_tags='["muscle_strength_5"]', status="draft")
+        ppl = TrainingProgram(name="PPL", goal_tags='["ppl_6"]', status="draft")
+        s.add_all([muscle, ppl]); s.flush()
+        ms_template = next(item for item in PROGRAMS["muscle_strength_5"]["sessions"] if item["name"] == "Back & Shoulders Size")
+        ms_session = ProgramSession(program_id=muscle.id, name=ms_template["name"])
+        ppl_template = PROGRAMS["ppl_6"]["sessions"][0]
+        ppl_session = ProgramSession(program_id=ppl.id, name=ppl_template["name"])
+        s.add_all([ms_session, ppl_session]); s.flush()
+        for index, item in enumerate(ms_template["exercises"]):
+            s.add(SessionExercise(program_session_id=ms_session.id, exercise_name=item["exercise_name"], sets=item["sets"], reps=item["reps"], rest_seconds=90, order_index=index))
+        for index, item in enumerate(ppl_template["exercises"]):
+            s.add(SessionExercise(program_session_id=ppl_session.id, exercise_name=item["exercise_name"], sets=item["sets"], reps=item["reps"], rest_seconds=45, order_index=index))
+        s.flush()
+        ms_id, ppl_id = ms_session.id, ppl_session.id
+        s.execute(text("CREATE TABLE IF NOT EXISTS app_migrations (migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"))
+        s.execute(text("DELETE FROM app_migrations WHERE migration_key = 'session_exercise_execution_fidelity_2026_08_01_v1'"))
+    db_module._migrate_add_columns()
+    with db_module.get_session() as s:
+        ms_rows = s.query(SessionExercise).filter_by(program_session_id=ms_id).order_by(SessionExercise.order_index).all()
+        assert [(row.superset_group, row.transition_rest_seconds) for row in ms_rows[:2]] == [("superset_1", 90), ("superset_1", 90)]
+        assert all(row.transition_rest_seconds == 90 for row in ms_rows)
+        assert all(row.superset_group is None and row.transition_rest_seconds == 90 for row in s.query(SessionExercise).filter_by(program_session_id=ppl_id))
+        assert s.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = 'session_exercise_execution_fidelity_2026_08_01_v1'")).scalar_one() == 1
+        ms_rows[0].rest_seconds = 91
+    db_module._migrate_add_columns()
+    with db_module.get_session() as s:
+        assert s.query(SessionExercise).filter_by(program_session_id=ms_id).order_by(SessionExercise.order_index).first().rest_seconds == 91
 
 
 def test_existing_total_package_sessions_receive_full_body_names(client):
