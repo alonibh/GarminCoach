@@ -259,7 +259,7 @@ def test_weekly_summary_uses_synced_same_rep_progression_without_acwr(session):
 
     summary = build_weekly_summary(session, date(2026, 7, 11))
 
-    assert "Bench Press +2.5 kg at 8 reps" in summary
+    assert "Bench Press 82.5 kg \u00d7 8, up 2.5 kg from prior week." in summary
     assert "ACWR" not in summary
     assert "readiness" not in summary.lower()
 
@@ -286,7 +286,7 @@ def test_weekly_completion_uses_activity_date_not_late_reconciliation_date(sessi
 
     summary = build_weekly_summary(session, date(2026, 7, 11))
 
-    assert "Training: 1 of 2 program sessions completed." in summary
+    assert "Program: 1 of 2 sessions completed." in summary
     assert "Unmatched strength activities" not in summary
     assert "not defined" not in summary
 
@@ -302,7 +302,7 @@ def test_weekly_summary_uses_plain_language_and_omits_sleep_stats(session):
 
     summary = build_weekly_summary(session, date(2026, 7, 11))
 
-    assert "Training: 0 of 2 program sessions completed." in summary
+    assert "Program: 0 of 2 sessions completed." in summary
     assert "Sleep" not in summary
     assert "score 83" not in summary
     assert "Unmatched" not in summary

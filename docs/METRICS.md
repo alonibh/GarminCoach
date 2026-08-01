@@ -256,6 +256,16 @@ only stored values and disclose the number of days with either observed value,
 so missing days are never treated as zero. They are informational only: they
 do not enter readiness, workout, Telegram, injury-risk, or Ask Coach logic.
 
+## Weekly summary
+
+Phase 4G implements the deterministic local weekly report documented in
+[`WEEKLY_SUMMARY_CONTRACT.md`](WEEKLY_SUMMARY_CONTRACT.md). It contains bounded
+training/adherence, activity, movement, descriptive strength, approved Phase
+4E recovery-trend, scoped Phase 4F slow-history, and next-session sections.
+It reuses the existing Phase 4E formulas and Phase 4F history exactly; missing
+days are never converted to zero. It has no custom score, workout authority,
+ACWR, or Training Readiness content.
+
 ## Body composition gate
 
 Body composition remains intentionally gated. See

@@ -1,7 +1,7 @@
 """Durable notification queue with quiet hours and delivery revalidation."""
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 import json
 import logging
 
@@ -107,8 +107,11 @@ def _decision_is_current(session: Session, row: NotificationOutbox) -> bool:
     return current.idempotency_key == source["idempotency_key"]
 
 
-def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tuple[str, dict | None] | None:
-    payload = json.loads(row.payload_json)
+def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tuple[str, dict | None] | tuple[str, None, None] | None:
+    try:
+        payload = json.loads(row.payload_json)
+    except (TypeError, ValueError):
+        return None
     if row.event_type == "strength_progression_ready":
         from coach.strength_progression_notifications import materialize_progression_summary
         materialized = materialize_progression_summary(session, batch_id=str(payload.get("batch_id", "")), now=now)
@@ -206,8 +209,30 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
         return f"Workout reminder — you have the {workout_name} one hour from now.", None
 
     if row.event_type == "weekly_summary":
-        from notify.weekly import build_weekly_summary
-        return build_weekly_summary(session, datetime.fromisoformat(payload["week_end"]).date()), None
+        try:
+            raw_week_end = payload.get("week_end")
+            if not isinstance(raw_week_end, str) or len(raw_week_end) != 10:
+                return None
+            week_end = date.fromisoformat(raw_week_end)
+            if week_end.isoformat() != raw_week_end or week_end > now.date():
+                return None
+            if now.date() > week_end + timedelta(days=6):
+                return None
+            from notify.weekly_report import build_weekly_summary_report, render_weekly_summary
+            # Only a same-day delivery can include an overnight observation for
+            # Saturday, and only when the existing freshness evidence permits it.
+            overnight_ready = False
+            if week_end == now.date():
+                from metrics.freshness import proactive_metrics_ready
+                overnight_ready = proactive_metrics_ready(session, day=week_end)
+            report = build_weekly_summary_report(
+                session, week_end=week_end, generated_at=now, overnight_today_ready=overnight_ready,
+            )
+            return render_weekly_summary(report), None, None
+        except (TypeError, ValueError):
+            # Delivery validation deliberately exposes neither malformed payload
+            # data nor renderer exceptions to Telegram or logs.
+            return None
 
     if row.event_type == "late_material_update":
         if not _decision_is_current(session, row):

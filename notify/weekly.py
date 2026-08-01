@@ -1,120 +1,31 @@
-"""Deterministic Saturday summary; no LLM and no ACWR."""
+"""Saturday weekly-summary enqueue compatibility wrapper."""
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from coach.onboarding import active_program
-from coach.program_state import program_state_facts
-from db import (
-    Activity,
-    ActivityProgramMatch,
-    ExerciseSet,
-    PlannedSession,
-    ProgramSession,
-    get_session,
-)
-from notify.outbox import enqueue_notification, process_due_notifications
+from db import get_session
+from notify.outbox import enqueue_notification
+from notify.weekly_report import build_weekly_summary_report, render_weekly_summary
 from time_utils import get_local_date, get_local_now
 
 
-def _strength_progression(session: Session, week_start: date, week_end: date) -> str | None:
-    previous_start = week_start - timedelta(days=7)
-    rows = (
-        session.query(ExerciseSet, Activity.start_time)
-        .join(Activity, ExerciseSet.activity_id == Activity.id)
-        .filter(
-            Activity.start_time >= datetime.combine(previous_start, time.min),
-            Activity.start_time <= datetime.combine(week_end, time.max),
-            ExerciseSet.weight_kg.isnot(None),
-            ExerciseSet.weight_kg > 0,
-            ExerciseSet.reps.isnot(None),
-            ExerciseSet.set_type != "REST",
-        )
-        .all()
-    )
-    current, previous = {}, {}
-    for exercise, started in rows:
-        name = exercise.exercise_name or exercise.exercise_category or "Exercise"
-        key = (name, int(exercise.reps))
-        target = current if started.date() >= week_start else previous
-        target[key] = max(target.get(key, 0), float(exercise.weight_kg))
-    gains = [
-        (weight - previous[key], key[0], key[1])
-        for key, weight in current.items()
-        if key in previous and weight > previous[key]
-    ]
-    if not gains:
-        return None
-    delta, name, reps = max(gains)
-    return f"{name.replace('_', ' ').title()} +{delta:g} kg at {reps} reps"
-
-
-def build_weekly_summary(session: Session, week_end: date) -> str:
-    week_start = week_end - timedelta(days=6)
-    start_dt = datetime.combine(week_start, time.min)
-    end_dt = datetime.combine(week_end, time.max)
-    program = active_program(session)
-    completed = (
-        session.query(ActivityProgramMatch)
-        .join(Activity, ActivityProgramMatch.activity_id == Activity.id)
-        .filter(Activity.start_time >= start_dt, Activity.start_time <= end_dt)
-        .count()
-    )
-    expected = program.days_per_week if program and program.days_per_week is not None else None
-    if program and expected is None:
-        expected = session.query(ProgramSession).filter(
-            ProgramSession.program_id == program.id,
-            ProgramSession.session_role == "coach_strength",
-            ProgramSession.is_addon.is_(False),
-        ).count() or None
-    strength = (
-        session.query(Activity)
-        .filter(
-            Activity.start_time >= start_dt,
-            Activity.start_time <= end_dt,
-            (Activity.activity_type.ilike("%strength%")) | (Activity.activity_type.ilike("%weight%")),
-        )
-        .all()
-    )
-    matched_ids = {
-        item[0]
-        for item in session.query(ActivityProgramMatch.activity_id)
-        .join(Activity, ActivityProgramMatch.activity_id == Activity.id)
-        .filter(Activity.start_time >= start_dt, Activity.start_time <= end_dt)
-        .all()
-    }
-    unmatched = sum(1 for activity in strength if activity.id not in matched_ids)
-    missed = session.query(PlannedSession).filter(
-        PlannedSession.target_date >= week_start,
-        PlannedSession.target_date <= week_end,
-        PlannedSession.status.notin_(("completed", "cancelled", "replaced_by_active_recovery", "rest_selected")),
-    ).count()
-    progression = _strength_progression(session, week_start, week_end)
-
-    state = program_state_facts(session, program, on_date=week_end) if program else None
-
-    if expected is not None and completed <= expected:
-        training_text = f"Training: {completed} of {expected} program sessions completed."
-    elif expected is not None:
-        training_text = f"Training: {completed} program sessions completed; weekly target {expected}."
-    elif completed:
-        training_text = f"Training: {completed} program sessions completed."
-    else:
-        training_text = "Training: no program sessions completed."
-    lines = ["*Weekly summary*", training_text]
-    if unmatched:
-        noun = "activity" if unmatched == 1 else "activities"
-        lines.append(f"Additional training: {unmatched} other strength {noun} synced.")
-    if missed:
-        noun = "session remains" if missed == 1 else "sessions remain"
-        lines.append(f"Schedule: {missed} planned {noun} incomplete.")
-    if progression:
-        lines.append(f"Progress: {progression}.")
-    if state:
-        lines.append(f"Next: {state['next_session_name']}.")
-    return "\n".join(lines)
+def build_weekly_summary(
+    session: Session,
+    week_end: date,
+    *,
+    generated_at: datetime | None = None,
+    overnight_today_ready: bool | None = None,
+) -> str:
+    """Compatibility API for callers that require only the rendered text."""
+    generated_at = (generated_at or get_local_now()).replace(tzinfo=None)
+    if overnight_today_ready is None:
+        overnight_today_ready = week_end < generated_at.date()
+    return render_weekly_summary(build_weekly_summary_report(
+        session, week_end=week_end, generated_at=generated_at,
+        overnight_today_ready=overnight_today_ready,
+    ))
 
 
 def send_weekly_summary() -> None:
@@ -128,7 +39,6 @@ def send_weekly_summary() -> None:
             payload={"week_end": today.isoformat()},
             idempotency_key=f"weekly:{today.isoformat()}",
         )
-    process_due_notifications(now)
 
 
 if __name__ == "__main__":

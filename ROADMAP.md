@@ -107,10 +107,12 @@ the selected workout, and every mutation requires a current Telegram confirmatio
   Garmin request and have no workout, notification, or coaching authority.
 - [x] Phase 4F: durable Fitness Age, target Fitness Age, activity-scoped VO₂ max,
   and device-scoped Training Status history with capability-aware local UI.
-- [ ] Phase 4G: weekly-summary improvements using approved deterministic aggregates.
+- [x] Phase 4G: deterministic weekly summary using local training, movement,
+  approved recovery-trend, and scoped slow-history aggregates with outbox-only
+  plain-text delivery.
 - [ ] Phase 4H: compact aggregate Ask Coach context under a separate privacy contract.
 
-Phase 4B2, 4C, 4D, and 4E are complete; later runtime stages remain unchecked.
+Phase 4A–4G are complete; Phase 4H remains unchecked.
 Progression evidence has no authority from Garmin RPE, Garmin Feel,
 subjective feedback, biometrics, readiness, or recovery metrics. Any future
 approved change is limited to a local `SessionExercise.weight_kg`; it never

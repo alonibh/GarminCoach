@@ -299,8 +299,11 @@ preserving the existing Stage 1, weekly, and incremental fetch policy. It adds
 no Garmin endpoint or historical Garmin scan. Fitness Age and target Fitness
 Age are account-scoped; VO₂ is explicit running/cycling activity-scoped (legacy
 local imports remain unverified); Training Status is current-device source text
-and capability-aware. Weekly-summary improvements and aggregate Ask Coach
-context remain future work and receive none of this history.
+and capability-aware. Phase 4G weekly-summary improvements are implemented
+under [`WEEKLY_SUMMARY_CONTRACT.md`](WEEKLY_SUMMARY_CONTRACT.md). They reuse
+only local stored facts and add no fetch, endpoint, scan, worker, or UI-time
+request. Phase 4H aggregate Ask Coach context remains future work and receives
+none of this history.
 
 ### Manual sync
 
