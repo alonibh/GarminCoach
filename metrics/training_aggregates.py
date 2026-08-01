@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from math import isfinite
 import re
@@ -23,6 +24,12 @@ class StrengthCandidate:
     current_weight_kg: float
     prior_weight_kg: float
     delta_kg: float
+
+
+@dataclass(frozen=True)
+class StrengthComparisonResult:
+    candidates: tuple[StrengthCandidate, ...]
+    total_candidates: int
 
 
 def finite(value: object) -> float | None:
@@ -107,3 +114,18 @@ def stable_strength_candidates(current: dict[tuple[str, int], tuple[float, str]]
         if shown is not None and old is not None and shown > old:
             result.append(StrengthCandidate(key, label, reps, shown, old, shown - old))
     return tuple(sorted(result, key=lambda item: (-item.delta_kg, item.label.casefold(), item.reps)))
+
+
+def build_strength_comparisons(rows, *, current_start: date, current_end: date) -> StrengthComparisonResult:
+    """Shared prior-seven-day versus current-window exact strength evidence."""
+    prior_start = current_start - timedelta(days=7)
+    current, prior = {}, {}
+    for row, started in rows:
+        if not isinstance(started, datetime) or not active_work_set(row): continue
+        identity, weight, reps = exact_strength_identity(row), finite(row.weight_kg), positive_integer(row.reps)
+        if identity is None or weight is None or weight <= 0 or reps is None: continue
+        key = identity[0], reps
+        if current_start <= started.date() <= current_end and (key not in current or weight > current[key][0]): current[key] = weight, identity[1]
+        elif prior_start <= started.date() < current_start: prior[key] = max(prior.get(key, 0), weight)
+    candidates = stable_strength_candidates(current, prior)
+    return StrengthComparisonResult(candidates, len(candidates))

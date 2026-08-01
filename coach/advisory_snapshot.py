@@ -40,9 +40,12 @@ def effective_snapshot_max_chars() -> int:
 def _utc_iso(value: datetime | None) -> str | None:
     if not isinstance(value, datetime):
         return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return _as_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Interpret naïve database datetimes as UTC; preserve aware offsets."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _clean(value: object, maximum: int = 96) -> str | None:
@@ -94,7 +97,7 @@ def _fact(value: object, observed_at: datetime | None, *, capability: str = "not
     allowed_freshness = {"fresh", "stale", "missing", "expected_pending", "error", "unknown"}
     capability = capability if capability in allowed_capability else "unknown"
     freshness = freshness if freshness in allowed_freshness else "unknown"
-    if freshness not in {"fresh", "stale"}:
+    if capability == "unsupported" or freshness not in {"fresh", "stale"}:
         value, observed_at = None, None
     return {"value": value, "observed_at": _utc_iso(observed_at), "capability": capability, "freshness": freshness}
 
@@ -122,7 +125,7 @@ def _official_recommendation(session: Session, local_day: date, local_timezone: 
     if not isinstance(result, dict):
         result = {}
     evaluated = record.evaluated_at
-    decision_day = evaluated.replace(tzinfo=timezone.utc).astimezone(local_timezone).date() if isinstance(evaluated, datetime) else None
+    decision_day = _as_utc(evaluated).astimezone(local_timezone).date() if isinstance(evaluated, datetime) else None
     session_name = _clean(result.get("planned_session_name") or result.get("next_program_session_name"), 96)
     readiness = _number(result.get("readiness_score"), low=0, high=100)
     category = _clean(result.get("readiness_category"), 32)

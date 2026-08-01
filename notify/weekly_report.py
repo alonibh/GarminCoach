@@ -215,34 +215,8 @@ def _strength_highlights(session: Session, start: date, end: date) -> tuple[Week
         Activity.start_time >= datetime.combine(previous_start, time.min),
         Activity.start_time <= datetime.combine(end, time.max),
     ).all()
-    current: dict[tuple[str, int], tuple[float, str]] = {}
-    prior: dict[tuple[str, int], float] = {}
-    for row, started in rows:
-        if not isinstance(started, datetime) or not isinstance(row.set_type, str) or row.set_type.strip().upper() not in {"ACTIVE", "WORK"}:
-            continue
-        weight, reps = _finite(row.weight_kg), _positive_integer(row.reps)
-        if weight is None or weight <= 0 or reps is None:
-            continue
-        identity = _weekly_exercise_identity(row)
-        if identity is None:
-            continue
-        canonical, label = identity
-        key = (canonical, reps)
-        if start <= started.date() <= end:
-            if key not in current or weight > current[key][0]:
-                current[key] = (weight, label)
-        elif previous_start <= started.date() < start:
-            prior[key] = max(prior.get(key, 0.0), weight)
-    highlights = []
-    for key, (weight, label) in current.items():
-        prior_weight = prior.get(key)
-        current_display, prior_display = _display_weight_kg(weight), _display_weight_kg(prior_weight)
-        if current_display is None or prior_display is None or current_display <= prior_display:
-            continue
-        highlights.append(WeeklyStrengthHighlight(
-            key[0], label, key[1], current_display, prior_display, current_display - prior_display,
-        ))
-    return tuple(sorted(highlights, key=lambda item: (-item.delta_kg, item.label.casefold(), item.reps))[:2])
+    result = shared.build_strength_comparisons(rows, current_start=start, current_end=end)
+    return tuple(WeeklyStrengthHighlight(item.key, item.label, item.reps, item.current_weight_kg, item.prior_weight_kg, item.delta_kg) for item in result.candidates[:2])
 
 
 def _recovery_highlights(session: Session, end: date, overnight_today_ready: bool) -> tuple[WeeklyRecoveryHighlight, ...]:

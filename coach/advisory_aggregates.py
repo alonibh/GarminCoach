@@ -190,20 +190,8 @@ def _aggregate_window(session: Session, start: date, end: date, program: Trainin
 def _strength_highlights(session: Session, start: date, end: date) -> tuple[StrengthHighlight, ...]:
     prior_start = start - timedelta(days=7)
     rows = session.query(ExerciseSet, Activity.start_time).join(Activity, ExerciseSet.activity_id == Activity.id).filter(Activity.start_time >= datetime.combine(prior_start, time.min), Activity.start_time <= datetime.combine(end, time.max)).all()
-    current: dict[tuple[str, int], tuple[float, str]] = {}
-    prior: dict[tuple[str, int], float] = {}
-    for row, started in rows:
-        if not isinstance(started, datetime) or not shared.active_work_set(row):
-            continue
-        identity, weight, reps = exact_strength_identity(row), _finite(row.weight_kg), _positive_integer(row.reps)
-        if identity is None or weight is None or weight <= 0 or reps is None:
-            continue
-        key = identity[0], reps
-        if start <= started.date() <= end and (key not in current or weight > current[key][0]):
-            current[key] = weight, identity[1]
-        elif prior_start <= started.date() < start:
-            prior[key] = max(prior.get(key, 0.0), weight)
-    return tuple(StrengthHighlight(item.label, item.reps, item.current_weight_kg, item.prior_weight_kg, item.delta_kg) for item in shared.stable_strength_candidates(current, prior)[:3])
+    result = shared.build_strength_comparisons(rows, current_start=start, current_end=end)
+    return tuple(StrengthHighlight(item.label, item.reps, item.current_weight_kg, item.prior_weight_kg, item.delta_kg) for item in result.candidates[:3])
 
 
 def _recovery(session: Session, as_of_day: date, overnight_today_ready: bool) -> tuple[RecoveryAggregateFact | SleepTimingAggregate, ...]:
