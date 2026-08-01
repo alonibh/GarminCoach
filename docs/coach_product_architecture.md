@@ -1,5 +1,13 @@
 # GarminCoach Product and System Architecture
 
+## Operator safety boundary (Phase 6A)
+
+Operator health is read-only and has no product or coaching authority. Verified
+SQLite backup is explicit and local; it makes no external calls. Restore remains
+absent in Phase 6A, raw logs are never served by the web application, and an
+existing malformed database fails closed rather than triggering automatic
+quarantine, replacement, or recreation.
+
 **Status:** Approved target architecture; current runtime differs where noted  
 **Updated:** 2026-08-01
 

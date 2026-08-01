@@ -117,6 +117,10 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", _DEFAULT_SESSION_SECRET)
 SESSION_MAX_AGE_DAYS = int(os.getenv("SESSION_MAX_AGE_DAYS", "30"))
 MAX_INVITED_USERS = int(os.getenv("MAX_INVITED_USERS", "5"))
 DB_URL = f"sqlite:///{DB_PATH}"
+# Operator-only local backup settings.  No scheduler consumes these values.
+OPERATOR_BACKUP_ROOT = _expand(os.getenv("OPERATOR_BACKUP_ROOT", "operator_backups"))
+OPERATOR_BACKUP_WARN_AGE_HOURS = max(1, min(int(os.getenv("OPERATOR_BACKUP_WARN_AGE_HOURS", "36")), 24 * 365))
+OPERATOR_BACKUP_MIN_FREE_MIB = max(1, min(int(os.getenv("OPERATOR_BACKUP_MIN_FREE_MIB", "1024")), 1024 * 1024))
 
 # LLM code remains available for future reviewed features, but production must
 # opt in explicitly. Merely configuring a provider or API key never enables it.

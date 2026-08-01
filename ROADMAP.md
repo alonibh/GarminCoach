@@ -132,9 +132,16 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
   programs, with factual local completion context, outbox notification, web-only
   acknowledgement/snooze, and no automatic deload or workout mutation.
 
+## Phase 6: Operator safety and recovery
+
+- [x] Phase 6A: read-only operator health, fail-closed database integrity,
+  verified online SQLite backups, and restore-plan verification with no restore
+  mutation.
+- [ ] Phase 6B: separately reviewed guarded restore from a verified Phase 6A
+  backup.
+
 ## Later product work
 
-- Operator health and restore tooling.
 - Additional evidence rules only after separate review and boundary tests.
 
 ## Deliberately excluded

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 - Operator health and verified backups
+
+- Added fail-closed SQLite integrity preflight, read-only health diagnostics,
+  explicit verified online backups, and verification-only restore planning.
+
 ## 2026-08-01 - Source-duration review prompts
 
 - Added durable, neutral source-duration review points for eligible curated

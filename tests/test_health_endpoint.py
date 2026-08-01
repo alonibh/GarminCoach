@@ -44,3 +44,11 @@ def test_deployment_health_check_requires_direct_200():
     assert "--write-out '%{http_code}'" in workflow
     assert '[ "$status" = "200" ]' in workflow
     assert "--location" not in workflow
+
+
+def test_sysinfo_is_retired_and_app_has_no_log_command_route():
+    client = TestClient(app.app)
+    assert client.get("/sysinfo", follow_redirects=False).status_code == 410
+    source = Path("app.py").read_text(encoding="utf-8")
+    assert "journalctl" not in source
+    assert '"sudo"' not in source

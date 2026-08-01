@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from control_db import ControlBase, Invitation, User, create_control_engine, utcnow
 from db import Goal
 from tenant_context import TenantIdentity, current_tenant, require_tenant, tenant_scope
+from operator_storage import DatabaseIntegrityError
 from tenant_store import athlete_db_path, get_user_session, provision_user_store
 
 
@@ -100,7 +101,7 @@ def test_control_db_contains_identity_metadata_not_athlete_tables(tmp_path: Path
         assert session.query(Invitation).one().email == "invitee@example.com"
 
 
-def test_malformed_sqlite_is_quarantined_and_recreated(tmp_path: Path):
+def test_malformed_sqlite_fails_closed_without_quarantine_or_replacement(tmp_path: Path):
     user_id = str(uuid4())
     db_path = provision_user_store(user_id, tmp_path)
     assert db_path.exists()
@@ -108,14 +109,9 @@ def test_malformed_sqlite_is_quarantined_and_recreated(tmp_path: Path):
     # Corrupt the SQLite database file deliberately
     db_path.write_bytes(b"INVALID_SQLITE_HEADER_CORRUPTED_FILE_DATA_12345")
 
-    # Provisioning / opening again must quarantine corrupt file and create a fresh healthy DB
-    repaired_path = provision_user_store(user_id, tmp_path)
-    assert repaired_path == db_path
-    assert repaired_path.exists()
-
-    corrupt_files = list(tmp_path.glob("**/*.corrupt.*"))
-    assert len(corrupt_files) >= 1
-
-    with get_user_session(user_id, tmp_path) as session:
-        session.add(Goal(id=1, goal="recreated after corruption", custom_input=""))
-        assert session.get(Goal, 1).goal == "recreated after corruption"
+    before = db_path.read_bytes()
+    with pytest.raises(DatabaseIntegrityError):
+        provision_user_store(user_id, tmp_path)
+    assert db_path.read_bytes() == before
+    assert not list(tmp_path.glob("**/*.corrupt.*"))
+    assert not list(tmp_path.glob("**/*.recovered"))

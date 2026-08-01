@@ -239,6 +239,25 @@ network such as Tailscale can provide remote access without changing the app.
 
 See [`.env.example`](.env.example) for all supported settings.
 
+## Operator health and verified backups
+
+Phase 6A adds local operator-only commands; they make no Garmin, Telegram,
+calendar, or network calls.
+
+```bash
+python scripts/operator_health.py --deep
+python scripts/create_verified_backup.py
+python scripts/verify_verified_backup.py operator_backups/backup-<id> --against-current-config
+python scripts/verify_verified_backup.py operator_backups/backup-<id> --restore-plan-json
+```
+
+`/health` remains a fast public liveness response only. `/sysinfo` is retired;
+the web process never exposes journal output. Backups are local and unencrypted,
+and Phase 6A has no restore command: the dry-run plan always reports
+`restorable: false`. Existing malformed databases fail closed rather than being
+automatically repaired, quarantined, or replaced. A destructive reset quarantine
+is forensic material, not a backup.
+
 ## Explicit database reset
 
 Database corruption never triggers an automatic wipe. An operator may perform a

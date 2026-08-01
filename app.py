@@ -196,6 +196,14 @@ def initialize_databases() -> None:
         init_db()
 
 
+def preflight_existing_databases() -> None:
+    """Fail closed before migrations or traffic when an existing DB is malformed."""
+    from operator_storage import discover_database_targets, require_healthy_existing_database
+
+    for target in discover_database_targets():
+        require_healthy_existing_database(target.path)
+
+
 async def run_cleanup(name: str, action) -> None:
     try:
         result = action()
@@ -232,6 +240,7 @@ async def lifespan(application: FastAPI):
     try:
         process_lock = acquire_process_lock()
         validate_startup_configuration()
+        preflight_existing_databases()
         dispose_all_engines()
         run_destructive_migrations()
         initialize_databases()
@@ -393,10 +402,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 _COOKIE_NAME = "gc_session"
 _MAX_AGE_S = config.SESSION_MAX_AGE_DAYS * 86400  # days → seconds
 
-# Paths that don't require auth. NOTE: /sysinfo is intentionally NOT here — it
-# runs journalctl and returns logs (emails, stack traces), so it must require a
-# session cookie. /calendar/coach.ics stays public because external calendar
-# apps fetch it without cookies (it carries no secrets).
+# Public endpoints are bounded liveness/static/feed endpoints only.
 _PUBLIC_PREFIXES = ("/static", "/app-login", "/favicon", "/calendar/coach.ics", "/telegram/webhook")
 
 
@@ -432,7 +438,7 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
         if config.MULTI_USER_ENABLED:
             path = request.url.path
             public = ("/static", "/auth", "/invite", "/favicon", "/telegram/webhook", "/calendar/feed/")
-            if path == "/health" or path == "/calendar/coach.ics" or path.startswith(public):
+            if path in {"/health", "/sysinfo", "/calendar/coach.ics"} or path.startswith(public):
                 return await call_next(request)
             raw_session = request.cookies.get(MULTI_USER_SESSION_COOKIE, "")
             with get_control_session() as control_session:
@@ -451,7 +457,7 @@ class CookieAuthMiddleware(BaseHTTPMiddleware):
 
         # Skip auth for public paths.
         path = request.url.path
-        if path == "/health" or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        if path in {"/health", "/sysinfo"} or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
 
         # Check session cookie.
@@ -468,6 +474,12 @@ app.add_middleware(CookieAuthMiddleware)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/sysinfo", status_code=410)
+def retired_sysinfo() -> dict[str, str]:
+    """Fixed retirement response; operator diagnostics are local CLI only."""
+    return {"detail": "Operator diagnostics are available through the local CLI."}
 
 
 def _localize_message_created_at(created_at: datetime | None) -> datetime | None:
@@ -3182,20 +3194,6 @@ def get_calendar_page(request: Request, year: int = None, month: int = None):
         "next_y": next_y, "next_m": next_m
     })
 
-
-@app.get("/sysinfo")
-def sysinfo():
-    import subprocess
-    import re
-    from fastapi.responses import PlainTextResponse
-    try:
-        cmd = ["sudo", "journalctl", "-u", "garmincoach.service", "-n", "100", "--no-pager"]
-        logs = subprocess.check_output(cmd).decode("utf-8")
-        # Redact common secrets
-        logs = re.sub(r"(?i)(api_key|token|password|secret)[\s=:\"']+([a-zA-Z0-9_\-\.]+)", r"\1=***REDACTED***", logs)
-        return PlainTextResponse(f"LOGS:\n{logs}")
-    except Exception as e:
-        return PlainTextResponse(str(e))
 
 @app.get("/calendar/coach.ics")
 def coach_calendar_feed():

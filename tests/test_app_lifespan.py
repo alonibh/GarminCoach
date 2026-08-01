@@ -30,6 +30,9 @@ def _patch_lifecycle(monkeypatch, events, *, scheduler_failure=False):
         lambda: events.append("validate"),
     )
     monkeypatch.setattr(
+        app, "preflight_existing_databases", lambda: events.append("integrity_preflight")
+    )
+    monkeypatch.setattr(
         db_migration,
         "dispose_all_engines",
         lambda: events.append("dispose_engines"),
@@ -101,6 +104,7 @@ def test_lifespan_startup_and_shutdown_order(monkeypatch):
     assert events == [
         "acquire_lock",
         "validate",
+        "integrity_preflight",
         "dispose_engines",
         "migrate",
         "initialize",

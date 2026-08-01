@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-from uuid import UUID
 
 import config
 
@@ -30,23 +29,10 @@ def dispose_all_engines() -> None:
 
 
 def discover_database_paths() -> list[Path]:
-    candidates = [Path(config.CONTROL_DB_PATH), Path(config.DB_PATH)]
-    root = Path(config.MULTI_USER_DATA_ROOT).resolve()
-    if root.exists():
-        for child in root.iterdir():
-            if not child.is_dir():
-                continue
-            try:
-                if str(UUID(child.name)) != child.name:
-                    continue
-            except ValueError:
-                continue
-            candidates.append(child / "athlete.db")
-    deduplicated: dict[str, Path] = {}
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        deduplicated[os.path.normcase(str(resolved))] = resolved
-    return list(deduplicated.values())
+    """Use the shared canonical target model without changing migration scope."""
+    from operator_storage import discover_database_targets
+
+    return [target.path for target in discover_database_targets()]
 
 
 def _migration_completed(control_path: Path) -> bool:
