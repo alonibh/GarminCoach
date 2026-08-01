@@ -262,8 +262,11 @@ def _active_program(session: Session) -> dict | None:
     session_query = session.query(ProgramSession).filter(ProgramSession.program_id == program.id)
     session_total = session_query.count()
     session_rows = session_query.order_by(ProgramSession.sequence_order, ProgramSession.id).limit(20).all()
+    if next_session and all(row.id != next_session.id for row in session_rows):
+        session_rows = [*session_rows[:19], next_session]
+        session_rows.sort(key=lambda row: (row.sequence_order, row.id))
     counts = dict(session.query(SessionExercise.program_session_id, __import__("sqlalchemy").func.count(SessionExercise.id)).filter(SessionExercise.program_session_id.in_([row.id for row in session_rows])).group_by(SessionExercise.program_session_id).all()) if session_rows else {}
-    summaries = [{"name": _clean(row.name, 96), "duration_minutes": _number(row.duration_min, low=0, integer=True), "exercise_count": counts.get(row.id, 0)} for row in session_rows[:20]]
+    summaries = [{"name": _clean(row.name, 96), "duration_minutes": _number(row.duration_min, low=0, integer=True), "exercise_count": counts.get(row.id, 0), "_cursor_target": bool(next_session and row.id == next_session.id)} for row in session_rows[:20]]
     exercises = []
     if next_session:
         exercise_query = session.query(SessionExercise).filter(SessionExercise.program_session_id == next_session.id)
@@ -333,7 +336,10 @@ def serialize_advisory_snapshot(snapshot: dict) -> str:
     exercises = (trimmed.get("active_program") or {}).get("next_session_detail", {}).get("exercises") if (trimmed.get("active_program") or {}).get("next_session_detail") else None
     while len(dump()) > maximum and exercises and pop(exercises): pass
     sessions = (trimmed.get("active_program") or {}).get("sessions")
-    while len(dump()) > maximum and sessions and pop(sessions): pass
+    while len(dump()) > maximum and sessions:
+        removable = next((index for index in range(len(sessions["items"]) - 1, -1, -1) if not sessions["items"][index].get("_cursor_target")), None)
+        if removable is None: break
+        sessions["items"].pop(removable); sessions["truncated"] = True; sessions["omitted_count"] += 1
     recovery = trimmed["recovery_trends_28_days"]
     while len(dump()) > maximum:
         stable_index = next((index for index, item in enumerate(recovery["items"]) if item.get("direction") == "stable"), None)
@@ -347,6 +353,8 @@ def serialize_advisory_snapshot(snapshot: dict) -> str:
         slow["truncated"] = True; slow["omitted_count"] += 1
     strength = trimmed["training_aggregates"]["strength_highlights_14_days"]
     while len(dump()) > maximum and pop(strength): pass
+    for item in ((trimmed.get("active_program") or {}).get("sessions") or {}).get("items", []):
+        item.pop("_cursor_target", None)
     output = dump()
     if len(output) > maximum:
         raise AdvisorySnapshotSizeError("Ask Coach v3 mandatory snapshot exceeds effective privacy ceiling")

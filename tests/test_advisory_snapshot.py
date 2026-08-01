@@ -4,7 +4,7 @@ import json
 import pytest
 
 from coach.advisory_snapshot import PRIVACY_CONTRACT_VERSION, RECOVERY_METRICS, SNAPSHOT_VERSION, build_advisory_snapshot, serialize_advisory_snapshot
-from db import Activity, DailyHealth, Sleep
+from db import Activity, DailyHealth, ProgramCursor, ProgramSession, Sleep, TrainingProgram
 from metrics import freshness
 
 
@@ -49,3 +49,15 @@ def test_current_recovery_never_leaks_missing_or_error_values(session):
     recovery = build_advisory_snapshot(session)["current_recovery"]
     assert recovery["garmin_hrv_status"]["value"] is None
     assert recovery["recovery_time_minutes"]["value"] is None
+
+
+def test_cursor_target_summary_is_private_and_survives_serialization(session):
+    program = TrainingProgram(id=1, name="Plan", active=True)
+    first = ProgramSession(id=1, program_id=1, name="Same", sequence_order=1)
+    target = ProgramSession(id=2, program_id=1, name="Same", sequence_order=2)
+    session.add_all([program, first, target, ProgramCursor(program_id=1, next_program_session_id=2, policy_version="v", created_at=datetime.now(), updated_at=datetime.now())])
+    session.commit()
+    snapshot = build_advisory_snapshot(session, generated_at=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    assert any(item["name"] == "Same" for item in snapshot["active_program"]["sessions"]["items"])
+    rendered = serialize_advisory_snapshot(snapshot)
+    assert '"_cursor_target"' not in rendered and '"id":2' not in rendered
