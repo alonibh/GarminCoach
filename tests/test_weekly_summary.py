@@ -239,6 +239,36 @@ def test_unknown_exercises_need_specific_identity_and_remain_deterministic(sessi
     assert [(item.label, item.reps, item.delta_kg) for item in highlights] == [("Cable Thing", 10, 2.5)]
 
 
+def test_broad_garmin_categories_do_not_merge_unknown_names(session):
+    session.add_all([
+        Activity(id=130, activity_type="strength_training", start_time=datetime(2026, 7, 2)),
+        Activity(id=131, activity_type="strength_training", start_time=datetime(2026, 7, 9)),
+    ])
+    session.flush()
+    for index, category in enumerate(("BENCH_PRESS", "ROW", "SQUAT", "DEADLIFT")):
+        session.add(ExerciseSet(activity_id=130, set_index=index, set_type="ACTIVE", exercise_category=category,
+                                exercise_name="Prototype Machine Press", reps=8, weight_kg=50))
+        session.add(ExerciseSet(activity_id=131, set_index=index, set_type="ACTIVE", exercise_category=category,
+                                exercise_name="Prototype Cable Press", reps=8, weight_kg=80))
+    assert _report(session).strength_highlights == ()
+
+
+def test_exact_catalog_pair_and_custom_category_only_identity(session):
+    session.add_all([
+        Activity(id=140, activity_type="strength_training", start_time=datetime(2026, 7, 2)),
+        Activity(id=141, activity_type="strength_training", start_time=datetime(2026, 7, 9)),
+    ])
+    session.flush()
+    session.add_all([
+        ExerciseSet(activity_id=140, set_index=1, set_type="ACTIVE", exercise_category="BENCH_PRESS", exercise_name="BARBELL_BENCH_PRESS", reps=8, weight_kg=80),
+        ExerciseSet(activity_id=141, set_index=1, set_type="ACTIVE", exercise_category="BENCH_PRESS", exercise_name="BARBELL_BENCH_PRESS", reps=8, weight_kg=82.5),
+        ExerciseSet(activity_id=140, set_index=2, set_type="ACTIVE", exercise_category="Custom Machine", reps=6, weight_kg=30),
+        ExerciseSet(activity_id=141, set_index=2, set_type="ACTIVE", exercise_category="Custom Machine", reps=6, weight_kg=32.5),
+    ])
+    highlights = _report(session).strength_highlights
+    assert [(item.label, item.delta_kg) for item in highlights] == [("Barbell Bench Press", 2.5), ("Custom Machine", 2.5)]
+
+
 def test_unexpected_weekly_materialization_rolls_back_and_does_not_block_other_row(session, monkeypatch):
     from sqlalchemy import text
     import notify.outbox as outbox

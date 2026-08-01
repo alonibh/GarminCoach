@@ -252,14 +252,14 @@ def test_weekly_summary_uses_synced_same_rep_progression_without_acwr(session):
     session.add_all([previous, current])
     session.flush()
     session.add_all([
-        ExerciseSet(activity_id=1, set_index=1, set_type="ACTIVE", exercise_name="BENCH_PRESS", reps=8, weight_kg=80),
-        ExerciseSet(activity_id=2, set_index=1, set_type="ACTIVE", exercise_name="BENCH_PRESS", reps=8, weight_kg=82.5),
-        ExerciseSet(activity_id=2, set_index=2, set_type="ACTIVE", exercise_name="BENCH_PRESS", reps=5, weight_kg=100),
+        ExerciseSet(activity_id=1, set_index=1, set_type="ACTIVE", exercise_category="BENCH_PRESS", exercise_name="BARBELL_BENCH_PRESS", reps=8, weight_kg=80),
+        ExerciseSet(activity_id=2, set_index=1, set_type="ACTIVE", exercise_category="BENCH_PRESS", exercise_name="BARBELL_BENCH_PRESS", reps=8, weight_kg=82.5),
+        ExerciseSet(activity_id=2, set_index=2, set_type="ACTIVE", exercise_category="BENCH_PRESS", exercise_name="BARBELL_BENCH_PRESS", reps=5, weight_kg=100),
     ])
 
     summary = build_weekly_summary(session, date(2026, 7, 11), generated_at=datetime(2026, 7, 11, 20))
 
-    assert "Bench Press 82.5 kg \u00d7 8, up 2.5 kg from prior week." in summary
+    assert "Barbell Bench Press 82.5 kg \u00d7 8, up 2.5 kg from prior week." in summary
     assert "ACWR" not in summary
     assert "readiness" not in summary.lower()
 

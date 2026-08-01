@@ -14,7 +14,7 @@ import re
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from coach.exercises import exercise_metadata
+from coach.exercises import GARMIN_EXERCISES
 from coach.onboarding import active_program
 from coach.planned_session_status import INACTIVE_ORIGINAL_SESSION_STATUSES
 from db import (
@@ -201,7 +201,11 @@ def _next_session_name_read_only(session: Session, *, program) -> str | None:
     return _clean(item.name)
 
 
-_GENERIC_EXERCISE_IDENTITIES = frozenset({"exercise", "unknown", "other", "generic", "strength"})
+_GENERIC_EXERCISE_IDENTITIES = frozenset({
+    "exercise", "unknown", "other", "generic", "strength", "unknown_exercise",
+    "other_exercise", "generic_exercise", "strength_exercise", "unnamed_exercise",
+})
+_GARMIN_CATEGORIES = frozenset(item["category"] for item in GARMIN_EXERCISES.values())
 
 
 def _specific_exercise_source(value: object) -> tuple[str, str] | None:
@@ -221,19 +225,26 @@ def _weekly_exercise_identity(row: ExerciseSet) -> tuple[str, str] | None:
     """Use catalog identity, or an unambiguous custom source composite only."""
     name = _specific_exercise_source(row.exercise_name)
     category = _specific_exercise_source(row.exercise_category)
-    for candidate in (row.exercise_name, row.exercise_category):
-        if isinstance(candidate, str):
-            meta = exercise_metadata(candidate)
-            if meta:
-                label = _clean(meta.get("label"), 48)
-                key = meta.get("key")
-                if isinstance(key, str) and label:
-                    return key, label
     if name and category:
+        exact_key = f"{category[0].upper()}:{name[0].upper()}"
+        catalog = GARMIN_EXERCISES.get(exact_key)
+        if catalog:
+            label = _clean(catalog.get("label"), 48)
+            if label:
+                return exact_key, label
         return f"custom:{category[0]}:{name[0]}", name[1]
     if name:
+        # Name-only evidence is catalog evidence only if its Garmin enum is unique.
+        matches = [item for item in GARMIN_EXERCISES.values() if item.get("garmin_name") == name[0].upper()]
+        if len(matches) == 1:
+            item = matches[0]
+            label = _clean(item.get("label"), 48)
+            if label:
+                return item["key"], label
         return f"custom:name:{name[0]}", name[1]
     if category:
+        if category[0].upper() in _GARMIN_CATEGORIES:
+            return None
         return f"custom:category:{category[0]}", category[1]
     return None
 
