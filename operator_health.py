@@ -28,6 +28,27 @@ class HealthCheck:
     path: str | None = None
 
 
+def _backup_artifact_permission_checks(latest: Path, *, show_paths: bool) -> list[HealthCheck]:
+    """Read manifest only after strict verification; bound any race/read failure."""
+    try:
+        manifest = json.loads((latest / "manifest.json").read_text(encoding="utf-8"))
+        entries = manifest.get("databases")
+        if not isinstance(entries, list):
+            raise ValueError
+        checks: list[HealthCheck] = []
+        for code, candidate, directory in (("backup_directory_permissions", latest, True), ("backup_manifest_permissions", latest / "manifest.json", False), ("backup_checksum_permissions", latest / "manifest.sha256", False)):
+            state = permission_health(candidate, directory=directory)
+            checks.append(HealthCheck(code, "healthy" if state == "private" else "warning", state.replace("_", " ")))
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("filename"), str) or not isinstance(entry.get("target_key"), str):
+                raise ValueError
+            state = permission_health(latest / entry["filename"])
+            checks.append(HealthCheck("backup_database_permissions", "healthy" if state == "private" else "warning", state.replace("_", " "), entry["target_key"]))
+        return checks
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return [HealthCheck("backup_artifact_permissions", "warning", "Backup artifact metadata could not be inspected")]
+
+
 def _status(checks: list[HealthCheck]) -> Severity:
     if any(item.status == "critical" for item in checks): return "critical"
     if any(item.status == "warning" for item in checks): return "warning"
@@ -88,6 +109,10 @@ def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetim
         if os.name != "nt" and backup_root.exists():
             state = permission_health(backup_root, directory=True)
             checks.append(HealthCheck("backup_root_permissions", "healthy" if state == "private" else "warning", state.replace("_", " ")))
+            backup_lock = backup_root / ".garmincoach-backup.lock"
+            if backup_lock.exists() or backup_lock.is_symlink():
+                state = permission_health(backup_lock)
+                checks.append(HealthCheck("backup_lock_permissions", "healthy" if state == "private" else "warning", state.replace("_", " ")))
         partial = sorted(item for item in backup_root.glob(".partial-*") if item.is_dir()) if backup_root.exists() else []
         for item in partial:
             age = (now - datetime.fromtimestamp(item.stat().st_mtime, timezone.utc)).total_seconds()
@@ -99,13 +124,7 @@ def collect_health(*, deep: bool = False, show_paths: bool = False, now: datetim
             latest = complete[-1]
             try:
                 verified = verify_verified_backup(latest)
-                if os.name != "nt":
-                    for code, candidate, directory in (("backup_directory_permissions", latest, True), ("backup_manifest_permissions", latest / "manifest.json", False), ("backup_checksum_permissions", latest / "manifest.sha256", False)):
-                        state = permission_health(candidate, directory=directory)
-                        checks.append(HealthCheck(code, "healthy" if state == "private" else "warning", state.replace("_", " ")))
-                    for entry in verified and __import__("json").loads((latest / "manifest.json").read_text(encoding="utf-8"))["databases"]:
-                        state = permission_health(latest / entry["filename"])
-                        checks.append(HealthCheck("backup_database_permissions", "healthy" if state == "private" else "warning", state.replace("_", " "), entry["target_key"]))
+                if os.name != "nt": checks.extend(_backup_artifact_permission_checks(latest, show_paths=show_paths))
                 completed = datetime.fromisoformat(verified["completed_at"].replace("Z", "+00:00"))
                 age = (now - completed).total_seconds() / 3600
                 if age < -(5 / 60):

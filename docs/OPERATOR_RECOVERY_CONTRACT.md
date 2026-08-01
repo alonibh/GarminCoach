@@ -64,6 +64,14 @@ or internally inconsistent set is invalid even if every listed file hashes.
 `--against-current-config` additionally requires the runtime target set and the
 installed `garminconnect` distribution version to match.
 
+Migration health is closed: `migration_ledger_absent`,
+`migration_ledger_malformed`, and `required_migration_missing` are critical;
+`migration_ledger_valid` is healthy. On POSIX health inspects database files and
+parents, backup root, latest backup directory, manifest, checksum, listed SQLite
+files, and an existing backup lock. Windows emits one informational
+`permission_platform` result instead. Artifact races/decoding failures and all
+expected strict or compatibility failures are bounded and sanitized.
+
 Every backup records `runtime_mode` and an ordered `runtime_target_keys` set.
 Single-user backups contain exactly control and single-user targets with empty
 mappings. Multi-user backups contain control plus existing canonical tenant

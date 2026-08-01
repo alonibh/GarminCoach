@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-01 - Operator recovery acceptance
+
+- Added bounded backup-artifact and lock permission health inspection.
+
 ## 2026-08-01 - Operator backup verification hardening
 
 - Split runtime and maintenance discovery, reject symlink/path escapes, and
