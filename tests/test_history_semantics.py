@@ -24,6 +24,7 @@ def test_application_refusals_are_delivered_but_not_added_to_history(monkeypatch
         return True
 
     monkeypatch.setattr(webhook, "get_user_session", database)
+    monkeypatch.setattr(webhook, "_valid_consent", lambda _user_id: True)
     monkeypatch.setattr(webhook, "build_advisory_snapshot", lambda _db: {})
     monkeypatch.setattr(webhook, "serialize_advisory_snapshot", lambda _data: "{}")
     monkeypatch.setattr(webhook, "generate_ask_coach_response", refusal)

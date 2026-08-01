@@ -196,8 +196,11 @@ ACWR is descriptive UI data only.
 
 ### Optional AI context
 
-Send compact aggregates, freshness, coverage, and decisive facts—not raw sensor
-series, full history, GPS, or intraday timelines.
+The optional AI context is implemented as `ask-coach-v3`, under the
+[`ASK_COACH_AGGREGATE_CONTEXT_CONTRACT.md`](ASK_COACH_AGGREGATE_CONTEXT_CONTRACT.md).
+It sends compact aggregates, freshness, coverage, and decisive facts—not raw
+sensor series, full history, GPS, or intraday timelines. It remains strictly
+below the deterministic authority hierarchy and cannot alter a workout.
 
 ## 10. Current implementation gaps
 

@@ -49,10 +49,27 @@ ASK_COACH_ACTIVE = (
     "Ask Coach is active. Ask a fitness or health question in a text message."
 )
 DISCLOSURE = (
-    "Ask Coach sends the coaching-relevant GarminCoach data listed in the "
-    "privacy details, plus this session's conversation, to Google Gemini. "
-    "Google interaction storage is disabled."
+    "Ask Coach sends compact, aggregate-focused GarminCoach coaching facts "
+    "and this session's conversation to Google Gemini. Gemini interaction "
+    "storage is disabled. It includes current GarminCoach workout/program "
+    "facts, but no private calendar events, GPS/routes/raw sensor timelines, "
+    "and cannot change workouts automatically."
 )
+
+_CATEGORY_DESCRIPTIONS = {
+    "profile.coaching_relevant": "Coaching-relevant profile preferences",
+    "data.freshness_and_coverage": "Data freshness and coverage labels",
+    "recommendation.official": "Stored GarminCoach official recommendation",
+    "recovery.current_facts": "Current recovery facts",
+    "recovery.trends_28_days_aggregate": "28-day recovery trend aggregates",
+    "training.activity_movement_aggregates_28_days": "7- and 28-day activity and movement aggregates",
+    "training.strength_highlights_14_days": "14-day strength highlights",
+    "training.recent_activity_facts_7_days": "Up to five minimized recent activity facts",
+    "fitness.slow_metrics_aggregate": "Compact Garmin fitness metric facts",
+    "program.active_structure": "Active program and next-session structure",
+    "sessions.garmincoach_next_7_days": "GarminCoach planned sessions for the next seven days",
+    "conversation.current_session": "This active session's conversation only",
+}
 
 _active_tasks: set[asyncio.Task] = set()
 _protected_tasks: set[asyncio.Task] = set()
@@ -240,9 +257,15 @@ async def run_ask_coach_question(
     user_id = identity.user_id
     tenant_token = bind_tenant(identity)
     try:
-        from notify import telegram
-
-        await asyncio.to_thread(telegram.send_chat_action, chat_id, "typing")
+        if not await session_manager.validate_session_for_delivery(
+            user_id, chat_id, generation_token
+        ):
+            return
+        # Do this before tenant snapshot work: old or revoked consent cannot
+        # result in a local context build or a Gemini request.
+        if not await asyncio.to_thread(_valid_consent, user_id):
+            await session_manager.close_session(user_id)
+            return
         history = await session_manager.history_for_generation(
             user_id, generation_token
         )
@@ -251,6 +274,11 @@ async def run_ask_coach_question(
         with get_user_session(user_id) as database:
             snapshot = build_advisory_snapshot(database)
             snapshot_json = serialize_advisory_snapshot(snapshot)
+        if not await asyncio.to_thread(_valid_consent, user_id):
+            await session_manager.close_session(user_id)
+            return
+        from notify import telegram
+        await asyncio.to_thread(telegram.send_chat_action, chat_id, "typing")
         try:
             result = await generate_ask_coach_response(
                 user_id=user_id,
@@ -388,16 +416,18 @@ async def run_calendar_menu(
 
 def _privacy_text() -> str:
     categories = "\n".join(
-        f"• {category}"
+        f"• {_CATEGORY_DESCRIPTIONS[category]}"
         for category in config.CURRENT_ASK_COACH_DATA_CATEGORIES
     )
     return (
         f"Provider: {config.ASK_COACH_PROVIDER}\n"
         f"Consent version: {config.ASK_COACH_CONSENT_VERSION}\n"
-        f"Data categories version: "
-        f"{config.ASK_COACH_DATA_CATEGORIES_VERSION}\n\n"
+        f"Data categories version: {config.ASK_COACH_DATA_CATEGORIES_VERSION}\n\n"
         f"Data categories:\n{categories}\n\n"
-        "Gemini interaction storage is disabled."
+        "Gemini interaction storage is disabled. Context is compact and "
+        "aggregate-focused. Current-session conversation is transient and is "
+        "not stored as profile memory. No private calendar events, GPS/routes, "
+        "or raw sensor timelines are sent. Ask Coach cannot change workouts."
     )
 
 
@@ -928,6 +958,7 @@ async def handle_telegram_update(data: dict) -> dict:
             if callback_data.startswith("ask:retry:"):
                 nonce = callback_data.removeprefix("ask:retry:")
                 if not _valid_consent(identity.user_id):
+                    await session_manager.close_session(identity.user_id)
                     _clear_inline_markup(chat_id, message_id)
                     await _send_plain("This retry is no longer available.", chat_id=chat_id, reply_markup=ask_coach_back_markup())
                     return {"status": "ok"}

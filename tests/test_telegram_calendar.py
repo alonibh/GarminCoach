@@ -85,8 +85,9 @@ def test_advisory_snapshot_never_fetches_calendar_network(monkeypatch, session):
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("network I/O")),
     )
     snapshot = build_advisory_snapshot(session)
-    items = snapshot["calendar_next_7_days"]["items"]
-    assert [item["title"] for item in items] == ["GarminCoach workout"]
+    assert "calendar_next_7_days" not in snapshot
+    items = snapshot["planned_sessions_next_7_days"]["items"]
+    assert len(items) == 1
     assert "Private dentist" not in str(snapshot)
     assert "09:30" not in str(snapshot)
 

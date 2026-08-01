@@ -6,7 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 import coach.ask_coach_llm as llm
-from coach.ask_coach_llm import AskCoachResponse
+from coach.ask_coach_llm import AskCoachLLMError, AskCoachResponse
+
+
+def _snapshot(**extra):
+    return json.dumps({"snapshot_version": "ask-coach-v3", **extra})
 
 
 class FakeInteractions:
@@ -46,7 +50,7 @@ def test_async_interactions_uses_store_false_and_structured_format(monkeypatch):
     response = asyncio.run(
         llm.generate_ask_coach_response(
             user_id="user",
-            snapshot_json='{"official_recommendation":{"status":"unavailable"}}',
+            snapshot_json=_snapshot(official_recommendation={"status": "unavailable"}),
             history=[],
             question="How should I train?",
         )
@@ -71,7 +75,7 @@ def test_schema_correction_omits_snapshot_history_and_question(monkeypatch):
     response = asyncio.run(
         llm.generate_ask_coach_response(
             user_id="user",
-            snapshot_json='{"private_snapshot":"secret-health"}',
+            snapshot_json=_snapshot(private_snapshot="secret-health"),
             history=[{"role": "user", "content": "history-secret"}],
             question="question-secret",
         )
@@ -84,6 +88,16 @@ def test_schema_correction_omits_snapshot_history_and_question(monkeypatch):
     assert "history-secret" not in correction["input"]
     assert "question-secret" not in correction["input"]
     assert json.loads(correction["input"])["invalid_model_output"] == invalid
+
+
+def test_invalid_or_oversize_snapshot_fails_before_provider(monkeypatch):
+    fake = FakeClient([])
+    monkeypatch.setattr(llm, "_client", fake)
+    with pytest.raises(AskCoachLLMError):
+        asyncio.run(llm.generate_ask_coach_response(user_id="u", snapshot_json="not json", history=[], question="q"))
+    with pytest.raises(AskCoachLLMError):
+        asyncio.run(llm.generate_ask_coach_response(user_id="u", snapshot_json=_snapshot(text="x" * 16_001), history=[], question="q"))
+    assert not fake.aio.interactions.calls
 
 
 def test_system_instruction_covers_provenance_and_confidentiality():

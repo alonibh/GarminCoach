@@ -35,6 +35,7 @@ def test_database_closes_before_gemini_and_context_resets(monkeypatch):
         return True
 
     monkeypatch.setattr(webhook, "get_user_session", database_session)
+    monkeypatch.setattr(webhook, "_valid_consent", lambda _user_id: True)
     monkeypatch.setattr(webhook, "build_advisory_snapshot", lambda _db: {})
     monkeypatch.setattr(webhook, "serialize_advisory_snapshot", lambda _data: "{}")
     monkeypatch.setattr(webhook, "generate_ask_coach_response", fake_generate)
@@ -73,6 +74,7 @@ def test_cancellation_always_clears_matching_token(monkeypatch):
         raise asyncio.CancelledError
 
     monkeypatch.setattr(webhook, "get_user_session", database_session)
+    monkeypatch.setattr(webhook, "_valid_consent", lambda _user_id: True)
     monkeypatch.setattr(webhook, "build_advisory_snapshot", lambda _db: {})
     monkeypatch.setattr(webhook, "serialize_advisory_snapshot", lambda _data: "{}")
     monkeypatch.setattr(webhook, "generate_ask_coach_response", cancelled)

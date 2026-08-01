@@ -266,6 +266,17 @@ It reuses the existing Phase 4E formulas and Phase 4F history exactly; missing
 days are never converted to zero. It has no custom score, workout authority,
 ACWR, or Training Readiness content.
 
+## Ask Coach aggregate context
+
+Ask Coach uses the separate, consent-versioned
+[`ASK_COACH_AGGREGATE_CONTEXT_CONTRACT.md`](ASK_COACH_AGGREGATE_CONTEXT_CONTRACT.md).
+Its approved sections are current recovery facts with capability/freshness,
+28-day recovery aggregates, 7-/28-day training and movement aggregates,
+14-day strength highlights, compact slow-fitness facts, minimized recent
+activity facts, and current program/upcoming-session facts. No raw metric
+series, ACWR, acute/chronic load, or GarminCoach custom readiness enters
+Gemini context.
+
 ## Body composition gate
 
 Body composition remains intentionally gated. See

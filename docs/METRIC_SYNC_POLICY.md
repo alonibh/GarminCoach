@@ -301,9 +301,11 @@ Age are account-scoped; VO₂ is explicit running/cycling activity-scoped (legac
 local imports remain unverified); Training Status is current-device source text
 and capability-aware. Phase 4G weekly-summary improvements are implemented
 under [`WEEKLY_SUMMARY_CONTRACT.md`](WEEKLY_SUMMARY_CONTRACT.md). They reuse
-only local stored facts and add no fetch, endpoint, scan, worker, or UI-time
-request. Phase 4H aggregate Ask Coach context remains future work and receives
-none of this history.
+ only local stored facts and add no fetch, endpoint, scan, worker, or UI-time
+ request. Phase 4H Ask Coach context is implemented under
+ [`ASK_COACH_AGGREGATE_CONTEXT_CONTRACT.md`](ASK_COACH_AGGREGATE_CONTEXT_CONTRACT.md);
+ it reads existing local stores only and adds no Garmin fetch, endpoint, scan,
+ worker, or UI-time call. All existing sync cadences remain unchanged.
 
 ### Manual sync
 

@@ -1,662 +1,284 @@
-"""Read-only, privacy-bounded athlete facts for Ask Coach."""
+"""The compact, consent-versioned Ask Coach v3 local snapshot."""
 from __future__ import annotations
 
-from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 import json
+from math import isfinite
+import re
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 import config
-from coach.onboarding import active_program
-from db import (
-    Activity,
-    ActivityProgramMatch,
-    AthleteProfile,
-    DailyHealth,
-    DailyMetrics,
-    DecisionRecord,
-    ObservationFreshness,
-    PlannedSession,
-    ProgramCursor,
-    ProgramSession,
-    SessionExercise,
-    Sleep,
-    SyncState,
-)
+from coach.advisory_aggregates import aggregate_dict, build_ask_coach_aggregate_context, normalize_activity_domain
+from db import Activity, AthleteProfile, DailyHealth, DecisionRecord, ObservationFreshness, PlannedSession, ProgramCursor, ProgramSession, SessionExercise, Sleep, SyncState, TrainingProgram
+from metrics.freshness import proactive_metrics_ready
 from tenant_context import current_tenant
 
-SNAPSHOT_VERSION = "ask-coach-v2"
+SNAPSHOT_VERSION = "ask-coach-v3"
+PRIVACY_CONTRACT_VERSION = "ask-coach-aggregate-context-v1"
 RECOVERY_METRICS = (
-    "sleep_duration_hours",
-    "sleep_score",
-    "hrv",
-    "hrv_baseline_low",
-    "hrv_baseline_high",
-    "hrv_weekly_avg",
-    "garmin_hrv_status",
-    "hrv_7d_coverage_days",
-    "resting_heart_rate",
-    "body_battery",
-    "body_battery_charged",
-    "body_battery_drained",
-    "training_readiness",
-    "recovery_time_minutes",
-    "recovery_time_change_phrase",
-    "stress",
-    "acute_load",
-    "chronic_load",
-    "acwr",
+    "sleep_duration_hours", "sleep_score", "overnight_hrv", "garmin_hrv_status",
+    "garmin_hrv_weekly_average", "local_hrv_7_night_coverage", "resting_heart_rate",
+    "body_battery_current", "body_battery_high", "body_battery_charged",
+    "body_battery_drained", "stress", "garmin_training_readiness", "recovery_time_minutes",
 )
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_SPACE = re.compile(r"\s+")
+_INACTIVE = ("cancelled", "completed", "replaced_by_active_recovery", "rest_selected")
+_HARD_MAX_CHARS = 16_000
 
 
 def _utc_iso(value: datetime | None) -> str | None:
-    if value is None:
+    if not isinstance(value, datetime):
         return None
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _parse_datetime(value: str | None) -> datetime | None:
-    if not value:
+def _clean(value: object, maximum: int = 96) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = _SPACE.sub(" ", _CONTROL.sub(" ", value)).strip()
+    return value[:maximum].rstrip() or None
+
+
+def _number(value: object, *, low: float | None = None, high: float | None = None, integer: bool = False) -> float | int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not isfinite(value) or (low is not None and value < low) or (high is not None and value > high):
+        return None
+    if integer:
+        return int(value) if value.is_integer() else None
+    return value
+
+
+def _state_dt(session: Session, key: str) -> datetime | None:
+    item = session.get(SyncState, key)
+    if not item or not item.value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
+        result = datetime.fromisoformat(item.value.replace("Z", "+00:00"))
+    except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return result if result.tzinfo else result.replace(tzinfo=timezone.utc)
 
 
-def _state(session: Session, key: str) -> str | None:
-    row = session.get(SyncState, key)
-    return row.value if row and row.value else None
-
-
-def _json(value: str | None, fallback):
-    if not value:
-        return fallback
+def _timezone() -> tuple[str, ZoneInfo]:
+    tenant = current_tenant()
+    name = tenant.timezone if tenant and tenant.timezone else "UTC"
     try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError):
-        return fallback
-    return parsed
+        return name, ZoneInfo(name)
+    except (KeyError, ValueError):
+        return "UTC", ZoneInfo("UTC")
 
 
-def _metric(value, observed_at: datetime | None, generated_at: datetime) -> dict:
-    if value is None:
-        return {"value": None, "observed_at": None, "status": "missing"}
-    status = "available"
-    if observed_at is None:
-        status = "incomplete"
-    else:
-        normalized = (
-            observed_at.replace(tzinfo=timezone.utc)
-            if observed_at.tzinfo is None
-            else observed_at.astimezone(timezone.utc)
-        )
-        if generated_at - normalized > timedelta(days=2):
-            status = "stale"
-    return {
-        "value": value,
-        "observed_at": _utc_iso(observed_at),
-        "status": status,
-    }
+def _freshness_row(session: Session, signal: str, day: date) -> str | None:
+    row = session.get(ObservationFreshness, (signal, day))
+    state = row.state if row else None
+    return state if state in {"fresh", "stale", "missing", "expected_pending", "error"} else None
 
 
-def _day_observed(day: date | None) -> datetime | None:
-    if day is None:
-        return None
-    return datetime.combine(day, time.min, tzinfo=timezone.utc)
+def _fact(value: object, observed_at: datetime | None, *, capability: str = "not_applicable", freshness: str = "missing") -> dict:
+    allowed_capability = {"supported", "unsupported", "unknown", "not_applicable"}
+    allowed_freshness = {"fresh", "stale", "missing", "expected_pending", "error", "unknown"}
+    capability = capability if capability in allowed_capability else "unknown"
+    freshness = freshness if freshness in allowed_freshness else "unknown"
+    if freshness not in {"fresh", "stale"}:
+        value, observed_at = None, None
+    return {"value": value, "observed_at": _utc_iso(observed_at), "capability": capability, "freshness": freshness}
 
 
-def _bounded(items: list[dict], maximum: int) -> dict:
-    maximum = max(0, maximum)
-    kept = items[:maximum]
-    omitted = max(0, len(items) - len(kept))
-    return {"items": kept, "truncated": omitted > 0, "omitted_count": omitted}
-
-
-def _official_recommendation(
-    session: Session,
-) -> tuple[dict, str | None]:
-    record = (
-        session.query(DecisionRecord)
-        .order_by(DecisionRecord.evaluated_at.desc())
-        .first()
-    )
+def _official_recommendation(session: Session, local_day: date) -> tuple[dict, datetime | None]:
+    record = session.query(DecisionRecord).order_by(DecisionRecord.evaluated_at.desc()).first()
     if record is None:
-        return {
-            "status": "unavailable",
-            "source": "garmincoach_official",
-            "verdict": None,
-            "score": None,
-            "recommended_session": None,
-            "evaluated_at": None,
-            "reasons": [],
-            "missing_inputs": ["No official recommendation has been evaluated"],
-        }, None
-    result = _json(record.result_json, {})
-    session_name = (
-        result.get("planned_session_name")
-        or result.get("next_program_session_name")
-    )
-    duration = None
-    session_type = None
-    if session_name:
-        program_session = (
-            session.query(ProgramSession)
-            .filter(ProgramSession.name == session_name)
-            .order_by(ProgramSession.id.desc())
-            .first()
-        )
-        if program_session:
-            duration = program_session.duration_min
-            session_type = program_session.sport_type or None
-    decision_type = result.get("decision_type") or record.decision_type
-    readiness = result.get("readiness_score")
-    category = result.get("readiness_category")
-    verdict = decision_type.replace("_", " ").title()
-    if category:
-        verdict = f"{verdict} — {str(category).lower()} readiness"
-    missing = result.get("missing_observations") or _json(record.missing_json, [])
-    missing_inputs = [
-        item.get("signal", "Unknown input") if isinstance(item, dict) else str(item)
-        for item in missing
-    ]
-    reasons = [
-        str(item).replace("_", " ").title()
-        for item in (result.get("reason_codes") or _json(record.reason_codes_json, []))
-    ]
+        return {"status": "unavailable", "decision_type": None, "selected_session_name": None, "training_readiness": None, "evaluated_at": None, "decision_day": None, "reason_labels": [], "missing_input_labels": ["official recommendation unavailable"]}, None
+    try:
+        result = json.loads(record.result_json or "{}")
+    except (TypeError, ValueError):
+        result = {}
+    evaluated = record.evaluated_at
+    decision_day = evaluated.date() if isinstance(evaluated, datetime) else None
+    session_name = _clean(result.get("planned_session_name") or result.get("next_program_session_name"), 96)
+    readiness = _number(result.get("readiness_score"), low=0, high=100)
+    category = _clean(result.get("readiness_category"), 32)
+    reasons = result.get("reason_codes") or []
+    missing = result.get("missing_observations") or []
+    def labels(values):
+        return [_clean(item.get("signal") if isinstance(item, dict) else str(item), 64) for item in values][:8]
     return {
-        "status": "available",
-        "source": "garmincoach_official",
-        "verdict": verdict,
-        "score": readiness,
-        "recommended_session": (
-            {
-                "name": session_name,
-                "duration_min": duration,
-                "session_type": session_type,
-            }
-            if session_name
-            else None
-        ),
-        "evaluated_at": _utc_iso(record.evaluated_at),
-        "reasons": reasons,
-        "missing_inputs": missing_inputs,
-    }, _utc_iso(record.evaluated_at)
+        "status": "current" if decision_day == local_day else "historical",
+        "decision_type": _clean(result.get("decision_type") or record.decision_type, 48),
+        "selected_session_name": session_name,
+        "training_readiness": {"score": readiness, "category": category} if readiness is not None or category else None,
+        "evaluated_at": _utc_iso(evaluated), "decision_day": decision_day.isoformat() if decision_day else None,
+        "reason_labels": [item for item in labels(reasons) if item],
+        "missing_input_labels": [item for item in labels(missing) if item],
+    }, evaluated
 
 
-def _freshness(session: Session, recommendation_at: str | None) -> dict:
-    latest_observation = (
-        session.query(ObservationFreshness)
-        .order_by(ObservationFreshness.fetched_at.desc())
-        .first()
-    )
-    metrics = (
-        session.query(DailyMetrics).order_by(DailyMetrics.day.desc()).first()
-    )
-    sleep = session.query(Sleep).order_by(Sleep.day.desc()).first()
+def _data_freshness(session: Session, recommendation_at: datetime | None) -> dict:
     health = session.query(DailyHealth).order_by(DailyHealth.day.desc()).first()
+    sleep = session.query(Sleep).order_by(Sleep.day.desc()).first()
     return {
-        "last_sync_at": _utc_iso(_parse_datetime(_state(session, "last_sync_at"))),
-        "device_last_upload_at": _utc_iso(
-            _parse_datetime(_state(session, "device_last_upload"))
-        ),
-        "health_last_updated": _utc_iso(
-            latest_observation.fetched_at
-            if latest_observation
-            else _day_observed(health.day if health else None)
-        ),
-        "metrics_last_updated": _utc_iso(
-            _day_observed(metrics.day if metrics else None)
-        ),
-        "sleep_last_updated": _utc_iso(
-            sleep.sleep_end_time
-            if sleep and sleep.sleep_end_time
-            else _day_observed(sleep.day if sleep else None)
-        ),
-        "recommendation_evaluated_at": recommendation_at,
+        "last_sync_at": _utc_iso(_state_dt(session, "last_sync_at")),
+        "device_last_upload_at": _utc_iso(_state_dt(session, "device_last_upload")),
+        "latest_health_update": health.day.isoformat() if health else None,
+        "latest_sleep_update": _utc_iso(sleep.sleep_end_time) if sleep and sleep.sleep_end_time else (sleep.day.isoformat() if sleep else None),
+        "official_recommendation_evaluated_at": _utc_iso(recommendation_at),
     }
 
 
-def _profile(session: Session, generated_at: datetime) -> dict:
+def _profile(session: Session, local_day: date) -> dict:
     profile = session.get(AthleteProfile, 1)
-    birth = _state(session, "user_birth_date")
-    birth_date = None
-    try:
-        birth_date = date.fromisoformat(birth) if birth else None
-    except ValueError:
-        pass
+    birth = session.get(SyncState, "user_birth_date")
     age = None
-    if birth_date:
-        today = generated_at.date()
-        age = today.year - birth_date.year - (
-            (today.month, today.day) < (birth_date.month, birth_date.day)
-        )
-    weight = None
-    try:
-        raw_weight = _state(session, "user_weight")
-        weight = float(raw_weight) if raw_weight is not None else None
-    except ValueError:
-        pass
-    observed = _parse_datetime(_state(session, "last_sync_at"))
-    goals = []
-    equipment = []
-    preferences = {}
-    if profile:
-        goals = [
-            value
-            for value in (profile.primary_goal, profile.goal_detail)
-            if value and value.strip()
-        ]
-        equipment = [
-            str(item) for item in _json(profile.equipment_access, []) if str(item)
-        ]
-        preferences = {
-            "training_type": profile.training_type or None,
-            "experience_level": profile.experience_level or None,
-            "preferred_activities": _json(profile.preferred_activities, []),
-            "availability": profile.availability or None,
-            "timing": _json(profile.timing_preferences, {}),
-            "scheduling": profile.scheduling_preferences or None,
-        }
-    return {
-        "age": _metric(age, _day_observed(generated_at.date()), generated_at),
-        "weight_kg": _metric(weight, observed, generated_at),
-        "height_cm": _metric(None, None, generated_at),
-        "goals": goals,
-        "equipment": equipment,
-        "preferences": preferences,
-    }
-
-
-def _recovery(session: Session, generated_at: datetime) -> dict:
-    sleep = session.query(Sleep).order_by(Sleep.day.desc()).first()
-    health = session.query(DailyHealth).order_by(DailyHealth.day.desc()).first()
-    metrics = (
-        session.query(DailyMetrics).order_by(DailyMetrics.day.desc()).first()
-    )
-    sleep_at = (
-        sleep.sleep_end_time
-        if sleep and sleep.sleep_end_time
-        else _day_observed(sleep.day if sleep else None)
-    )
-    health_at = _day_observed(health.day if health else None)
-    metrics_at = _day_observed(metrics.day if metrics else None)
-    def current_recovery_fact(value, signal: str, observed_at: datetime | None):
-        if health is None:
-            return None, None
-        row = session.get(ObservationFreshness, (signal, health.day))
-        if row is None:
-            return None, None
-        if row.state == "fresh":
-            return value, observed_at or row.fetched_at
-        # A genuinely stale observation retains the snapshot's normal stale
-        # representation. Missing, unsupported, and failed fetches never leak
-        # an older stored fact as current availability.
-        if row.state == "stale":
-            return value, row.fetched_at
-        return None, None
-
-    hrv_weekly_avg, hrv_status_at = current_recovery_fact(
-        health.hrv_weekly_avg if health else None, "hrv_status", health_at,
-    )
-    hrv_status, _ = current_recovery_fact(
-        health.hrv_status if health else None, "hrv_status", health_at,
-    )
-    recovery_minutes, recovery_at = current_recovery_fact(
-        health.recovery_time_minutes if health else None, "recovery_time",
-        health.recovery_time_observed_at if health else None,
-    )
-    recovery_phrase, recovery_phrase_at = current_recovery_fact(
-        health.recovery_time_change_phrase if health else None, "recovery_time",
-        health.recovery_time_observed_at if health else None,
-    )
-    values = {
-        "sleep_duration_hours": (
-            round(sleep.total_s / 3600, 2)
-            if sleep and sleep.total_s is not None
-            else None,
-            sleep_at,
-        ),
-        "sleep_score": (sleep.score if sleep else None, sleep_at),
-        "hrv": (health.hrv_overnight if health else None, health_at),
-        "hrv_baseline_low": (
-            health.hrv_baseline_low if health else None,
-            health_at,
-        ),
-        "hrv_baseline_high": (
-            health.hrv_baseline_high if health else None,
-            health_at,
-        ),
-        "hrv_weekly_avg": (hrv_weekly_avg, hrv_status_at),
-        "garmin_hrv_status": (hrv_status, hrv_status_at),
-        "hrv_7d_coverage_days": (health.hrv_7d_coverage_days if health else None, health_at),
-        "resting_heart_rate": (health.resting_hr if health else None, health_at),
-        "body_battery": (
-            (
-                health.body_battery_current
-                if health and health.body_battery_current is not None
-                else health.body_battery_high if health else None
-            ),
-            health_at,
-        ),
-        "body_battery_charged": (health.body_battery_charged if health else None, health_at),
-        "body_battery_drained": (health.body_battery_drained if health else None, health_at),
-        "training_readiness": (
-            health.training_readiness if health else None,
-            health_at if health and health.training_readiness is not None else None,
-        ),
-        "recovery_time_minutes": (recovery_minutes, recovery_at),
-        "recovery_time_change_phrase": (recovery_phrase, recovery_phrase_at),
-        "stress": (health.stress_avg if health else None, health_at),
-        "acute_load": (metrics.acute_load if metrics else None, metrics_at),
-        "chronic_load": (metrics.chronic_load if metrics else None, metrics_at),
-        "acwr": (metrics.acwr if metrics else None, metrics_at),
-    }
-    return {
-        name: _metric(values[name][0], values[name][1], generated_at)
-        for name in RECOVERY_METRICS
-    }
-
-
-def _planned_sessions(session: Session, today: date) -> dict:
-    rows = (
-        session.query(PlannedSession)
-        .filter(
-            PlannedSession.target_date >= today,
-            PlannedSession.status.notin_(("cancelled", "completed", "replaced_by_active_recovery", "rest_selected")),
-        )
-        .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
-        .all()
-    )
-    items = [
-        {
-            "title": row.title,
-            "target_date": row.target_date.isoformat(),
-            "suggested_time": row.suggested_time or None,
-            "duration_min": row.duration_min,
-            "session_type": row.activity_type or None,
-            "status": row.status,
-            "official_program_session": row.program_session_id is not None,
-        }
-        for row in rows
-    ]
-    return _bounded(items, config.ASK_COACH_MAX_CALENDAR_EVENTS)
-
-
-def _calendar(session: Session, today: date, tz: ZoneInfo) -> dict:
-    items: list[dict] = []
-    end_day = today + timedelta(days=7)
-    rows = (
-        session.query(PlannedSession)
-        .filter(
-            PlannedSession.target_date >= today,
-            PlannedSession.target_date < end_day,
-            PlannedSession.status.in_(("approved", "scheduled", "planned")),
-        )
-        .order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id)
-        .all()
-    )
-    for row in rows:
-        start_text = str(row.suggested_time or "00:00")[:5]
+    if birth and birth.value:
         try:
-            start_clock = time.fromisoformat(start_text)
+            born = date.fromisoformat(birth.value)
+            age = local_day.year - born.year - ((local_day.month, local_day.day) < (born.month, born.day))
         except ValueError:
-            start_clock = time.min
-        start = datetime.combine(row.target_date, start_clock, tzinfo=tz)
-        duration = int(row.duration_min or 0)
-        items.append(
-            {
-                "title": str(row.title or "Workout")[:255],
-                "start_time": start.isoformat(),
-                "end_time": (start + timedelta(minutes=duration)).isoformat(),
-                "source": "garmincoach_workout",
-            }
-        )
-
-    # This section intentionally contains GarminCoach workouts only. Private
-    # calendar events are never part of the Ask Coach context.
-    items.sort(key=lambda item: item["start_time"])
-    return _bounded(items, config.ASK_COACH_MAX_CALENDAR_EVENTS)
-
-
-def _recent_activities(
-    session: Session, generated_at: datetime, tz: ZoneInfo
-) -> tuple[dict, list[Activity]]:
-    cutoff = generated_at.replace(tzinfo=None) - timedelta(days=14)
-    rows = (
-        session.query(Activity)
-        .filter(Activity.start_time >= cutoff)
-        .order_by(Activity.start_time.desc())
-        .all()
-    )
-    matched_activity_ids = {
-        row.completed_activity_id
-        for row in session.query(PlannedSession).filter(
-            PlannedSession.completed_activity_id.is_not(None)
-        )
-    }
-    matched_activity_ids.update(
-        row[0]
-        for row in session.query(ActivityProgramMatch.activity_id).all()
-    )
-    items = []
-    for row in rows:
-        started = row.start_time
-        if started and started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-        items.append(
-            {
-                "title": row.name or row.activity_type or "Activity",
-                "activity_type": row.activity_type or None,
-                "started_at": started.astimezone(tz).isoformat() if started else None,
-                "duration_min": (
-                    round(row.duration_s / 60, 1)
-                    if row.duration_s is not None
-                    else None
-                ),
-                "distance_km": (
-                    round(row.distance_m / 1000, 2)
-                    if row.distance_m is not None
-                    else None
-                ),
-                "training_load": row.training_load,
-                "average_heart_rate": row.avg_hr,
-                "calories": row.calories,
-                "completed_program_session": row.id in matched_activity_ids,
-            }
-        )
-    return _bounded(items, config.ASK_COACH_MAX_RECENT_ACTIVITIES), rows
-
-
-def _trends(rows: list[Activity], generated_at: datetime) -> dict:
-    week_starts = [
-        (generated_at.date() - timedelta(days=generated_at.weekday()))
-        - timedelta(weeks=offset)
-        for offset in reversed(range(6))
-    ]
-    duration_by_week: defaultdict[date, float] = defaultdict(float)
-    activity_mix: Counter[str] = Counter()
-    active_days: Counter[int] = Counter()
-    for row in rows:
-        if not row.start_time:
-            continue
-        activity_day = row.start_time.date()
-        week_start = activity_day - timedelta(days=activity_day.weekday())
-        duration_by_week[week_start] += float(row.duration_s or 0) / 3600
-        activity_mix[row.activity_type or "other"] += 1
-        active_days[activity_day.weekday()] += 1
-    weekday_names = (
-        "Mondays",
-        "Tuesdays",
-        "Wednesdays",
-        "Thursdays",
-        "Fridays",
-        "Saturdays",
-        "Sundays",
-    )
-    rest = [weekday_names[index] for index in range(7) if active_days[index] == 0]
+            pass
+    weight = None
+    raw_weight = session.get(SyncState, "user_weight")
+    try:
+        weight = _number(float(raw_weight.value), low=0) if raw_weight and raw_weight.value else None
+    except (TypeError, ValueError):
+        pass
+    def local_json(value):
+        try: data = json.loads(value or "[]")
+        except (TypeError, ValueError): data = []
+        return [_clean(item, 64) for item in data if _clean(item, 64)][:8] if isinstance(data, list) else None
     return {
-        "weekly_duration_hours": [
-            round(duration_by_week[week], 2) for week in week_starts
-        ],
-        "activity_mix": dict(activity_mix),
-        "rest_days_pattern": ", ".join(rest) if rest else "No consistent rest day",
-    }
-
-
-def _trend_activities(
-    session: Session, generated_at: datetime
-) -> list[Activity]:
-    cutoff = generated_at.replace(tzinfo=None) - timedelta(weeks=6)
-    return (
-        session.query(Activity)
-        .filter(Activity.start_time >= cutoff)
-        .order_by(Activity.start_time)
-        .all()
-    )
-
-
-def _active_program(session: Session) -> dict | None:
-    program = active_program(session)
-    if program is None:
-        return None
-    cursor = session.get(ProgramCursor, program.id)
-    next_session = (
-        session.get(ProgramSession, cursor.next_program_session_id)
-        if cursor and cursor.next_program_session_id
-        else None
-    )
-    sessions = (
-        session.query(ProgramSession)
-        .filter(ProgramSession.program_id == program.id)
-        .order_by(ProgramSession.sequence_order, ProgramSession.id)
-        .all()
-    )
-    exercise_budget = max(0, config.ASK_COACH_MAX_PROGRAM_EXERCISES)
-    omitted_exercises = 0
-    session_items = []
-    for program_session in sessions:
-        exercises = (
-            session.query(SessionExercise)
-            .filter(SessionExercise.program_session_id == program_session.id)
-            .order_by(SessionExercise.order_index, SessionExercise.id)
-            .all()
-        )
-        allowed = max(0, exercise_budget)
-        kept_exercises = exercises[:allowed]
-        exercise_budget -= len(kept_exercises)
-        omitted_exercises += len(exercises) - len(kept_exercises)
-        session_items.append(
-            {
-                "sequence_order": program_session.sequence_order,
-                "name": program_session.name,
-                "duration_min": program_session.duration_min,
-                "exercises": [
-                    {
-                        "order": exercise.order_index + 1,
-                        "name": exercise.exercise_name,
-                        "sets": exercise.sets,
-                        "reps": exercise.reps,
-                        "target_weight_kg": exercise.weight_kg,
-                        "duration_seconds": exercise.duration_seconds,
-                        "rest_seconds": exercise.rest_seconds,
-                        "warmup": exercise.warmup_enabled,
-                        "notes": (exercise.notes or "")[:500] or None,
-                    }
-                    for exercise in kept_exercises
-                ],
-            }
-        )
-    earliest = (
-        session.query(PlannedSession.target_date)
-        .filter(
-            PlannedSession.program_session_id
-            == (next_session.id if next_session else -1),
-            PlannedSession.status.notin_(("cancelled", "completed", "replaced_by_active_recovery", "rest_selected")),
-        )
-        .order_by(PlannedSession.target_date)
-        .scalar()
-    )
-    return {
-        "name": program.name,
-        "next_session": next_session.name if next_session else None,
-        "earliest_eligible_date": earliest.isoformat() if earliest else None,
-        "sessions": {
-            "items": session_items,
-            "truncated": omitted_exercises > 0,
-            "omitted_count": omitted_exercises,
+        "age": age, "weight_kg": weight,
+        "goals": [_clean(item, 128) for item in ((profile.primary_goal, profile.goal_detail) if profile else ()) if _clean(item, 128)],
+        "experience": _clean(profile.experience_level, 48) if profile else None,
+        "preferred_activities": local_json(profile.preferred_activities) if profile else [],
+        "equipment": local_json(profile.equipment_access) if profile else [],
+        "training_preferences": {
+            "training_type": _clean(profile.training_type, 48) if profile else None,
+            "availability": _clean(profile.availability, 128) if profile else None,
+            "scheduling": _clean(profile.scheduling_preferences, 128) if profile else None,
         },
     }
 
 
-def build_advisory_snapshot(session: Session) -> dict:
-    """Build the complete snapshot using read-only ORM queries only."""
-    generated_at = datetime.now(timezone.utc)
-    tenant = current_tenant()
-    timezone_name = tenant.timezone if tenant and tenant.timezone else "UTC"
-    try:
-        local_timezone = ZoneInfo(timezone_name)
-    except (KeyError, ValueError):
-        timezone_name = "UTC"
-        local_timezone = ZoneInfo("UTC")
-    today = generated_at.astimezone(local_timezone).date()
+def _current_recovery(session: Session, local_day: date, overnight_ready: bool) -> dict:
+    sleep, health = session.get(Sleep, local_day), session.get(DailyHealth, local_day)
+    sleep_at = sleep.sleep_end_time if sleep and sleep.sleep_end_time else (datetime.combine(local_day, time.min, tzinfo=timezone.utc) if sleep else None)
+    health_at = datetime.combine(local_day, time.min, tzinfo=timezone.utc) if health else None
+    def overnight(value, *, low=None, high=None, signal=None, capability="not_applicable", integer=False):
+        state = _freshness_row(session, signal, local_day) if signal else None
+        state = state or ("fresh" if overnight_ready and value is not None else ("expected_pending" if not overnight_ready else "missing"))
+        return _fact(_number(value, low=low, high=high, integer=integer), health_at if health else sleep_at, capability=capability, freshness=state)
+    def full_day(value, *, low=None, high=None, integer=False):
+        state = "fresh" if value is not None else "missing"
+        return _fact(_number(value, low=low, high=high, integer=integer), health_at, freshness=state)
+    return {
+        "sleep_duration_hours": overnight((sleep.total_s / 3600) if sleep and sleep.total_s is not None else None, low=0.01, high=24),
+        "sleep_score": overnight(sleep.score if sleep else None, low=0, high=100),
+        "overnight_hrv": overnight(health.hrv_overnight if health else None, low=0.01),
+        "garmin_hrv_status": overnight(_clean(health.hrv_status, 64) if health else None, signal="hrv_status", capability="unknown"),
+        "garmin_hrv_weekly_average": overnight(health.hrv_weekly_avg if health else None, low=0.01, signal="hrv_status", capability="unknown"),
+        "local_hrv_7_night_coverage": overnight(health.hrv_7d_coverage_days if health else None, low=0, high=7, integer=True),
+        "resting_heart_rate": overnight(health.resting_hr if health else None, low=0.01),
+        "body_battery_current": full_day(health.body_battery_current if health else None, low=0, high=100),
+        "body_battery_high": full_day(health.body_battery_high if health else None, low=0, high=100),
+        "body_battery_charged": full_day(health.body_battery_charged if health else None, low=0, integer=True),
+        "body_battery_drained": full_day(health.body_battery_drained if health else None, low=0, integer=True),
+        "stress": full_day(health.stress_avg if health else None, low=0, high=100),
+        "garmin_training_readiness": overnight(health.training_readiness if health else None, low=0, high=100, signal="training_readiness", capability="unknown", integer=True),
+        "recovery_time_minutes": overnight(health.recovery_time_minutes if health else None, low=0, signal="recovery_time", capability="unknown", integer=True),
+    }
+
+
+def _recent_activity_facts(session: Session, local_day: date) -> dict:
+    start = local_day - timedelta(days=6)
+    rows = session.query(Activity).filter(Activity.start_time >= datetime.combine(start, time.min), Activity.start_time <= datetime.combine(local_day, time.max)).order_by(Activity.start_time.desc(), Activity.id.desc()).limit(6).all()
+    items = []
+    for row in rows[:5]:
+        duration = _number(row.duration_s, low=0)
+        distance = _number(row.distance_m, low=0)
+        items.append({"local_day": row.start_time.date().isoformat(), "domain": normalize_activity_domain(row.activity_type), "duration_minutes": int(round(duration / 60)) if duration is not None else None, "distance_km": round(distance / 1000, 2) if distance is not None else None})
+    return {"items": items, "truncated": len(rows) > 5, "omitted_count": max(0, len(rows) - 5)}
+
+
+def _active_program(session: Session) -> dict | None:
+    program = session.query(TrainingProgram).filter(TrainingProgram.active.is_(True)).order_by(TrainingProgram.id.desc()).first()
+    if not program: return None
+    cursor = session.get(ProgramCursor, program.id)
+    next_session = session.get(ProgramSession, cursor.next_program_session_id) if cursor and cursor.next_program_session_id else None
+    if next_session and next_session.program_id != program.id: next_session = None
+    exercises = []
+    if next_session:
+        rows = session.query(SessionExercise).filter(SessionExercise.program_session_id == next_session.id).order_by(SessionExercise.order_index, SessionExercise.id).limit(21).all()
+        exercises = [{"name": _clean(row.exercise_name, 64), "sets": _number(row.sets, low=0, integer=True), "reps": _number(row.reps, low=0, integer=True), "target_weight_kg": _number(row.weight_kg, low=0)} for row in rows[:20] if _clean(row.exercise_name, 64)]
+        exercise_meta = {"items": exercises, "truncated": len(rows) > 20, "omitted_count": max(0, len(rows) - 20)}
+    else:
+        exercise_meta = {"items": [], "truncated": False, "omitted_count": 0}
+    return {"name": _clean(program.name, 96), "mode": _clean(program.mode, 48), "weekly_sessions": _number(program.days_per_week, low=1, integer=True), "next_session": {"name": _clean(next_session.name, 96), "domain": normalize_activity_domain(next_session.sport_type), "duration_minutes": _number(next_session.duration_min, low=0, integer=True), "exercises": exercise_meta} if next_session else None}
+
+
+def _planned_sessions(session: Session, local_day: date) -> dict:
+    end = local_day + timedelta(days=6)
+    rows = session.query(PlannedSession, ProgramSession).outerjoin(ProgramSession, PlannedSession.program_session_id == ProgramSession.id).filter(PlannedSession.target_date >= local_day, PlannedSession.target_date <= end, PlannedSession.status.notin_(_INACTIVE)).order_by(PlannedSession.target_date, PlannedSession.suggested_time, PlannedSession.id).limit(11).all()
+    items = [{"local_day": planned.target_date.isoformat(), "session_name": _clean(program.name, 96) if program else None, "domain": normalize_activity_domain(program.sport_type if program else planned.activity_type), "duration_minutes": _number(planned.duration_min, low=0, integer=True), "status": _clean(planned.status, 32)} for planned, program in rows[:10]]
+    return {"items": items, "truncated": len(rows) > 10, "omitted_count": max(0, len(rows) - 10)}
+
+
+def build_advisory_snapshot(session: Session, *, generated_at: datetime | None = None) -> dict:
+    """Build a deterministic local-only v3 dictionary; never repairs state."""
+    if generated_at is None:
+        generated_at = datetime.now(timezone.utc)
+    if not isinstance(generated_at, datetime) or generated_at.tzinfo is None:
+        raise ValueError("generated_at must be timezone-aware")
+    generated_at = generated_at.astimezone(timezone.utc)
+    timezone_name, local_timezone = _timezone()
+    local_day = generated_at.astimezone(local_timezone).date()
     with session.no_autoflush:
-        recommendation, recommendation_at = _official_recommendation(session)
-        recent, _ = _recent_activities(
-            session, generated_at, local_timezone
-        )
-        trend_rows = _trend_activities(session, generated_at)
-        snapshot = {
+        overnight_ready = proactive_metrics_ready(session, day=local_day)
+        recommendation, recommendation_at = _official_recommendation(session, local_day)
+        aggregate = aggregate_dict(build_ask_coach_aggregate_context(session, as_of_day=local_day, overnight_today_ready=overnight_ready))
+        return {
             "snapshot_version": SNAPSHOT_VERSION,
-            "generated_at": _utc_iso(generated_at),
-            "timezone": timezone_name,
-            "official_recommendation": recommendation,
-            "data_freshness": _freshness(session, recommendation_at),
-            "profile": _profile(session, generated_at),
-            "recovery": _recovery(session, generated_at),
-            "planned_sessions": _planned_sessions(session, today),
-            "calendar_next_7_days": _calendar(session, today, local_timezone),
-            "recent_activities_14_days": recent,
-            "training_trends_6_weeks": _trends(trend_rows, generated_at),
-            "active_program": _active_program(session),
+            "privacy_contract_version": PRIVACY_CONTRACT_VERSION,
+            "generated_at": _utc_iso(generated_at), "timezone": timezone_name,
+            "date_context": {"local_day": local_day.isoformat(), "overnight_today_ready": overnight_ready, "training_windows": {"recent_7_days": {"start": (local_day - timedelta(days=6)).isoformat(), "end": local_day.isoformat()}, "prior_7_days": {"start": (local_day - timedelta(days=13)).isoformat(), "end": (local_day - timedelta(days=7)).isoformat()}, "recent_28_days": {"start": (local_day - timedelta(days=27)).isoformat(), "end": local_day.isoformat()}}},
+            "official_recommendation": recommendation, "data_freshness": _data_freshness(session, recommendation_at),
+            "profile": _profile(session, local_day), "current_recovery": _current_recovery(session, local_day, overnight_ready),
+            "training_aggregates": {"recent_7_days": aggregate["recent_7_days"], "prior_7_days": aggregate["prior_7_days"], "recent_28_days": aggregate["recent_28_days"], "strength_highlights_14_days": aggregate["strength_highlights"]},
+            "recovery_trends_28_days": aggregate["recovery_trends"], "slow_fitness_summary": aggregate["slow_fitness"],
+            "recent_activity_facts_7_days": _recent_activity_facts(session, local_day), "active_program": _active_program(session),
+            "planned_sessions_next_7_days": _planned_sessions(session, local_day),
         }
-    return snapshot
 
 
 def serialize_advisory_snapshot(snapshot: dict) -> str:
-    """Serialize within the configured prompt-size ceiling without losing schema."""
-    compact = json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False)
-    if len(compact) <= config.ASK_COACH_SNAPSHOT_MAX_CHARS:
-        return compact
-    trimmed = json.loads(json.dumps(snapshot))
-    sections = (
-        "recent_activities_14_days",
-        "calendar_next_7_days",
-        "planned_sessions",
-    )
-    for section in sections:
-        wrapper = trimmed[section]
-        while wrapper["items"] and len(
-            json.dumps(trimmed, separators=(",", ":"), ensure_ascii=False)
-        ) > config.ASK_COACH_SNAPSHOT_MAX_CHARS:
-            wrapper["items"].pop()
-            wrapper["truncated"] = True
-            wrapper["omitted_count"] += 1
-    active = trimmed.get("active_program")
-    if active:
-        for item in reversed(active["sessions"]["items"]):
-            while item["exercises"] and len(
-                json.dumps(trimmed, separators=(",", ":"), ensure_ascii=False)
-            ) > config.ASK_COACH_SNAPSHOT_MAX_CHARS:
-                item["exercises"].pop()
-                active["sessions"]["truncated"] = True
-                active["sessions"]["omitted_count"] += 1
-    compact = json.dumps(trimmed, separators=(",", ":"), ensure_ascii=False)
-    if len(compact) > config.ASK_COACH_SNAPSHOT_MAX_CHARS:
-        raise ValueError("Advisory snapshot exceeds configured safe size")
-    return compact
+    """Serialize under the non-overridable 16k privacy ceiling.
+
+    Optional fields are removed in this order: recent activity facts, planned
+    sessions, next-session exercises, then optional strength/recovery/fitness
+    aggregates. Mandatory schema and decisive facts are never removed.
+    """
+    if not isinstance(snapshot, dict) or snapshot.get("snapshot_version") != SNAPSHOT_VERSION:
+        raise ValueError("invalid Ask Coach v3 snapshot")
+    trimmed = json.loads(json.dumps(snapshot, ensure_ascii=False))
+    def dump(): return json.dumps(trimmed, separators=(",", ":"), ensure_ascii=False)
+    def pop(wrapper):
+        if wrapper.get("items"):
+            wrapper["items"].pop(); wrapper["truncated"] = True; wrapper["omitted_count"] = int(wrapper.get("omitted_count", 0)) + 1; return True
+        return False
+    while len(dump()) > _HARD_MAX_CHARS and pop(trimmed["recent_activity_facts_7_days"]): pass
+    while len(dump()) > _HARD_MAX_CHARS and pop(trimmed["planned_sessions_next_7_days"]): pass
+    exercises = (trimmed.get("active_program") or {}).get("next_session", {}).get("exercises") if (trimmed.get("active_program") or {}).get("next_session") else None
+    while len(dump()) > _HARD_MAX_CHARS and exercises and pop(exercises): pass
+    for key in ("strength_highlights_14_days",):
+        while len(dump()) > _HARD_MAX_CHARS and trimmed["training_aggregates"][key]: trimmed["training_aggregates"][key].pop()
+    for key in ("recovery_trends_28_days", "slow_fitness_summary"):
+        while len(dump()) > _HARD_MAX_CHARS and trimmed[key]: trimmed[key].pop()
+    output = dump()
+    if len(output) > _HARD_MAX_CHARS:
+        raise ValueError("Ask Coach v3 mandatory snapshot exceeds 16000 characters")
+    return output

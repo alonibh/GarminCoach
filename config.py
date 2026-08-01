@@ -52,8 +52,8 @@ ASK_COACH_HISTORY_MAX_MESSAGES = int(
     os.getenv("ASK_COACH_HISTORY_MAX_MESSAGES", "10")
 )
 ASK_COACH_HISTORY_MAX_CHARS = int(os.getenv("ASK_COACH_HISTORY_MAX_CHARS", "8000"))
-ASK_COACH_SNAPSHOT_MAX_CHARS = int(
-    os.getenv("ASK_COACH_SNAPSHOT_MAX_CHARS", "30000")
+ASK_COACH_SNAPSHOT_MAX_CHARS = min(
+    int(os.getenv("ASK_COACH_SNAPSHOT_MAX_CHARS", "16000")), 16000
 )
 ASK_COACH_MAX_RECENT_ACTIVITIES = int(
     os.getenv("ASK_COACH_MAX_RECENT_ACTIVITIES", "40")
@@ -67,20 +67,21 @@ ASK_COACH_MAX_PROGRAM_EXERCISES = int(
 ASK_COACH_SESSION_IDLE_MINUTES = int(
     os.getenv("ASK_COACH_SESSION_IDLE_MINUTES", "120")
 )
-ASK_COACH_CONSENT_VERSION = os.getenv(
-    "ASK_COACH_CONSENT_VERSION", "ask-coach-v1"
-)
+ASK_COACH_CONSENT_VERSION = "ask-coach-v2"
 ASK_COACH_PROVIDER = os.getenv("ASK_COACH_PROVIDER", "Google Gemini")
-ASK_COACH_DATA_CATEGORIES_VERSION = "ask-coach-categories-v1"
+ASK_COACH_DATA_CATEGORIES_VERSION = "ask-coach-categories-v2"
 CURRENT_ASK_COACH_DATA_CATEGORIES = (
     "profile.coaching_relevant",
-    "recovery.metrics",
-    "training.recent_14_days",
-    "training.trends_6_weeks",
-    "program.active",
-    "sessions.planned",
     "recommendation.official",
-    "calendar.titles_and_times_7_days",
+    "data.freshness_and_coverage",
+    "recovery.current_facts",
+    "recovery.trends_28_days_aggregate",
+    "training.activity_movement_aggregates_28_days",
+    "training.strength_highlights_14_days",
+    "training.recent_activity_facts_7_days",
+    "fitness.slow_metrics_aggregate",
+    "program.active_structure",
+    "sessions.garmincoach_next_7_days",
     "conversation.current_session",
 )
 

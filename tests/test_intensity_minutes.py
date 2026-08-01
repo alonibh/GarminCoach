@@ -93,7 +93,7 @@ def test_local_windows_disclose_coverage_without_missing_day_imputation(session,
     assert twenty_eight == {"days": 28, "moderate_minutes": 10, "vigorous_minutes": 12, "coverage_days": 3}
 
 
-def test_ask_coach_snapshot_excludes_raw_intensity_history(session):
+def test_ask_coach_snapshot_uses_only_aggregate_intensity_context(session):
     today = date.today()
     session.add(DailyHealth(
         day=today,
@@ -102,7 +102,11 @@ def test_ask_coach_snapshot_excludes_raw_intensity_history(session):
     ))
     session.commit()
 
-    assert "intensity" not in str(build_advisory_snapshot(session)).lower()
+    snapshot = build_advisory_snapshot(session)
+    aggregate = snapshot["training_aggregates"]["recent_7_days"]
+    assert aggregate["moderate_minutes"] == 20
+    assert aggregate["vigorous_minutes"] == 5
+    assert "daily_moderate_intensity_minutes" not in str(snapshot)
 
 
 def test_daily_intensity_migration_adds_columns_idempotently():
