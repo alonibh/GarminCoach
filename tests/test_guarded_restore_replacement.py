@@ -80,7 +80,9 @@ def _prepared(tmp_path: Path, monkeypatch):
     if os.name != "nt":
         os.chmod(root, 0o700)
     destinations = []
-    for entry, name in zip(safety.entries, ("control.sqlite", "single.sqlite")):
+    name_map = {"control": "control.sqlite", "single-user": "single.sqlite"}
+    for entry in safety.entries:
+        name = name_map[entry.target_key]
         destination = root / name
         shutil.copyfile(safety.directory / entry.filename, destination)
         if os.name != "nt":
@@ -150,8 +152,13 @@ def _prepared_multi_user(tmp_path: Path, monkeypatch):
     if os.name != "nt":
         os.chmod(root, 0o700)
     destinations = []
-    names = ("control.sqlite", f"tenant-{t1_uuid}.sqlite", f"tenant-{t2_uuid}.sqlite")
-    for entry, name in zip(safety.entries, names):
+    name_map = {
+        "control": "control.sqlite",
+        f"tenant:{t1_uuid}": f"tenant-{t1_uuid}.sqlite",
+        f"tenant:{t2_uuid}": f"tenant-{t2_uuid}.sqlite",
+    }
+    for entry in safety.entries:
+        name = name_map[entry.target_key]
         destination = root / name
         shutil.copyfile(safety.directory / entry.filename, destination)
         if os.name != "nt":
@@ -311,7 +318,14 @@ def test_symlink_sidecar_refuses_and_rolls_back(tmp_path, monkeypatch):
             fixture_root=root,
             journal_root=config.OPERATOR_RESTORE_ROOT,
         )
-    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_SAFE
+    for entry, target in zip(safety.entries, destinations):
+        assert target.path.read_bytes() == (safety.directory / entry.filename).read_bytes()
+    for fact in j.targets:
+        assert fact.state is TargetRestoreState.STAGED_VERIFIED
+        assert not fact.rollback_completed
+    assert sidecar.is_symlink()
 
 
 def test_sidecar_handling_absent_and_regular_wal_shm(tmp_path, monkeypatch):
@@ -349,7 +363,192 @@ def test_sidecar_directory_refused(tmp_path, monkeypatch):
             fixture_root=root,
             journal_root=config.OPERATOR_RESTORE_ROOT,
         )
-    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_SAFE
+    for entry, target in zip(safety.entries, destinations):
+        assert target.path.read_bytes() == (safety.directory / entry.filename).read_bytes()
+    for fact in j.targets:
+        assert fact.state is TargetRestoreState.STAGED_VERIFIED
+        assert not fact.rollback_completed
+    assert sidecar_dir.is_dir()
+
+
+def test_unsafe_sidecar_on_later_target_after_earlier_replaced(tmp_path, monkeypatch):
+    selected, safety, journal, root, destinations, staged = _prepared_multi_user(tmp_path, monkeypatch)
+    # Target replacement order: tenant-1, tenant-2, control.
+    # Place unsafe directory sidecar on tenant-2 (destinations[2]).
+    sidecar_dir = Path(str(destinations[2].path) + "-wal")
+    sidecar_dir.mkdir()
+
+    with pytest.raises(RollbackCompletedError):
+        replace_and_verify_synthetic_restore(
+            operation_id=journal.operation_id,
+            selected_backup=selected,
+            safety_backup=safety,
+            destinations=destinations,
+            staging_result=staged,
+            fixture_root=root,
+            journal_root=config.OPERATOR_RESTORE_ROOT,
+        )
+
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_SAFE
+
+    # destinations[1] (tenant-1) was replaced and then rolled back -> state ROLLED_BACK
+    fact_t1 = next(f for f in j.targets if f.target_key == destinations[1].target_key)
+    assert fact_t1.state is TargetRestoreState.ROLLED_BACK
+    assert fact_t1.rollback_completed
+    assert destinations[1].path.read_bytes() == (safety.directory / safety.entries[1].filename).read_bytes()
+
+    # destinations[2] (tenant-2) was never replaced -> state STAGED_VERIFIED
+    fact_t2 = next(f for f in j.targets if f.target_key == destinations[2].target_key)
+    assert fact_t2.state is TargetRestoreState.STAGED_VERIFIED
+    assert not fact_t2.rollback_completed
+    assert destinations[2].path.read_bytes() == (safety.directory / safety.entries[2].filename).read_bytes()
+    assert sidecar_dir.is_dir()
+
+    # destinations[0] (control) was never replaced -> state STAGED_VERIFIED
+    fact_ctrl = next(f for f in j.targets if f.target_key == destinations[0].target_key)
+    assert fact_ctrl.state is TargetRestoreState.STAGED_VERIFIED
+
+
+def test_replacement_intent_persisted_destination_still_original(tmp_path, monkeypatch):
+    selected, safety, journal, root, destinations, staged = _prepared(tmp_path, monkeypatch)
+    import guarded_restore_replacement as replacement
+    replacement._prepare_rollbacks(operation_id=journal.operation_id, safety=safety, destinations=destinations, fixture_root=root)
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.REPLACING)
+    update_restore_journal(
+        journal.operation_id,
+        root=config.OPERATOR_RESTORE_ROOT,
+        target_key="single-user",
+        replacement_intent=True,
+    )
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.ROLLBACK_REQUIRED)
+
+    with pytest.raises(RollbackCompletedError):
+        replace_and_verify_synthetic_restore(
+            operation_id=journal.operation_id,
+            selected_backup=selected,
+            safety_backup=safety,
+            destinations=destinations,
+            staging_result=staged,
+            fixture_root=root,
+            journal_root=config.OPERATOR_RESTORE_ROOT,
+        )
+
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_SAFE
+    fact = next(f for f in j.targets if f.target_key == "single-user")
+    assert fact.state is TargetRestoreState.STAGED_VERIFIED
+    assert not fact.rollback_completed
+
+
+def test_replacement_intent_persisted_destination_already_selected(tmp_path, monkeypatch):
+    selected, safety, journal, root, destinations, staged = _prepared(tmp_path, monkeypatch)
+    import guarded_restore_replacement as replacement
+    replacement._prepare_rollbacks(operation_id=journal.operation_id, safety=safety, destinations=destinations, fixture_root=root)
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.REPLACING)
+    update_restore_journal(
+        journal.operation_id,
+        root=config.OPERATOR_RESTORE_ROOT,
+        target_key="single-user",
+        replacement_intent=True,
+    )
+    # Copy selected content to single-user destination to simulate crash right after os.replace
+    shutil.copyfile(selected.directory / selected.entries[1].filename, destinations[1].path)
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.ROLLBACK_REQUIRED)
+
+    with pytest.raises(RollbackCompletedError):
+        replace_and_verify_synthetic_restore(
+            operation_id=journal.operation_id,
+            selected_backup=selected,
+            safety_backup=safety,
+            destinations=destinations,
+            staging_result=staged,
+            fixture_root=root,
+            journal_root=config.OPERATOR_RESTORE_ROOT,
+        )
+
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_SAFE
+    fact = next(f for f in j.targets if f.target_key == "single-user")
+    assert fact.state is TargetRestoreState.ROLLED_BACK
+    assert fact.rollback_completed
+    assert destinations[1].path.read_bytes() == (safety.directory / safety.entries[1].filename).read_bytes()
+
+
+def test_replacement_intent_persisted_destination_matches_neither(tmp_path, monkeypatch):
+    selected, safety, journal, root, destinations, staged = _prepared(tmp_path, monkeypatch)
+    import guarded_restore_replacement as replacement
+    replacement._prepare_rollbacks(operation_id=journal.operation_id, safety=safety, destinations=destinations, fixture_root=root)
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.REPLACING)
+    update_restore_journal(
+        journal.operation_id,
+        root=config.OPERATOR_RESTORE_ROOT,
+        target_key="single-user",
+        replacement_intent=True,
+    )
+    # Corrupt single-user destination content so it matches neither safety nor selected
+    destinations[1].path.write_bytes(b"CORRUPTED_NEITHER_BYTES")
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.ROLLBACK_REQUIRED)
+
+    with pytest.raises(ManualRecoveryRequiredError):
+        replace_and_verify_synthetic_restore(
+            operation_id=journal.operation_id,
+            selected_backup=selected,
+            safety_backup=safety,
+            destinations=destinations,
+            staging_result=staged,
+            fixture_root=root,
+            journal_root=config.OPERATOR_RESTORE_ROOT,
+        )
+
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED
+
+
+def test_unsafe_sidecar_prevents_rollback_of_genuinely_replaced_target(tmp_path, monkeypatch):
+    selected, safety, journal, root, destinations, staged = _prepared(tmp_path, monkeypatch)
+    import guarded_restore_replacement as replacement
+    replacement._prepare_rollbacks(operation_id=journal.operation_id, safety=safety, destinations=destinations, fixture_root=root)
+    # Perform initial replacement setup in journal and on disk
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.REPLACING)
+    update_restore_journal(
+        journal.operation_id,
+        root=config.OPERATOR_RESTORE_ROOT,
+        target_key="single-user",
+        replacement_intent=True,
+        target_state=TargetRestoreState.REPLACED,
+        replacement_completed=True,
+    )
+    shutil.copyfile(selected.directory / selected.entries[1].filename, destinations[1].path)
+    update_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT, stage=RestoreStage.ROLLBACK_REQUIRED)
+
+    # Place an un-unlinkable directory sidecar on single-user destination during rollback
+    sidecar_dir = Path(str(destinations[1].path) + "-wal")
+    sidecar_dir.mkdir()
+
+    with pytest.raises(ManualRecoveryRequiredError):
+        replace_and_verify_synthetic_restore(
+            operation_id=journal.operation_id,
+            selected_backup=selected,
+            safety_backup=safety,
+            destinations=destinations,
+            staging_result=staged,
+            fixture_root=root,
+            journal_root=config.OPERATOR_RESTORE_ROOT,
+        )
+
+    j = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert j.stage is RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED
+    # Check mixed facts: single-user remains REPLACED because rollback failed
+    fact_single = next(f for f in j.targets if f.target_key == "single-user")
+    assert fact_single.state is TargetRestoreState.REPLACED
+    assert fact_single.replacement_completed
+    assert not fact_single.rollback_completed
+    # control remains STAGED_VERIFIED
+    fact_ctrl = next(f for f in j.targets if f.target_key == "control")
+    assert fact_ctrl.state is TargetRestoreState.STAGED_VERIFIED
 
 
 def test_postcheck_quick_check_failure_triggers_rollback(tmp_path, monkeypatch):

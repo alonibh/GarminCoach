@@ -389,7 +389,14 @@ def _preflight(*, operation_id: str, selected: ValidatedBackupSnapshot, safety: 
                fixture_root: Path, journal_root: Path):
     try:
         journal = load_restore_journal(operation_id, root=journal_root)
-        if journal.stage is not RestoreStage.REPLACEMENT_READY or journal.operation_id != operation_id or journal.safety_backup_id != safety.backup_id:
+        active_stages = {
+            RestoreStage.REPLACEMENT_READY,
+            RestoreStage.REPLACING,
+            RestoreStage.ROLLBACK_REQUIRED,
+            RestoreStage.REPLACED,
+            RestoreStage.POSTCHECK_PASSED,
+        }
+        if journal.stage not in active_stages or journal.operation_id != operation_id or journal.safety_backup_id != safety.backup_id:
             raise ValueError("journal")
         if (journal.selected_backup_id, journal.selected_backup_manifest_sha256, journal.runtime_mode, journal.target_keys) != (selected.backup_id, selected.manifest_sha256, selected.runtime_mode, selected.target_keys):
             raise ValueError("selected")
@@ -413,7 +420,10 @@ def _preflight(*, operation_id: str, selected: ValidatedBackupSnapshot, safety: 
             expected = target.path.parent / f".garmincoach-restore-stage-{operation_id}" / _staged_filename(entry, index)
             if not isinstance(artifact, StagedArtifact) or (artifact.operation_id, artifact.target_key, artifact.kind, artifact.target_order, artifact.path, artifact.size_bytes, artifact.sha256) != (operation_id, entry[0], entry[1], index, expected, entry[4], entry[5]) or artifact.destination_size_bytes < 0 or len(artifact.destination_sha256) != 64:
                 raise ValueError("artifact")
-            _read_record(target.path, size=artifact.destination_size_bytes, digest=artifact.destination_sha256)
+            if journal.stage is RestoreStage.REPLACEMENT_READY:
+                _read_record(target.path, size=artifact.destination_size_bytes, digest=artifact.destination_sha256)
+            else:
+                _read_record(target.path)
             _read_record(expected, size=entry[4], digest=entry[5])
             _verify(entry, expected)
             if not _same_device(target.path.parent, expected):
@@ -555,9 +565,10 @@ def _run_complete_postcheck(
 def _run_reentrant_rollback(
     *,
     operation_id: str,
+    selected_entries: tuple,
     safety: ValidatedBackupSnapshot,
+    safety_entries: tuple,
     destinations: tuple[SyntheticRestoreTarget, ...],
-    entries: tuple,
     journal_root: Path,
 ) -> None:
     """Perform re-entrant rollback in reverse replacement order."""
@@ -577,44 +588,86 @@ def _run_reentrant_rollback(
         reverse_ordered = list(reversed(control_indices)) + list(reversed(data_indices))
 
         for index in reverse_ordered:
-            target, entry = destinations[index], entries[index]
+            target = destinations[index]
+            safety_entry = next(e for e in safety_entries if e[0] == target.target_key)
+            selected_entry = next(e for e in selected_entries if e[0] == target.target_key)
+
             journal = load_restore_journal(operation_id, root=journal_root)
             fact = next(f for f in journal.targets if f.target_key == target.target_key)
 
             if fact.rollback_completed and fact.state is TargetRestoreState.ROLLED_BACK:
-                _read_record(target.path, size=entry[4], digest=entry[5])
+                _read_record(target.path, size=safety_entry[4], digest=safety_entry[5])
                 continue
 
-            if not fact.replacement_intent and not fact.replacement_completed and fact.state is not TargetRestoreState.REPLACED:
-                # Target was never replaced; destination is original/safety bytes.
-                continue
-
-            already_safety = False
+            # Classify destination using descriptor-bound destination identity and exact immutable hashes
+            is_safety = False
+            is_selected = False
             try:
-                _read_record(target.path, size=entry[4], digest=entry[5])
-                _verify(entry, target.path)
-                already_safety = True
+                rec = _read_record(target.path)
+                if (rec.size, rec.sha256) == (safety_entry[4], safety_entry[5]):
+                    is_safety = True
+                elif (rec.size, rec.sha256) == (selected_entry[4], selected_entry[5]):
+                    is_selected = True
             except Exception:
-                already_safety = False
+                pass
 
-            if fact.state is not TargetRestoreState.REPLACED and already_safety:
-                # Target was not successfully replaced and destination already matches safety bytes
-                continue
+            was_replaced = (fact.state is TargetRestoreState.REPLACED or fact.replacement_completed or is_selected)
+
+            if not was_replaced:
+                if is_safety:
+                    # Destination matches safety bytes and was never completed as replaced.
+                    # Do NOT replace it, do NOT mark ROLLED_BACK, preserve sidecar intact.
+                    continue
+                else:
+                    # Matches neither safety nor selected evidence, and was not completed as replaced.
+                    raise ReplacementPreconditionError(f"Target {target.target_key} matches neither safety nor selected baseline")
+
+            # Target was replaced (or destination matches selected bytes).
+            # If replacement_completed was not recorded but destination is selected bytes, reconcile it first.
+            if fact.state is not TargetRestoreState.REPLACED or not fact.replacement_completed:
+                journal = _transition(
+                    operation_id,
+                    journal_root,
+                    target_key=target.target_key,
+                    target_state=TargetRestoreState.REPLACED,
+                    replacement_completed=True,
+                )
+                fact = next(f for f in journal.targets if f.target_key == target.target_key)
 
             if not fact.rollback_intent:
                 journal = _transition(operation_id, journal_root, target_key=target.target_key, rollback_intent=True)
 
+            already_safety = False
+            try:
+                _read_record(target.path, size=safety_entry[4], digest=safety_entry[5])
+                _verify(safety_entry, target.path)
+                already_safety = True
+            except Exception:
+                already_safety = False
+
             if not already_safety:
-                artifact = _verify_binding(_rollback_directory(target, operation_id, index), operation_id=operation_id, safety=safety, entry=entry, index=index)
-                journal = _handle_durable_sidecars(target.path, journal, target.target_key, journal_root, allow_symlink_unlink=True)
+                artifact = _verify_binding(
+                    _rollback_directory(target, operation_id, index),
+                    operation_id=operation_id,
+                    safety=safety,
+                    entry=safety_entry,
+                    index=index,
+                )
+                journal = _handle_durable_sidecars(
+                    target.path,
+                    journal,
+                    target.target_key,
+                    journal_root,
+                    allow_symlink_unlink=True,
+                )
 
                 if not _same_device(target.path.parent, artifact):
                     raise ReplacementPreconditionError("Rollback filesystem is unsafe")
 
                 os.replace(artifact, target.path)
                 _private(target.path)
-                _read_record(target.path, size=entry[4], digest=entry[5])
-                _verify(entry, target.path)
+                _read_record(target.path, size=safety_entry[4], digest=safety_entry[5])
+                _verify(safety_entry, target.path)
                 _fsync(target.path)
                 _fsync(target.path.parent, directory=True)
 
@@ -628,10 +681,18 @@ def _run_reentrant_rollback(
 
         _transition(operation_id, journal_root, stage=RestoreStage.ROLLED_BACK)
         _transition(operation_id, journal_root, stage=RestoreStage.FAILED_SAFE)
+        raise RollbackCompletedError("Synthetic replacement was rolled back")
     except Exception as exc:
+        if isinstance(exc, RollbackCompletedError):
+            raise
         try:
             j = load_restore_journal(operation_id, root=journal_root)
-            if j.stage in {RestoreStage.ROLLBACK_REQUIRED, RestoreStage.REPLACING, RestoreStage.REPLACED, RestoreStage.POSTCHECK_PASSED}:
+            if j.stage in {
+                RestoreStage.ROLLBACK_REQUIRED,
+                RestoreStage.REPLACING,
+                RestoreStage.REPLACED,
+                RestoreStage.POSTCHECK_PASSED,
+            }:
                 _transition(operation_id, journal_root, stage=RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED)
         except Exception:
             pass
@@ -761,8 +822,12 @@ def replace_and_verify_synthetic_restore(*, operation_id: str, selected_backup: 
 
     if journal.stage is RestoreStage.ROLLBACK_REQUIRED:
         _run_reentrant_rollback(
-            operation_id=operation_id, safety=safety, destinations=destinations,
-            entries=safety_entries, journal_root=journal_root
+            operation_id=operation_id,
+            selected_entries=selected_entries,
+            safety=safety,
+            safety_entries=safety_entries,
+            destinations=destinations,
+            journal_root=journal_root,
         )
 
     if journal.stage is RestoreStage.REPLACED:
@@ -775,8 +840,12 @@ def replace_and_verify_synthetic_restore(*, operation_id: str, selected_backup: 
             journal = load_restore_journal(operation_id, root=journal_root)
         except Exception as cause:
             _run_reentrant_rollback(
-                operation_id=operation_id, safety=safety, destinations=destinations,
-                entries=safety_entries, journal_root=journal_root
+                operation_id=operation_id,
+                selected_entries=selected_entries,
+                safety=safety,
+                safety_entries=safety_entries,
+                destinations=destinations,
+                journal_root=journal_root,
             )
 
     if journal.stage is RestoreStage.POSTCHECK_PASSED:
@@ -870,8 +939,12 @@ def replace_and_verify_synthetic_restore(*, operation_id: str, selected_backup: 
     except Exception as cause:
         try:
             _run_reentrant_rollback(
-                operation_id=operation_id, safety=safety, destinations=destinations,
-                entries=safety_entries, journal_root=journal_root
+                operation_id=operation_id,
+                selected_entries=selected_entries,
+                safety=safety,
+                safety_entries=safety_entries,
+                destinations=destinations,
+                journal_root=journal_root,
             )
         except ManualRecoveryRequiredError:
             raise

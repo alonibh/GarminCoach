@@ -311,7 +311,7 @@ def _validate_journal(journal: RestoreJournal) -> None:
         # Current facts intentionally retain the exact partial rollback point.
         # The terminal stage itself proves the only legal entry was from
         # ROLLBACK_REQUIRED; no invented historical normalization is allowed.
-        if any(state not in {TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK} for state in states) or not any(state in {TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK} for state in states):
+        if any(state not in {TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK} for state in states):
             raise RestoreJournalError("Invalid restore journal")
 
 
