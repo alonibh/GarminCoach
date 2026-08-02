@@ -224,6 +224,14 @@ def create_restore_plan(*, selected_backup_id: str, selected_backup_manifest_sha
 class TargetJournalFact:
     target_key: str
     state: TargetRestoreState
+    wal_present: bool = False
+    shm_present: bool = False
+    wal_removed: bool = False
+    shm_removed: bool = False
+    replacement_intent: bool = False
+    replacement_completed: bool = False
+    rollback_intent: bool = False
+    rollback_completed: bool = False
 
 
 @dataclass(frozen=True)
@@ -258,8 +266,25 @@ def _validate_journal(journal: RestoreJournal) -> None:
     created, updated = _timestamp(journal.created_at, RestoreJournalError), _timestamp(journal.updated_at, RestoreJournalError)
     if updated < created or len(journal.targets) != len(journal.target_keys) or tuple(f.target_key for f in journal.targets) != journal.target_keys:
         raise RestoreJournalError("Invalid restore journal")
-    if any(not isinstance(f.state, TargetRestoreState) for f in journal.targets):
-        raise RestoreJournalError("Invalid restore journal")
+    for f in journal.targets:
+        if not isinstance(f.state, TargetRestoreState):
+            raise RestoreJournalError("Invalid restore journal")
+        if any(type(b) is not bool for b in (f.wal_present, f.shm_present, f.wal_removed, f.shm_removed, f.replacement_intent, f.replacement_completed, f.rollback_intent, f.rollback_completed)):
+            raise RestoreJournalError("Invalid restore journal")
+        if f.wal_removed and not f.wal_present:
+            raise RestoreJournalError("Invalid restore journal")
+        if f.shm_removed and not f.shm_present:
+            raise RestoreJournalError("Invalid restore journal")
+        if f.replacement_completed and not f.replacement_intent:
+            raise RestoreJournalError("Invalid restore journal")
+        if f.rollback_completed and not f.rollback_intent:
+            raise RestoreJournalError("Invalid restore journal")
+        if (f.rollback_intent or f.rollback_completed) and not f.replacement_intent:
+            raise RestoreJournalError("Invalid restore journal")
+        if f.state is TargetRestoreState.REPLACED and (not f.replacement_intent or not f.replacement_completed):
+            raise RestoreJournalError("Invalid restore journal")
+        if f.state is TargetRestoreState.ROLLED_BACK and (not f.rollback_intent or not f.rollback_completed):
+            raise RestoreJournalError("Invalid restore journal")
     states = [f.state for f in journal.targets]
     if journal.safety_backup_id is not None:
         _safe(journal.safety_backup_id, pattern=_BACKUP_ID, error=RestoreJournalError)
@@ -335,7 +360,37 @@ def _journal_path(root: Path, operation_id: str) -> Path:
 
 
 def _journal_payload(journal: RestoreJournal) -> dict[str, Any]:
-    return {"format_version": journal.format_version, "operation_id": journal.operation_id, "selected_backup_id": journal.selected_backup_id, "selected_backup_manifest_sha256": journal.selected_backup_manifest_sha256, "safety_backup_id": journal.safety_backup_id, "expected_application_commit": journal.expected_application_commit, "runtime_mode": journal.runtime_mode, "target_keys": list(journal.target_keys), "target_set_hash": journal.target_set_hash, "confirmation_value": journal.confirmation_value, "stage": journal.stage.value, "targets": [{"target_key": fact.target_key, "state": fact.state.value} for fact in journal.targets], "created_at": journal.created_at, "updated_at": journal.updated_at, "final_result": journal.final_result.value if journal.final_result else None}
+    return {
+        "format_version": journal.format_version,
+        "operation_id": journal.operation_id,
+        "selected_backup_id": journal.selected_backup_id,
+        "selected_backup_manifest_sha256": journal.selected_backup_manifest_sha256,
+        "safety_backup_id": journal.safety_backup_id,
+        "expected_application_commit": journal.expected_application_commit,
+        "runtime_mode": journal.runtime_mode,
+        "target_keys": list(journal.target_keys),
+        "target_set_hash": journal.target_set_hash,
+        "confirmation_value": journal.confirmation_value,
+        "stage": journal.stage.value,
+        "targets": [
+            {
+                "target_key": fact.target_key,
+                "state": fact.state.value,
+                "wal_present": fact.wal_present,
+                "shm_present": fact.shm_present,
+                "wal_removed": fact.wal_removed,
+                "shm_removed": fact.shm_removed,
+                "replacement_intent": fact.replacement_intent,
+                "replacement_completed": fact.replacement_completed,
+                "rollback_intent": fact.rollback_intent,
+                "rollback_completed": fact.rollback_completed,
+            }
+            for fact in journal.targets
+        ],
+        "created_at": journal.created_at,
+        "updated_at": journal.updated_at,
+        "final_result": journal.final_result.value if journal.final_result else None,
+    }
 
 
 def _write_journal(root: Path, journal: RestoreJournal) -> None:
@@ -387,9 +442,37 @@ def _from_payload(payload: object) -> RestoreJournal:
     if not isinstance(payload, dict) or set(payload) != {"format_version", "operation_id", "selected_backup_id", "selected_backup_manifest_sha256", "safety_backup_id", "expected_application_commit", "runtime_mode", "target_keys", "target_set_hash", "confirmation_value", "stage", "targets", "created_at", "updated_at", "final_result"}:
         raise RestoreJournalError("Invalid restore journal")
     try:
-        targets = tuple(TargetJournalFact(_target_key(item["target_key"], RestoreJournalError), TargetRestoreState(item["state"])) for item in payload["targets"])
+        targets_list = []
+        for item in payload["targets"]:
+            if not isinstance(item, dict):
+                raise RestoreJournalError("Invalid restore journal")
+            key = _target_key(item["target_key"], RestoreJournalError)
+            state = TargetRestoreState(item["state"])
+            wal_pres = item.get("wal_present", False)
+            shm_pres = item.get("shm_present", False)
+            wal_rem = item.get("wal_removed", False)
+            shm_rem = item.get("shm_removed", False)
+            repl_int = item.get("replacement_intent", state in {TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK})
+            repl_comp = item.get("replacement_completed", state is TargetRestoreState.REPLACED)
+            roll_int = item.get("rollback_intent", state is TargetRestoreState.ROLLED_BACK)
+            roll_comp = item.get("rollback_completed", state is TargetRestoreState.ROLLED_BACK)
+            for b in (wal_pres, shm_pres, wal_rem, shm_rem, repl_int, repl_comp, roll_int, roll_comp):
+                if type(b) is not bool:
+                    raise RestoreJournalError("Invalid restore journal")
+            targets_list.append(TargetJournalFact(
+                target_key=key,
+                state=state,
+                wal_present=wal_pres,
+                shm_present=shm_pres,
+                wal_removed=wal_rem,
+                shm_removed=shm_rem,
+                replacement_intent=repl_int,
+                replacement_completed=repl_comp,
+                rollback_intent=roll_int,
+                rollback_completed=roll_comp,
+            ))
         final = None if payload["final_result"] is None else FinalResult(payload["final_result"])
-        journal = RestoreJournal(payload["format_version"], payload["operation_id"], payload["selected_backup_id"], payload["selected_backup_manifest_sha256"], payload["safety_backup_id"], payload["expected_application_commit"], payload["runtime_mode"], tuple(payload["target_keys"]), payload["target_set_hash"], payload["confirmation_value"], RestoreStage(payload["stage"]), targets, payload["created_at"], payload["updated_at"], final)
+        journal = RestoreJournal(payload["format_version"], payload["operation_id"], payload["selected_backup_id"], payload["selected_backup_manifest_sha256"], payload["safety_backup_id"], payload["expected_application_commit"], payload["runtime_mode"], tuple(payload["target_keys"]), payload["target_set_hash"], payload["confirmation_value"], RestoreStage(payload["stage"]), tuple(targets_list), payload["created_at"], payload["updated_at"], final)
     except (KeyError, TypeError, ValueError) as exc: raise RestoreJournalError("Invalid restore journal") from exc
     _validate_journal(journal); return journal
 
@@ -426,29 +509,105 @@ def load_restore_journal(operation_id: str, *, root: Path | str | None = None) -
     return journal
 
 
-def update_restore_journal(operation_id: str, *, root: Path | str | None = None, stage: RestoreStage | None = None, target_key: str | None = None, target_state: TargetRestoreState | None = None, safety_backup_id: str | None = None, now: str | None = None) -> RestoreJournal:
+def update_restore_journal(
+    operation_id: str,
+    *,
+    root: Path | str | None = None,
+    stage: RestoreStage | None = None,
+    target_key: str | None = None,
+    target_state: TargetRestoreState | None = None,
+    wal_present: bool | None = None,
+    shm_present: bool | None = None,
+    wal_removed: bool | None = None,
+    shm_removed: bool | None = None,
+    replacement_intent: bool | None = None,
+    replacement_completed: bool | None = None,
+    rollback_intent: bool | None = None,
+    rollback_completed: bool | None = None,
+    safety_backup_id: str | None = None,
+    now: str | None = None,
+) -> RestoreJournal:
     journal = load_restore_journal(operation_id, root=root)
-    if (stage is None) == (target_key is None): raise RestoreTransitionError("Illegal restore journal transition")
-    if target_key is not None and target_state is None: raise RestoreTransitionError("Illegal restore journal transition")
-    if stage is not None and not isinstance(stage, RestoreStage): raise RestoreTransitionError("Illegal restore journal transition")
-    if journal.stage in _TERMINAL_RESULTS: raise RestoreTransitionError("Illegal restore journal transition")
-    facts = list(journal.targets); new_stage = journal.stage; safety = journal.safety_backup_id
+    if (stage is None) and (target_key is None):
+        raise RestoreTransitionError("Illegal restore journal transition")
+    if target_key is not None and target_state is None and all(v is None for v in (wal_present, shm_present, wal_removed, shm_removed, replacement_intent, replacement_completed, rollback_intent, rollback_completed)):
+        raise RestoreTransitionError("Illegal restore journal transition")
+    if stage is not None and not isinstance(stage, RestoreStage):
+        raise RestoreTransitionError("Illegal restore journal transition")
+    if journal.stage in _TERMINAL_RESULTS:
+        raise RestoreTransitionError("Illegal restore journal transition")
+    facts = list(journal.targets)
+    new_stage = journal.stage
+    safety = journal.safety_backup_id
     if stage is not None:
-        if stage not in _GLOBAL_TRANSITIONS[journal.stage]: raise RestoreTransitionError("Illegal restore journal transition")
+        if target_key is not None or any(v is not None for v in (wal_present, shm_present, wal_removed, shm_removed, replacement_intent, replacement_completed, rollback_intent, rollback_completed)):
+            raise RestoreTransitionError("Illegal restore journal transition")
+        if stage not in _GLOBAL_TRANSITIONS[journal.stage]:
+            raise RestoreTransitionError("Illegal restore journal transition")
         if safety_backup_id is not None:
-            if stage is not RestoreStage.CURRENT_SNAPSHOT_CREATED or safety is not None: raise RestoreTransitionError("Illegal restore journal transition")
+            if stage is not RestoreStage.CURRENT_SNAPSHOT_CREATED or safety is not None:
+                raise RestoreTransitionError("Illegal restore journal transition")
             safety = _safe(safety_backup_id, pattern=_BACKUP_ID, error=RestoreTransitionError)
-        elif stage is RestoreStage.CURRENT_SNAPSHOT_CREATED: raise RestoreTransitionError("Illegal restore journal transition")
+        elif stage is RestoreStage.CURRENT_SNAPSHOT_CREATED:
+            raise RestoreTransitionError("Illegal restore journal transition")
         new_stage = stage
     else:
-        key = _target_key(target_key, RestoreTransitionError); index = next((i for i, fact in enumerate(facts) if fact.target_key == key), None)
-        if index is None or not isinstance(target_state, TargetRestoreState) or target_state not in _TARGET_TRANSITIONS[facts[index].state]: raise RestoreTransitionError("Illegal restore journal transition")
-        facts[index] = TargetJournalFact(key, target_state)
-    result = _TERMINAL_RESULTS.get(new_stage); timestamp = now or _now()
+        key = _target_key(target_key, RestoreTransitionError)
+        index = next((i for i, fact in enumerate(facts) if fact.target_key == key), None)
+        if index is None:
+            raise RestoreTransitionError("Illegal restore journal transition")
+        curr = facts[index]
+        new_state = curr.state
+        if target_state is not None:
+            if not isinstance(target_state, TargetRestoreState) or (target_state != curr.state and target_state not in _TARGET_TRANSITIONS[curr.state]):
+                raise RestoreTransitionError("Illegal restore journal transition")
+            new_state = target_state
+        new_repl_intent = curr.replacement_intent if replacement_intent is None else replacement_intent
+        new_repl_comp = curr.replacement_completed if replacement_completed is None else replacement_completed
+        new_roll_intent = curr.rollback_intent if rollback_intent is None else rollback_intent
+        new_roll_comp = curr.rollback_completed if rollback_completed is None else rollback_completed
+        if new_state is TargetRestoreState.REPLACED:
+            if replacement_intent is None: new_repl_intent = True
+            if replacement_completed is None: new_repl_comp = True
+        elif new_state is TargetRestoreState.ROLLED_BACK:
+            if rollback_intent is None: new_roll_intent = True
+            if rollback_completed is None: new_roll_comp = True
+        facts[index] = TargetJournalFact(
+            target_key=key,
+            state=new_state,
+            wal_present=curr.wal_present if wal_present is None else wal_present,
+            shm_present=curr.shm_present if shm_present is None else shm_present,
+            wal_removed=curr.wal_removed if wal_removed is None else wal_removed,
+            shm_removed=curr.shm_removed if shm_removed is None else shm_removed,
+            replacement_intent=new_repl_intent,
+            replacement_completed=new_repl_comp,
+            rollback_intent=new_roll_intent,
+            rollback_completed=new_roll_comp,
+        )
+    result = _TERMINAL_RESULTS.get(new_stage)
+    timestamp = now or _now()
     if _timestamp(timestamp, RestoreJournalError) < _timestamp(journal.updated_at, RestoreJournalError):
         raise RestoreTransitionError("Illegal restore journal transition")
-    updated = RestoreJournal(journal.format_version, journal.operation_id, journal.selected_backup_id, journal.selected_backup_manifest_sha256, safety, journal.expected_application_commit, journal.runtime_mode, journal.target_keys, journal.target_set_hash, journal.confirmation_value, new_stage, tuple(facts), journal.created_at, timestamp, result)
-    _validate_journal(updated); _write_journal(validate_restore_root(root), updated); return updated
+    updated = RestoreJournal(
+        journal.format_version,
+        journal.operation_id,
+        journal.selected_backup_id,
+        journal.selected_backup_manifest_sha256,
+        safety,
+        journal.expected_application_commit,
+        journal.runtime_mode,
+        journal.target_keys,
+        journal.target_set_hash,
+        journal.confirmation_value,
+        new_stage,
+        tuple(facts),
+        journal.created_at,
+        timestamp,
+        result,
+    )
+    _validate_journal(updated)
+    _write_journal(validate_restore_root(root), updated)
+    return updated
 
 
 class RestoreLock:
