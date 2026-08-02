@@ -483,3 +483,39 @@ def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypa
     assert all(flags & staging._BINARY_FLAG for flags in source + partial + final)
     assert all((flags & os.O_WRONLY) == 0 for flags in source + final)
     assert all(flags & os.O_WRONLY and flags & os.O_CREAT and flags & os.O_EXCL for flags in partial)
+
+def test_two_parent_bindings_are_finalized_before_first_copy(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    other = root / "other"; other.mkdir()
+    if os.name != "nt": os.chmod(other, 0o700)
+    moved = other / "single.sqlite"; destinations[1].path.replace(moved)
+    targets = (destinations[0], SyntheticRestoreTarget("single-user", "single_user", moved))
+    original = staging._copy
+    def copy_after_all_bindings(*args, **kwargs):
+        assert len(list(root.rglob(".staging-binding.json"))) == 2
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "_copy", copy_after_all_bindings)
+    stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=targets, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    bindings = list(root.rglob(".staging-binding.json"))
+    assert len(bindings) == 2
+    if os.name != "nt":
+        assert all((path.stat().st_mode & 0o777) == 0o600 and (path.parent.stat().st_mode & 0o777) == 0o700 for path in bindings)
+
+@pytest.mark.parametrize("mutate", [
+    lambda value: value["artifacts"][0].__setitem__("size_bytes", True),
+    lambda value: value["artifacts"][0].__setitem__("target_order", 0.0),
+    lambda value: value["artifacts"][0].__setitem__("sha256", "bad"),
+    lambda value: value["artifacts"][0].__setitem__("destination", "../escape"),
+    lambda value: value["artifacts"][0].__setitem__("unexpected", "x"),
+])
+def test_binding_loader_rejects_strict_schema_mutations(tmp_path, monkeypatch, mutate):
+    import json
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    _fail_verification_to_failed_safe(validated, journal, root, destinations, monkeypatch)
+    stage = next(root.glob(".garmincoach-restore-stage-*")); binding = stage / ".staging-binding.json"
+    value = json.loads(binding.read_text(encoding="utf-8")); mutate(value)
+    binding.write_bytes(staging._canonical_json(value))
+    with pytest.raises(StagingCleanupBindingError, match="Synthetic staging cleanup binding is invalid"):
+        cleanup_synthetic_staging(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)

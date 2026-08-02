@@ -87,10 +87,40 @@ def _fsync_directory(path: Path) -> None:
     try: os.fsync(fd)
     finally: os.close(fd)
 
+def _identity(info):
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_size, getattr(info, "st_mtime_ns", None))
+
+def _read_exact(fd: int, size: int) -> bytes:
+    data=b""
+    while len(data) < size:
+        chunk=os.read(fd, size-len(data))
+        if not chunk: raise OSError("early eof")
+        data+=chunk
+    if os.read(fd, 1): raise OSError("trailing bytes")
+    return data
+
+def _stage_directory_is_private(stage_directory: Path) -> bool:
+    state=os.lstat(stage_directory)
+    return stat.S_ISDIR(state.st_mode) and not stage_directory.is_symlink() and not has_symlink_component(stage_directory) and (os.name=="nt" or stat.S_IMODE(state.st_mode)==0o700)
+
+def _compensate_unpublished_binding(*, stage_directory: Path, temporary: Path) -> None:
+    """Remove only the invocation's empty, as-yet-unpublished staging directory."""
+    try:
+        if not _stage_directory_is_private(stage_directory): raise OSError("unsafe stage")
+        try: item=os.lstat(temporary)
+        except FileNotFoundError: item=None
+        if item is not None:
+            if not stat.S_ISREG(item.st_mode) or stat.S_ISLNK(item.st_mode): raise OSError("unsafe temporary")
+            os.unlink(temporary)
+        if tuple(stage_directory.iterdir()): raise OSError("unexpected entries")
+        stage_directory.rmdir(); _fsync_directory(stage_directory.parent)
+    except OSError as exc:
+        raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
+
 def _write_staging_binding(*, stage_directory: Path, payload: dict[str, object]) -> None:
     final=stage_directory/_STAGING_BINDING_NAME; temporary=stage_directory/_STAGING_BINDING_TEMP_NAME; data=_canonical_json(payload); fd=None; published=False
     try:
-        if stage_directory.is_symlink() or has_symlink_component(stage_directory) or not stage_directory.is_dir() or final.exists() or temporary.exists(): raise OSError("unsafe")
+        if not _stage_directory_is_private(stage_directory) or final.exists() or temporary.exists(): raise OSError("unsafe")
         fd=os.open(str(temporary),os.O_WRONLY|os.O_CREAT|os.O_EXCL|_NOFOLLOW_FLAG|_BINARY_FLAG,0o600); offset=0
         while offset<len(data):
             count=os.write(fd,data[offset:])
@@ -100,40 +130,63 @@ def _write_staging_binding(*, stage_directory: Path, payload: dict[str, object])
         verify=os.open(str(final),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
         try:
             info=os.fstat(verify)
-            if not stat.S_ISREG(info.st_mode) or info.st_size!=len(data) or os.read(verify,len(data)+1)!=data: raise OSError("verify")
+            if not stat.S_ISREG(info.st_mode) or info.st_size!=len(data) or (os.name!="nt" and stat.S_IMODE(info.st_mode)!=0o600): raise OSError("verify")
+            before=_identity(info)
+            if _read_exact(verify,len(data))!=data or before!=_identity(os.fstat(verify)): raise OSError("verify")
             if os.name!="nt": os.fsync(verify)
         finally: os.close(verify)
         _fsync_directory(stage_directory)
-    except StagingPersistenceError: raise
+    except StagingPersistenceError as exc:
+        if published: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
+        _compensate_unpublished_binding(stage_directory=stage_directory,temporary=temporary)
+        raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
     except OSError as exc:
         if fd is not None:
             try: os.close(fd)
             except OSError: pass
         if published: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
-        try:
-            if temporary.exists() and not temporary.is_symlink(): os.unlink(temporary)
-            if not any(stage_directory.iterdir()): stage_directory.rmdir()
-        except OSError as cleanup: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from cleanup
+        _compensate_unpublished_binding(stage_directory=stage_directory,temporary=temporary)
         raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
+
+_BINDING_KEYS={"format_version","operation_id","selected_backup_id","selected_backup_manifest_sha256","safety_backup_id","runtime_mode","target_set_hash","stage_parent","artifacts"}
+_ARTIFACT_KEYS={"target_key","kind","target_order","destination","staged_filename","size_bytes","sha256"}
+def _relative_binding_path(value: object, *, filename=False) -> bool:
+    return isinstance(value,str) and value and "\\" not in value and not Path(value).is_absolute() and ".." not in value.split("/") and (not filename or "/" not in value)
+def _validate_binding_schema(parsed: object) -> None:
+    if not isinstance(parsed,dict) or set(parsed)!=_BINDING_KEYS: raise ValueError("keys")
+    for name in ("format_version","operation_id","selected_backup_id","safety_backup_id","runtime_mode","target_set_hash"):
+        if not isinstance(parsed[name],str) or not parsed[name]: raise ValueError(name)
+    if not _lower_sha256(parsed["selected_backup_manifest_sha256"]) or not _relative_binding_path(parsed["stage_parent"]): raise ValueError("path")
+    artifacts=parsed["artifacts"]
+    if not isinstance(artifacts,list) or not artifacts: raise ValueError("artifacts")
+    seen=[set(),set(),set(),set()]
+    previous_order=-1
+    for item in artifacts:
+        if not isinstance(item,dict) or set(item)!=_ARTIFACT_KEYS: raise ValueError("artifact keys")
+        if item["kind"] not in {"control","single_user","tenant"} or not isinstance(item["target_key"],str) or not item["target_key"]: raise ValueError("kind")
+        for key in ("target_order","size_bytes"):
+            if type(item[key]) is not int or item[key]<0: raise ValueError(key)
+        if item["target_order"]<=previous_order or not _lower_sha256(item["sha256"]) or not _relative_binding_path(item["destination"]) or not _relative_binding_path(item["staged_filename"],filename=True): raise ValueError("value")
+        previous_order=item["target_order"]
+        for bucket,value in zip(seen,(item["target_key"],item["target_order"],item["destination"],item["staged_filename"])):
+            if value in bucket: raise ValueError("duplicate")
+            bucket.add(value)
 
 def _load_staging_binding(*, stage_directory: Path, expected_payload: dict[str, object]) -> None:
     binding=stage_directory/_STAGING_BINDING_NAME
     try:
-        if stage_directory.is_symlink() or binding.is_symlink() or has_symlink_component(stage_directory): raise OSError("unsafe")
+        if not _stage_directory_is_private(stage_directory) or binding.is_symlink(): raise OSError("unsafe")
         fd=os.open(str(binding),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
         try:
             before=os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_size>_MAX_STAGING_BINDING_BYTES: raise OSError("invalid")
-            data=b""
-            while len(data)<=_MAX_STAGING_BINDING_BYTES:
-                chunk=os.read(fd,8192)
-                if not chunk: break
-                data+=chunk
+            if not stat.S_ISREG(before.st_mode) or before.st_size<=0 or before.st_size>_MAX_STAGING_BINDING_BYTES or (os.name!="nt" and stat.S_IMODE(before.st_mode)!=0o600): raise OSError("invalid")
+            identity=_identity(before); data=_read_exact(fd,before.st_size)
             after=os.fstat(fd)
-            if (before.st_dev,before.st_ino,before.st_size)!=(after.st_dev,after.st_ino,after.st_size): raise OSError("changed")
+            if identity!=_identity(after): raise OSError("changed")
         finally: os.close(fd)
         parsed=json.loads(data.decode("utf-8"))
-        if not isinstance(parsed,dict) or _canonical_json(parsed)!=data or parsed!=expected_payload: raise ValueError("invalid")
+        _validate_binding_schema(parsed)
+        if _canonical_json(parsed)!=data or parsed!=expected_payload: raise ValueError("invalid")
     except (OSError,UnicodeError,ValueError,json.JSONDecodeError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
 def _validate_inputs(operation_id: str, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path, expected_stage=RestoreStage.CURRENT_SNAPSHOT_CREATED):
     journal=load_restore_journal(operation_id,root=journal_root)
@@ -328,12 +381,19 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
         dirs={}
         for parent,indices in parent_indices.items():
             stage=_stage_dir(parent,operation_id)
+            created=False
             try: os.lstat(stage)
             except FileNotFoundError: pass
             else: raise StagingPersistenceError("Synthetic staging directory already exists")
-            stage.mkdir(mode=0o700); _private(stage,True)
-            if stage.is_symlink() or has_symlink_component(stage) or (os.name!="nt" and permission_health(stage,directory=True)!="private"): raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup")
-            _write_staging_binding(stage_directory=stage,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)))
+            try:
+                stage.mkdir(mode=0o700); created=True; _private(stage,True)
+                if not _stage_directory_is_private(stage) or (os.name!="nt" and permission_health(stage,directory=True)!="private"): raise OSError("unsafe stage")
+                _write_staging_binding(stage_directory=stage,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)))
+            except StagingManualCleanupRequiredError: raise
+            except StagingBindingPersistenceError: raise
+            except (OSError, StagingPersistenceError) as exc:
+                if created: _compensate_unpublished_binding(stage_directory=stage,temporary=stage/_STAGING_BINDING_TEMP_NAME)
+                raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
             dirs[parent]=stage
         staged=[]
         for index,(entry,dest) in enumerate(zip(entries,destinations)):
