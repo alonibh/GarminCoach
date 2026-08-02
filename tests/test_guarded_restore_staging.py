@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from dataclasses import replace
 import config
-from guarded_restore import RestoreStage, create_restore_journal, create_restore_plan, update_restore_journal
-from guarded_restore_staging import SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
+from guarded_restore import RestoreJournalError, RestoreJournalPersistenceError, RestoreStage, TargetRestoreState, create_restore_journal, create_restore_plan, load_restore_journal, update_restore_journal
+from guarded_restore_staging import StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
 from verified_backup import create_verified_backup, load_validated_backup_snapshot
 
 def _db(path: Path, ledger: str, key: str):
@@ -33,7 +33,140 @@ def test_configured_destination_is_refused(tmp_path,monkeypatch):
     with pytest.raises(SyntheticDestinationError): stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=validated,destinations=bad,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
 def test_forged_or_stale_snapshot_is_refused(tmp_path,monkeypatch):
     validated,journal,root,destinations=_prepared(tmp_path,monkeypatch)
-    with pytest.raises(Exception): stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=replace(validated,backup_id="20260801T120000Z-a1b2c3d4"),destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    with pytest.raises(StagingSourceError): stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=replace(validated,backup_id="20260801T120000Z-a1b2c3d4"),destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+
+def _stage_files(root: Path):
+    return sorted(root.glob(".garmincoach-restore-stage-*/*.sqlite.staged"))
+
+def _states(journal):
+    return tuple(item.state for item in journal.targets)
+
+def test_first_staged_journal_failure_compensates_only_unrecorded_artifact(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    source = [entry.path.read_bytes() for entry in destinations]
+    unrelated = root / "unrelated.txt"; unrelated.write_text("keep", encoding="utf-8")
+    original = staging.update_restore_journal
+    def fail_first(*args, **kwargs):
+        if kwargs.get("target_key") == "control" and kwargs.get("target_state") is TargetRestoreState.STAGED:
+            raise RestoreJournalError("injected")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_first)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == (TargetRestoreState.PENDING, TargetRestoreState.PENDING)
+    assert not _stage_files(root) and not list(root.glob(".garmincoach-restore-stage-*/*.partial"))
+    assert unrelated.read_text(encoding="utf-8") == "keep" and [entry.path.read_bytes() for entry in destinations] == source
+
+def test_later_staged_journal_failure_preserves_owned_artifact(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original = staging.update_restore_journal
+    def fail_second(*args, **kwargs):
+        if kwargs.get("target_key") == "single-user" and kwargs.get("target_state") is TargetRestoreState.STAGED:
+            raise RestoreJournalPersistenceError("injected")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_second)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    files = _stage_files(root)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == (TargetRestoreState.STAGED, TargetRestoreState.PENDING)
+    assert len(files) == 1 and files[0].name.startswith("000-control")
+
+def test_unrecorded_artifact_unlink_failure_requires_manual_cleanup(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_update, original_unlink = staging.update_restore_journal, staging.os.unlink
+    def fail_staged(*args, **kwargs):
+        if kwargs.get("target_state") is TargetRestoreState.STAGED:
+            raise RestoreJournalError("injected")
+        return original_update(*args, **kwargs)
+    def fail_exact(path, *args, **kwargs):
+        if str(path).endswith(".sqlite.staged"):
+            raise OSError("injected")
+        return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_staged); monkeypatch.setattr(staging.os, "unlink", fail_exact)
+    with pytest.raises(StagingManualCleanupRequiredError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.RESTORE_STAGED
+    assert len(_stage_files(root)) == 1
+
+def test_initial_global_staging_transition_failure_reaches_failed_safe_without_artifacts(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original = staging.update_restore_journal
+    def fail_initial(*args, **kwargs):
+        if kwargs.get("stage") is RestoreStage.RESTORE_STAGED: raise RestoreJournalError("injected")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_initial)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == (TargetRestoreState.PENDING, TargetRestoreState.PENDING)
+    assert not _stage_files(root)
+
+@pytest.mark.skipif(os.name == "nt", reason="directory fsync durability is unavailable on Windows")
+def test_unrecorded_artifact_directory_fsync_failure_requires_manual_cleanup(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    import stat
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_update, original_fsync = staging.update_restore_journal, staging.os.fsync
+    def fail_staged(*args, **kwargs):
+        if kwargs.get("target_state") is TargetRestoreState.STAGED: raise RestoreJournalError("injected")
+        return original_update(*args, **kwargs)
+    def fail_directory(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode): raise OSError("injected")
+        return original_fsync(fd)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_staged); monkeypatch.setattr(staging.os, "fsync", fail_directory)
+    with pytest.raises(StagingManualCleanupRequiredError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.RESTORE_STAGED
+    assert not _stage_files(root)
+
+@pytest.mark.parametrize("target_key, expected", [("control", (TargetRestoreState.STAGED, TargetRestoreState.STAGED)), ("single-user", (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED))])
+def test_verified_target_journal_failures_preserve_exact_owned_progress(tmp_path, monkeypatch, target_key, expected):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original = staging.update_restore_journal
+    def fail_target(*args, **kwargs):
+        if kwargs.get("target_key") == target_key and kwargs.get("target_state") is TargetRestoreState.STAGED_VERIFIED: raise RestoreJournalError("injected")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_target)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == expected and len(_stage_files(root)) == 2
+
+@pytest.mark.parametrize("stage, states", [(RestoreStage.STAGED_VERIFIED, (TargetRestoreState.STAGED, TargetRestoreState.STAGED)), (RestoreStage.REPLACEMENT_READY, (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED_VERIFIED))])
+def test_global_journal_failures_preserve_owned_artifacts(tmp_path, monkeypatch, stage, states):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original = staging.update_restore_journal
+    def fail_global(*args, **kwargs):
+        if kwargs.get("stage") is stage: raise RestoreJournalPersistenceError("injected")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_global)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == states and len(_stage_files(root)) == 2
+
+def test_failed_safe_persistence_failure_leaves_prior_journal_and_compensates_unrecorded(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original = staging.update_restore_journal
+    def fail_transitions(*args, **kwargs):
+        if kwargs.get("target_state") is TargetRestoreState.STAGED or kwargs.get("stage") is RestoreStage.FAILED_SAFE:
+            raise RestoreJournalPersistenceError("injected")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_transitions)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.RESTORE_STAGED and _states(current) == (TargetRestoreState.PENDING, TargetRestoreState.PENDING)
+    assert not _stage_files(root)
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows binary descriptor regression")
 def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypatch):

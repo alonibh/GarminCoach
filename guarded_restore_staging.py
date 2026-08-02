@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import config
-from guarded_restore import RestoreJournalError, RestoreStage, TargetRestoreState, load_restore_journal, update_restore_journal
+from guarded_restore import RestoreJournalError, RestoreJournalPersistenceError, RestoreStage, TargetRestoreState, load_restore_journal, update_restore_journal
 from operator_storage import has_symlink_component, inspect_sqlite, migration_markers, permission_health, schema_fingerprint
 from verified_backup import ValidatedBackupSnapshot, load_validated_backup_snapshot
 _BINARY_FLAG = getattr(os, "O_BINARY", 0)
@@ -17,6 +17,8 @@ class StagingSourceError(StagingError): pass
 class SyntheticDestinationError(StagingError): pass
 class StagedVerificationError(StagingError): pass
 class StagingPersistenceError(StagingError): pass
+class StagingJournalPersistenceError(StagingPersistenceError): pass
+class StagingManualCleanupRequiredError(StagingPersistenceError): pass
 
 @dataclass(frozen=True)
 class SyntheticRestoreTarget:
@@ -132,10 +134,62 @@ def _verify(entry, staged: Path):
     inspected=inspect_sqlite(staged,deep=True)
     actual= migration_markers(staged,kind)
     if not inspected.readable or not inspected.quick_check_ok or not inspected.integrity_check_ok or not inspected.foreign_keys_ok or schema_fingerprint(staged)!=fingerprint or (actual["ledger"],tuple(actual["keys"]),actual["state"])!=markers: raise StagedVerificationError("Staged artifact verification failed")
+
+def _remove_unrecorded_staged_artifact(*, artifact: Path, stage_directory: Path) -> None:
+    """Remove only a finalised artifact which never gained journal ownership."""
+    import stat
+    try:
+        if artifact.parent != stage_directory or stage_directory.is_symlink() or has_symlink_component(stage_directory):
+            raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup")
+        directory_state = os.lstat(stage_directory)
+        if not stat.S_ISDIR(directory_state.st_mode):
+            raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup")
+        try:
+            artifact_state = os.lstat(artifact)
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(artifact_state.st_mode) or not stat.S_ISREG(artifact_state.st_mode):
+            raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup")
+        os.unlink(artifact)
+        if os.name != "nt":
+            descriptor = os.open(str(stage_directory), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    except StagingManualCleanupRequiredError:
+        raise
+    except OSError as exc:
+        raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
+
+def _transition_staging_failure_to_failed_safe(*, operation_id: str, journal_root: Path) -> None:
+    """Persist the only legal terminal transition available during staging."""
+    try:
+        journal = load_restore_journal(operation_id, root=journal_root)
+        if journal.stage is RestoreStage.FAILED_SAFE:
+            return
+        if journal.stage not in {
+            RestoreStage.CURRENT_SNAPSHOT_CREATED,
+            RestoreStage.RESTORE_STAGED,
+            RestoreStage.STAGED_VERIFIED,
+            RestoreStage.REPLACEMENT_READY,
+        }:
+            raise RestoreJournalError("Restore journal cannot enter failed safe state")
+        update_restore_journal(operation_id, root=journal_root, stage=RestoreStage.FAILED_SAFE)
+    except (RestoreJournalError, RestoreJournalPersistenceError, OSError) as exc:
+        raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from exc
+
+def _journal_failure(*, operation_id: str, journal_root: Path) -> StagingJournalPersistenceError:
+    _transition_staging_failure_to_failed_safe(operation_id=operation_id, journal_root=journal_root)
+    return StagingJournalPersistenceError("Restore staging journal could not be persisted")
+
 def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->StagingResult:
     try:
         journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root)
-        update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.RESTORE_STAGED)
+        try:
+            update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.RESTORE_STAGED)
+        except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
+            raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
         dirs={}
         for d in destinations:
             parent=d.path.parent; stage=_stage_dir(parent,operation_id)
@@ -145,20 +199,35 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
         staged=[]
         for index,(entry,dest) in enumerate(zip(entries,destinations)):
             file=_copy(entry,validated_backup.directory,dirs[dest.path.parent],index)
-            update_restore_journal(operation_id,root=journal_root,target_key=entry[0],target_state=TargetRestoreState.STAGED)
+            try:
+                update_restore_journal(operation_id,root=journal_root,target_key=entry[0],target_state=TargetRestoreState.STAGED)
+            except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
+                _remove_unrecorded_staged_artifact(artifact=file,stage_directory=dirs[dest.path.parent])
+                raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
             staged.append((entry,file,index))
-        update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.STAGED_VERIFIED)
+        try:
+            update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.STAGED_VERIFIED)
+        except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
+            raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
         artifacts=[]
         for entry,file,index in staged:
-            _verify(entry,file); update_restore_journal(operation_id,root=journal_root,target_key=entry[0],target_state=TargetRestoreState.STAGED_VERIFIED)
+            _verify(entry,file)
+            try:
+                update_restore_journal(operation_id,root=journal_root,target_key=entry[0],target_state=TargetRestoreState.STAGED_VERIFIED)
+            except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
+                raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
             artifacts.append(StagedArtifact(operation_id,entry[0],entry[1],index,file,entry[4],entry[5],entry[6],entry[7]))
-        update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.REPLACEMENT_READY)
-        return StagingResult(operation_id,tuple(artifacts))
-    except (StagingError,RestoreJournalError):
         try:
-            current=load_restore_journal(operation_id,root=journal_root)
-            if current.stage not in {RestoreStage.FAILED_SAFE,RestoreStage.REPLACING,RestoreStage.REPLACED,RestoreStage.POSTCHECK_PASSED}: update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.FAILED_SAFE)
-        except Exception: pass
+            update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.REPLACEMENT_READY)
+        except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
+            raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
+        return StagingResult(operation_id,tuple(artifacts))
+    except StagingManualCleanupRequiredError:
+        raise
+    except StagingJournalPersistenceError:
+        raise
+    except (StagingError,RestoreJournalError,RestoreJournalPersistenceError):
+        _transition_staging_failure_to_failed_safe(operation_id=operation_id,journal_root=journal_root)
         raise
 def cleanup_synthetic_staging(*,operation_id: str,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->None:
     journal=load_restore_journal(operation_id,root=journal_root)
