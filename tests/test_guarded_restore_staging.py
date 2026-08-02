@@ -446,6 +446,42 @@ def test_authorized_cleanup_removes_bound_artifacts_and_is_idempotent(tmp_path, 
     assert not stage.exists() and [(validated.directory/e.filename).read_bytes() for e in validated.entries]==source and [d.path.read_bytes() for d in destinations]==destination
     cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
 
+def test_cleanup_preflight_failure_in_later_directory_preserves_earlier_directory(tmp_path, monkeypatch):
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch)
+    other=root/"other"; other.mkdir()
+    if os.name != "nt": os.chmod(other,0o700)
+    moved=other/"single.sqlite"; destinations[1].path.replace(moved)
+    targets=(destinations[0],SyntheticRestoreTarget("single-user","single_user",moved))
+    _fail_verification_to_failed_safe(validated,journal,root,targets,monkeypatch)
+    stages=sorted(root.rglob(".garmincoach-restore-stage-*")); assert len(stages)==2
+    (stages[1]/"foreign").write_bytes(b"evidence")
+    before=[sorted(item.name for item in stage.iterdir()) for stage in stages]
+    with pytest.raises(StagingCleanupBindingError,match="Synthetic staging cleanup binding is invalid"):
+        cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=targets,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert [sorted(item.name for item in stage.iterdir()) for stage in stages] == before
+
+def test_cleanup_refuses_artifact_substitution_after_preflight(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); artifact=next(stage.glob("*.sqlite.staged")); replacement=root/"replacement.sqlite"
+    replacement.write_bytes(artifact.read_bytes())
+    real_revalidate, calls=staging._revalidate_cleanup_directory,[0]
+    def replace_after_preflight(record):
+        calls[0]+=1
+        # Preflight makes its only directory check first; mutation must reject this replacement.
+        if calls[0] == 2: replacement.replace(artifact)
+        return real_revalidate(record)
+    monkeypatch.setattr(staging,"_revalidate_cleanup_directory",replace_after_preflight)
+    with pytest.raises(staging.StagingCleanupPersistenceError,match="Synthetic staging cleanup could not be persisted"):
+        cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert artifact.exists() and stage.exists()
+
+def test_cleanup_allows_missing_bound_artifact_on_retry(tmp_path, monkeypatch):
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); next(stage.glob("*.sqlite.staged")).unlink()
+    cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert not stage.exists()
+
 @pytest.mark.parametrize("tamper", ["binding", "artifact", "destination", "snapshot"])
 def test_cleanup_refuses_tampered_or_substituted_context_without_deletion(tmp_path, monkeypatch, tamper):
     validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)

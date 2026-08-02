@@ -83,7 +83,7 @@ def _binding_payload(journal, entries, destinations, root: Path, parent: Path, i
 
 def _fsync_directory(path: Path) -> None:
     if os.name=="nt": return
-    fd=os.open(str(path),os.O_RDONLY|getattr(os,"O_DIRECTORY",0))
+    fd=os.open(str(path),os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|_NOFOLLOW_FLAG)
     try: os.fsync(fd)
     finally: os.close(fd)
 
@@ -205,21 +205,93 @@ def _validate_binding_schema(parsed: object) -> None:
             if value in bucket: raise ValueError("duplicate")
             bucket.add(value)
 
-def _load_staging_binding(*, stage_directory: Path, expected_payload: dict[str, object]) -> None:
+@dataclass(frozen=True)
+class _CleanupDirectoryRecord:
+    path: Path
+    device: int
+    inode: int
+    file_type: int
+    mode: int | None
+    parent_path: Path
+    parent_device: int
+    parent_inode: int
+    target_indices: tuple[int, ...]
+
+@dataclass(frozen=True)
+class _CleanupBindingRecord:
+    path: Path
+    device: int
+    inode: int
+    file_type: int
+    size: int
+    mtime_ns: int | None
+    mode: int | None
+    canonical_bytes: bytes
+
+@dataclass(frozen=True)
+class _CleanupArtifactRecord:
+    target_order: int
+    path: Path
+    device: int
+    inode: int
+    file_type: int
+    size: int
+    mtime_ns: int | None
+    mode: int | None
+    expected_sha256: str
+
+@dataclass(frozen=True)
+class _CleanupStagePlan:
+    directory: _CleanupDirectoryRecord
+    binding: _CleanupBindingRecord
+    artifacts: tuple[_CleanupArtifactRecord, ...]
+
+def _cleanup_file_record(path: Path, *, maximum_size: int | None = None, expected_size: int | None = None, expected_sha256: str | None = None) -> tuple[_CleanupBindingRecord, bytes]:
+    """Read a regular cleanup file via a no-follow descriptor and bind its contents."""
+    fd = os.open(str(path), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
+    try:
+        before = os.fstat(fd)
+        mode = stat.S_IMODE(before.st_mode) if os.name != "nt" else None
+        if not stat.S_ISREG(before.st_mode) or (os.name != "nt" and mode != 0o600): raise OSError("unsafe file")
+        if before.st_size < 0 or (maximum_size is not None and before.st_size > maximum_size) or (expected_size is not None and before.st_size != expected_size): raise OSError("unsafe size")
+        data = _read_exact(fd, before.st_size)
+        after = os.fstat(fd)
+        identity = (before.st_dev, before.st_ino, stat.S_IFMT(before.st_mode), before.st_size, getattr(before, "st_mtime_ns", None), mode)
+        if identity != (after.st_dev, after.st_ino, stat.S_IFMT(after.st_mode), after.st_size, getattr(after, "st_mtime_ns", None), stat.S_IMODE(after.st_mode) if os.name != "nt" else None): raise OSError("file changed")
+        if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256: raise OSError("wrong digest")
+        return _CleanupBindingRecord(path, before.st_dev, before.st_ino, stat.S_IFMT(before.st_mode), before.st_size, getattr(before, "st_mtime_ns", None), mode, data), data
+    finally:
+        os.close(fd)
+
+def _cleanup_directory_record(path: Path, indices: tuple[int, ...]) -> _CleanupDirectoryRecord:
+    state = os.lstat(path)
+    parent = path.parent
+    parent_state = os.lstat(parent)
+    if (not stat.S_ISDIR(state.st_mode) or stat.S_ISLNK(state.st_mode) or has_symlink_component(path)
+            or not stat.S_ISDIR(parent_state.st_mode) or stat.S_ISLNK(parent_state.st_mode)
+            or (os.name != "nt" and stat.S_IMODE(state.st_mode) != 0o700)):
+        raise OSError("unsafe directory")
+    _open_verified_directory(path=path, expected_identity=_directory_identity(path), fsync=False)
+    _open_verified_directory(path=parent, expected_identity=_directory_identity(parent), fsync=False)
+    return _CleanupDirectoryRecord(path, state.st_dev, state.st_ino, stat.S_IFMT(state.st_mode), stat.S_IMODE(state.st_mode) if os.name != "nt" else None, parent, parent_state.st_dev, parent_state.st_ino, indices)
+
+def _same_cleanup_record(record: _CleanupBindingRecord, actual: _CleanupBindingRecord) -> bool:
+    return (record.device, record.inode, record.file_type, record.size, record.mtime_ns, record.mode) == (actual.device, actual.inode, actual.file_type, actual.size, actual.mtime_ns, actual.mode)
+
+def _revalidate_cleanup_directory(record: _CleanupDirectoryRecord) -> None:
+    actual = _cleanup_directory_record(record.path, record.target_indices)
+    if (actual.device, actual.inode, actual.file_type, actual.mode, actual.parent_path, actual.parent_device, actual.parent_inode) != (record.device, record.inode, record.file_type, record.mode, record.parent_path, record.parent_device, record.parent_inode): raise OSError("directory changed")
+
+def _load_staging_binding(*, stage_directory: Path, expected_payload: dict[str, object]) -> _CleanupBindingRecord:
     binding=stage_directory/_STAGING_BINDING_NAME
     try:
         if not _stage_directory_is_private(stage_directory) or binding.is_symlink(): raise OSError("unsafe")
-        fd=os.open(str(binding),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
-        try:
-            before=os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_size<=0 or before.st_size>_MAX_STAGING_BINDING_BYTES or (os.name!="nt" and stat.S_IMODE(before.st_mode)!=0o600): raise OSError("invalid")
-            identity=_identity(before); data=_read_exact(fd,before.st_size)
-            after=os.fstat(fd)
-            if identity!=_identity(after): raise OSError("changed")
-        finally: os.close(fd)
+        record, data = _cleanup_file_record(binding, maximum_size=_MAX_STAGING_BINDING_BYTES)
+        if not data: raise OSError("invalid")
         parsed=json.loads(data.decode("utf-8"))
         _validate_binding_schema(parsed)
         if _canonical_json(parsed)!=data or parsed!=expected_payload: raise ValueError("invalid")
+        return record
     except (OSError,UnicodeError,ValueError,json.JSONDecodeError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
 def _validate_inputs(operation_id: str, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path, expected_stage=RestoreStage.CURRENT_SNAPSHOT_CREATED):
     journal=load_restore_journal(operation_id,root=journal_root)
@@ -469,25 +541,52 @@ def cleanup_synthetic_staging(*,operation_id: str,validated_backup: ValidatedBac
     except StagingError as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
     groups={}
     for index,destination in enumerate(destinations): groups.setdefault(destination.path.parent,[]).append(index)
-    prepared=[]
+    prepared: list[_CleanupStagePlan]=[]
     try:
         for parent,indices in groups.items():
             stage=_stage_dir(parent,operation_id)
-            if not stage.exists(): continue
-            payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)); _load_staging_binding(stage_directory=stage,expected_payload=payload)
+            try: os.lstat(stage)
+            except FileNotFoundError: continue
+            directory = _cleanup_directory_record(stage, tuple(indices))
+            payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)); binding = _load_staging_binding(stage_directory=stage,expected_payload=payload)
             allowed={_STAGING_BINDING_NAME,*(_staged_filename(entries[index],index) for index in indices)}
+            names=[]
+            with os.scandir(stage) as children:
+                for child in children:
+                    item = Path(child.path); names.append(child.name)
+                    state=os.lstat(item)
+                    if child.name not in allowed or stat.S_ISLNK(state.st_mode) or not stat.S_ISREG(state.st_mode): raise OSError("unexpected entry")
+            if _STAGING_BINDING_NAME not in names: raise OSError("binding absent")
             present=[]
-            for child in stage.iterdir():
-                if child.name not in allowed or child.is_symlink() or not child.is_file(): raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid")
-                if child.name!=_STAGING_BINDING_NAME:
-                    index=next(i for i in indices if _staged_filename(entries[i],i)==child.name)
-                    if child.stat().st_size!=entries[index][4] or _sha(child)!=entries[index][5]: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid")
-                    present.append((index,child))
-            prepared.append((stage,sorted(present)))
+            for index in indices:
+                artifact=stage/_staged_filename(entries[index],index)
+                if artifact.name not in names: continue
+                record, _ = _cleanup_file_record(artifact, expected_size=entries[index][4], expected_sha256=entries[index][5])
+                present.append(_CleanupArtifactRecord(index, artifact, record.device, record.inode, record.file_type, record.size, record.mtime_ns, record.mode, entries[index][5]))
+            _revalidate_cleanup_directory(directory)
+            prepared.append(_CleanupStagePlan(directory,binding,tuple(present)))
     except StagingCleanupBindingError: raise
-    except (OSError,ValueError,StagingError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
+    except (OSError,ValueError,StagingError,UnicodeError,json.JSONDecodeError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
     try:
-        for stage,present in prepared:
-            for _,child in present: os.unlink(child)
-            os.unlink(stage/_STAGING_BINDING_NAME); _fsync_directory(stage); stage.rmdir(); _fsync_directory(stage.parent)
+        for plan in prepared:
+            directory=plan.directory
+            for artifact in plan.artifacts:
+                _revalidate_cleanup_directory(directory)
+                current, _ = _cleanup_file_record(artifact.path, expected_size=artifact.size, expected_sha256=artifact.expected_sha256)
+                expected = _CleanupBindingRecord(artifact.path,artifact.device,artifact.inode,artifact.file_type,artifact.size,artifact.mtime_ns,artifact.mode,b"")
+                if not _same_cleanup_record(expected,current): raise OSError("artifact changed")
+                _revalidate_cleanup_directory(directory)
+                os.unlink(artifact.path)
+            _revalidate_cleanup_directory(directory)
+            current, data = _cleanup_file_record(plan.binding.path, maximum_size=_MAX_STAGING_BINDING_BYTES)
+            if not _same_cleanup_record(plan.binding,current) or data != plan.binding.canonical_bytes: raise OSError("binding changed")
+            _revalidate_cleanup_directory(directory)
+            os.unlink(plan.binding.path)
+            _revalidate_cleanup_directory(directory)
+            # The directory is now allowed to contain no entries, and only then may it be removed.
+            with os.scandir(directory.path) as children:
+                if next(children, None) is not None: raise OSError("directory not empty")
+            _fsync_directory(directory.path)
+            directory.path.rmdir()
+            _open_verified_directory(path=directory.parent_path, expected_identity=_directory_identity(directory.parent_path))
     except OSError as exc: raise StagingCleanupPersistenceError("Synthetic staging cleanup could not be persisted") from exc
