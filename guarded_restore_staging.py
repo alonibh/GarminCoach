@@ -19,6 +19,7 @@ class StagedVerificationError(StagingError): pass
 class StagingPersistenceError(StagingError): pass
 class StagingJournalPersistenceError(StagingPersistenceError): pass
 class StagingManualCleanupRequiredError(StagingPersistenceError): pass
+class StagingOwnershipIndeterminateError(StagingManualCleanupRequiredError): pass
 
 @dataclass(frozen=True)
 class SyntheticRestoreTarget:
@@ -183,6 +184,29 @@ def _journal_failure(*, operation_id: str, journal_root: Path) -> StagingJournal
     _transition_staging_failure_to_failed_safe(operation_id=operation_id, journal_root=journal_root)
     return StagingJournalPersistenceError("Restore staging journal could not be persisted")
 
+def _reconcile_failed_staged_transition(*, operation_id: str, journal_root: Path, target_key: str, artifact: Path, stage_directory: Path, cause: Exception) -> None:
+    """Resolve ownership after an ambiguous target-journal persistence error."""
+    try:
+        journal = load_restore_journal(operation_id, root=journal_root)
+        facts = tuple(fact for fact in journal.targets if fact.target_key == target_key)
+        if len(facts) != 1:
+            raise RestoreJournalError("Restore journal target is indeterminate")
+        state = facts[0].state
+    except (RestoreJournalError, RestoreJournalPersistenceError, OSError, ValueError) as exc:
+        raise StagingOwnershipIndeterminateError("Staged artifact ownership is indeterminate") from cause
+    if state is TargetRestoreState.PENDING:
+        try:
+            _remove_unrecorded_staged_artifact(artifact=artifact, stage_directory=stage_directory)
+        except StagingManualCleanupRequiredError:
+            raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from cause
+    elif state is not TargetRestoreState.STAGED:
+        raise StagingOwnershipIndeterminateError("Staged artifact ownership is indeterminate") from cause
+    try:
+        _transition_staging_failure_to_failed_safe(operation_id=operation_id, journal_root=journal_root)
+    except StagingJournalPersistenceError:
+        raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from cause
+    raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from cause
+
 def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->StagingResult:
     try:
         journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root)
@@ -202,8 +226,7 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
             try:
                 update_restore_journal(operation_id,root=journal_root,target_key=entry[0],target_state=TargetRestoreState.STAGED)
             except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
-                _remove_unrecorded_staged_artifact(artifact=file,stage_directory=dirs[dest.path.parent])
-                raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
+                _reconcile_failed_staged_transition(operation_id=operation_id,journal_root=journal_root,target_key=entry[0],artifact=file,stage_directory=dirs[dest.path.parent],cause=exc)
             staged.append((entry,file,index))
         try:
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.STAGED_VERIFIED)

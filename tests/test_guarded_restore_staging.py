@@ -6,7 +6,7 @@ import pytest
 from dataclasses import replace
 import config
 from guarded_restore import RestoreJournalError, RestoreJournalPersistenceError, RestoreStage, TargetRestoreState, create_restore_journal, create_restore_plan, load_restore_journal, update_restore_journal
-from guarded_restore_staging import StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
+from guarded_restore_staging import StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingOwnershipIndeterminateError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
 from verified_backup import create_verified_backup, load_validated_backup_snapshot
 
 def _db(path: Path, ledger: str, key: str):
@@ -167,6 +167,105 @@ def test_failed_safe_persistence_failure_leaves_prior_journal_and_compensates_un
     current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
     assert current.stage is RestoreStage.RESTORE_STAGED and _states(current) == (TargetRestoreState.PENDING, TargetRestoreState.PENDING)
     assert not _stage_files(root)
+
+def test_first_persisted_staged_transition_exception_preserves_owned_artifact(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    sources, backup = [item.path.read_bytes() for item in destinations], [ (validated.directory / entry.filename).read_bytes() for entry in validated.entries ]
+    original, original_unlink = staging.update_restore_journal, staging.os.unlink; unlinked = []
+    def persist_then_fail(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if kwargs.get("target_key") == "control" and kwargs.get("target_state") is TargetRestoreState.STAGED:
+            raise RestoreJournalPersistenceError("injected")
+        return result
+    def recording_unlink(path, *args, **kwargs):
+        unlinked.append(Path(path)); return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", persist_then_fail); monkeypatch.setattr(staging.os, "unlink", recording_unlink)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current, files = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT), _stage_files(root)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == (TargetRestoreState.STAGED, TargetRestoreState.PENDING)
+    assert len(files) == 1 and not [path for path in unlinked if path.name.endswith(".sqlite.staged")]
+    assert [item.path.read_bytes() for item in destinations] == sources and [(validated.directory / entry.filename).read_bytes() for entry in validated.entries] == backup
+
+def test_later_persisted_staged_transition_exception_preserves_both_owned_artifacts(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, original_unlink = staging.update_restore_journal, staging.os.unlink; unlinked = []
+    def persist_then_fail(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if kwargs.get("target_key") == "single-user" and kwargs.get("target_state") is TargetRestoreState.STAGED:
+            raise RestoreJournalError("injected")
+        return result
+    def recording_unlink(path, *args, **kwargs):
+        unlinked.append(Path(path)); return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", persist_then_fail); monkeypatch.setattr(staging.os, "unlink", recording_unlink)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == (TargetRestoreState.STAGED, TargetRestoreState.STAGED)
+    assert len(_stage_files(root)) == 2 and not [path for path in unlinked if path.name.endswith(".sqlite.staged")]
+
+def test_persisted_staged_transition_with_failed_safe_write_preserves_artifact(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, original_unlink = staging.update_restore_journal, staging.os.unlink; unlinked = []
+    def persist_then_fail(*args, **kwargs):
+        if kwargs.get("stage") is RestoreStage.FAILED_SAFE: raise RestoreJournalPersistenceError("injected")
+        result = original(*args, **kwargs)
+        if kwargs.get("target_key") == "control" and kwargs.get("target_state") is TargetRestoreState.STAGED:
+            raise RestoreJournalPersistenceError("injected")
+        return result
+    def recording_unlink(path, *args, **kwargs):
+        unlinked.append(Path(path)); return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", persist_then_fail); monkeypatch.setattr(staging.os, "unlink", recording_unlink)
+    with pytest.raises(StagingJournalPersistenceError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.RESTORE_STAGED and _states(current) == (TargetRestoreState.STAGED, TargetRestoreState.PENDING)
+    assert len(_stage_files(root)) == 1 and not [path for path in unlinked if path.name.endswith(".sqlite.staged")]
+
+def test_ownership_reload_failure_preserves_evidence_without_failed_safe(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_update, original_load, original_unlink = staging.update_restore_journal, staging.load_restore_journal, staging.os.unlink
+    loads, unlinked, updates = [0], [], []
+    def fail_after_update(*args, **kwargs):
+        updates.append(kwargs)
+        result = original_update(*args, **kwargs)
+        if kwargs.get("target_key") == "control" and kwargs.get("target_state") is TargetRestoreState.STAGED: raise RestoreJournalPersistenceError("injected")
+        return result
+    def fail_reconciliation(*args, **kwargs):
+        loads[0] += 1
+        if loads[0] == 2: raise RestoreJournalError("injected")
+        return original_load(*args, **kwargs)
+    def recording_unlink(path, *args, **kwargs):
+        unlinked.append(Path(path)); return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_after_update); monkeypatch.setattr(staging, "load_restore_journal", fail_reconciliation); monkeypatch.setattr(staging.os, "unlink", recording_unlink)
+    with pytest.raises(StagingOwnershipIndeterminateError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert len(_stage_files(root)) == 1 and not unlinked and not [item for item in updates if item.get("stage") is RestoreStage.FAILED_SAFE]
+
+def test_unexpected_durable_target_state_preserves_artifact_without_normalization(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_update, original_load, original_unlink = staging.update_restore_journal, staging.load_restore_journal, staging.os.unlink
+    loads, unlinked, updates = [0], [], []
+    def persist_then_fail(*args, **kwargs):
+        updates.append(kwargs)
+        result = original_update(*args, **kwargs)
+        if kwargs.get("target_key") == "control" and kwargs.get("target_state") is TargetRestoreState.STAGED: raise RestoreJournalError("injected")
+        return result
+    def unexpected_second_load(*args, **kwargs):
+        loads[0] += 1; result = original_load(*args, **kwargs)
+        if loads[0] == 2: return replace(result, targets=(replace(result.targets[0], state=TargetRestoreState.STAGED_VERIFIED), result.targets[1]))
+        return result
+    def recording_unlink(path, *args, **kwargs):
+        unlinked.append(Path(path)); return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging, "update_restore_journal", persist_then_fail); monkeypatch.setattr(staging, "load_restore_journal", unexpected_second_load); monkeypatch.setattr(staging.os, "unlink", recording_unlink)
+    with pytest.raises(StagingOwnershipIndeterminateError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert len(_stage_files(root)) == 1 and not unlinked and not [item for item in updates if item.get("stage") is RestoreStage.FAILED_SAFE]
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows binary descriptor regression")
 def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypatch):
