@@ -112,18 +112,36 @@ def test_unrecorded_artifact_directory_fsync_failure_requires_manual_cleanup(tmp
     import guarded_restore_staging as staging
     import stat
     validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
-    original_update, original_fsync = staging.update_restore_journal, staging.os.fsync
+    source = [(validated.directory / entry.filename).read_bytes() for entry in validated.entries]
+    destination = [item.path.read_bytes() for item in destinations]
+    original_update, original_unlink, original_fsync = staging.update_restore_journal, staging.os.unlink, staging.os.fsync
+    compensation_artifact_unlinked, normal_directory_fsyncs, failed_safe, attempted = [False], [0], [False], []
     def fail_staged(*args, **kwargs):
+        attempted.append(kwargs)
         if kwargs.get("target_state") is TargetRestoreState.STAGED: raise RestoreJournalError("injected")
         return original_update(*args, **kwargs)
-    def fail_directory(fd):
-        if stat.S_ISDIR(os.fstat(fd).st_mode): raise OSError("injected")
+    def unlink_then_mark(path, *args, **kwargs):
+        result = original_unlink(path, *args, **kwargs)
+        if Path(path).name.endswith(".sqlite.staged"): compensation_artifact_unlinked[0] = True
+        return result
+    def fail_only_compensation_directory_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            if compensation_artifact_unlinked[0]:
+                failed_safe[0] = True
+                raise OSError("injected")
+            normal_directory_fsyncs[0] += 1
         return original_fsync(fd)
-    monkeypatch.setattr(staging, "update_restore_journal", fail_staged); monkeypatch.setattr(staging.os, "fsync", fail_directory)
+    monkeypatch.setattr(staging, "update_restore_journal", fail_staged); monkeypatch.setattr(staging.os, "unlink", unlink_then_mark); monkeypatch.setattr(staging.os, "fsync", fail_only_compensation_directory_fsync)
     with pytest.raises(StagingManualCleanupRequiredError):
         stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
-    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.RESTORE_STAGED
-    assert not _stage_files(root)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    directories = list(root.glob(".garmincoach-restore-stage-*"))
+    assert any(item.get("target_key") == "control" and item.get("target_state") is TargetRestoreState.STAGED for item in attempted)
+    assert compensation_artifact_unlinked[0] and failed_safe[0] and normal_directory_fsyncs[0] >= 1
+    assert current.stage is RestoreStage.RESTORE_STAGED and _states(current) == (TargetRestoreState.PENDING, TargetRestoreState.PENDING)
+    assert not _stage_files(root) and not list(root.glob(".garmincoach-restore-stage-*/*.partial"))
+    assert len(directories) == 1 and directories[0].is_dir()
+    assert [(validated.directory / entry.filename).read_bytes() for entry in validated.entries] == source and [item.path.read_bytes() for item in destinations] == destination
 
 @pytest.mark.parametrize("target_key, expected", [("control", (TargetRestoreState.STAGED, TargetRestoreState.STAGED)), ("single-user", (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED))])
 def test_verified_target_journal_failures_preserve_exact_owned_progress(tmp_path, monkeypatch, target_key, expected):
