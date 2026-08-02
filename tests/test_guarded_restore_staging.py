@@ -366,6 +366,64 @@ def test_first_and_later_verification_failures_preserve_exact_target_progress(tm
     current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
     assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == expected and len(_stage_files(root)) == 2
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX private-mode verification")
+def test_posix_permission_helper_exception_is_sanitized_and_preserves_owned_artifacts(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, original_unlink = staging.permission_health, staging.os.unlink; unlinked = []
+    raw = "/private/operator/path.sqlite sqlite detail tenant:fake"
+    def fail_staged_permission(path, directory=False):
+        if Path(path).name.endswith(".sqlite.staged"): raise RuntimeError(raw)
+        return original(path, directory=directory)
+    monkeypatch.setattr(staging, "permission_health", fail_staged_permission)
+    monkeypatch.setattr(staging.os, "unlink", lambda path, *args, **kwargs: (unlinked.append(Path(path)), original_unlink(path, *args, **kwargs))[1])
+    error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
+    assert raw not in str(error) and isinstance(error.__cause__, RuntimeError)
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX private-mode verification")
+def test_posix_non_private_permission_result_is_a_mismatch(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, original_unlink = staging.permission_health, staging.os.unlink; unlinked = []
+    def broad_staged_permission(path, directory=False):
+        if Path(path).name.endswith(".sqlite.staged"): return "permissions_too_broad"
+        return original(path, directory=directory)
+    monkeypatch.setattr(staging, "permission_health", broad_staged_permission)
+    monkeypatch.setattr(staging.os, "unlink", lambda path, *args, **kwargs: (unlinked.append(Path(path)), original_unlink(path, *args, **kwargs))[1])
+    error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
+    assert error.__cause__ is None
+
+def test_staged_size_mismatch_preserves_both_owned_artifacts(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_verify, original_unlink = staging._verify, staging.os.unlink; modified, unlinked = [None], []
+    def enlarge_first_staged(entry, path):
+        if modified[0] is None:
+            with Path(path).open("ab") as stream: stream.write(b"x")
+            modified[0] = Path(path)
+        return original_verify(entry, path)
+    monkeypatch.setattr(staging, "_verify", enlarge_first_staged)
+    monkeypatch.setattr(staging.os, "unlink", lambda path, *args, **kwargs: (unlinked.append(Path(path)), original_unlink(path, *args, **kwargs))[1])
+    error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
+    files = _stage_files(root)
+    assert error.__cause__ is None and modified[0] in files and modified[0].stat().st_size != validated.entries[0].size_bytes
+    assert (validated.directory / validated.entries[1].filename).read_bytes() == files[1].read_bytes()
+
+@pytest.mark.parametrize("shape", ["extra", "duplicate", "unordered"])
+def test_migration_marker_shape_mismatches_are_normalized(tmp_path, monkeypatch, shape):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, original_unlink = staging.migration_markers, staging.os.unlink; unlinked = []
+    def malformed_shape(path, kind):
+        result = original(path, kind)
+        if shape == "extra": return {**result, "unexpected": "value"}
+        if shape == "duplicate": return {**result, "keys": [result["keys"][0], result["keys"][0]]}
+        return {**result, "keys": ["z", "a"]}
+    monkeypatch.setattr(staging, "migration_markers", malformed_shape)
+    monkeypatch.setattr(staging.os, "unlink", lambda path, *args, **kwargs: (unlinked.append(Path(path)), original_unlink(path, *args, **kwargs))[1])
+    error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
+    assert error.__cause__ is None
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows binary descriptor regression")
 def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypatch):
     import guarded_restore_staging as staging
