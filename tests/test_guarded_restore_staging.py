@@ -11,6 +11,7 @@ from verified_backup import create_verified_backup, load_validated_backup_snapsh
 
 def _db(path: Path, ledger: str, key: str):
     path.parent.mkdir(parents=True,exist_ok=True); c=sqlite3.connect(path); c.execute("CREATE TABLE sample(id INTEGER PRIMARY KEY)"); c.execute(f"CREATE TABLE {ledger}({key} TEXT PRIMARY KEY)"); c.execute(f"INSERT INTO {ledger} VALUES ('base')"); c.commit(); c.close()
+    if os.name != "nt": os.chmod(path, 0o600)
 def _prepared(tmp_path,monkeypatch):
     monkeypatch.setattr(config,"PROJECT_ROOT",tmp_path); monkeypatch.setattr(config,"CONTROL_DB_PATH",tmp_path/"data"/"control.db"); monkeypatch.setattr(config,"DB_PATH",tmp_path/"data"/"single.db"); monkeypatch.setattr(config,"MULTI_USER_DATA_ROOT",tmp_path/"data"/"users"); monkeypatch.setattr(config,"OPERATOR_BACKUP_ROOT",tmp_path/"backups"); monkeypatch.setattr(config,"OPERATOR_RESTORE_ROOT",tmp_path/"journals"); monkeypatch.setattr(config,"MULTI_USER_ENABLED",False)
     _db(config.CONTROL_DB_PATH,"migration_versions","version"); _db(config.DB_PATH,"app_migrations","migration_key")
@@ -27,6 +28,18 @@ def test_synthetic_staging_reaches_replacement_ready_without_destination_mutatio
     result=stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
     assert len(result.artifacts)==2 and [d.path.read_bytes() for d in destinations]==before
     assert __import__('guarded_restore').load_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.REPLACEMENT_READY
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX private fixture permissions")
+def test_prepared_destinations_are_private_and_broadening_is_rejected(tmp_path, monkeypatch):
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    assert (root.stat().st_mode & 0o777) == 0o700
+    assert all((item.path.parent.stat().st_mode & 0o777) == 0o700 and (item.path.stat().st_mode & 0o777) == 0o600 for item in destinations)
+    result = stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert result.operation_id == journal.operation_id and load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.REPLACEMENT_READY
+    private, second_journal, second_root, second_destinations = _prepared(tmp_path / "second", monkeypatch)
+    os.chmod(second_destinations[0].path, 0o644)
+    with pytest.raises(SyntheticDestinationError):
+        stage_and_verify_synthetic_restore(operation_id=second_journal.operation_id, validated_backup=private, destinations=second_destinations, fixture_root=second_root, journal_root=config.OPERATOR_RESTORE_ROOT)
 
 def test_final_barrier_rejects_journal_token_drift_and_preserves_evidence(tmp_path, monkeypatch):
     import guarded_restore_staging as staging
