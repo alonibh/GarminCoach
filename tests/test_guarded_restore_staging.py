@@ -6,7 +6,7 @@ import pytest
 from dataclasses import replace
 import config
 from guarded_restore import RestoreJournalError, RestoreJournalPersistenceError, RestoreStage, TargetRestoreState, create_restore_journal, create_restore_plan, load_restore_journal, update_restore_journal
-from guarded_restore_staging import StagedVerificationError, StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingOwnershipIndeterminateError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
+from guarded_restore_staging import StagedVerificationError, StagingCleanupBindingError, StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingOwnershipIndeterminateError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, cleanup_synthetic_staging, stage_and_verify_synthetic_restore
 from verified_backup import create_verified_backup, load_validated_backup_snapshot
 
 def _db(path: Path, ledger: str, key: str):
@@ -423,6 +423,40 @@ def test_migration_marker_shape_mismatches_are_normalized(tmp_path, monkeypatch,
     monkeypatch.setattr(staging.os, "unlink", lambda path, *args, **kwargs: (unlinked.append(Path(path)), original_unlink(path, *args, **kwargs))[1])
     error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
     assert error.__cause__ is None
+
+def _fail_verification_to_failed_safe(validated, journal, root, destinations, monkeypatch):
+    import guarded_restore_staging as staging
+    monkeypatch.setattr(staging, "_verify", lambda entry, path: (_ for _ in ()).throw(StagedVerificationError("Staged artifact verification failed")))
+    with pytest.raises(StagedVerificationError): stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+
+def test_staging_binding_is_canonical_and_precedes_artifacts(tmp_path, monkeypatch):
+    import json
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    result=stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    binding=next(root.glob(".garmincoach-restore-stage-*/.staging-binding.json")); payload=json.loads(binding.read_text(encoding="utf-8"))
+    assert binding.read_bytes()==__import__('guarded_restore_staging')._canonical_json(payload)
+    assert payload["operation_id"]==journal.operation_id and [item["target_key"] for item in payload["artifacts"]]==["control","single-user"]
+    assert all(not str(value).startswith(str(root)) for value in [payload["stage_parent"],*(item["destination"] for item in payload["artifacts"])])
+    assert len(result.artifacts)==2
+
+def test_authorized_cleanup_removes_bound_artifacts_and_is_idempotent(tmp_path, monkeypatch):
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); source=[(validated.directory/e.filename).read_bytes() for e in validated.entries]; destination=[d.path.read_bytes() for d in destinations]
+    cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert not stage.exists() and [(validated.directory/e.filename).read_bytes() for e in validated.entries]==source and [d.path.read_bytes() for d in destinations]==destination
+    cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+
+@pytest.mark.parametrize("tamper", ["binding", "artifact", "destination", "snapshot"])
+def test_cleanup_refuses_tampered_or_substituted_context_without_deletion(tmp_path, monkeypatch, tamper):
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); before=sorted(path.name for path in stage.iterdir())
+    supplied, targets = validated, destinations
+    if tamper=="binding": (stage/".staging-binding.json").write_text("{}\n",encoding="utf-8")
+    elif tamper=="artifact": next(stage.glob("*.sqlite.staged")).write_bytes(b"changed")
+    elif tamper=="destination": targets=(SyntheticRestoreTarget("control","control",root/"other.sqlite"),destinations[1])
+    else: supplied=replace(validated,backup_id="20260801T120000Z-a1b2c3d4")
+    with pytest.raises(StagingCleanupBindingError): cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=supplied,destinations=targets,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert stage.exists() and sorted(path.name for path in stage.iterdir())==before
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows binary descriptor regression")
 def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypatch):

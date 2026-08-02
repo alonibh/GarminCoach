@@ -1,7 +1,7 @@
 """Synthetic-fixture-only offline guarded-restore staging (Phase 6B2B)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-import hashlib, os, shutil, stat
+import hashlib, json, os, shutil, stat
 from pathlib import Path
 from typing import Literal
 
@@ -12,6 +12,10 @@ from verified_backup import ValidatedBackupSnapshot, load_validated_backup_snaps
 _BINARY_FLAG = getattr(os, "O_BINARY", 0)
 _NOFOLLOW_FLAG = getattr(os, "O_NOFOLLOW", 0)
 _STAGED_VERIFICATION_ERROR = "Staged artifact verification failed"
+_STAGING_BINDING_FORMAT = "garmincoach-restore-staging-binding-v1"
+_STAGING_BINDING_NAME = ".staging-binding.json"
+_STAGING_BINDING_TEMP_NAME = ".staging-binding.json.partial"
+_MAX_STAGING_BINDING_BYTES = 64 * 1024
 
 class StagingError(RuntimeError): pass
 class StagingSourceError(StagingError): pass
@@ -21,6 +25,9 @@ class StagingPersistenceError(StagingError): pass
 class StagingJournalPersistenceError(StagingPersistenceError): pass
 class StagingManualCleanupRequiredError(StagingPersistenceError): pass
 class StagingOwnershipIndeterminateError(StagingManualCleanupRequiredError): pass
+class StagingBindingPersistenceError(StagingPersistenceError): pass
+class StagingCleanupBindingError(StagingError): pass
+class StagingCleanupPersistenceError(StagingError): pass
 
 @dataclass(frozen=True)
 class SyntheticRestoreTarget:
@@ -52,6 +59,11 @@ def _inside(child: Path, root: Path) -> bool:
     try: child.resolve(strict=False).relative_to(root.resolve(strict=False)); return True
     except ValueError: return False
 def _stage_dir(parent: Path, operation_id: str) -> Path: return parent / f".garmincoach-restore-stage-{operation_id}"
+def _staged_filename(entry, index: int) -> str:
+    _,kind,tenant,_,_,_,_,_=entry
+    identity="control" if kind=="control" else "single-user" if kind=="single_user" else f"tenant-{tenant}"
+    return f"{index:03d}-{identity}.sqlite.staged"
+def _canonical_json(value: object) -> bytes: return (json.dumps(value,sort_keys=True,separators=(",",":"),ensure_ascii=False)+"\n").encode("utf-8")
 def _validate_fixture_root(root: Path, backup: Path) -> Path:
     if not root.exists() or not root.is_dir() or root.is_symlink() or has_symlink_component(root): raise SyntheticDestinationError("Synthetic fixture root is unsafe")
     resolved=root.resolve()
@@ -61,9 +73,71 @@ def _validate_fixture_root(root: Path, backup: Path) -> Path:
     return resolved
 def _entry_tuple(entry) -> tuple[str,str,str|None,str,int,str,str,tuple[str,tuple[str,...],str]]:
     return (entry.target_key,entry.kind,entry.tenant_id,entry.filename,entry.size_bytes,entry.sha256,entry.schema_fingerprint,(entry.migration_ledger,entry.migration_keys,entry.migration_state))
-def _validate_inputs(operation_id: str, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path):
+
+def _binding_payload(journal, entries, destinations, root: Path, parent: Path, indices: tuple[int,...]) -> dict[str, object]:
+    artifacts=[]
+    for index in indices:
+        entry=entries[index]; dest=destinations[index]
+        artifacts.append({"target_key":entry[0],"kind":entry[1],"target_order":index,"destination":dest.path.resolve().relative_to(root).as_posix(),"staged_filename":_staged_filename(entry,index),"size_bytes":entry[4],"sha256":entry[5]})
+    return {"format_version":_STAGING_BINDING_FORMAT,"operation_id":journal.operation_id,"selected_backup_id":journal.selected_backup_id,"selected_backup_manifest_sha256":journal.selected_backup_manifest_sha256,"safety_backup_id":journal.safety_backup_id,"runtime_mode":journal.runtime_mode,"target_set_hash":journal.target_set_hash,"stage_parent":parent.resolve().relative_to(root).as_posix(),"artifacts":artifacts}
+
+def _fsync_directory(path: Path) -> None:
+    if os.name=="nt": return
+    fd=os.open(str(path),os.O_RDONLY|getattr(os,"O_DIRECTORY",0))
+    try: os.fsync(fd)
+    finally: os.close(fd)
+
+def _write_staging_binding(*, stage_directory: Path, payload: dict[str, object]) -> None:
+    final=stage_directory/_STAGING_BINDING_NAME; temporary=stage_directory/_STAGING_BINDING_TEMP_NAME; data=_canonical_json(payload); fd=None; published=False
+    try:
+        if stage_directory.is_symlink() or has_symlink_component(stage_directory) or not stage_directory.is_dir() or final.exists() or temporary.exists(): raise OSError("unsafe")
+        fd=os.open(str(temporary),os.O_WRONLY|os.O_CREAT|os.O_EXCL|_NOFOLLOW_FLAG|_BINARY_FLAG,0o600); offset=0
+        while offset<len(data):
+            count=os.write(fd,data[offset:])
+            if count<=0: raise OSError("write")
+            offset+=count
+        os.fsync(fd); os.close(fd); fd=None; os.replace(temporary,final); published=True; _private(final)
+        verify=os.open(str(final),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
+        try:
+            info=os.fstat(verify)
+            if not stat.S_ISREG(info.st_mode) or info.st_size!=len(data) or os.read(verify,len(data)+1)!=data: raise OSError("verify")
+            if os.name!="nt": os.fsync(verify)
+        finally: os.close(verify)
+        _fsync_directory(stage_directory)
+    except StagingPersistenceError: raise
+    except OSError as exc:
+        if fd is not None:
+            try: os.close(fd)
+            except OSError: pass
+        if published: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
+        try:
+            if temporary.exists() and not temporary.is_symlink(): os.unlink(temporary)
+            if not any(stage_directory.iterdir()): stage_directory.rmdir()
+        except OSError as cleanup: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from cleanup
+        raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
+
+def _load_staging_binding(*, stage_directory: Path, expected_payload: dict[str, object]) -> None:
+    binding=stage_directory/_STAGING_BINDING_NAME
+    try:
+        if stage_directory.is_symlink() or binding.is_symlink() or has_symlink_component(stage_directory): raise OSError("unsafe")
+        fd=os.open(str(binding),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
+        try:
+            before=os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_size>_MAX_STAGING_BINDING_BYTES: raise OSError("invalid")
+            data=b""
+            while len(data)<=_MAX_STAGING_BINDING_BYTES:
+                chunk=os.read(fd,8192)
+                if not chunk: break
+                data+=chunk
+            after=os.fstat(fd)
+            if (before.st_dev,before.st_ino,before.st_size)!=(after.st_dev,after.st_ino,after.st_size): raise OSError("changed")
+        finally: os.close(fd)
+        parsed=json.loads(data.decode("utf-8"))
+        if not isinstance(parsed,dict) or _canonical_json(parsed)!=data or parsed!=expected_payload: raise ValueError("invalid")
+    except (OSError,UnicodeError,ValueError,json.JSONDecodeError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
+def _validate_inputs(operation_id: str, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path, expected_stage=RestoreStage.CURRENT_SNAPSHOT_CREATED):
     journal=load_restore_journal(operation_id,root=journal_root)
-    if journal.stage is not RestoreStage.CURRENT_SNAPSHOT_CREATED or not journal.safety_backup_id: raise StagingError("Restore journal is not ready for synthetic staging")
+    if journal.stage is not expected_stage or not journal.safety_backup_id: raise StagingError("Restore journal is not ready for synthetic staging")
     if type(validated) is not ValidatedBackupSnapshot: raise StagingSourceError("Validated backup does not match restore journal")
     try: fresh=load_validated_backup_snapshot(validated.directory)
     except Exception as exc: raise StagingSourceError("Validated backup does not match restore journal") from exc
@@ -83,8 +157,7 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
     if Path(filename).name!=filename or "/" in filename or "\\" in filename: raise StagingSourceError("Validated staging filename is unsafe")
     source=backup/filename
     if source.is_symlink() or has_symlink_component(source) or not source.is_file(): raise StagingSourceError("Validated staging source changed")
-    identity="control" if kind=="control" else "single-user" if kind=="single_user" else f"tenant-{tenant}"
-    final=stage/f"{index:03d}-{identity}.sqlite.staged"; partial=stage/f".{index:03d}-{identity}.partial"
+    staged_name=_staged_filename(entry,index); final=stage/staged_name; partial=stage/f".{staged_name.removesuffix('.sqlite.staged')}.partial"
     if final.exists() or partial.exists() or final.is_symlink() or partial.is_symlink(): raise StagingPersistenceError("Synthetic staging artifact already exists")
     source_fd: int|None=None; partial_fd: int|None=None
     try:
@@ -238,12 +311,16 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.RESTORE_STAGED)
         except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
             raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
-        dirs={}
-        for d in destinations:
+        dirs={}; parent_indices={}
+        for index,d in enumerate(destinations):
             parent=d.path.parent; stage=_stage_dir(parent,operation_id)
             if parent not in dirs:
                 if stage.exists() or stage.is_symlink(): raise StagingPersistenceError("Synthetic staging directory already exists")
                 stage.mkdir(mode=0o700); _private(stage,True); dirs[parent]=stage
+                parent_indices[parent]=[]
+            parent_indices[parent].append(index)
+        for parent,stage in dirs.items():
+            _write_staging_binding(stage_directory=stage,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(parent_indices[parent])))
         staged=[]
         for index,(entry,dest) in enumerate(zip(entries,destinations)):
             file=_copy(entry,validated_backup.directory,dirs[dest.path.parent],index)
@@ -276,18 +353,31 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
     except (StagingError,RestoreJournalError,RestoreJournalPersistenceError):
         _transition_staging_failure_to_failed_safe(operation_id=operation_id,journal_root=journal_root)
         raise
-def cleanup_synthetic_staging(*,operation_id: str,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->None:
-    journal=load_restore_journal(operation_id,root=journal_root)
-    if journal.stage is not RestoreStage.FAILED_SAFE: raise StagingError("Synthetic staging cleanup is not permitted")
-    root=_validate_fixture_root(Path(fixture_root),Path(config.OPERATOR_BACKUP_ROOT))
-    for parent in {d.path.parent for d in destinations}:
-        stage=_stage_dir(parent,operation_id)
-        if not stage.exists(): continue
-        if stage.is_symlink() or not _inside(stage,root): raise StagingError("Synthetic staging cleanup is unsafe")
-        expected={f"{i:03d}-{'control' if d.kind=='control' else 'single-user' if d.kind=='single_user' else 'tenant-'+d.target_key[7:]}.sqlite.staged" for i,d in enumerate(destinations) if d.path.parent==parent}
-        names={p.name for p in stage.iterdir()}
-        if not names.issubset(expected): raise StagingError("Synthetic staging cleanup is unsafe")
-        for p in stage.iterdir():
-            if p.is_symlink() or not p.is_file(): raise StagingError("Synthetic staging cleanup is unsafe")
-            p.unlink()
-        stage.rmdir()
+def cleanup_synthetic_staging(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->None:
+    try:
+        journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root,expected_stage=RestoreStage.FAILED_SAFE)
+    except StagingError as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
+    groups={}
+    for index,destination in enumerate(destinations): groups.setdefault(destination.path.parent,[]).append(index)
+    prepared=[]
+    try:
+        for parent,indices in groups.items():
+            stage=_stage_dir(parent,operation_id)
+            if not stage.exists(): continue
+            payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)); _load_staging_binding(stage_directory=stage,expected_payload=payload)
+            allowed={_STAGING_BINDING_NAME,*(_staged_filename(entries[index],index) for index in indices)}
+            present=[]
+            for child in stage.iterdir():
+                if child.name not in allowed or child.is_symlink() or not child.is_file(): raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid")
+                if child.name!=_STAGING_BINDING_NAME:
+                    index=next(i for i in indices if _staged_filename(entries[i],i)==child.name)
+                    if child.stat().st_size!=entries[index][4] or _sha(child)!=entries[index][5]: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid")
+                    present.append((index,child))
+            prepared.append((stage,sorted(present)))
+    except StagingCleanupBindingError: raise
+    except (OSError,ValueError,StagingError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
+    try:
+        for stage,present in prepared:
+            for _,child in present: os.unlink(child)
+            os.unlink(stage/_STAGING_BINDING_NAME); _fsync_directory(stage); stage.rmdir(); _fsync_directory(stage.parent)
+    except OSError as exc: raise StagingCleanupPersistenceError("Synthetic staging cleanup could not be persisted") from exc
