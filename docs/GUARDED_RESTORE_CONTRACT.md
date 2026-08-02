@@ -263,7 +263,7 @@ Implementation requires separate approvals:
 2. **6B2B**: complete: synthetic-fixture-only offline staging and strict
    verification through `REPLACEMENT_READY`; configured destinations, replacement,
    rollback, and serialized staging paths remain absent.
-3. **6B2C**: in progress: guarded replacement, postcheck, and automatic rollback
+3. **6B2C**: complete: guarded replacement, postcheck, and automatic rollback
    on temporary synthetic fixtures only. Configured application databases remain
    excluded and untargetable.
 4. **6B3**: operator CLI and documented manual service procedure.
