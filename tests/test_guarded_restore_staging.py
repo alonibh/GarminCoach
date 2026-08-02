@@ -6,7 +6,7 @@ import pytest
 from dataclasses import replace
 import config
 from guarded_restore import RestoreJournalError, RestoreJournalPersistenceError, RestoreStage, TargetRestoreState, create_restore_journal, create_restore_plan, load_restore_journal, update_restore_journal
-from guarded_restore_staging import StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingOwnershipIndeterminateError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
+from guarded_restore_staging import StagedVerificationError, StagingJournalPersistenceError, StagingManualCleanupRequiredError, StagingOwnershipIndeterminateError, StagingSourceError, SyntheticDestinationError, SyntheticRestoreTarget, stage_and_verify_synthetic_restore
 from verified_backup import create_verified_backup, load_validated_backup_snapshot
 
 def _db(path: Path, ledger: str, key: str):
@@ -284,6 +284,87 @@ def test_unexpected_durable_target_state_preserves_artifact_without_normalizatio
     with pytest.raises(StagingOwnershipIndeterminateError):
         stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
     assert len(_stage_files(root)) == 1 and not unlinked and not [item for item in updates if item.get("stage") is RestoreStage.FAILED_SAFE]
+
+def _assert_verification_failure(validated, journal, root, destinations, unlinked):
+    source = [(validated.directory / entry.filename).read_bytes() for entry in validated.entries]
+    destination = [item.path.read_bytes() for item in destinations]
+    with pytest.raises(StagedVerificationError) as raised:
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert str(raised.value) == "Staged artifact verification failed"
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == (TargetRestoreState.STAGED, TargetRestoreState.STAGED)
+    assert len(_stage_files(root)) == 2 and not [path for path in unlinked if path.name.endswith(".sqlite.staged")]
+    assert [(validated.directory / entry.filename).read_bytes() for entry in validated.entries] == source and [item.path.read_bytes() for item in destinations] == destination
+    return raised.value
+
+@pytest.mark.parametrize("kind", ["metadata", "sha_source", "sha_ordinary", "inspection", "fingerprint", "markers"])
+def test_verification_operational_failures_are_sanitized_and_preserve_owned_artifacts(tmp_path, monkeypatch, kind):
+    import guarded_restore_staging as staging
+    from operator_storage import DatabaseIntegrityError
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_unlink = staging.os.unlink; unlinked = []
+    def recording_unlink(path, *args, **kwargs):
+        unlinked.append(Path(path)); return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(staging.os, "unlink", recording_unlink)
+    raw = "C:/private/path.sqlite fake sqlite detail tenant:bad"
+    if kind == "metadata":
+        original_stat, original_impl, verifying = Path.stat, staging._verify_impl, [False]
+        def fail_staged_stat(path, *args, **kwargs):
+            if verifying[0] and path.name.endswith(".sqlite.staged"): raise OSError(raw)
+            return original_stat(path, *args, **kwargs)
+        def only_during_verification(entry, path):
+            verifying[0] = True
+            try: return original_impl(entry, path)
+            finally: verifying[0] = False
+        monkeypatch.setattr(Path, "stat", fail_staged_stat)
+        monkeypatch.setattr(staging, "_verify_impl", only_during_verification)
+    elif kind == "sha_source": monkeypatch.setattr(staging, "_sha", lambda path: (_ for _ in ()).throw(StagingSourceError(raw)))
+    elif kind == "sha_ordinary": monkeypatch.setattr(staging, "_sha", lambda path: (_ for _ in ()).throw(RuntimeError(raw)))
+    elif kind == "inspection": monkeypatch.setattr(staging, "inspect_sqlite", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError(raw)))
+    elif kind == "fingerprint": monkeypatch.setattr(staging, "schema_fingerprint", lambda path: (_ for _ in ()).throw(DatabaseIntegrityError(raw)))
+    else: monkeypatch.setattr(staging, "migration_markers", lambda path, kind: (_ for _ in ()).throw(DatabaseIntegrityError(raw)))
+    error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
+    assert raw not in str(error) and error.__cause__ is not None
+
+@pytest.mark.parametrize("kind", ["hash", "unreadable", "quick", "integrity", "foreign_keys", "fingerprint_malformed", "fingerprint_mismatch", "markers_malformed", "ledger", "keys", "state"])
+def test_verification_mismatches_are_normalized(tmp_path, monkeypatch, kind):
+    import guarded_restore_staging as staging
+    from dataclasses import replace as dataclass_replace
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_unlink = staging.os.unlink; unlinked = []
+    monkeypatch.setattr(staging.os, "unlink", lambda path, *args, **kwargs: (unlinked.append(Path(path)), original_unlink(path, *args, **kwargs))[1])
+    if kind == "hash": monkeypatch.setattr(staging, "_sha", lambda path: "0" * 64)
+    elif kind in {"unreadable", "quick", "integrity", "foreign_keys"}:
+        original = staging.inspect_sqlite
+        field = {"unreadable": "readable", "quick": "quick_check_ok", "integrity": "integrity_check_ok", "foreign_keys": "foreign_keys_ok"}[kind]
+        monkeypatch.setattr(staging, "inspect_sqlite", lambda *args, **kwargs: dataclass_replace(original(*args, **kwargs), **{field: False}))
+    elif kind.startswith("fingerprint"):
+        monkeypatch.setattr(staging, "schema_fingerprint", lambda path: "not-a-fingerprint" if kind == "fingerprint_malformed" else "0" * 64)
+    else:
+        original = staging.migration_markers
+        def marker_mismatch(path, target_kind):
+            result = original(path, target_kind)
+            if kind == "markers_malformed": return {"ledger": result["ledger"], "keys": result["keys"]}
+            if kind == "ledger": return {**result, "ledger": "wrong"}
+            if kind == "keys": return {**result, "keys": ["wrong"]}
+            return {**result, "state": "wrong"}
+        monkeypatch.setattr(staging, "migration_markers", marker_mismatch)
+    error = _assert_verification_failure(validated, journal, root, destinations, unlinked)
+    assert error.__cause__ is None
+
+@pytest.mark.parametrize("fail_after, expected", [(0, (TargetRestoreState.STAGED, TargetRestoreState.STAGED)), (1, (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED))])
+def test_first_and_later_verification_failures_preserve_exact_target_progress(tmp_path, monkeypatch, fail_after, expected):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, calls = staging._verify, [0]
+    def fail_selected(entry, path):
+        if calls[0] == fail_after: raise StagedVerificationError("Staged artifact verification failed")
+        calls[0] += 1; return original(entry, path)
+    monkeypatch.setattr(staging, "_verify", fail_selected)
+    with pytest.raises(StagedVerificationError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
+    assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == expected and len(_stage_files(root)) == 2
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows binary descriptor regression")
 def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypatch):

@@ -1,7 +1,7 @@
 """Synthetic-fixture-only offline guarded-restore staging (Phase 6B2B)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-import hashlib, os, shutil
+import hashlib, os, shutil, stat
 from pathlib import Path
 from typing import Literal
 
@@ -11,6 +11,7 @@ from operator_storage import has_symlink_component, inspect_sqlite, migration_ma
 from verified_backup import ValidatedBackupSnapshot, load_validated_backup_snapshot
 _BINARY_FLAG = getattr(os, "O_BINARY", 0)
 _NOFOLLOW_FLAG = getattr(os, "O_NOFOLLOW", 0)
+_STAGED_VERIFICATION_ERROR = "Staged artifact verification failed"
 
 class StagingError(RuntimeError): pass
 class StagingSourceError(StagingError): pass
@@ -128,13 +129,36 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
         if partial.exists():
             try: partial.unlink()
             except OSError: pass
-def _verify(entry, staged: Path):
+def _verification_failure() -> StagedVerificationError:
+    return StagedVerificationError(_STAGED_VERIFICATION_ERROR)
+
+def _lower_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+def _verify_impl(entry, staged: Path) -> None:
     key,kind,tenant,_,size,digest,fingerprint,markers=entry
-    if staged.is_symlink() or has_symlink_component(staged) or not staged.is_file() or staged.stat().st_size!=size or _sha(staged)!=digest: raise StagedVerificationError("Staged artifact verification failed")
-    if os.name!="nt" and permission_health(staged)!="private": raise StagedVerificationError("Staged artifact verification failed")
+    if staged.is_symlink() or has_symlink_component(staged): raise _verification_failure()
+    state = staged.stat()
+    if not stat.S_ISREG(state.st_mode) or state.st_size != size or _sha(staged) != digest: raise _verification_failure()
+    if os.name!="nt" and permission_health(staged)!="private": raise _verification_failure()
     inspected=inspect_sqlite(staged,deep=True)
     actual= migration_markers(staged,kind)
-    if not inspected.readable or not inspected.quick_check_ok or not inspected.integrity_check_ok or not inspected.foreign_keys_ok or schema_fingerprint(staged)!=fingerprint or (actual["ledger"],tuple(actual["keys"]),actual["state"])!=markers: raise StagedVerificationError("Staged artifact verification failed")
+    if inspected.readable is not True or inspected.quick_check_ok is not True or inspected.integrity_check_ok is not True or inspected.foreign_keys_ok is not True: raise _verification_failure()
+    actual_fingerprint = schema_fingerprint(staged)
+    if not _lower_sha256(actual_fingerprint) or actual_fingerprint != fingerprint: raise _verification_failure()
+    if not isinstance(actual, dict) or set(actual) != {"ledger", "keys", "state"}: raise _verification_failure()
+    ledger, keys, marker_state = actual["ledger"], actual["keys"], actual["state"]
+    if not isinstance(ledger, str) or not isinstance(marker_state, str) or not isinstance(keys, (list, tuple)) or any(not isinstance(item, str) for item in keys): raise _verification_failure()
+    marker_keys = tuple(keys)
+    if marker_keys != tuple(sorted(marker_keys)) or len(marker_keys) != len(set(marker_keys)) or (ledger, marker_keys, marker_state) != markers: raise _verification_failure()
+
+def _verify(entry, staged: Path) -> None:
+    try:
+        _verify_impl(entry, staged)
+    except StagedVerificationError:
+        raise
+    except Exception as exc:
+        raise StagedVerificationError(_STAGED_VERIFICATION_ERROR) from exc
 
 def _remove_unrecorded_staged_artifact(*, artifact: Path, stage_directory: Path) -> None:
     """Remove only a finalised artifact which never gained journal ownership."""
