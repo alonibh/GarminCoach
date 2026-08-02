@@ -42,6 +42,9 @@ class SyntheticRestoreTarget:
 class StagedArtifact:
     operation_id: str; target_key: str; kind: str; target_order: int
     path: Path = field(repr=False); size_bytes: int = 0; sha256: str = ""; schema_fingerprint: str = ""; migration_markers: tuple[str, tuple[str, ...], str] = ()
+    # Kept in the frozen in-memory result so 6B2C can reject a destination
+    # whose contents drifted after the final 6B2B readiness barrier.
+    destination_size_bytes: int = 0; destination_sha256: str = ""
 
 @dataclass(frozen=True)
 class StagingResult:
@@ -775,7 +778,8 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
                 update_restore_journal(operation_id,root=journal_root,target_key=entry[0],target_state=TargetRestoreState.STAGED_VERIFIED)
             except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
                 raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
-            artifacts.append(StagedArtifact(operation_id,entry[0],entry[1],index,file,entry[4],entry[5],entry[6],entry[7]))
+            baseline = destination_baselines[index].file
+            artifacts.append(StagedArtifact(operation_id,entry[0],entry[1],index,file,entry[4],entry[5],entry[6],entry[7],baseline.size,baseline.sha256))
         try:
             journal_token=_final_revalidate_before_replacement_ready(operation_id=operation_id,validated_backup=validated_backup,destinations=destinations,fixture_root=fixture_root,journal_root=journal_root,staged=staged,baselines=destination_baselines)
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.REPLACEMENT_READY)
