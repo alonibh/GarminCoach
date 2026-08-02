@@ -1,4 +1,4 @@
-"""Fixture-only guarded replacement and automatic rollback (Phase 6B2C).
+"""Guarded restore replacement and automatic rollback engine for Phase 6B2C synthetic fixtures.
 
 This module is deliberately not a restore engine for GarminCoach's configured
 databases. Its public entry point accepts only paths below a private temporary
