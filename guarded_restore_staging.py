@@ -1,6 +1,7 @@
 """Synthetic-fixture-only offline guarded-restore staging (Phase 6B2B)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
+from datetime import datetime
 import hashlib, json, os, shutil, stat
 from pathlib import Path
 from typing import Literal
@@ -29,6 +30,8 @@ class StagingBindingPersistenceError(StagingPersistenceError): pass
 class StagingCleanupBindingError(StagingError): pass
 class StagingCleanupPersistenceError(StagingError): pass
 
+class FinalReadinessError(StagingError): pass
+
 @dataclass(frozen=True)
 class SyntheticRestoreTarget:
     target_key: str
@@ -43,6 +46,44 @@ class StagedArtifact:
 @dataclass(frozen=True)
 class StagingResult:
     operation_id: str; artifacts: tuple[StagedArtifact, ...]
+
+@dataclass(frozen=True)
+class _ReadyFileRecord:
+    path: Path
+    device: int
+    inode: int
+    file_type: int
+    size: int
+    mtime_ns: int | None
+    mode: int | None
+    sha256: str
+
+@dataclass(frozen=True)
+class _DestinationBaseline:
+    target_order: int
+    target_key: str
+    kind: str
+    file: _ReadyFileRecord
+    parent_path: Path
+    parent_device: int
+    parent_inode: int
+    parent_file_type: int
+    parent_mode: int | None
+
+@dataclass(frozen=True)
+class _ReadyDirectoryRecord:
+    path: Path
+    device: int
+    inode: int
+    file_type: int
+    mode: int | None
+    parent_path: Path
+    parent_device: int
+    parent_inode: int
+    parent_file_type: int
+    parent_mode: int | None
+    entries: tuple[str, ...]
+    target_indices: tuple[int, ...]
 
 def _private(path: Path, directory=False):
     try: os.chmod(path, 0o700 if directory else 0o600)
@@ -492,21 +533,204 @@ def _reconcile_failed_staged_transition(*, operation_id: str, journal_root: Path
         raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from cause
     raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from cause
 
-def _final_revalidate_before_replacement_ready(*, operation_id: str, validated_backup: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path, staged) -> None:
-    """Repeat read-only source, journal, destination, and artifact checks at the ready boundary."""
-    journal, entries, root = _validate_inputs(operation_id, validated_backup, destinations, fixture_root, journal_root, expected_stage=RestoreStage.STAGED_VERIFIED)
-    if any(fact.state is not TargetRestoreState.STAGED_VERIFIED for fact in journal.targets):
-        raise StagingError("Restore journal is not ready for synthetic staging")
-    if len(entries) != len(staged): raise StagingError("Validated backup does not match restore journal")
-    for index, (entry, artifact, _) in enumerate(staged):
-        if entry != entries[index] or artifact.parent != _stage_dir(destinations[index].path.parent, operation_id):
-            raise StagingError("Validated backup does not match restore journal")
-        _verify(entry, artifact)
-        _load_staging_binding(stage_directory=artifact.parent, expected_payload=_binding_payload(journal, entries, destinations, root, destinations[index].path.parent, tuple(i for i, destination in enumerate(destinations) if destination.path.parent == destinations[index].path.parent)))
+def _ready_file_record(path: Path, *, expected_size: int | None = None, expected_sha256: str | None = None) -> _ReadyFileRecord:
+    """Bind a private regular file, its name, and its bytes to one no-follow read."""
+    fd = None
+    try:
+        if path.is_symlink() or has_symlink_component(path): raise OSError("unsafe file")
+        fd = os.open(str(path), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
+        before = os.fstat(fd); mode = stat.S_IMODE(before.st_mode) if os.name != "nt" else None
+        if not stat.S_ISREG(before.st_mode) or (os.name != "nt" and mode != 0o600): raise OSError("unsafe file")
+        if expected_size is not None and before.st_size != expected_size: raise OSError("wrong size")
+        named_before = os.lstat(path)
+        if _identity(named_before) != _identity(before): raise OSError("file replaced")
+        digest = hashlib.sha256(_read_exact(fd, before.st_size)).hexdigest()
+        after = os.fstat(fd); named_after = os.lstat(path)
+        if _identity(before) != _identity(after) or _identity(before) != _identity(named_after): raise OSError("file changed")
+        if expected_sha256 is not None and digest != expected_sha256: raise OSError("wrong digest")
+        return _ReadyFileRecord(path, before.st_dev, before.st_ino, stat.S_IFMT(before.st_mode), before.st_size, getattr(before, "st_mtime_ns", None), mode, digest)
+    finally:
+        if fd is not None: os.close(fd)
+
+def _same_ready_file(left: _ReadyFileRecord, right: _ReadyFileRecord) -> bool:
+    return (left.path, left.device, left.inode, left.file_type, left.size, left.mtime_ns, left.mode, left.sha256) == (right.path, right.device, right.inode, right.file_type, right.size, right.mtime_ns, right.mode, right.sha256)
+
+def _ready_directory_record(path: Path, indices: tuple[int, ...], expected_entries: tuple[str, ...]) -> _ReadyDirectoryRecord:
+    """Capture a stage directory and its parent without granting pathname races authority."""
+    try:
+        state, parent_state = os.lstat(path), os.lstat(path.parent)
+        if (not stat.S_ISDIR(state.st_mode) or stat.S_ISLNK(state.st_mode) or has_symlink_component(path)
+                or not stat.S_ISDIR(parent_state.st_mode) or stat.S_ISLNK(parent_state.st_mode)
+                or (os.name != "nt" and (stat.S_IMODE(state.st_mode) != 0o700 or stat.S_IMODE(parent_state.st_mode) != 0o700))): raise OSError("unsafe directory")
+        identity = _directory_identity(path); parent_identity = _directory_identity(path.parent)
+        _open_verified_directory(path=path, expected_identity=identity, fsync=False)
+        _open_verified_directory(path=path.parent, expected_identity=parent_identity, fsync=False)
+        names=[]
+        with os.scandir(path) as scan:
+            for child in scan:
+                item=os.lstat(child.path)
+                if stat.S_ISLNK(item.st_mode) or not stat.S_ISREG(item.st_mode): raise OSError("unsafe entry")
+                names.append(child.name)
+        entries=tuple(sorted(names))
+        if entries != tuple(sorted(expected_entries)) or _STAGING_BINDING_TEMP_NAME in entries or any(name.endswith(".partial") for name in entries): raise OSError("unexpected entry")
+        return _ReadyDirectoryRecord(path,state.st_dev,state.st_ino,stat.S_IFMT(state.st_mode),stat.S_IMODE(state.st_mode) if os.name != "nt" else None,path.parent,parent_state.st_dev,parent_state.st_ino,stat.S_IFMT(parent_state.st_mode),stat.S_IMODE(parent_state.st_mode) if os.name != "nt" else None,entries,indices)
+    except OSError:
+        raise
+
+def _same_ready_directory(record: _ReadyDirectoryRecord, actual: _ReadyDirectoryRecord) -> bool:
+    return (record.path,record.device,record.inode,record.file_type,record.mode,record.parent_path,record.parent_device,record.parent_inode,record.parent_file_type,record.parent_mode,record.entries,record.target_indices) == (actual.path,actual.device,actual.inode,actual.file_type,actual.mode,actual.parent_path,actual.parent_device,actual.parent_inode,actual.parent_file_type,actual.parent_mode,actual.entries,actual.target_indices)
+
+def _capture_destination_baselines(destinations: tuple[SyntheticRestoreTarget, ...]) -> tuple[_DestinationBaseline, ...]:
+    try:
+        captured=[]
+        for index, destination in enumerate(destinations):
+            parent_state=os.lstat(destination.path.parent)
+            if not stat.S_ISDIR(parent_state.st_mode) or stat.S_ISLNK(parent_state.st_mode) or has_symlink_component(destination.path.parent): raise OSError("unsafe parent")
+            parent_identity=_directory_identity(destination.path.parent)
+            _open_verified_directory(path=destination.path.parent, expected_identity=parent_identity, fsync=False)
+            file=_ready_file_record(destination.path)
+            after_parent=_directory_identity(destination.path.parent)
+            if not _same_directory_identity(parent_identity,after_parent): raise OSError("parent changed")
+            captured.append(_DestinationBaseline(index,destination.target_key,destination.kind,file,destination.path.parent,parent_state.st_dev,parent_state.st_ino,stat.S_IFMT(parent_state.st_mode),stat.S_IMODE(parent_state.st_mode) if os.name != "nt" else None))
+        return tuple(captured)
+    except OSError as exc:
+        raise SyntheticDestinationError("Synthetic destination is unsafe") from exc
+
+def _revalidate_destination_baselines(baselines: tuple[_DestinationBaseline, ...], destinations: tuple[SyntheticRestoreTarget, ...]) -> None:
+    try:
+        if len(baselines) != len(destinations): raise OSError("destination set changed")
+        for index, (baseline, destination) in enumerate(zip(baselines, destinations)):
+            if (baseline.target_order,baseline.target_key,baseline.kind,baseline.file.path) != (index,destination.target_key,destination.kind,destination.path): raise OSError("destination substituted")
+            parent_state=os.lstat(destination.path.parent)
+            parent=(parent_state.st_dev,parent_state.st_ino,stat.S_IFMT(parent_state.st_mode),stat.S_IMODE(parent_state.st_mode) if os.name != "nt" else None)
+            if parent != (baseline.parent_device,baseline.parent_inode,baseline.parent_file_type,baseline.parent_mode): raise OSError("parent changed")
+            fresh=_ready_file_record(destination.path,expected_size=baseline.file.size,expected_sha256=baseline.file.sha256)
+            if not _same_ready_file(baseline.file,fresh): raise OSError("destination changed")
+    except OSError as exc:
+        raise SyntheticDestinationError("Synthetic destination changed during staging") from exc
+
+def _final_journal_token(*, operation_id: str, journal_root: Path, validated: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget, ...]):
+    try:
+        journal=load_restore_journal(operation_id,root=journal_root)
+    except (RestoreJournalError, RestoreJournalPersistenceError, OSError, ValueError) as exc:
+        raise FinalReadinessError("Restore staging journal is invalid") from exc
+    if (journal.operation_id != operation_id or journal.stage is not RestoreStage.STAGED_VERIFIED or not journal.safety_backup_id
+            or journal.selected_backup_id != validated.backup_id or journal.selected_backup_manifest_sha256 != validated.manifest_sha256
+            or journal.runtime_mode != validated.runtime_mode or journal.target_keys != tuple(item.target_key for item in destinations)
+            or (journal.expected_application_commit != "unknown" and journal.expected_application_commit != validated.application_commit)
+            or len(journal.targets) != len(journal.target_keys) or tuple(item.target_key for item in journal.targets) != journal.target_keys
+            or any(item.state is not TargetRestoreState.STAGED_VERIFIED for item in journal.targets) or journal.final_result is not None):
+        raise FinalReadinessError("Restore staging journal is invalid")
+    return journal
+
+def _selected_backup_directory_identity(path: Path) -> tuple[int, int, int, int | None]:
+    state=None; fd=None
+    try:
+        state=os.lstat(path)
+        if not stat.S_ISDIR(state.st_mode) or stat.S_ISLNK(state.st_mode) or has_symlink_component(path): raise OSError("unsafe backup directory")
+        if os.name == "nt": return (state.st_dev,state.st_ino,stat.S_IFMT(state.st_mode),None)
+        fd=os.open(str(path),os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|_NOFOLLOW_FLAG)
+        actual=os.fstat(fd)
+        if (actual.st_dev,actual.st_ino,stat.S_IFMT(actual.st_mode)) != (state.st_dev,state.st_ino,stat.S_IFMT(state.st_mode)) or not stat.S_ISDIR(actual.st_mode): raise OSError("backup directory changed")
+        return (actual.st_dev,actual.st_ino,stat.S_IFMT(actual.st_mode),stat.S_IMODE(actual.st_mode))
+    finally:
+        if fd is not None: os.close(fd)
+
+def _fresh_selected_backup(*, validated: ValidatedBackupSnapshot, journal) -> tuple[ValidatedBackupSnapshot, tuple[tuple[str,str,str|None,str,int,str,str,tuple[str,tuple[str,...],str]], ...], tuple[_ReadyFileRecord, ...], tuple[int, int, int, int | None]]:
+    try:
+        fresh=load_validated_backup_snapshot(validated.directory)
+        if fresh != validated or fresh.backup_id != journal.selected_backup_id or fresh.manifest_sha256 != journal.selected_backup_manifest_sha256 or fresh.runtime_mode != journal.runtime_mode or fresh.target_keys != journal.target_keys: raise OSError("backup changed")
+        entries=tuple(_entry_tuple(entry) for entry in fresh.entries)
+        if tuple(entry[0] for entry in entries) != journal.target_keys: raise OSError("backup targets changed")
+        directory_identity=_selected_backup_directory_identity(fresh.directory)
+        records=tuple(_ready_file_record(fresh.directory / entry[3],expected_size=entry[4],expected_sha256=entry[5]) for entry in entries)
+        if _selected_backup_directory_identity(fresh.directory) != directory_identity: raise OSError("backup directory changed")
+        return fresh,entries,records,directory_identity
+    except (Exception,) as exc:
+        if isinstance(exc, FinalReadinessError): raise
+        raise StagingSourceError("Validated staging source changed") from exc
+
+def _load_final_binding(*, directory: _ReadyDirectoryRecord, expected_payload: dict[str, object]) -> tuple[_ReadyFileRecord, bytes]:
+    try:
+        record=_ready_file_record(directory.path/_STAGING_BINDING_NAME)
+        if record.size > _MAX_STAGING_BINDING_BYTES: raise OSError("binding too large")
+        fd=os.open(str(record.path),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
+        try: data=_read_exact(fd,record.size)
+        finally: os.close(fd)
+        parsed=json.loads(data.decode("utf-8")); _validate_binding_schema(parsed)
+        if _canonical_json(parsed) != data or parsed != expected_payload: raise ValueError("binding mismatch")
+        # Reopen after parsing so an equal-content replacement cannot pass.
+        after=_ready_file_record(record.path)
+        if not _same_ready_file(record,after): raise OSError("binding changed")
+        return record,data
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise FinalReadinessError("Synthetic staging binding is invalid") from exc
+
+def _final_revalidate_before_replacement_ready(*, operation_id: str, validated_backup: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path, staged, baselines: tuple[_DestinationBaseline, ...]) -> None:
+    """Perform the complete read-only readiness proof and return only after its barrier."""
+    journal=_final_journal_token(operation_id=operation_id,journal_root=journal_root,validated=validated_backup,destinations=destinations)
+    fresh,entries,source_records,source_directory_identity=_fresh_selected_backup(validated=validated_backup,journal=journal)
+    try: root=_validate_fixture_root(Path(fixture_root),fresh.directory)
+    except StagingError: raise
+    if len(entries) != len(staged) or len(destinations) != len(entries): raise FinalReadinessError("Synthetic staging artifacts are invalid")
+    _revalidate_destination_baselines(baselines,destinations)
+    groups={}
+    for index,destination in enumerate(destinations): groups.setdefault(destination.path.parent,[]).append(index)
+    directories=[]; bindings={}; artifacts={}
+    try:
+        for parent,indices in groups.items():
+            stage=_stage_dir(parent,operation_id); expected=(_STAGING_BINDING_NAME,*(_staged_filename(entries[index],index) for index in indices))
+            directory=_ready_directory_record(stage,tuple(indices),tuple(expected)); directories.append(directory)
+            payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices))
+            bindings[stage]=_load_final_binding(directory=directory,expected_payload=payload)
+        for index,(entry,path,staged_index) in enumerate(staged):
+            expected=_stage_dir(destinations[index].path.parent,operation_id)/_staged_filename(entries[index],index)
+            if staged_index != index or entry != entries[index] or path != expected: raise OSError("artifact substituted")
+            record=_ready_file_record(path,expected_size=entry[4],expected_sha256=entry[5]); _verify(entry,path)
+            after=_ready_file_record(path,expected_size=entry[4],expected_sha256=entry[5])
+            if not _same_ready_file(record,after): raise OSError("artifact changed")
+            artifacts[index]=record
+        for directory in directories:
+            expected=(_STAGING_BINDING_NAME,*(_staged_filename(entries[index],index) for index in directory.target_indices))
+            current=_ready_directory_record(directory.path,directory.target_indices,tuple(expected))
+            if not _same_ready_directory(directory,current): raise OSError("stage directory changed")
+            binding,data=bindings[directory.path]; again,again_data=_load_final_binding(directory=directory,expected_payload=_binding_payload(journal,entries,destinations,root,directory.parent_path,directory.target_indices))
+            if not _same_ready_file(binding,again) or data != again_data: raise OSError("binding changed")
+        # The final mutation-free barrier intentionally repeats every mutable proof.
+        if _final_journal_token(operation_id=operation_id,journal_root=journal_root,validated=validated_backup,destinations=destinations) != journal: raise OSError("journal changed")
+        if _selected_backup_directory_identity(fresh.directory) != source_directory_identity: raise OSError("backup directory changed")
+        for source in source_records:
+            current=_ready_file_record(source.path,expected_size=source.size,expected_sha256=source.sha256)
+            if not _same_ready_file(source,current): raise OSError("backup changed")
+        _revalidate_destination_baselines(baselines,destinations)
+        for directory in directories:
+            expected=(_STAGING_BINDING_NAME,*(_staged_filename(entries[index],index) for index in directory.target_indices))
+            current=_ready_directory_record(directory.path,directory.target_indices,tuple(expected))
+            if not _same_ready_directory(directory,current): raise OSError("stage directory changed")
+            binding,data=bindings[directory.path]; again,again_data=_load_final_binding(directory=directory,expected_payload=_binding_payload(journal,entries,destinations,root,directory.parent_path,directory.target_indices))
+            if not _same_ready_file(binding,again) or data != again_data: raise OSError("binding changed")
+        for index,record in artifacts.items():
+            current=_ready_file_record(record.path,expected_size=record.size,expected_sha256=record.sha256)
+            if not _same_ready_file(record,current): raise OSError("artifact changed")
+    except FinalReadinessError: raise
+    except (OSError, StagedVerificationError, ValueError) as exc:
+        raise StagedVerificationError(_STAGED_VERIFICATION_ERROR) from exc
+    return journal
+
+def _verify_replacement_ready_transition(*, operation_id: str, journal_root: Path, token) -> None:
+    try:
+        current=load_restore_journal(operation_id,root=journal_root)
+        unchanged=("operation_id","selected_backup_id","selected_backup_manifest_sha256","safety_backup_id","expected_application_commit","runtime_mode","target_keys","target_set_hash","confirmation_value","targets","created_at","final_result")
+        if current.stage is not RestoreStage.REPLACEMENT_READY or any(getattr(current,name) != getattr(token,name) for name in unchanged) or any(item.state is not TargetRestoreState.STAGED_VERIFIED for item in current.targets): raise OSError("wrong journal state")
+        if datetime.fromisoformat(current.updated_at.replace("Z","+00:00")) < datetime.fromisoformat(token.updated_at.replace("Z","+00:00")): raise OSError("journal time moved backward")
+    except (RestoreJournalError, RestoreJournalPersistenceError, OSError, ValueError) as exc:
+        raise FinalReadinessError("Restore staging journal transition is invalid") from exc
 
 def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->StagingResult:
     try:
         journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root)
+        # This precedes every staging mutation and is held only in memory.
+        destination_baselines=_capture_destination_baselines(destinations)
         try:
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.RESTORE_STAGED)
         except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
@@ -553,8 +777,9 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
                 raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
             artifacts.append(StagedArtifact(operation_id,entry[0],entry[1],index,file,entry[4],entry[5],entry[6],entry[7]))
         try:
-            _final_revalidate_before_replacement_ready(operation_id=operation_id,validated_backup=validated_backup,destinations=destinations,fixture_root=fixture_root,journal_root=journal_root,staged=staged)
+            journal_token=_final_revalidate_before_replacement_ready(operation_id=operation_id,validated_backup=validated_backup,destinations=destinations,fixture_root=fixture_root,journal_root=journal_root,staged=staged,baselines=destination_baselines)
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.REPLACEMENT_READY)
+            _verify_replacement_ready_transition(operation_id=operation_id,journal_root=journal_root,token=journal_token)
         except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
             raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
         return StagingResult(operation_id,tuple(artifacts))

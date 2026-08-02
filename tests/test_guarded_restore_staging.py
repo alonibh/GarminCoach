@@ -27,6 +27,78 @@ def test_synthetic_staging_reaches_replacement_ready_without_destination_mutatio
     result=stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
     assert len(result.artifacts)==2 and [d.path.read_bytes() for d in destinations]==before
     assert __import__('guarded_restore').load_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.REPLACEMENT_READY
+
+def test_final_barrier_rejects_journal_token_drift_and_preserves_evidence(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch); before = [item.path.read_bytes() for item in destinations]
+    original, calls = staging._final_journal_token, [0]
+    def drift(**kwargs):
+        token = original(**kwargs); calls[0] += 1
+        return replace(token, updated_at="2099-01-01T00:00:00Z") if calls[0] == 2 else token
+    monkeypatch.setattr(staging, "_final_journal_token", drift)
+    with pytest.raises(StagedVerificationError, match="Staged artifact verification failed"):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE
+    assert [item.path.read_bytes() for item in destinations] == before and _stage_files(root)
+
+def test_final_boundary_rejects_identical_bytes_destination_replacement(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch); before = [item.path.read_bytes() for item in destinations]
+    original, replaced = staging._final_journal_token, [False]
+    def replace_destination(**kwargs):
+        token = original(**kwargs)
+        if not replaced[0]:
+            replacement = root / "replacement.sqlite"; replacement.write_bytes(destinations[0].path.read_bytes())
+            if os.name != "nt": os.chmod(replacement, 0o600)
+            os.replace(replacement, destinations[0].path); replaced[0] = True
+        return token
+    monkeypatch.setattr(staging, "_final_journal_token", replace_destination)
+    with pytest.raises(SyntheticDestinationError, match="Synthetic destination changed during staging"):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE
+    assert destinations[0].path.read_bytes() == before[0] and _stage_files(root)
+
+def test_final_boundary_rejects_identical_binding_replacement(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original, calls = staging._load_final_binding, [0]
+    def replace_binding(**kwargs):
+        result = original(**kwargs); calls[0] += 1
+        if calls[0] == 1:
+            binding = kwargs["directory"].path / ".staging-binding.json"; replacement = binding.with_name("replacement.json")
+            replacement.write_bytes(binding.read_bytes())
+            if os.name != "nt": os.chmod(replacement, 0o600)
+            os.replace(replacement, binding)
+        return result
+    monkeypatch.setattr(staging, "_load_final_binding", replace_binding)
+    with pytest.raises(StagedVerificationError, match="Staged artifact verification failed"):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE and _stage_files(root)
+
+def test_replacement_ready_persist_then_raise_is_forced_to_failed_safe(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch); before = [item.path.read_bytes() for item in destinations]
+    original = staging.update_restore_journal
+    def persist_then_raise(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if kwargs.get("stage") is RestoreStage.REPLACEMENT_READY: raise RestoreJournalPersistenceError("injected")
+        return result
+    monkeypatch.setattr(staging, "update_restore_journal", persist_then_raise)
+    with pytest.raises(StagingJournalPersistenceError, match="Restore staging journal could not be persisted"):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE
+    assert [item.path.read_bytes() for item in destinations] == before and _stage_files(root)
+
+def test_replacement_ready_post_write_reread_must_match(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch); original, calls = staging.load_restore_journal, [0]
+    def wrong_post_write(*args, **kwargs):
+        value = original(*args, **kwargs); calls[0] += 1
+        return replace(value, stage=RestoreStage.STAGED_VERIFIED) if calls[0] == 4 else value
+    monkeypatch.setattr(staging, "load_restore_journal", wrong_post_write)
+    with pytest.raises(staging.FinalReadinessError, match="Restore staging journal transition is invalid"):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.FAILED_SAFE and _stage_files(root)
 def test_configured_destination_is_refused(tmp_path,monkeypatch):
     validated,journal,root,destinations=_prepared(tmp_path,monkeypatch)
     bad=(SyntheticRestoreTarget("control","control",config.CONTROL_DB_PATH),destinations[1])
