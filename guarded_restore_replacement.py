@@ -425,7 +425,7 @@ def _preflight(*, operation_id: str, selected: ValidatedBackupSnapshot, safety: 
         raise ReplacementPreconditionError("Synthetic replacement preflight failed") from exc
 
 
-def _handle_durable_sidecars(destination: Path, journal: RestoreJournal, target_key: str, journal_root: Path) -> RestoreJournal:
+def _handle_durable_sidecars(destination: Path, journal: RestoreJournal, target_key: str, journal_root: Path, *, allow_symlink_unlink: bool = False) -> RestoreJournal:
     """Perform sidecar handling according to the durable sidecar protocol."""
     fact = next((f for f in journal.targets if f.target_key == target_key), None)
     if fact is None:
@@ -453,12 +453,21 @@ def _handle_durable_sidecars(destination: Path, journal: RestoreJournal, target_
         if was_pres:
             try:
                 state = os.lstat(sidecar)
-                if stat.S_ISLNK(state.st_mode) or not stat.S_ISREG(state.st_mode):
+                if stat.S_ISDIR(state.st_mode):
                     raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
-                os.unlink(sidecar)
+                if stat.S_ISLNK(state.st_mode):
+                    if not allow_symlink_unlink:
+                        raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
+                    os.unlink(sidecar)
+                elif stat.S_ISREG(state.st_mode):
+                    os.unlink(sidecar)
+                else:
+                    raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
             except FileNotFoundError:
                 pass
             except OSError as exc:
+                if isinstance(exc, SyntheticReplacementError):
+                    raise
                 raise ReplacementPersistenceError("Synthetic sidecar handling failed") from exc
 
             _fsync(destination.parent, directory=True)
@@ -472,6 +481,8 @@ def _handle_durable_sidecars(destination: Path, journal: RestoreJournal, target_
             if stat.S_ISDIR(state.st_mode):
                 raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
             if stat.S_ISLNK(state.st_mode):
+                if not allow_symlink_unlink:
+                    raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
                 os.unlink(sidecar)
                 _fsync(destination.parent, directory=True)
                 kw_rem = {pres_attr: True, rem_attr: True}
@@ -501,7 +512,11 @@ def _handle_durable_sidecars(destination: Path, journal: RestoreJournal, target_
             current_journal = _transition(journal.operation_id, journal_root, target_key=target_key, **kw_none)
             fact = next(f for f in current_journal.targets if f.target_key == target_key)
         except OSError as exc:
+            if isinstance(exc, SyntheticReplacementError):
+                raise
             raise ReplacementPersistenceError("Synthetic sidecar handling failed") from exc
+
+    return current_journal
 
     return current_journal
 
@@ -591,7 +606,7 @@ def _run_reentrant_rollback(
 
             if not already_safety:
                 artifact = _verify_binding(_rollback_directory(target, operation_id, index), operation_id=operation_id, safety=safety, entry=entry, index=index)
-                journal = _handle_durable_sidecars(target.path, journal, target.target_key, journal_root)
+                journal = _handle_durable_sidecars(target.path, journal, target.target_key, journal_root, allow_symlink_unlink=True)
 
                 if not _same_device(target.path.parent, artifact):
                     raise ReplacementPreconditionError("Rollback filesystem is unsafe")
