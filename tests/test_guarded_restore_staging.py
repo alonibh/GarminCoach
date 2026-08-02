@@ -519,3 +519,19 @@ def test_binding_loader_rejects_strict_schema_mutations(tmp_path, monkeypatch, m
     binding.write_bytes(staging._canonical_json(value))
     with pytest.raises(StagingCleanupBindingError, match="Synthetic staging cleanup binding is invalid"):
         cleanup_synthetic_staging(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+
+def test_inserted_final_binding_is_preserved_and_blocks_copy(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    original_lstat, copied, inserted = staging.os.lstat, [], [None]
+    def insert_at_publication(path, *args, **kwargs):
+        target = Path(path)
+        if target.name == ".staging-binding.json" and inserted[0] is None:
+            inserted[0] = target; target.write_bytes(b"foreign")
+        return original_lstat(path, *args, **kwargs)
+    monkeypatch.setattr(staging.os, "lstat", insert_at_publication)
+    monkeypatch.setattr(staging, "_copy", lambda *args, **kwargs: copied.append(True))
+    with pytest.raises(StagingManualCleanupRequiredError):
+        stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert inserted[0].read_bytes() == b"foreign" and not copied
+    assert load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.RESTORE_STAGED

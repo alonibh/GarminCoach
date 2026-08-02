@@ -90,6 +90,28 @@ def _fsync_directory(path: Path) -> None:
 def _identity(info):
     return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_size, getattr(info, "st_mtime_ns", None))
 
+def _directory_identity(path: Path):
+    info=os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode): raise OSError("not a directory")
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), getattr(info, "st_mtime_ns", None), stat.S_IMODE(info.st_mode))
+
+def _same_directory_identity(actual, expected) -> bool:
+    # A directory's mtime legitimately changes as its own binding entries are created.
+    return actual[:3]+actual[4:] == expected[:3]+expected[4:]
+
+def _open_verified_directory(*, path: Path, expected_identity, fsync=True) -> None:
+    """Open a directory without text/binary conversion and bind it to its identity."""
+    if os.name=="nt":
+        if not _same_directory_identity(_directory_identity(path),expected_identity): raise OSError("directory identity changed")
+        return
+    fd=os.open(str(path), os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|_NOFOLLOW_FLAG)
+    try:
+        info=os.fstat(fd)
+        actual=(info.st_dev,info.st_ino,stat.S_IFMT(info.st_mode),getattr(info,"st_mtime_ns",None),stat.S_IMODE(info.st_mode))
+        if not _same_directory_identity(actual,expected_identity) or not stat.S_ISDIR(info.st_mode) or (os.name!="nt" and stat.S_IMODE(info.st_mode)!=0o700): raise OSError("directory identity changed")
+        if fsync and os.name!="nt": os.fsync(fd)
+    finally: os.close(fd)
+
 def _read_exact(fd: int, size: int) -> bytes:
     data=b""
     while len(data) < size:
@@ -103,49 +125,60 @@ def _stage_directory_is_private(stage_directory: Path) -> bool:
     state=os.lstat(stage_directory)
     return stat.S_ISDIR(state.st_mode) and not stage_directory.is_symlink() and not has_symlink_component(stage_directory) and (os.name=="nt" or stat.S_IMODE(state.st_mode)==0o700)
 
-def _compensate_unpublished_binding(*, stage_directory: Path, temporary: Path) -> None:
+def _compensate_unpublished_binding(*, stage_directory: Path, stage_identity, parent_identity, temporary: Path, temporary_identity=None) -> None:
     """Remove only the invocation's empty, as-yet-unpublished staging directory."""
     try:
-        if not _stage_directory_is_private(stage_directory): raise OSError("unsafe stage")
+        if not _stage_directory_is_private(stage_directory) or not _same_directory_identity(_directory_identity(stage_directory),stage_identity): raise OSError("unsafe stage")
         try: item=os.lstat(temporary)
         except FileNotFoundError: item=None
         if item is not None:
-            if not stat.S_ISREG(item.st_mode) or stat.S_ISLNK(item.st_mode): raise OSError("unsafe temporary")
+            if not stat.S_ISREG(item.st_mode) or stat.S_ISLNK(item.st_mode) or temporary_identity is None or _identity(item)!=temporary_identity: raise OSError("unsafe temporary")
             os.unlink(temporary)
         if tuple(stage_directory.iterdir()): raise OSError("unexpected entries")
-        stage_directory.rmdir(); _fsync_directory(stage_directory.parent)
+        if not _same_directory_identity(_directory_identity(stage_directory),stage_identity): raise OSError("stage replaced")
+        stage_directory.rmdir()
+        # rmdir changes the parent's mtime, so preserve and compare its stable identity fields.
+        parent_now=_directory_identity(stage_directory.parent)
+        if not _same_directory_identity(parent_now,parent_identity): raise OSError("parent replaced")
+        _open_verified_directory(path=stage_directory.parent,expected_identity=parent_now)
     except OSError as exc:
         raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
 
-def _write_staging_binding(*, stage_directory: Path, payload: dict[str, object]) -> None:
-    final=stage_directory/_STAGING_BINDING_NAME; temporary=stage_directory/_STAGING_BINDING_TEMP_NAME; data=_canonical_json(payload); fd=None; published=False
+def _write_staging_binding(*, stage_directory: Path, stage_identity, parent_identity, payload: dict[str, object]) -> None:
+    final=stage_directory/_STAGING_BINDING_NAME; temporary=stage_directory/_STAGING_BINDING_TEMP_NAME; data=_canonical_json(payload); fd=None; published=False; temporary_identity=None
     try:
-        if not _stage_directory_is_private(stage_directory) or final.exists() or temporary.exists(): raise OSError("unsafe")
+        if not _stage_directory_is_private(stage_directory) or not _same_directory_identity(_directory_identity(stage_directory),stage_identity) or final.exists() or temporary.exists(): raise OSError("unsafe")
         fd=os.open(str(temporary),os.O_WRONLY|os.O_CREAT|os.O_EXCL|_NOFOLLOW_FLAG|_BINARY_FLAG,0o600); offset=0
         while offset<len(data):
             count=os.write(fd,data[offset:])
             if count<=0: raise OSError("write")
             offset+=count
-        os.fsync(fd); os.close(fd); fd=None; os.replace(temporary,final); published=True; _private(final)
+        os.fsync(fd); temporary_identity=_identity(os.fstat(fd)); os.close(fd); fd=None
+        try: os.lstat(final)
+        except FileNotFoundError: pass
+        else: raise OSError("final exists")
+        if not _same_directory_identity(_directory_identity(stage_directory),stage_identity): raise OSError("stage replaced")
+        os.replace(temporary,final); published=True; _private(final)
         verify=os.open(str(final),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
         try:
             info=os.fstat(verify)
             if not stat.S_ISREG(info.st_mode) or info.st_size!=len(data) or (os.name!="nt" and stat.S_IMODE(info.st_mode)!=0o600): raise OSError("verify")
-            before=_identity(info)
-            if _read_exact(verify,len(data))!=data or before!=_identity(os.fstat(verify)): raise OSError("verify")
+            before=_identity(info); path_state=os.lstat(final)
+            if _read_exact(verify,len(data))!=data or before!=_identity(os.fstat(verify)) or before!=_identity(path_state): raise OSError("verify")
             if os.name!="nt": os.fsync(verify)
         finally: os.close(verify)
-        _fsync_directory(stage_directory)
+        if not _same_directory_identity(_directory_identity(stage_directory),stage_identity): raise OSError("stage replaced")
+        _open_verified_directory(path=stage_directory,expected_identity=stage_identity)
     except StagingPersistenceError as exc:
         if published: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
-        _compensate_unpublished_binding(stage_directory=stage_directory,temporary=temporary)
+        _compensate_unpublished_binding(stage_directory=stage_directory,stage_identity=stage_identity,parent_identity=parent_identity,temporary=temporary,temporary_identity=temporary_identity)
         raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
     except OSError as exc:
         if fd is not None:
             try: os.close(fd)
             except OSError: pass
         if published: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
-        _compensate_unpublished_binding(stage_directory=stage_directory,temporary=temporary)
+        _compensate_unpublished_binding(stage_directory=stage_directory,stage_identity=stage_identity,parent_identity=parent_identity,temporary=temporary,temporary_identity=temporary_identity)
         raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
 
 _BINDING_KEYS={"format_version","operation_id","selected_backup_id","selected_backup_manifest_sha256","safety_backup_id","runtime_mode","target_set_hash","stage_parent","artifacts"}
@@ -381,18 +414,20 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
         dirs={}
         for parent,indices in parent_indices.items():
             stage=_stage_dir(parent,operation_id)
-            created=False
+            created=False; stage_identity=None; parent_identity=None
             try: os.lstat(stage)
             except FileNotFoundError: pass
             else: raise StagingPersistenceError("Synthetic staging directory already exists")
             try:
                 stage.mkdir(mode=0o700); created=True; _private(stage,True)
                 if not _stage_directory_is_private(stage) or (os.name!="nt" and permission_health(stage,directory=True)!="private"): raise OSError("unsafe stage")
-                _write_staging_binding(stage_directory=stage,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)))
+                stage_identity=_directory_identity(stage); parent_identity=_directory_identity(parent)
+                _write_staging_binding(stage_directory=stage,stage_identity=stage_identity,parent_identity=parent_identity,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)))
             except StagingManualCleanupRequiredError: raise
             except StagingBindingPersistenceError: raise
             except (OSError, StagingPersistenceError) as exc:
-                if created: _compensate_unpublished_binding(stage_directory=stage,temporary=stage/_STAGING_BINDING_TEMP_NAME)
+                if created and stage_identity is not None and parent_identity is not None: _compensate_unpublished_binding(stage_directory=stage,stage_identity=stage_identity,parent_identity=parent_identity,temporary=stage/_STAGING_BINDING_TEMP_NAME)
+                elif created: raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup") from exc
                 raise StagingBindingPersistenceError("Restore staging binding could not be persisted") from exc
             dirs[parent]=stage
         staged=[]
