@@ -24,6 +24,8 @@ from verified_backup import create_verified_backup, load_validated_backup_snapsh
 
 def _db(path: Path, ledger: str, key: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(path.parent, 0o700)
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE sample(id INTEGER PRIMARY KEY, value TEXT)")
     connection.execute(f"CREATE TABLE {ledger}({key} TEXT PRIMARY KEY)")
@@ -42,6 +44,12 @@ def _prepared(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "OPERATOR_BACKUP_ROOT", tmp_path / "backups")
     monkeypatch.setattr(config, "OPERATOR_RESTORE_ROOT", tmp_path / "journals")
     monkeypatch.setattr(config, "MULTI_USER_ENABLED", False)
+
+    for d in (tmp_path / "data", config.OPERATOR_BACKUP_ROOT, config.OPERATOR_RESTORE_ROOT):
+        d.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(d, 0o700)
+
     _db(config.CONTROL_DB_PATH, "migration_versions", "version")
     _db(config.DB_PATH, "app_migrations", "migration_key")
     selected = load_validated_backup_snapshot(create_verified_backup(config.OPERATOR_BACKUP_ROOT))
@@ -100,6 +108,11 @@ def _prepared_multi_user(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "OPERATOR_BACKUP_ROOT", tmp_path / "backups")
     monkeypatch.setattr(config, "OPERATOR_RESTORE_ROOT", tmp_path / "journals")
     monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+
+    for d in (tmp_path / "data", config.MULTI_USER_DATA_ROOT, config.MULTI_USER_DATA_ROOT / t1_uuid, config.MULTI_USER_DATA_ROOT / t2_uuid, config.OPERATOR_BACKUP_ROOT, config.OPERATOR_RESTORE_ROOT):
+        d.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(d, 0o700)
 
     t1_path = config.MULTI_USER_DATA_ROOT / t1_uuid / "athlete.db"
     t2_path = config.MULTI_USER_DATA_ROOT / t2_uuid / "athlete.db"
