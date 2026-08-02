@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sqlite3
+import os
 from pathlib import Path
 import pytest
 from dataclasses import replace
@@ -33,3 +34,29 @@ def test_configured_destination_is_refused(tmp_path,monkeypatch):
 def test_forged_or_stale_snapshot_is_refused(tmp_path,monkeypatch):
     validated,journal,root,destinations=_prepared(tmp_path,monkeypatch)
     with pytest.raises(Exception): stage_and_verify_synthetic_restore(operation_id=journal.operation_id,validated_backup=replace(validated,backup_id="20260801T120000Z-a1b2c3d4"),destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows binary descriptor regression")
+def test_windows_staging_uses_binary_regular_file_descriptors(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)
+    before = [item.path.read_bytes() for item in destinations]
+    real_open = os.open; opens = []
+    def recording_open(path, flags, *args):
+        text = str(path)
+        if text.startswith(str(validated.directory)) or text.startswith(str(root)):
+            opens.append((Path(path).name, flags))
+        return real_open(path, flags, *args)
+    monkeypatch.setattr(staging.os, "open", recording_open)
+    result = stage_and_verify_synthetic_restore(operation_id=journal.operation_id, validated_backup=validated, destinations=destinations, fixture_root=root, journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert __import__('guarded_restore').load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT).stage is RestoreStage.REPLACEMENT_READY
+    assert [item.path.read_bytes() for item in destinations] == before
+    for artifact, entry in zip(result.artifacts, validated.entries):
+        assert artifact.path.stat().st_size == entry.size_bytes
+        assert artifact.path.read_bytes() == (validated.directory / entry.filename).read_bytes()
+    source = [flags for name, flags in opens if name.endswith(".sqlite") and not name.endswith(".staged")]
+    partial = [flags for name, flags in opens if name.endswith(".partial")]
+    final = [flags for name, flags in opens if name.endswith(".staged")]
+    assert source and partial and final
+    assert all(flags & staging._BINARY_FLAG for flags in source + partial + final)
+    assert all((flags & os.O_WRONLY) == 0 for flags in source + final)
+    assert all(flags & os.O_WRONLY and flags & os.O_CREAT and flags & os.O_EXCL for flags in partial)

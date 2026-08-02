@@ -9,6 +9,8 @@ import config
 from guarded_restore import RestoreJournalError, RestoreStage, TargetRestoreState, load_restore_journal, update_restore_journal
 from operator_storage import has_symlink_component, inspect_sqlite, migration_markers, permission_health, schema_fingerprint
 from verified_backup import ValidatedBackupSnapshot, load_validated_backup_snapshot
+_BINARY_FLAG = getattr(os, "O_BINARY", 0)
+_NOFOLLOW_FLAG = getattr(os, "O_NOFOLLOW", 0)
 
 class StagingError(RuntimeError): pass
 class StagingSourceError(StagingError): pass
@@ -82,11 +84,11 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
     if final.exists() or partial.exists() or final.is_symlink() or partial.is_symlink(): raise StagingPersistenceError("Synthetic staging artifact already exists")
     source_fd: int|None=None; partial_fd: int|None=None
     try:
-        source_fd=os.open(str(source),os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)); before=os.fstat(source_fd)
+        source_fd=os.open(str(source),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG); before=os.fstat(source_fd)
         import stat
         identity=(before.st_dev,before.st_ino,stat.S_IFMT(before.st_mode),before.st_size,getattr(before,"st_mtime_ns",None))
         if not stat.S_ISREG(before.st_mode) or before.st_size!=size: raise StagingSourceError("Validated staging source changed")
-        partial_fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,"O_NOFOLLOW",0),0o600)
+        partial_fd=os.open(str(partial),os.O_WRONLY|os.O_CREAT|os.O_EXCL|_NOFOLLOW_FLAG|_BINARY_FLAG,0o600)
         h=hashlib.sha256(); count=0
         while True:
             chunk=os.read(source_fd,1024*1024)
@@ -101,15 +103,17 @@ def _copy(entry, backup: Path, stage: Path, index: int) -> Path:
         os.close(source_fd); source_fd=None; os.close(partial_fd); partial_fd=None
         if stage.is_symlink() or partial.is_symlink() or final.exists() or final.is_symlink() or partial.parent!=stage or final.parent!=stage: raise StagingPersistenceError("Synthetic staging artifact is unsafe")
         os.replace(partial,final); _private(final)
-        final_fd=os.open(str(final),os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+        final_fd=os.open(str(final),os.O_RDONLY|_NOFOLLOW_FLAG|_BINARY_FLAG)
         try:
             state=os.fstat(final_fd)
-            if state.st_size!=size or (os.name!="nt" and (not stat.S_ISREG(state.st_mode) or (state.st_mode&0o777)!=0o600)): raise StagingPersistenceError("Synthetic staging artifact is unsafe")
-            os.fsync(final_fd)
+            if not stat.S_ISREG(state.st_mode) or state.st_size!=size: raise StagingPersistenceError("Synthetic staging artifact is unsafe")
+            if os.name!="nt" and stat.S_IMODE(state.st_mode)!=0o600: raise StagingPersistenceError("Synthetic staging artifact is unsafe")
+            if os.name != "nt": os.fsync(final_fd)
         finally: os.close(final_fd)
-        directory_fd=os.open(str(stage),os.O_RDONLY|getattr(os,"O_DIRECTORY",0));
-        try: os.fsync(directory_fd)
-        finally: os.close(directory_fd)
+        if os.name != "nt":
+            directory_fd=os.open(str(stage),os.O_RDONLY|getattr(os,"O_DIRECTORY",0))
+            try: os.fsync(directory_fd)
+            finally: os.close(directory_fd)
         return final
     except StagingError: raise
     except OSError as exc: raise StagingPersistenceError("Synthetic staging copy failed") from exc
