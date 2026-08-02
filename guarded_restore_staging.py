@@ -304,6 +304,18 @@ def _reconcile_failed_staged_transition(*, operation_id: str, journal_root: Path
         raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from cause
     raise StagingJournalPersistenceError("Restore staging journal could not be persisted") from cause
 
+def _final_revalidate_before_replacement_ready(*, operation_id: str, validated_backup: ValidatedBackupSnapshot, destinations: tuple[SyntheticRestoreTarget,...], fixture_root: Path, journal_root: Path, staged) -> None:
+    """Repeat read-only source, journal, destination, and artifact checks at the ready boundary."""
+    journal, entries, root = _validate_inputs(operation_id, validated_backup, destinations, fixture_root, journal_root, expected_stage=RestoreStage.STAGED_VERIFIED)
+    if any(fact.state is not TargetRestoreState.STAGED_VERIFIED for fact in journal.targets):
+        raise StagingError("Restore journal is not ready for synthetic staging")
+    if len(entries) != len(staged): raise StagingError("Validated backup does not match restore journal")
+    for index, (entry, artifact, _) in enumerate(staged):
+        if entry != entries[index] or artifact.parent != _stage_dir(destinations[index].path.parent, operation_id):
+            raise StagingError("Validated backup does not match restore journal")
+        _verify(entry, artifact)
+        _load_staging_binding(stage_directory=artifact.parent, expected_payload=_binding_payload(journal, entries, destinations, root, destinations[index].path.parent, tuple(i for i, destination in enumerate(destinations) if destination.path.parent == destinations[index].path.parent)))
+
 def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->StagingResult:
     try:
         journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root)
@@ -311,16 +323,18 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.RESTORE_STAGED)
         except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
             raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
-        dirs={}; parent_indices={}
-        for index,d in enumerate(destinations):
-            parent=d.path.parent; stage=_stage_dir(parent,operation_id)
-            if parent not in dirs:
-                if stage.exists() or stage.is_symlink(): raise StagingPersistenceError("Synthetic staging directory already exists")
-                stage.mkdir(mode=0o700); _private(stage,True); dirs[parent]=stage
-                parent_indices[parent]=[]
-            parent_indices[parent].append(index)
-        for parent,stage in dirs.items():
-            _write_staging_binding(stage_directory=stage,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(parent_indices[parent])))
+        parent_indices={}
+        for index,d in enumerate(destinations): parent_indices.setdefault(d.path.parent,[]).append(index)
+        dirs={}
+        for parent,indices in parent_indices.items():
+            stage=_stage_dir(parent,operation_id)
+            try: os.lstat(stage)
+            except FileNotFoundError: pass
+            else: raise StagingPersistenceError("Synthetic staging directory already exists")
+            stage.mkdir(mode=0o700); _private(stage,True)
+            if stage.is_symlink() or has_symlink_component(stage) or (os.name!="nt" and permission_health(stage,directory=True)!="private"): raise StagingManualCleanupRequiredError("Unrecorded staging artifact requires manual cleanup")
+            _write_staging_binding(stage_directory=stage,payload=_binding_payload(journal,entries,destinations,root,parent,tuple(indices)))
+            dirs[parent]=stage
         staged=[]
         for index,(entry,dest) in enumerate(zip(entries,destinations)):
             file=_copy(entry,validated_backup.directory,dirs[dest.path.parent],index)
@@ -342,6 +356,7 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
                 raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
             artifacts.append(StagedArtifact(operation_id,entry[0],entry[1],index,file,entry[4],entry[5],entry[6],entry[7]))
         try:
+            _final_revalidate_before_replacement_ready(operation_id=operation_id,validated_backup=validated_backup,destinations=destinations,fixture_root=fixture_root,journal_root=journal_root,staged=staged)
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.REPLACEMENT_READY)
         except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
             raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
