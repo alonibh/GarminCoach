@@ -482,6 +482,67 @@ def test_cleanup_allows_missing_bound_artifact_on_retry(tmp_path, monkeypatch):
     cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
     assert not stage.exists()
 
+@pytest.mark.parametrize("failure", [RestoreJournalError("bad"), RestoreJournalPersistenceError("bad")])
+def test_cleanup_normalizes_journal_loading_failures_without_deletion(tmp_path, monkeypatch, failure):
+    import guarded_restore_staging as staging
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); before=sorted(item.name for item in stage.iterdir())
+    monkeypatch.setattr(staging,"load_restore_journal",lambda *args,**kwargs: (_ for _ in ()).throw(failure))
+    with pytest.raises(StagingCleanupBindingError,match="Synthetic staging cleanup binding is invalid"):
+        cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert sorted(item.name for item in stage.iterdir()) == before
+
+def _replace_directory(path: Path) -> Path:
+    original=path.with_name(path.name+"-original"); path.replace(original); path.mkdir()
+    if os.name != "nt": os.chmod(path,0o700)
+    return original
+
+@pytest.mark.parametrize("when", ["before_fsync", "after_fsync"])
+def test_cleanup_preserves_substituted_stage_at_final_removal_boundary(tmp_path, monkeypatch, when):
+    import guarded_restore_staging as staging
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); original_fsync=staging._fsync_verified_directory
+    if when == "before_fsync":
+        def replace_then_fsync(*, path, expected_identity):
+            if path == stage: _replace_directory(stage)
+            return original_fsync(path=path,expected_identity=expected_identity)
+    else:
+        def replace_then_fsync(*, path, expected_identity):
+            result=original_fsync(path=path,expected_identity=expected_identity)
+            if path == stage: _replace_directory(stage)
+            return result
+    monkeypatch.setattr(staging,"_fsync_verified_directory",replace_then_fsync)
+    with pytest.raises(staging.StagingCleanupPersistenceError,match="Synthetic staging cleanup could not be persisted"):
+        cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert stage.exists() and not list(stage.iterdir())
+
+def test_cleanup_rejects_replaced_parent_before_parent_fsync(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    original_fsync=staging._fsync_verified_directory
+    def replace_parent(*, path, expected_identity):
+        if path == root: _replace_directory(root)
+        return original_fsync(path=path,expected_identity=expected_identity)
+    monkeypatch.setattr(staging,"_fsync_verified_directory",replace_parent)
+    with pytest.raises(staging.StagingCleanupPersistenceError,match="Synthetic staging cleanup could not be persisted"):
+        cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    assert root.exists() and not list(root.iterdir())
+
+def test_cleanup_parent_fsync_uses_preflight_identity_and_directory_opens_are_not_binary(tmp_path, monkeypatch):
+    import guarded_restore_staging as staging
+    validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)
+    stage=next(root.glob(".garmincoach-restore-stage-*")); parent_before=os.lstat(root); original_fsync=staging._fsync_verified_directory; seen=[]; real_open=os.open; opens=[]
+    def record_fsync(*, path, expected_identity):
+        seen.append((path,expected_identity)); return original_fsync(path=path,expected_identity=expected_identity)
+    def record_open(path,flags,*args):
+        if Path(path) in {root,stage}: opens.append(flags)
+        return real_open(path,flags,*args)
+    monkeypatch.setattr(staging,"_fsync_verified_directory",record_fsync); monkeypatch.setattr(staging.os,"open",record_open)
+    cleanup_synthetic_staging(operation_id=journal.operation_id,validated_backup=validated,destinations=destinations,fixture_root=root,journal_root=config.OPERATOR_RESTORE_ROOT)
+    parent_call=[identity for path,identity in seen if path == root][-1]
+    assert parent_call[:3]+parent_call[4:] == (parent_before.st_dev,parent_before.st_ino,__import__('stat').S_IFMT(parent_before.st_mode),__import__('stat').S_IMODE(parent_before.st_mode))
+    assert all(not (flags & getattr(os,"O_DIRECTORY",0) and flags & staging._BINARY_FLAG) for flags in opens)
+
 @pytest.mark.parametrize("tamper", ["binding", "artifact", "destination", "snapshot"])
 def test_cleanup_refuses_tampered_or_substituted_context_without_deletion(tmp_path, monkeypatch, tamper):
     validated,journal,root,destinations=_prepared(tmp_path,monkeypatch); _fail_verification_to_failed_safe(validated,journal,root,destinations,monkeypatch)

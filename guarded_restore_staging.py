@@ -215,6 +215,9 @@ class _CleanupDirectoryRecord:
     parent_path: Path
     parent_device: int
     parent_inode: int
+    parent_file_type: int
+    parent_mode: int | None
+    parent_mtime_ns: int | None
     target_indices: tuple[int, ...]
 
 @dataclass(frozen=True)
@@ -263,6 +266,31 @@ def _cleanup_file_record(path: Path, *, maximum_size: int | None = None, expecte
     finally:
         os.close(fd)
 
+def _cleanup_directory_identity(state) -> tuple[int, int, int, int | None, int | None]:
+    return (state.st_dev, state.st_ino, stat.S_IFMT(state.st_mode), getattr(state, "st_mtime_ns", None), stat.S_IMODE(state.st_mode))
+
+def _stable_cleanup_directory_identity(identity) -> tuple[int, int, int, int | None]:
+    return (identity[0], identity[1], identity[2], identity[4])
+
+def _record_directory_identity(record: _CleanupDirectoryRecord) -> tuple[int, int, int, int | None, int | None]:
+    return (record.device, record.inode, record.file_type, None, record.mode)
+
+def _record_parent_identity(record: _CleanupDirectoryRecord) -> tuple[int, int, int, int | None, int | None]:
+    return (record.parent_device, record.parent_inode, record.parent_file_type, record.parent_mtime_ns, record.parent_mode)
+
+def _fsync_verified_directory(*, path: Path, expected_identity) -> None:
+    """Fsync a no-follow directory descriptor that still names the preflighted directory."""
+    if os.name == "nt":
+        _open_verified_directory(path=path, expected_identity=expected_identity, fsync=False)
+        return
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _NOFOLLOW_FLAG)
+    try:
+        actual = _cleanup_directory_identity(os.fstat(fd))
+        if not stat.S_ISDIR(os.fstat(fd).st_mode) or not _same_directory_identity(actual, expected_identity): raise OSError("directory changed")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
 def _cleanup_directory_record(path: Path, indices: tuple[int, ...]) -> _CleanupDirectoryRecord:
     state = os.lstat(path)
     parent = path.parent
@@ -271,16 +299,18 @@ def _cleanup_directory_record(path: Path, indices: tuple[int, ...]) -> _CleanupD
             or not stat.S_ISDIR(parent_state.st_mode) or stat.S_ISLNK(parent_state.st_mode)
             or (os.name != "nt" and stat.S_IMODE(state.st_mode) != 0o700)):
         raise OSError("unsafe directory")
-    _open_verified_directory(path=path, expected_identity=_directory_identity(path), fsync=False)
-    _open_verified_directory(path=parent, expected_identity=_directory_identity(parent), fsync=False)
-    return _CleanupDirectoryRecord(path, state.st_dev, state.st_ino, stat.S_IFMT(state.st_mode), stat.S_IMODE(state.st_mode) if os.name != "nt" else None, parent, parent_state.st_dev, parent_state.st_ino, indices)
+    stage_identity = _cleanup_directory_identity(state)
+    parent_identity = _cleanup_directory_identity(parent_state)
+    _open_verified_directory(path=path, expected_identity=stage_identity, fsync=False)
+    _open_verified_directory(path=parent, expected_identity=parent_identity, fsync=False)
+    return _CleanupDirectoryRecord(path, state.st_dev, state.st_ino, stat.S_IFMT(state.st_mode), stat.S_IMODE(state.st_mode), parent, parent_state.st_dev, parent_state.st_ino, stat.S_IFMT(parent_state.st_mode), stat.S_IMODE(parent_state.st_mode), getattr(parent_state, "st_mtime_ns", None), indices)
 
 def _same_cleanup_record(record: _CleanupBindingRecord, actual: _CleanupBindingRecord) -> bool:
     return (record.device, record.inode, record.file_type, record.size, record.mtime_ns, record.mode) == (actual.device, actual.inode, actual.file_type, actual.size, actual.mtime_ns, actual.mode)
 
 def _revalidate_cleanup_directory(record: _CleanupDirectoryRecord) -> None:
     actual = _cleanup_directory_record(record.path, record.target_indices)
-    if (actual.device, actual.inode, actual.file_type, actual.mode, actual.parent_path, actual.parent_device, actual.parent_inode) != (record.device, record.inode, record.file_type, record.mode, record.parent_path, record.parent_device, record.parent_inode): raise OSError("directory changed")
+    if (_stable_cleanup_directory_identity(_record_directory_identity(actual)), actual.parent_path, _stable_cleanup_directory_identity(_record_parent_identity(actual))) != (_stable_cleanup_directory_identity(_record_directory_identity(record)), record.parent_path, _stable_cleanup_directory_identity(_record_parent_identity(record))): raise OSError("directory changed")
 
 def _load_staging_binding(*, stage_directory: Path, expected_payload: dict[str, object]) -> _CleanupBindingRecord:
     binding=stage_directory/_STAGING_BINDING_NAME
@@ -538,7 +568,7 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
 def cleanup_synthetic_staging(*,operation_id: str,validated_backup: ValidatedBackupSnapshot,destinations: tuple[SyntheticRestoreTarget,...],fixture_root: Path,journal_root: Path)->None:
     try:
         journal,entries,root=_validate_inputs(operation_id,validated_backup,destinations,fixture_root,journal_root,expected_stage=RestoreStage.FAILED_SAFE)
-    except StagingError as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
+    except (StagingError,RestoreJournalError,RestoreJournalPersistenceError,OSError,ValueError,TypeError) as exc: raise StagingCleanupBindingError("Synthetic staging cleanup binding is invalid") from exc
     groups={}
     for index,destination in enumerate(destinations): groups.setdefault(destination.path.parent,[]).append(index)
     prepared: list[_CleanupStagePlan]=[]
@@ -586,7 +616,8 @@ def cleanup_synthetic_staging(*,operation_id: str,validated_backup: ValidatedBac
             # The directory is now allowed to contain no entries, and only then may it be removed.
             with os.scandir(directory.path) as children:
                 if next(children, None) is not None: raise OSError("directory not empty")
-            _fsync_directory(directory.path)
+            _fsync_verified_directory(path=directory.path, expected_identity=_record_directory_identity(directory))
+            _revalidate_cleanup_directory(directory)
             directory.path.rmdir()
-            _open_verified_directory(path=directory.parent_path, expected_identity=_directory_identity(directory.parent_path))
+            _fsync_verified_directory(path=directory.parent_path, expected_identity=_record_parent_identity(directory))
     except OSError as exc: raise StagingCleanupPersistenceError("Synthetic staging cleanup could not be persisted") from exc
