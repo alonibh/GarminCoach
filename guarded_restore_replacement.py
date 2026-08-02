@@ -469,7 +469,17 @@ def _handle_durable_sidecars(destination: Path, journal: RestoreJournal, target_
 
         try:
             state = os.lstat(sidecar)
-            if stat.S_ISLNK(state.st_mode) or not stat.S_ISREG(state.st_mode):
+            if stat.S_ISDIR(state.st_mode):
+                raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
+            if stat.S_ISLNK(state.st_mode):
+                os.unlink(sidecar)
+                _fsync(destination.parent, directory=True)
+                kw_rem = {pres_attr: True, rem_attr: True}
+                current_journal = _transition(journal.operation_id, journal_root, target_key=target_key, **kw_rem)
+                fact = next(f for f in current_journal.targets if f.target_key == target_key)
+                continue
+
+            if not stat.S_ISREG(state.st_mode):
                 raise ReplacementPreconditionError("Synthetic sidecar is unsafe")
             before_id = (state.st_dev, state.st_ino, stat.S_IFMT(state.st_mode), state.st_size, getattr(state, "st_mtime_ns", None))
             kw_pres = {pres_attr: True}
