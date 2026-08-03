@@ -1117,36 +1117,43 @@ def test_artifact_hard_link_count_greater_than_one_refused(tmp_path, monkeypatch
 
 
 @pytest.mark.skipif(os.name == "nt", reason="fchmod descriptor binding not testable on Windows")
-def test_publish_noreplace_link_count_exceeds_one_refused(tmp_path):
-    """If a foreign hard link was created on the final destination before publish,
-    the link count after partial unlink must be != 1, and publish_noreplace must refuse it."""
-    partial = tmp_path / "test_lnk.partial"
-    final = tmp_path / "test_lnk.final"
-    partial.write_bytes(b"ownership data")
+def test_publish_noreplace_clean_publish_leaves_nlink_one(tmp_path):
+    """A clean publish with no external hard links must leave the final file with st_nlink==1."""
+    partial = tmp_path / "clean.partial"
+    final = tmp_path / "clean.final"
+    partial.write_bytes(b"clean ownership data")
 
-    # First, publish so final exists
     publish_noreplace(partial, final)
+
     assert final.exists()
+    assert not partial.exists()
+    assert final.stat().st_nlink == 1
 
-    # Now create another partial and try to publish to another final that has an extra hard link
-    partial2 = tmp_path / "test_lnk2.partial"
-    final2 = tmp_path / "test_lnk2.final"
-    partial2.write_bytes(b"ownership data 2")
 
-    # Simulate: partial2 already has a hard link (external copy)
+@pytest.mark.skipif(os.name == "nt", reason="fchmod descriptor binding not testable on Windows")
+def test_publish_noreplace_extra_link_on_partial_causes_nlink_gt1_refused(tmp_path):
+    """If a foreign hard link exists on partial_path before publish, os.link(partial→final)
+    causes partial, extra_link, and final to all share the same inode (nlink==3).
+    After os.unlink(partial), final and extra_link share the inode (nlink==2).
+    Our post-unlink link-count check must refuse this as ownership uncertain."""
+    partial = tmp_path / "lnk.partial"
+    final = tmp_path / "lnk.final"
+    partial.write_bytes(b"link count test data")
+
+    # Create a foreign hard link to partial before publish
     extra_link = tmp_path / "extra.lnk"
-    os.link(str(partial2), str(extra_link))
+    try:
+        os.link(str(partial), str(extra_link))
+    except OSError:
+        pytest.skip("Hard links not supported on this filesystem")
 
-    # Publish should succeed for the file itself, but after partial unlink,
-    # the link count of final2 should be 1 (extra link was on partial, not final).
-    # This tests the normal case passes when no extra link is on final2.
-    publish_noreplace(partial2, final2)
-    assert final2.exists()
-    assert not partial2.exists()
-    # extra_link still exists (it was the partial2 hard link, now unlinked via partial2)
-    # After partial2 is unlinked, extra_link holds the data but final2 is st_nlink==1
-    final2_st = final2.stat()
-    assert final2_st.st_nlink == 1
+    # After os.link(partial→final) inside publish, all three share the inode.
+    # After os.unlink(partial), final and extra_link remain → nlink==2.
+    # The post-unlink nlink check must catch this.
+    with pytest.raises(ConfiguredStagingOwnershipError, match="link count"):
+        publish_noreplace(partial, final)
+
+
 
 
 @pytest.mark.skipif(os.name == "nt", reason="fchmod descriptor binding not testable on Windows")
