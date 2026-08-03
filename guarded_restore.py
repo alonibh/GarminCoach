@@ -262,6 +262,7 @@ class RestoreJournal:
     created_at: str
     updated_at: str
     final_result: FinalResult | None
+    destination_baseline_sha256: str | None = None
 
 
 def _validate_journal(journal: RestoreJournal) -> None:
@@ -299,6 +300,8 @@ def _validate_journal(journal: RestoreJournal) -> None:
     states = [f.state for f in journal.targets]
     if journal.safety_backup_id is not None:
         _safe(journal.safety_backup_id, pattern=_BACKUP_ID, error=RestoreJournalError)
+    if journal.destination_baseline_sha256 is not None:
+        _safe(journal.destination_baseline_sha256, pattern=_SHA256, error=RestoreJournalError)
     terminal = _TERMINAL_RESULTS.get(journal.stage)
     if (terminal is None) != (journal.final_result is None) or (terminal is not None and journal.final_result != terminal):
         raise RestoreJournalError("Invalid restore journal")
@@ -319,9 +322,6 @@ def _validate_journal(journal: RestoreJournal) -> None:
     if journal.stage in {RestoreStage.ROLLED_BACK, RestoreStage.FAILED_SAFE} and TargetRestoreState.REPLACED in states:
         raise RestoreJournalError("Invalid restore journal")
     if journal.stage is RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED:
-        # Current facts intentionally retain the exact partial rollback point.
-        # The terminal stage itself proves the only legal entry was from
-        # ROLLBACK_REQUIRED; no invented historical normalization is allowed.
         if any(state not in {TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK} for state in states):
             raise RestoreJournalError("Invalid restore journal")
 
@@ -370,8 +370,8 @@ def _journal_path(root: Path, operation_id: str) -> Path:
     return _operation_directory(root, operation_id) / "journal.json"
 
 
-def _journal_payload(journal: RestoreJournal) -> dict[str, Any]:
-    return {
+def _journal_payload(journal: RestoreJournal) -> dict[str, object]:
+    payload: dict[str, object] = {
         "format_version": journal.format_version,
         "operation_id": journal.operation_id,
         "selected_backup_id": journal.selected_backup_id,
@@ -402,6 +402,9 @@ def _journal_payload(journal: RestoreJournal) -> dict[str, Any]:
         "updated_at": journal.updated_at,
         "final_result": journal.final_result.value if journal.final_result else None,
     }
+    if journal.destination_baseline_sha256 is not None:
+        payload["destination_baseline_sha256"] = journal.destination_baseline_sha256
+    return payload
 
 
 def _write_journal(root: Path, journal: RestoreJournal) -> None:
@@ -450,7 +453,8 @@ def create_restore_journal(plan: RestorePlan, *, root: Path | str | None = None,
 
 
 def _from_payload(payload: object) -> RestoreJournal:
-    if not isinstance(payload, dict) or set(payload) != {"format_version", "operation_id", "selected_backup_id", "selected_backup_manifest_sha256", "safety_backup_id", "expected_application_commit", "runtime_mode", "target_keys", "target_set_hash", "confirmation_value", "stage", "targets", "created_at", "updated_at", "final_result"}:
+    allowed_keys = {"format_version", "operation_id", "selected_backup_id", "selected_backup_manifest_sha256", "safety_backup_id", "expected_application_commit", "runtime_mode", "target_keys", "target_set_hash", "confirmation_value", "stage", "targets", "created_at", "updated_at", "final_result"}
+    if not isinstance(payload, dict) or not (set(payload) == allowed_keys or set(payload) == allowed_keys | {"destination_baseline_sha256"}):
         raise RestoreJournalError("Invalid restore journal")
     try:
         targets_list = []
@@ -483,7 +487,10 @@ def _from_payload(payload: object) -> RestoreJournal:
                 rollback_completed=roll_comp,
             ))
         final = None if payload["final_result"] is None else FinalResult(payload["final_result"])
-        journal = RestoreJournal(payload["format_version"], payload["operation_id"], payload["selected_backup_id"], payload["selected_backup_manifest_sha256"], payload["safety_backup_id"], payload["expected_application_commit"], payload["runtime_mode"], tuple(payload["target_keys"]), payload["target_set_hash"], payload["confirmation_value"], RestoreStage(payload["stage"]), tuple(targets_list), payload["created_at"], payload["updated_at"], final)
+        base_sha = payload.get("destination_baseline_sha256")
+        if base_sha is not None:
+            _safe(base_sha, pattern=_SHA256, error=RestoreJournalError)
+        journal = RestoreJournal(payload["format_version"], payload["operation_id"], payload["selected_backup_id"], payload["selected_backup_manifest_sha256"], payload["safety_backup_id"], payload["expected_application_commit"], payload["runtime_mode"], tuple(payload["target_keys"]), payload["target_set_hash"], payload["confirmation_value"], RestoreStage(payload["stage"]), tuple(targets_list), payload["created_at"], payload["updated_at"], final, destination_baseline_sha256=base_sha)
     except (KeyError, TypeError, ValueError) as exc: raise RestoreJournalError("Invalid restore journal") from exc
     _validate_journal(journal); return journal
 
@@ -536,10 +543,11 @@ def update_restore_journal(
     rollback_intent: bool | None = None,
     rollback_completed: bool | None = None,
     safety_backup_id: str | None = None,
+    destination_baseline_sha256: str | None = None,
     now: str | None = None,
 ) -> RestoreJournal:
     journal = load_restore_journal(operation_id, root=root)
-    if (stage is None) and (target_key is None):
+    if (stage is None) and (target_key is None) and (destination_baseline_sha256 is None):
         raise RestoreTransitionError("Illegal restore journal transition")
     if target_key is not None and target_state is None and all(v is None for v in (wal_present, shm_present, wal_removed, shm_removed, replacement_intent, replacement_completed, rollback_intent, rollback_completed)):
         raise RestoreTransitionError("Illegal restore journal transition")
@@ -550,6 +558,9 @@ def update_restore_journal(
     facts = list(journal.targets)
     new_stage = journal.stage
     safety = journal.safety_backup_id
+    new_baseline_sha = journal.destination_baseline_sha256
+    if destination_baseline_sha256 is not None:
+        new_baseline_sha = _safe(destination_baseline_sha256, pattern=_SHA256, error=RestoreTransitionError)
     if stage is not None:
         if target_key is not None or any(v is not None for v in (wal_present, shm_present, wal_removed, shm_removed, replacement_intent, replacement_completed, rollback_intent, rollback_completed)):
             raise RestoreTransitionError("Illegal restore journal transition")
@@ -562,7 +573,7 @@ def update_restore_journal(
         elif stage is RestoreStage.CURRENT_SNAPSHOT_CREATED:
             raise RestoreTransitionError("Illegal restore journal transition")
         new_stage = stage
-    else:
+    elif target_key is not None:
         key = _target_key(target_key, RestoreTransitionError)
         index = next((i for i, fact in enumerate(facts) if fact.target_key == key), None)
         if index is None:
@@ -615,6 +626,7 @@ def update_restore_journal(
         journal.created_at,
         timestamp,
         result,
+        destination_baseline_sha256=new_baseline_sha,
     )
     _validate_journal(updated)
     _write_journal(validate_restore_root(root), updated)

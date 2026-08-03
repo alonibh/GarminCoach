@@ -96,6 +96,52 @@ class ConfiguredStagingResult:
     staged_artifacts: tuple[ConfiguredStagedArtifact, ...]
 
 
+BASELINE_FORMAT = "garmincoach-destination-baseline-v1"
+_BASELINE_FILENAME = "destination-baseline.json"
+MAX_BASELINE_BYTES = 256 * 1024
+
+
+@dataclass(frozen=True)
+class TargetBaselineRecord:
+    target_key: str
+    kind: str
+    tenant_uuid: str | None
+    target_order: int
+    configured_relative_path: str
+    resolved_relative_path: str
+    is_regular_file: bool
+    st_dev: int
+    st_ino: int
+    size_bytes: int
+    mtime_ns: int
+    st_mode: int
+    sha256: str
+    parent_relative_path: str
+    parent_st_dev: int
+    parent_st_ino: int
+    parent_is_dir: bool
+    parent_st_mode: int
+    wal: dict[str, Any]
+    shm: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class DestinationBaselineEvidence:
+    format_version: str
+    operation_id: str
+    selected_backup_id: str
+    selected_backup_manifest_sha256: str
+    expected_application_commit: str
+    runtime_mode: str
+    target_set_hash: str
+    confirmation_value: str
+    ordered_target_keys: tuple[str, ...]
+    targets: tuple[TargetBaselineRecord, ...]
+    active_control_user_mapping: dict[str, Any]
+    garminconnect_version: str
+    captured_at: str
+
+
 @dataclass(frozen=True)
 class DestinationBaselineRecord:
     target_key: str
@@ -132,6 +178,82 @@ def _private(path: Path, directory: bool = False) -> None:
             raise ConfiguredStagingPersistenceError("Could not set private permissions") from exc
 
 
+def publish_noreplace(partial_path: Path, final_path: Path) -> None:
+    """Safely publish partial_path to final_path without overwriting.
+
+    Fails if final_path exists. Verifies descriptor identity before and after.
+    Fsyncs file and containing directory.
+    """
+    if final_path.exists() or final_path.is_symlink():
+        raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists or is unsafe")
+
+    if not partial_path.exists() or partial_path.is_symlink():
+        raise ConfiguredStagingOwnershipError("Partial file to publish is missing or unsafe")
+
+    partial_stat = os.stat(partial_path, follow_symlinks=False)
+    if not stat.S_ISREG(partial_stat.st_mode):
+        raise ConfiguredStagingOwnershipError("Partial file must be a regular file")
+
+    published = False
+    try:
+        os.link(str(partial_path), str(final_path))
+        published = True
+    except FileExistsError:
+        raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists")
+    except OSError as exc:
+        if final_path.exists():
+            raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists") from exc
+        try:
+            desc = os.open(str(final_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW_FLAG, 0o600)
+            published = True
+            with os.fdopen(desc, "wb") as f_out:
+                f_out.write(partial_path.read_bytes())
+                f_out.flush()
+                os.fsync(f_out.fileno())
+        except FileExistsError:
+            raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists") from exc
+        except OSError as sub_exc:
+            raise ConfiguredStagingOwnershipError("Failed to publish file without overwriting") from sub_exc
+
+    if not published:
+        raise ConfiguredStagingOwnershipError("Failed to publish file without overwriting")
+
+    curr_partial_stat = os.stat(partial_path, follow_symlinks=False)
+    if (curr_partial_stat.st_dev, curr_partial_stat.st_ino) != (partial_stat.st_dev, partial_stat.st_ino):
+        raise ConfiguredStagingOwnershipError("Partial file descriptor identity changed before unlink")
+
+    try:
+        os.unlink(str(partial_path))
+    except OSError as exc:
+        raise ConfiguredStagingOwnershipError("Failed to unlink partial file after publication") from exc
+
+    final_stat = os.stat(final_path, follow_symlinks=False)
+    if not stat.S_ISREG(final_stat.st_mode) or final_stat.st_size != partial_stat.st_size:
+        raise ConfiguredStagingOwnershipError("Published file verification failed")
+
+    _private(final_path)
+
+    try:
+        f_fd = os.open(str(final_path), os.O_RDONLY | _BINARY_FLAG)
+        try:
+            os.fsync(f_fd)
+        finally:
+            os.close(f_fd)
+    except OSError:
+        pass
+
+    parent_dir = final_path.parent
+    if os.name != "nt":
+        try:
+            p_fd = os.open(str(parent_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(p_fd)
+            finally:
+                os.close(p_fd)
+        except OSError:
+            pass
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     try:
@@ -154,14 +276,14 @@ def _staged_artifact_name(index: int, target_key: str) -> str:
 
 def _strict_json_loads(data_bytes: bytes) -> dict[str, Any]:
     """Parse JSON bytes with duplicate key rejection and max byte check."""
-    if len(data_bytes) > _MAX_BINDING_BYTES:
-        raise ConfiguredStagingOwnershipError("Ownership binding file exceeds maximum size limit")
+    if len(data_bytes) > MAX_BASELINE_BYTES:
+        raise ConfiguredStagingOwnershipError("JSON file exceeds maximum size limit")
 
     def _reject_duplicates(pairs):
         d = {}
         for k, v in pairs:
             if k in d:
-                raise ConfiguredStagingOwnershipError(f"Duplicate key '{k}' in ownership binding")
+                raise ConfiguredStagingOwnershipError(f"Duplicate key '{k}' in JSON payload")
             d[k] = v
         return d
 
@@ -169,12 +291,401 @@ def _strict_json_loads(data_bytes: bytes) -> dict[str, Any]:
         text = data_bytes.decode("utf-8")
         parsed = json.loads(text, object_pairs_hook=_reject_duplicates)
         if not isinstance(parsed, dict):
-            raise ConfiguredStagingOwnershipError("Ownership binding JSON root must be an object")
+            raise ConfiguredStagingOwnershipError("JSON root must be an object")
         return parsed
     except Exception as exc:
         if isinstance(exc, ConfiguredStagingOwnershipError):
             raise
-        raise ConfiguredStagingOwnershipError("Failed to parse ownership binding JSON") from exc
+        raise ConfiguredStagingOwnershipError("Failed to parse JSON payload") from exc
+
+
+def capture_destination_baseline_evidence(
+    operation_id: str,
+    selected_backup_id: str,
+    selected_backup_manifest_sha256: str,
+    expected_application_commit: str,
+    runtime_mode: str,
+    target_set_hash: str,
+    confirmation_value: str,
+    targets: tuple[DatabaseTarget, ...],
+) -> DestinationBaselineEvidence:
+    """Capture durable destination baseline evidence from runtime configuration."""
+    import importlib.metadata
+    from datetime import datetime, timezone
+    from operator_storage import active_user_target_mapping
+
+    control_t = next((t for t in targets if t.kind == "control"), None)
+    if control_t is not None and control_t.path.exists():
+        try:
+            active_mapping = dict(active_user_target_mapping(control_t.path))
+        except Exception:
+            active_mapping = {}
+    else:
+        active_mapping = {}
+
+    project_root = safe_resolve(config.PROJECT_ROOT)
+    ordered_keys = tuple(t.target_key for t in targets)
+    target_records: list[TargetBaselineRecord] = []
+
+    for idx, t in enumerate(targets):
+        raw_p = t.path
+        if has_symlink_component(raw_p) or raw_p.is_symlink():
+            raise ConfiguredStagingError("Configured database target path contains symlinks")
+        if not raw_p.exists():
+            if t.required:
+                raise ConfiguredStagingError("Required configured database target missing")
+            raise ConfiguredStagingError("Configured database target path does not exist")
+
+        resolved_p = safe_resolve(raw_p)
+        if resolved_p.is_symlink() or not stat.S_ISREG(resolved_p.stat().st_mode):
+            raise ConfiguredStagingError("Configured database target must be a regular file")
+
+        try:
+            cfg_rel = str(raw_p.relative_to(project_root)).replace("\\", "/")
+        except ValueError:
+            cfg_rel = str(raw_p).replace("\\", "/")
+
+        try:
+            res_rel = str(resolved_p.relative_to(project_root)).replace("\\", "/")
+        except ValueError:
+            res_rel = str(resolved_p).replace("\\", "/")
+
+        t_st = resolved_p.stat()
+        sha = _sha256_file(resolved_p)
+
+        parent_p = resolved_p.parent
+        if has_symlink_component(parent_p) or parent_p.is_symlink():
+            raise ConfiguredStagingError("Parent directory contains symlinks")
+        try:
+            p_rel = str(parent_p.relative_to(project_root)).replace("\\", "/")
+        except ValueError:
+            p_rel = str(parent_p).replace("\\", "/")
+
+        p_st = parent_p.stat()
+
+        # WAL
+        wal_path = raw_p.with_name(raw_p.name + "-wal")
+        if has_symlink_component(wal_path) or wal_path.is_symlink():
+            raise ConfiguredStagingError("WAL sidecar path contains symlinks")
+        if wal_path.exists():
+            wal_res = safe_resolve(wal_path)
+            w_st = wal_res.stat()
+            if not stat.S_ISREG(w_st.st_mode):
+                raise ConfiguredStagingError("WAL sidecar must be a regular file")
+            try:
+                w_cfg_rel = str(wal_path.relative_to(project_root)).replace("\\", "/")
+            except ValueError:
+                w_cfg_rel = str(wal_path).replace("\\", "/")
+            try:
+                w_res_rel = str(wal_res.relative_to(project_root)).replace("\\", "/")
+            except ValueError:
+                w_res_rel = str(wal_res).replace("\\", "/")
+            wal_info = {
+                "present": True,
+                "configured_relative_path": w_cfg_rel,
+                "resolved_relative_path": w_res_rel,
+                "is_regular_file": True,
+                "st_dev": w_st.st_dev,
+                "st_ino": w_st.st_ino,
+                "size_bytes": w_st.st_size,
+                "mtime_ns": w_st.st_mtime_ns,
+                "st_mode": stat.S_IMODE(w_st.st_mode),
+                "sha256": _sha256_file(wal_res),
+            }
+        else:
+            wal_info = {"present": False}
+
+        # SHM
+        shm_path = raw_p.with_name(raw_p.name + "-shm")
+        if has_symlink_component(shm_path) or shm_path.is_symlink():
+            raise ConfiguredStagingError("SHM sidecar path contains symlinks")
+        if shm_path.exists():
+            shm_res = safe_resolve(shm_path)
+            s_st = shm_res.stat()
+            if not stat.S_ISREG(s_st.st_mode):
+                raise ConfiguredStagingError("SHM sidecar must be a regular file")
+            try:
+                s_cfg_rel = str(shm_path.relative_to(project_root)).replace("\\", "/")
+            except ValueError:
+                s_cfg_rel = str(shm_path).replace("\\", "/")
+            try:
+                s_res_rel = str(shm_res.relative_to(project_root)).replace("\\", "/")
+            except ValueError:
+                s_res_rel = str(shm_res).replace("\\", "/")
+            shm_info = {
+                "present": True,
+                "configured_relative_path": s_cfg_rel,
+                "resolved_relative_path": s_res_rel,
+                "is_regular_file": True,
+                "st_dev": s_st.st_dev,
+                "st_ino": s_st.st_ino,
+                "size_bytes": s_st.st_size,
+                "mtime_ns": s_st.st_mtime_ns,
+                "st_mode": stat.S_IMODE(s_st.st_mode),
+                "sha256": _sha256_file(shm_res),
+            }
+        else:
+            shm_info = {"present": False}
+
+        target_records.append(
+            TargetBaselineRecord(
+                target_key=t.target_key,
+                kind=t.kind,
+                tenant_uuid=t.tenant_id,
+                target_order=idx,
+                configured_relative_path=cfg_rel,
+                resolved_relative_path=res_rel,
+                is_regular_file=True,
+                st_dev=t_st.st_dev,
+                st_ino=t_st.st_ino,
+                size_bytes=t_st.st_size,
+                mtime_ns=t_st.st_mtime_ns,
+                st_mode=stat.S_IMODE(t_st.st_mode),
+                sha256=sha,
+                parent_relative_path=p_rel,
+                parent_st_dev=p_st.st_dev,
+                parent_st_ino=p_st.st_ino,
+                parent_is_dir=stat.S_ISDIR(p_st.st_mode),
+                parent_st_mode=stat.S_IMODE(p_st.st_mode),
+                wal=wal_info,
+                shm=shm_info,
+            )
+        )
+
+    return DestinationBaselineEvidence(
+        format_version=BASELINE_FORMAT,
+        operation_id=operation_id,
+        selected_backup_id=selected_backup_id,
+        selected_backup_manifest_sha256=selected_backup_manifest_sha256,
+        expected_application_commit=expected_application_commit,
+        runtime_mode=runtime_mode,
+        target_set_hash=target_set_hash,
+        confirmation_value=confirmation_value,
+        ordered_target_keys=ordered_keys,
+        targets=tuple(target_records),
+        active_control_user_mapping=active_mapping,
+        garminconnect_version=importlib.metadata.version("garminconnect"),
+        captured_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _destination_baseline_payload(ev: DestinationBaselineEvidence) -> dict[str, Any]:
+    return {
+        "format_version": ev.format_version,
+        "operation_id": ev.operation_id,
+        "selected_backup_id": ev.selected_backup_id,
+        "selected_backup_manifest_sha256": ev.selected_backup_manifest_sha256,
+        "expected_application_commit": ev.expected_application_commit,
+        "runtime_mode": ev.runtime_mode,
+        "target_set_hash": ev.target_set_hash,
+        "confirmation_value": ev.confirmation_value,
+        "ordered_target_keys": list(ev.ordered_target_keys),
+        "targets": [
+            {
+                "target_key": t.target_key,
+                "kind": t.kind,
+                "tenant_uuid": t.tenant_uuid,
+                "target_order": t.target_order,
+                "configured_relative_path": t.configured_relative_path,
+                "resolved_relative_path": t.resolved_relative_path,
+                "is_regular_file": t.is_regular_file,
+                "st_dev": t.st_dev,
+                "st_ino": t.st_ino,
+                "size_bytes": t.size_bytes,
+                "mtime_ns": t.mtime_ns,
+                "st_mode": t.st_mode,
+                "sha256": t.sha256,
+                "parent_relative_path": t.parent_relative_path,
+                "parent_st_dev": t.parent_st_dev,
+                "parent_st_ino": t.parent_st_ino,
+                "parent_is_dir": t.parent_is_dir,
+                "parent_st_mode": t.parent_st_mode,
+                "wal": t.wal,
+                "shm": t.shm,
+            }
+            for t in ev.targets
+        ],
+        "active_control_user_mapping": ev.active_control_user_mapping,
+        "garminconnect_version": ev.garminconnect_version,
+        "captured_at": ev.captured_at,
+    }
+
+
+def write_destination_baseline_evidence(
+    operation_id: str,
+    evidence: DestinationBaselineEvidence,
+    *,
+    restore_root: Path | str | None = None,
+) -> str:
+    root = validate_restore_root(restore_root)
+    op_dir = root / f"operation-{operation_id}"
+    if not op_dir.exists() or op_dir.is_symlink():
+        raise ConfiguredStagingPersistenceError("Operation directory missing or unsafe")
+
+    payload = _destination_baseline_payload(evidence)
+    canonical_bytes = canonical_json(payload)
+    sha256_hex = hashlib.sha256(canonical_bytes).hexdigest()
+
+    final_file = op_dir / _BASELINE_FILENAME
+    partial_file = op_dir / f".{_BASELINE_FILENAME}.partial"
+
+    if final_file.exists() or final_file.is_symlink():
+        raise ConfiguredStagingPersistenceError("Destination baseline file already exists")
+
+    if partial_file.exists() or partial_file.is_symlink():
+        raise ConfiguredStagingPersistenceError("Destination baseline partial file already exists")
+
+    try:
+        fd = os.open(str(partial_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW_FLAG, 0o600)
+        with os.fdopen(fd, "wb") as h:
+            h.write(canonical_bytes)
+            h.flush()
+            os.fsync(h.fileno())
+    except OSError as exc:
+        raise ConfiguredStagingPersistenceError("Failed to write destination baseline partial file") from exc
+
+    publish_noreplace(partial_file, final_file)
+
+    reread_bytes = final_file.read_bytes()
+    if reread_bytes != canonical_bytes or hashlib.sha256(reread_bytes).hexdigest() != sha256_hex:
+        raise ConfiguredStagingPersistenceError("Destination baseline verification failed after write")
+
+    return sha256_hex
+
+
+def _destination_baseline_from_payload(payload: dict[str, Any]) -> DestinationBaselineEvidence:
+    expected_keys = {
+        "format_version", "operation_id", "selected_backup_id", "selected_backup_manifest_sha256",
+        "expected_application_commit", "runtime_mode", "target_set_hash", "confirmation_value",
+        "ordered_target_keys", "targets", "active_control_user_mapping", "garminconnect_version", "captured_at"
+    }
+    if set(payload.keys()) != expected_keys:
+        raise ConfiguredStagingOwnershipError("Destination baseline JSON payload schema is invalid")
+
+    if payload["format_version"] != BASELINE_FORMAT:
+        raise ConfiguredStagingOwnershipError("Destination baseline format version invalid")
+
+    targets: list[TargetBaselineRecord] = []
+    for item in payload["targets"]:
+        targets.append(
+            TargetBaselineRecord(
+                target_key=item["target_key"],
+                kind=item["kind"],
+                tenant_uuid=item["tenant_uuid"],
+                target_order=item["target_order"],
+                configured_relative_path=item["configured_relative_path"],
+                resolved_relative_path=item["resolved_relative_path"],
+                is_regular_file=item["is_regular_file"],
+                st_dev=item["st_dev"],
+                st_ino=item["st_ino"],
+                size_bytes=item["size_bytes"],
+                mtime_ns=item["mtime_ns"],
+                st_mode=item["st_mode"],
+                sha256=item["sha256"],
+                parent_relative_path=item["parent_relative_path"],
+                parent_st_dev=item["parent_st_dev"],
+                parent_st_ino=item["parent_st_ino"],
+                parent_is_dir=item["parent_is_dir"],
+                parent_st_mode=item["parent_st_mode"],
+                wal=dict(item["wal"]),
+                shm=dict(item["shm"]),
+            )
+        )
+
+    return DestinationBaselineEvidence(
+        format_version=payload["format_version"],
+        operation_id=payload["operation_id"],
+        selected_backup_id=payload["selected_backup_id"],
+        selected_backup_manifest_sha256=payload["selected_backup_manifest_sha256"],
+        expected_application_commit=payload["expected_application_commit"],
+        runtime_mode=payload["runtime_mode"],
+        target_set_hash=payload["target_set_hash"],
+        confirmation_value=payload["confirmation_value"],
+        ordered_target_keys=tuple(payload["ordered_target_keys"]),
+        targets=tuple(targets),
+        active_control_user_mapping=dict(payload["active_control_user_mapping"]),
+        garminconnect_version=payload["garminconnect_version"],
+        captured_at=payload["captured_at"],
+    )
+
+
+def load_destination_baseline_evidence(
+    operation_id: str,
+    *,
+    restore_root: Path | str | None = None,
+) -> tuple[DestinationBaselineEvidence, str]:
+    root = validate_restore_root(restore_root)
+    op_dir = root / f"operation-{operation_id}"
+    final_file = op_dir / _BASELINE_FILENAME
+
+    if not final_file.exists() or final_file.is_symlink() or not stat.S_ISREG(final_file.stat().st_mode):
+        raise ConfiguredStagingPersistenceError("Destination baseline file missing or unsafe")
+
+    raw_bytes = final_file.read_bytes()
+    if len(raw_bytes) > MAX_BASELINE_BYTES:
+        raise ConfiguredStagingPersistenceError("Destination baseline file exceeds size limit")
+
+    parsed = _strict_json_loads(raw_bytes)
+    sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
+
+    evidence = _destination_baseline_from_payload(parsed)
+    if evidence.operation_id != operation_id:
+        raise ConfiguredStagingPersistenceError("Destination baseline operation ID mismatch")
+
+    return evidence, sha256_hex
+
+
+def revalidate_destination_baseline_evidence(
+    evidence: DestinationBaselineEvidence,
+    targets: tuple[DatabaseTarget, ...],
+    expected_application_commit: str,
+) -> None:
+    """Strictly revalidate current runtime environment against persisted baseline evidence."""
+    import importlib.metadata
+    from operator_storage import active_user_target_mapping
+
+    if evidence.expected_application_commit != expected_application_commit:
+        raise ConfiguredRestoreError("Application commit mismatch against persisted baseline")
+
+    curr_gc_ver = importlib.metadata.version("garminconnect")
+    if evidence.garminconnect_version != curr_gc_ver:
+        raise ConfiguredRestoreError("garminconnect package version mismatch against persisted baseline")
+
+    control_t = next((t for t in targets if t.kind == "control"), None)
+    if control_t is not None and control_t.path.exists():
+        try:
+            curr_mapping = dict(active_user_target_mapping(control_t.path))
+        except Exception:
+            curr_mapping = {}
+    else:
+        curr_mapping = {}
+
+    if evidence.active_control_user_mapping != curr_mapping:
+        raise ConfiguredRestoreError("Active control-user mapping mismatch against persisted baseline")
+
+    curr_keys = tuple(t.target_key for t in targets)
+    if evidence.ordered_target_keys != curr_keys:
+        raise ConfiguredRestoreError("Ordered target keys mismatch against persisted baseline")
+
+    if len(evidence.targets) != len(targets):
+        raise ConfiguredRestoreError("Target count mismatch against persisted baseline")
+
+    fresh_ev = capture_destination_baseline_evidence(
+        operation_id=evidence.operation_id,
+        selected_backup_id=evidence.selected_backup_id,
+        selected_backup_manifest_sha256=evidence.selected_backup_manifest_sha256,
+        expected_application_commit=expected_application_commit,
+        runtime_mode=evidence.runtime_mode,
+        target_set_hash=evidence.target_set_hash,
+        confirmation_value=evidence.confirmation_value,
+        targets=targets,
+    )
+
+    for stored_t, fresh_t in zip(evidence.targets, fresh_ev.targets, strict=True):
+        if stored_t != fresh_t:
+            raise ConfiguredRestoreError(
+                f"Destination baseline revalidation failed for target '{stored_t.target_key}': drift detected"
+            )
 
 
 def capture_destination_baselines(targets: tuple[DatabaseTarget, ...]) -> tuple[DestinationBaselineRecord, ...]:
@@ -392,8 +903,7 @@ def _write_staging_binding(
         os.close(fd)
         fd = None
 
-        os.replace(temp_path, binding_path)
-        _private(binding_path)
+        publish_noreplace(temp_path, binding_path)
 
         if binding_path.read_bytes() != expected_data:
             raise ConfiguredStagingOwnershipError("Staging binding verification failed after publish")
@@ -442,12 +952,10 @@ def validate_existing_staging_directory(
     # Strict key set and strict duplicate rejection check
     _strict_json_loads(raw_bytes)
 
-    # Allowed children check inside stage_dir
+    # Allowed children check inside stage_dir (EXACT match required, no partial files permitted)
     allowed_children = {_STAGING_BINDING_NAME} | expected_staged_names
     for child in stage_dir.iterdir():
         c_name = child.name
-        if c_name.startswith(".") and c_name.endswith(".partial"):
-            continue
         if c_name not in allowed_children:
             raise ConfiguredStagingOwnershipError(f"Stage directory contains unexpected foreign child '{c_name}'")
 
@@ -544,7 +1052,7 @@ def stage_configured_targets(
             staged_path = stage_dir / staged_filename
             partial_path = stage_dir / f".{staged_filename}.partial"
 
-            if tf.state in {TargetRestoreState.STAGED, TargetRestoreState.STAGED_VERIFIED} and staged_path.exists():
+            if staged_path.exists():
                 if staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes or _sha256_file(staged_path) != entry.sha256:
                     raise ConfiguredStagingPersistenceError("Existing staged artifact is incompatible or modified")
             else:
@@ -592,7 +1100,7 @@ def stage_configured_targets(
                     os.close(partial_fd)
                     partial_fd = None
 
-                    os.replace(partial_path, staged_path)
+                    publish_noreplace(partial_path, staged_path)
                     _private(staged_path)
 
                     if os.name != "nt":
@@ -629,9 +1137,6 @@ def stage_configured_targets(
 
             staged_info.append((index, target_key, staged_path, entry, stage_dir))
 
-    if journal.stage is RestoreStage.RESTORE_STAGED:
-        journal = update_restore_journal(operation_id, root=root, stage=RestoreStage.STAGED_VERIFIED)
-
     artifacts: list[ConfiguredStagedArtifact] = []
 
     for index, target_key, staged_path, entry, stage_dir in staged_info:
@@ -658,15 +1163,6 @@ def stage_configured_targets(
         }
         if staged_markers != expected_markers:
             raise ConfiguredStagingPersistenceError("Staged file migration markers mismatch")
-
-        tf = next((f for f in journal.targets if f.target_key == target_key), None)
-        if tf is not None and tf.state is TargetRestoreState.STAGED:
-            journal = update_restore_journal(
-                operation_id,
-                root=root,
-                target_key=target_key,
-                target_state=TargetRestoreState.STAGED_VERIFIED,
-            )
 
         artifacts.append(
             ConfiguredStagedArtifact(

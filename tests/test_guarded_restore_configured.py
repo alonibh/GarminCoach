@@ -42,6 +42,7 @@ from guarded_restore_configured_staging import (
     ConfiguredStagingPersistenceError,
     preflight_backup_disk_space,
     preflight_staging_disk_space,
+    publish_noreplace,
 )
 from guarded_restore_replacement import SyntheticReplacementError as ReplacementSyntheticError
 from guarded_restore_staging import SyntheticDestinationError as StagingSyntheticError, _validate_fixture_root
@@ -558,3 +559,126 @@ def test_synthetic_staging_and_replacement_apis_continue_to_refuse_configured_pa
 
     with pytest.raises(StagingSyntheticError):
         _validate_fixture_root(control_db.parent, backup_root)
+
+
+# -----------------------------------------------------------------------------
+# 6. Durable Evidence & Preparation Safety Verification Tests
+# -----------------------------------------------------------------------------
+
+def test_destination_baseline_persistence_and_sha256_in_journal(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    result = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+    )
+
+    op_dir = restore_root / f"operation-{result.operation_id}"
+    baseline_file = op_dir / "destination-baseline.json"
+    assert baseline_file.exists()
+
+    baseline_data = json.loads(baseline_file.read_bytes())
+    assert baseline_data["format_version"] == "garmincoach-destination-baseline-v1"
+    assert baseline_data["operation_id"] == result.operation_id
+    assert len(baseline_data["targets"]) == 2
+
+    journal = load_restore_journal(result.operation_id, root=restore_root)
+    assert journal.destination_baseline_sha256 is not None
+    assert hashlib.sha256(baseline_file.read_bytes()).hexdigest() == journal.destination_baseline_sha256
+
+
+def test_publish_noreplace_non_overwrite_protection(tmp_path):
+    partial = tmp_path / "test.partial"
+    final = tmp_path / "test.final"
+    partial.write_bytes(b"hello world")
+
+    # First publication succeeds
+    publish_noreplace(partial, final)
+    assert final.read_bytes() == b"hello world"
+    assert not partial.exists()
+
+    # Second publication to existing file fails with ConfiguredStagingOwnershipError
+    partial2 = tmp_path / "test2.partial"
+    partial2.write_bytes(b"another text")
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        publish_noreplace(partial2, final)
+
+
+def test_unexpected_child_in_staging_dir_rejected(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    op_id = "restore-20260803T120000Z-77889900"
+    stage_dir = control_db.parent / f".garmincoach-restore-stage-{op_id}"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    (stage_dir / "unrelated_file.tmp").write_bytes(b"foreign payload")
+
+    with pytest.raises(ConfiguredRestoreError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=op_id,
+        )
+
+
+def test_centralized_failure_settlement_to_failed_safe_and_lock_release(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    # Wrong confirmation value will trigger exception after journal creation
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    # Pass wrong expected_application_commit to trigger failure after verification
+    with pytest.raises(ConfiguredRestorePreconditionError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit="0000000000000000000000000000000000000000",
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+        )

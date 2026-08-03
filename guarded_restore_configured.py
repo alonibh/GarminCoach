@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -34,6 +35,7 @@ from typing import Any
 
 import config
 from guarded_restore import (
+    FinalResult,
     RestoreJournal,
     RestoreLock,
     RestoreLockError,
@@ -41,6 +43,7 @@ from guarded_restore import (
     RestorePlanError,
     RestoreStage,
     TargetRestoreState,
+    _GLOBAL_TRANSITIONS,
     canonical_json,
     confirmation_value,
     create_restore_journal,
@@ -56,15 +59,23 @@ from guarded_restore_configured_staging import (
     ConfiguredStagedArtifact,
     ConfiguredStagingError,
     ConfiguredStagingOwnershipError,
+    ConfiguredStagingPersistenceError,
     ConfiguredStagingResult,
+    ConfiguredStagingSourceError,
+    DestinationBaselineEvidence,
     DestinationBaselineRecord,
+    capture_destination_baseline_evidence,
     capture_destination_baselines,
+    load_destination_baseline_evidence,
     preflight_backup_disk_space,
     preflight_staging_disk_space,
+    publish_noreplace,
+    revalidate_destination_baseline_evidence,
     revalidate_destination_baselines,
     stage_configured_targets,
     validate_existing_staging_directory,
     verify_configured_readiness,
+    write_destination_baseline_evidence,
 )
 from operator_storage import (
     DatabaseTarget,
@@ -178,6 +189,7 @@ def verify_complete_preparation_barrier(
     confirmed_restore_value: str,
     operation_id: str | None = None,
     journal: RestoreJournal | None = None,
+    restore_root: Path | str | None = None,
 ) -> bool:
     """Centralized, complete proof barrier freshly verifying every system proof."""
     # 1. Project root & git HEAD verification
@@ -245,6 +257,13 @@ def verify_complete_preparation_barrier(
             or journal.confirmation_value != recomputed_val
         ):
             raise ConfiguredRestorePreconditionError("Journal immutable fields mismatch during barrier proof")
+
+        if journal.destination_baseline_sha256 is not None and operation_id is not None:
+            r_root = restore_root or config.OPERATOR_RESTORE_ROOT
+            ev, sha_hex = load_destination_baseline_evidence(operation_id, restore_root=r_root)
+            if sha_hex != journal.destination_baseline_sha256:
+                raise ConfiguredRestorePreconditionError("Persisted destination baseline SHA-256 mismatch during barrier proof")
+            revalidate_destination_baseline_evidence(ev, targets, expected_application_commit)
 
     return True
 
@@ -346,20 +365,6 @@ def prepare_configured_restore(
     preflight_backup_disk_space(configured_targets, backup_root)
     baselines = capture_destination_baselines(configured_targets)
 
-    # Execute Barrier 1 complete proof
-    verify_complete_preparation_barrier(
-        expected_application_commit=expected_application_commit,
-        selected_backup_id=selected_backup_id,
-        selected_snapshot=selected_snapshot,
-        safety_backup_id=None,
-        safety_snapshot=None,
-        targets=configured_targets,
-        baselines=baselines,
-        confirmed_target_set_hash=confirmed_target_set_hash,
-        confirmed_restore_value=confirmed_restore_value,
-        operation_id=op_id,
-    )
-
     proc_lock: ProcessLock | None = None
     rest_lock: RestoreLock | None = None
     long_held_backup_lock: BackupLock | None = None
@@ -377,20 +382,6 @@ def prepare_configured_restore(
             rest_lock.__enter__()
         except Exception as exc:
             raise RestoreLockError("Could not acquire dedicated restore lock") from exc
-
-        # Barrier 2: Post-process/restore lock verification
-        verify_complete_preparation_barrier(
-            expected_application_commit=expected_application_commit,
-            selected_backup_id=selected_backup_id,
-            selected_snapshot=selected_snapshot,
-            safety_backup_id=None,
-            safety_snapshot=None,
-            targets=configured_targets,
-            baselines=baselines,
-            confirmed_target_set_hash=confirmed_target_set_hash,
-            confirmed_restore_value=confirmed_restore_value,
-            operation_id=op_id,
-        )
 
         op_dir = restore_root / f"operation-{op_id}"
         journal_path = op_dir / "journal.json"
@@ -429,7 +420,43 @@ def prepare_configured_restore(
                 target_keys=target_keys,
             )
             journal = create_restore_journal(plan, root=restore_root, operation_id=op_id)
-            journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED)
+
+            # Create & persist durable baseline evidence ONCE during initial creation under locks
+            evidence = capture_destination_baseline_evidence(
+                operation_id=op_id,
+                selected_backup_id=selected_backup_id,
+                selected_backup_manifest_sha256=selected_snapshot.manifest_sha256,
+                expected_application_commit=expected_application_commit,
+                runtime_mode=runtime_mode,
+                target_set_hash=recomputed_target_hash,
+                confirmation_value=recomputed_confirmation_value,
+                targets=configured_targets,
+            )
+            baseline_sha = write_destination_baseline_evidence(op_id, evidence, restore_root=restore_root)
+            journal = update_restore_journal(op_id, root=restore_root, destination_baseline_sha256=baseline_sha)
+
+        # On EVERY invocation (initial or re-entry), load persisted baseline & revalidate against current
+        evidence, loaded_baseline_sha = load_destination_baseline_evidence(op_id, restore_root=restore_root)
+        if journal.destination_baseline_sha256 != loaded_baseline_sha:
+            raise ConfiguredRestorePreconditionError("Journal destination baseline SHA-256 mismatch")
+
+        revalidate_destination_baseline_evidence(evidence, configured_targets, expected_application_commit)
+
+        # Barrier 1: Complete proof
+        verify_complete_preparation_barrier(
+            expected_application_commit=expected_application_commit,
+            selected_backup_id=selected_backup_id,
+            selected_snapshot=selected_snapshot,
+            safety_backup_id=None,
+            safety_snapshot=None,
+            targets=configured_targets,
+            baselines=baselines,
+            confirmed_target_set_hash=confirmed_target_set_hash,
+            confirmed_restore_value=confirmed_restore_value,
+            operation_id=op_id,
+            journal=journal,
+            restore_root=restore_root,
+        )
 
         # Stage 1: PRECHECK -> VERIFIED
         if journal.stage is RestoreStage.PRECHECK:
@@ -492,9 +519,10 @@ def prepare_configured_restore(
             confirmed_restore_value=confirmed_restore_value,
             operation_id=op_id,
             journal=journal,
+            restore_root=restore_root,
         )
 
-        # Step E: Long-held BackupLock acquisition
+        # Long-held BackupLock acquisition
         try:
             long_held_backup_lock = BackupLock(backup_root)
             long_held_backup_lock.__enter__()
@@ -514,6 +542,7 @@ def prepare_configured_restore(
             confirmed_restore_value=confirmed_restore_value,
             operation_id=op_id,
             journal=journal,
+            restore_root=restore_root,
         )
 
         # Exact per-filesystem disk space preflight under long-held BackupLock
@@ -523,21 +552,10 @@ def prepare_configured_restore(
 
         # Stage 3 & 4: CURRENT_SNAPSHOT_CREATED / RESTORE_STAGED -> STAGED_VERIFIED
         if journal.stage in {RestoreStage.CURRENT_SNAPSHOT_CREATED, RestoreStage.RESTORE_STAGED}:
-            # Barrier 5: Pre-staging group verification
-            verify_complete_preparation_barrier(
-                expected_application_commit=expected_application_commit,
-                selected_backup_id=selected_backup_id,
-                selected_snapshot=selected_snapshot,
-                safety_backup_id=safety_backup_id,
-                safety_snapshot=safety_snapshot,
-                targets=configured_targets,
-                baselines=baselines,
-                confirmed_target_set_hash=confirmed_target_set_hash,
-                confirmed_restore_value=confirmed_restore_value,
-                operation_id=op_id,
-                journal=journal,
-            )
+            if journal.stage is RestoreStage.CURRENT_SNAPSHOT_CREATED:
+                journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
 
+            # Ensure staging directories and ownership bindings exist for all target parents
             stage_result = stage_configured_targets(
                 op_id,
                 selected_snapshot,
@@ -545,20 +563,63 @@ def prepare_configured_restore(
                 restore_root=restore_root,
             )
 
-            # Barrier 6: Post-staging verification
-            verify_complete_preparation_barrier(
-                expected_application_commit=expected_application_commit,
-                selected_backup_id=selected_backup_id,
-                selected_snapshot=selected_snapshot,
-                safety_backup_id=safety_backup_id,
-                safety_snapshot=safety_snapshot,
-                targets=configured_targets,
-                baselines=baselines,
-                confirmed_target_set_hash=confirmed_target_set_hash,
-                confirmed_restore_value=confirmed_restore_value,
-                operation_id=op_id,
-                journal=journal,
-            )
+            journal = load_restore_journal(op_id, root=restore_root)
+
+            backup_entries_by_key = {e.target_key: e for e in selected_snapshot.entries}
+            targets_by_key = {t.target_key: t for t in configured_targets}
+
+            # 1. Update target PENDING -> STAGED under global RESTORE_STAGED
+            for index, target_key in enumerate(journal.target_keys):
+                t_obj = targets_by_key[target_key]
+                entry = backup_entries_by_key[target_key]
+                tf = next((f for f in journal.targets if f.target_key == target_key), None)
+                if tf is None:
+                    raise ConfiguredStagingError("Target key not found in journal target facts")
+
+                safe_key = target_key.replace(":", "-")
+                staged_name = f"{index:03d}-{safe_key}.sqlite.staged"
+                stage_dir = t_obj.path.parent.resolve() / f".garmincoach-restore-stage-{op_id}"
+                staged_path = stage_dir / staged_name
+
+                if tf.state is TargetRestoreState.PENDING:
+                    if not staged_path.exists():
+                        raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' missing for PENDING target")
+                    journal = update_restore_journal(op_id, root=restore_root, target_key=target_key, target_state=TargetRestoreState.STAGED)
+
+            # Reread journal & confirm all targets are STAGED
+            journal = load_restore_journal(op_id, root=restore_root)
+            if any(t_fact.state not in {TargetRestoreState.STAGED, TargetRestoreState.STAGED_VERIFIED} for t_fact in journal.targets):
+                raise ConfiguredJournalUncertaintyError("Not all targets are STAGED before global STAGED_VERIFIED transition")
+
+            # 2. Advance global stage RESTORE_STAGED -> STAGED_VERIFIED
+            journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED)
+
+            # 3. Run deep verification and update target STAGED -> STAGED_VERIFIED under global STAGED_VERIFIED
+            for index, target_key in enumerate(journal.target_keys):
+                t_obj = targets_by_key[target_key]
+                entry = backup_entries_by_key[target_key]
+                tf = next((f for f in journal.targets if f.target_key == target_key), None)
+                safe_key = target_key.replace(":", "-")
+                staged_name = f"{index:03d}-{safe_key}.sqlite.staged"
+                stage_dir = t_obj.path.parent.resolve() / f".garmincoach-restore-stage-{op_id}"
+                staged_path = stage_dir / staged_name
+
+                if tf.state is TargetRestoreState.STAGED:
+                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes:
+                        raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' incompatible or modified")
+                    _deep_verify_staged_artifact(staged_path, entry)
+                    journal = update_restore_journal(op_id, root=restore_root, target_key=target_key, target_state=TargetRestoreState.STAGED_VERIFIED)
+                elif tf.state is TargetRestoreState.STAGED_VERIFIED:
+                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes:
+                        raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' incompatible or modified")
+                    _deep_verify_staged_artifact(staged_path, entry)
+
+            # Confirm ALL targets are STAGED_VERIFIED
+            journal = load_restore_journal(op_id, root=restore_root)
+            if any(t_fact.state is not TargetRestoreState.STAGED_VERIFIED for t_fact in journal.targets):
+                raise ConfiguredJournalUncertaintyError("Not all targets are STAGED_VERIFIED")
+            if any(t_fact.wal_removed or t_fact.shm_removed or t_fact.replacement_intent or t_fact.replacement_completed or t_fact.rollback_intent or t_fact.rollback_completed for t_fact in journal.targets):
+                raise ConfiguredJournalUncertaintyError("Mutation flags present before global STAGED_VERIFIED transition")
         else:
             # Reconstruct staging result for STAGED_VERIFIED / REPLACEMENT_READY re-entry
             by_parent: dict[Path, list[tuple[int, str, DatabaseTarget, Any]]] = {}
@@ -607,6 +668,8 @@ def prepare_configured_restore(
                     if not staged_path.exists() or staged_path.is_symlink():
                         raise ConfiguredStagingOwnershipError("Staged artifact missing or unsafe")
 
+                    _deep_verify_staged_artifact(staged_path, entry)
+
                     reconstructed_artifacts.append(
                         ConfiguredStagedArtifact(
                             operation_id=op_id,
@@ -627,7 +690,6 @@ def prepare_configured_restore(
             )
 
         # Stage 5: STAGED_VERIFIED -> REPLACEMENT_READY
-        # Barrier 7: Pre-STAGED_VERIFIED finalization
         verify_complete_preparation_barrier(
             expected_application_commit=expected_application_commit,
             selected_backup_id=selected_backup_id,
@@ -640,6 +702,7 @@ def prepare_configured_restore(
             confirmed_restore_value=confirmed_restore_value,
             operation_id=op_id,
             journal=journal,
+            restore_root=restore_root,
         )
 
         verify_configured_readiness(
@@ -651,25 +714,10 @@ def prepare_configured_restore(
             restore_root=restore_root,
         )
 
-        # Barrier 8: Immediately before REPLACEMENT_READY
-        verify_complete_preparation_barrier(
-            expected_application_commit=expected_application_commit,
-            selected_backup_id=selected_backup_id,
-            selected_snapshot=selected_snapshot,
-            safety_backup_id=safety_backup_id,
-            safety_snapshot=safety_snapshot,
-            targets=configured_targets,
-            baselines=baselines,
-            confirmed_target_set_hash=confirmed_target_set_hash,
-            confirmed_restore_value=confirmed_restore_value,
-            operation_id=op_id,
-            journal=journal,
-        )
-
         if journal.stage is not RestoreStage.REPLACEMENT_READY:
             journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY)
 
-        # Barrier 9: REPLACEMENT_READY re-entry verification
+        # Final REPLACEMENT_READY Barrier Proof
         verify_complete_preparation_barrier(
             expected_application_commit=expected_application_commit,
             selected_backup_id=selected_backup_id,
@@ -682,10 +730,10 @@ def prepare_configured_restore(
             confirmed_restore_value=confirmed_restore_value,
             operation_id=op_id,
             journal=journal,
+            restore_root=restore_root,
         )
 
-        # Release all 3 locks BEFORE returning result in reverse acquisition order
-        # 1. BackupLock -> 2. RestoreLock -> 3. ProcessLock
+        # Reverse lock release BEFORE returning result
         lock_release_errors = []
 
         if long_held_backup_lock is not None:
@@ -729,25 +777,96 @@ def prepare_configured_restore(
         )
 
     except Exception as exc:
-        # Lock cleanup in reverse order
+        settlement_err = None
+        lock_release_err = None
+
+        if op_id is not None and (restore_root / f"operation-{op_id}" / "journal.json").exists():
+            try:
+                j = load_restore_journal(op_id, root=restore_root)
+                if j.stage not in {
+                    RestoreStage.COMPLETED,
+                    RestoreStage.FAILED_SAFE,
+                    RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED,
+                } and RestoreStage.FAILED_SAFE in _GLOBAL_TRANSITIONS.get(j.stage, set()):
+                    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.FAILED_SAFE)
+                    reread_j = load_restore_journal(op_id, root=restore_root)
+                    if reread_j.stage is not RestoreStage.FAILED_SAFE or reread_j.final_result is not FinalResult.FAILED_SAFE:
+                        settlement_err = ConfiguredJournalUncertaintyError("Failed to verify FAILED_SAFE journal settlement")
+            except Exception as j_exc:
+                if isinstance(j_exc, ConfiguredJournalUncertaintyError):
+                    settlement_err = j_exc
+                else:
+                    settlement_err = ConfiguredJournalUncertaintyError("Journal settlement failed")
+                    settlement_err.__cause__ = j_exc
+
+        lock_errors = []
         if long_held_backup_lock is not None:
             try:
                 long_held_backup_lock.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as b_exc:
+                lock_errors.append(b_exc)
+            long_held_backup_lock = None
+
         if rest_lock is not None:
             try:
                 rest_lock.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as r_exc:
+                lock_errors.append(r_exc)
+            rest_lock = None
+
         if proc_lock is not None:
             try:
                 release_process_lock(proc_lock)
-            except Exception:
-                pass
+            except Exception as p_exc:
+                lock_errors.append(p_exc)
+            proc_lock = None
+
+        if lock_errors:
+            lock_release_err = ConfiguredRestoreLockReleaseError("Failed to release all locks cleanly")
+            lock_release_err.__cause__ = lock_errors[0]
+
+        if settlement_err is not None:
+            settlement_err.__cause__ = exc
+            raise settlement_err
+
+        if lock_release_err is not None:
+            lock_release_err.__cause__ = exc
+            raise lock_release_err
 
         if isinstance(exc, (ConfiguredRestoreError, ConfiguredStagingError, RestoreLockError)):
             raise
 
-        _settle_journal_failed_safe(op_id, restore_root)
         raise ConfiguredRestoreError("Guarded restore preparation failed") from exc
+
+
+def _deep_verify_staged_artifact(staged_path: Path, entry: Any) -> None:
+    """Perform deep SQLite integrity, foreign key, schema, and migration checks."""
+    check = inspect_sqlite(staged_path)
+    if not check.readable or not check.quick_check_ok:
+        raise ConfiguredStagingPersistenceError("Staged SQLite database failed integrity check")
+
+    try:
+        conn = sqlite3.connect(f"file:{staged_path}?mode=ro", uri=True)
+        try:
+            fk_errs = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if fk_errs:
+                raise ConfiguredStagingPersistenceError("Staged SQLite database failed foreign_key_check")
+        finally:
+            conn.close()
+    except Exception as exc:
+        if isinstance(exc, ConfiguredStagingPersistenceError):
+            raise
+        raise ConfiguredStagingPersistenceError("SQLite foreign_key_check execution failed") from exc
+
+    s_fp = schema_fingerprint(staged_path)
+    if s_fp != entry.schema_fingerprint:
+        raise ConfiguredStagingPersistenceError("Staged artifact schema fingerprint mismatch")
+
+    m_markers = migration_markers(staged_path, entry.kind)
+    expected_markers = {
+        "ledger": entry.migration_ledger,
+        "keys": list(entry.migration_keys),
+        "state": entry.migration_state,
+    }
+    if m_markers != expected_markers:
+        raise ConfiguredStagingPersistenceError("Staged artifact migration markers mismatch")
