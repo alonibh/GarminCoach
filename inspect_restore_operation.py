@@ -2,7 +2,7 @@
 
 Inspects an existing guarded restore journal from the configured restore-operation
 root, reporting its bounded operational facts, current stage, per-target durable
-state, and safety assessment without mutating or continuing any operation.
+state, mutation evidence, and safety assessment without mutating or continuing any operation.
 """
 from __future__ import annotations
 
@@ -24,8 +24,10 @@ from guarded_restore import (
     EXIT_ROLLBACK_REQUIRED,
     EXIT_SUCCESS,
     EXIT_UNEXPECTED_FAILURE,
+    RestoreJournal,
     RestoreJournalError,
     RestoreStage,
+    TargetRestoreState,
     _OPERATION_ID,
     load_restore_journal,
     validate_restore_root,
@@ -33,165 +35,205 @@ from guarded_restore import (
 
 
 @dataclass(frozen=True)
-class _StageAssessment:
+class _StageMetadata:
     assessment: str
-    description: str
     exit_code: int
     terminal: bool
-    replacement_started: bool
     postcheck_required: bool
     automatic_reentry_required: bool
     manual_recovery_required: bool
+    static_description: str | None = None
 
 
-_STAGE_MAPPING: dict[RestoreStage, _StageAssessment] = {
-    RestoreStage.COMPLETED: _StageAssessment(
+_STAGE_METADATA: dict[RestoreStage, _StageMetadata] = {
+    RestoreStage.COMPLETED: _StageMetadata(
         assessment="completed",
-        description="Restore operation completed successfully",
         exit_code=EXIT_SUCCESS,
         terminal=True,
-        replacement_started=True,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Restore operation completed successfully",
     ),
-    RestoreStage.REPLACEMENT_READY: _StageAssessment(
+    RestoreStage.REPLACEMENT_READY: _StageMetadata(
         assessment="ready_for_replacement",
-        description="Staging and pre-replacement verification completed; ready for future apply",
         exit_code=EXIT_SUCCESS,
         terminal=False,
-        replacement_started=False,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Staging and pre-replacement verification completed; ready for future apply",
     ),
-    RestoreStage.PRECHECK: _StageAssessment(
+    RestoreStage.PRECHECK: _StageMetadata(
         assessment="preparation_incomplete",
-        description="Operation is in stage PRECHECK; apply orchestration has not reached REPLACEMENT_READY",
         exit_code=EXIT_PREPARATION_INCOMPLETE,
         terminal=False,
-        replacement_started=False,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Operation is in stage PRECHECK; apply orchestration has not reached REPLACEMENT_READY",
     ),
-    RestoreStage.VERIFIED: _StageAssessment(
+    RestoreStage.VERIFIED: _StageMetadata(
         assessment="preparation_incomplete",
-        description="Operation is in stage VERIFIED; apply orchestration has not reached REPLACEMENT_READY",
         exit_code=EXIT_PREPARATION_INCOMPLETE,
         terminal=False,
-        replacement_started=False,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Operation is in stage VERIFIED; apply orchestration has not reached REPLACEMENT_READY",
     ),
-    RestoreStage.CURRENT_SNAPSHOT_CREATED: _StageAssessment(
+    RestoreStage.CURRENT_SNAPSHOT_CREATED: _StageMetadata(
         assessment="preparation_incomplete",
-        description="Operation is in stage CURRENT_SNAPSHOT_CREATED; apply orchestration has not reached REPLACEMENT_READY",
         exit_code=EXIT_PREPARATION_INCOMPLETE,
         terminal=False,
-        replacement_started=False,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Operation is in stage CURRENT_SNAPSHOT_CREATED; apply orchestration has not reached REPLACEMENT_READY",
     ),
-    RestoreStage.RESTORE_STAGED: _StageAssessment(
+    RestoreStage.RESTORE_STAGED: _StageMetadata(
         assessment="preparation_incomplete",
-        description="Operation is in stage RESTORE_STAGED; apply orchestration has not reached REPLACEMENT_READY",
         exit_code=EXIT_PREPARATION_INCOMPLETE,
         terminal=False,
-        replacement_started=False,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Operation is in stage RESTORE_STAGED; apply orchestration has not reached REPLACEMENT_READY",
     ),
-    RestoreStage.STAGED_VERIFIED: _StageAssessment(
+    RestoreStage.STAGED_VERIFIED: _StageMetadata(
         assessment="preparation_incomplete",
-        description="Operation is in stage STAGED_VERIFIED; apply orchestration has not reached REPLACEMENT_READY",
         exit_code=EXIT_PREPARATION_INCOMPLETE,
         terminal=False,
-        replacement_started=False,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description="Operation is in stage STAGED_VERIFIED; apply orchestration has not reached REPLACEMENT_READY",
     ),
-    RestoreStage.REPLACING: _StageAssessment(
+    RestoreStage.REPLACING: _StageMetadata(
         assessment="operation_in_progress",
-        description="Target replacement is active or interrupted and requires guarded re-entry",
         exit_code=EXIT_OPERATION_IN_PROGRESS,
         terminal=False,
-        replacement_started=True,
         postcheck_required=True,
         automatic_reentry_required=True,
         manual_recovery_required=False,
+        static_description="Target replacement is active or interrupted and requires guarded re-entry",
     ),
-    RestoreStage.REPLACED: _StageAssessment(
+    RestoreStage.REPLACED: _StageMetadata(
         assessment="operation_in_progress",
-        description="All target replacements are durably recorded but postcheck remains required",
         exit_code=EXIT_OPERATION_IN_PROGRESS,
         terminal=False,
-        replacement_started=True,
         postcheck_required=True,
         automatic_reentry_required=True,
         manual_recovery_required=False,
+        static_description="All target replacements are durably recorded but postcheck remains required",
     ),
-    RestoreStage.POSTCHECK_PASSED: _StageAssessment(
+    RestoreStage.POSTCHECK_PASSED: _StageMetadata(
         assessment="operation_in_progress",
-        description="Postcheck passed but COMPLETED still must be durably persisted and reread",
         exit_code=EXIT_OPERATION_IN_PROGRESS,
         terminal=False,
-        replacement_started=True,
         postcheck_required=False,
         automatic_reentry_required=True,
         manual_recovery_required=False,
+        static_description="Postcheck passed but COMPLETED still must be durably persisted and reread",
     ),
-    RestoreStage.ROLLBACK_REQUIRED: _StageAssessment(
+    RestoreStage.ROLLBACK_REQUIRED: _StageMetadata(
         assessment="rollback_required",
-        description="Operation failed mid-replacement; rollback from safety backup is required",
         exit_code=EXIT_ROLLBACK_REQUIRED,
         terminal=False,
-        replacement_started=True,
         postcheck_required=False,
         automatic_reentry_required=True,
         manual_recovery_required=False,
+        static_description="Operation failed mid-replacement; rollback from safety backup is required",
     ),
-    RestoreStage.ROLLED_BACK: _StageAssessment(
+    RestoreStage.ROLLED_BACK: _StageMetadata(
+        assessment="rollback_completed_pending_finalization",
+        exit_code=EXIT_OPERATION_IN_PROGRESS,
+        terminal=False,
+        postcheck_required=False,
+        automatic_reentry_required=True,
+        manual_recovery_required=False,
+        static_description="Rollback is durably complete, but FAILED_SAFE has not yet been persisted and reread. Guarded re-entry is required only to finalize the journal.",
+    ),
+    RestoreStage.FAILED_SAFE: _StageMetadata(
         assessment="failed_safely",
-        description="Rollback from safety backup completed; operation terminated safely",
         exit_code=EXIT_FAILED_SAFE,
         terminal=True,
-        replacement_started=True,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=False,
+        static_description=None,  # Derived dynamically
     ),
-    RestoreStage.FAILED_SAFE: _StageAssessment(
-        assessment="failed_safely",
-        description="Operation terminated safely before database replacement",
-        exit_code=EXIT_FAILED_SAFE,
-        terminal=True,
-        replacement_started=False,
-        postcheck_required=False,
-        automatic_reentry_required=False,
-        manual_recovery_required=False,
-    ),
-    RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED: _StageAssessment(
+    RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED: _StageMetadata(
         assessment="manual_recovery_required",
-        description="CRITICAL: Operation failed with mixed target states. Manual recovery is required. Automatic continuation MUST NOT be attempted",
         exit_code=EXIT_MANUAL_RECOVERY_REQUIRED,
         terminal=True,
-        replacement_started=True,
         postcheck_required=False,
         automatic_reentry_required=False,
         manual_recovery_required=True,
+        static_description="CRITICAL: Operation failed with mixed target states. Manual recovery is required. Automatic continuation MUST NOT be attempted",
     ),
 }
 
 
-def _classify_stage(stage: RestoreStage) -> _StageAssessment:
-    if not isinstance(stage, RestoreStage) or stage not in _STAGE_MAPPING:
+@dataclass(frozen=True)
+class _InspectionAnalysis:
+    metadata: _StageMetadata
+    description: str
+    replacement_intent_recorded: bool
+    destination_replacement_completed: bool
+    rollback_intent_recorded: bool
+    destination_rollback_completed: bool
+    all_completed_replacements_rolled_back: bool
+
+
+def _derive_evidence_and_description(journal: RestoreJournal) -> _InspectionAnalysis:
+    stage = journal.stage
+    if not isinstance(stage, RestoreStage) or stage not in _STAGE_METADATA:
         raise RestoreJournalError("Unrecognized or unsupported global restore stage")
-    return _STAGE_MAPPING[stage]
+
+    meta = _STAGE_METADATA[stage]
+
+    replacement_intent_recorded = any(t.replacement_intent for t in journal.targets)
+    destination_replacement_completed = any(
+        t.replacement_completed or t.state in (TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK)
+        for t in journal.targets
+    )
+    rollback_intent_recorded = any(t.rollback_intent for t in journal.targets)
+    destination_rollback_completed = any(
+        t.rollback_completed or t.state == TargetRestoreState.ROLLED_BACK
+        for t in journal.targets
+    )
+
+    replaced_targets = [
+        t for t in journal.targets
+        if t.replacement_completed or t.state in (TargetRestoreState.REPLACED, TargetRestoreState.ROLLED_BACK)
+    ]
+    all_completed_replacements_rolled_back = bool(replaced_targets) and all(
+        t.rollback_completed and t.state == TargetRestoreState.ROLLED_BACK
+        for t in replaced_targets
+    )
+
+    if stage is RestoreStage.FAILED_SAFE:
+        if not replacement_intent_recorded:
+            description = "Operation failed safely before replacement began."
+        elif not destination_replacement_completed:
+            description = "Operation failed safely with no durably completed destination replacement."
+        elif all_completed_replacements_rolled_back:
+            description = "Operation failed safely after verified rollback of all replaced targets."
+        else:
+            description = "Operation failed safely."
+    else:
+        description = meta.static_description or ""
+
+    return _InspectionAnalysis(
+        metadata=meta,
+        description=description,
+        replacement_intent_recorded=replacement_intent_recorded,
+        destination_replacement_completed=destination_replacement_completed,
+        rollback_intent_recorded=rollback_intent_recorded,
+        destination_rollback_completed=destination_rollback_completed,
+        all_completed_replacements_rolled_back=all_completed_replacements_rolled_back,
+    )
 
 
 def _resolve_operation_id(raw_id: str) -> str:
@@ -203,15 +245,20 @@ def _resolve_operation_id(raw_id: str) -> str:
     return operation_id
 
 
-def _render_human_inspection(journal_dict: dict[str, object], assessment_info: _StageAssessment, *, show_paths: bool = False, operation_dir: Path | None = None) -> str:
+def _render_human_inspection(journal_dict: dict[str, object], analysis: _InspectionAnalysis, *, show_paths: bool = False, operation_dir: Path | None = None) -> str:
+    meta = analysis.metadata
     lines = [
         "GarminCoach Restore Operation Inspection",
         "========================================",
         f"Operation ID:                    {journal_dict['operation_id']}",
-        f"Status Assessment:               {journal_dict['assessment']} ({assessment_info.description})",
+        f"Status Assessment:               {journal_dict['assessment']} ({analysis.description})",
         f"Global Stage:                    {journal_dict['stage']}",
         f"Terminal Stage:                  {journal_dict['terminal']}",
-        f"Replacement Started:             {journal_dict['replacement_started']}",
+        f"Replacement Intent Recorded:     {journal_dict['replacement_intent_recorded']}",
+        f"Destination Replace Completed:   {journal_dict['destination_replacement_completed']}",
+        f"Rollback Intent Recorded:        {journal_dict['rollback_intent_recorded']}",
+        f"Destination Rollback Completed:  {journal_dict['destination_rollback_completed']}",
+        f"All Replaced Rolled Back:        {journal_dict['all_completed_replacements_rolled_back']}",
         f"Postcheck Required:              {journal_dict['postcheck_required']}",
         f"Automatic Re-entry Required:    {journal_dict['automatic_reentry_required']}",
         f"Manual Recovery Required:        {journal_dict['manual_recovery_required']}",
@@ -258,18 +305,25 @@ def inspect_operation(
     except (RestoreJournalError, OSError, ValueError) as exc:
         raise RestoreJournalError(f"Restore operation '{clean_op_id}' journal is invalid or unavailable") from exc
 
-    assessment_info = _classify_stage(journal.stage)
+    analysis = _derive_evidence_and_description(journal)
+    meta = analysis.metadata
 
     journal_dict = {
         "format_version": journal.format_version,
         "operation_id": journal.operation_id,
-        "assessment": assessment_info.assessment,
+        "assessment": meta.assessment,
         "stage": journal.stage.value,
-        "terminal": assessment_info.terminal,
-        "replacement_started": assessment_info.replacement_started,
-        "postcheck_required": assessment_info.postcheck_required,
-        "automatic_reentry_required": assessment_info.automatic_reentry_required,
-        "manual_recovery_required": assessment_info.manual_recovery_required,
+        "terminal": meta.terminal,
+        "replacement_intent_recorded": analysis.replacement_intent_recorded,
+        "replacement_attempted": analysis.replacement_intent_recorded,
+        "replacement_started": analysis.replacement_intent_recorded,
+        "destination_replacement_completed": analysis.destination_replacement_completed,
+        "rollback_intent_recorded": analysis.rollback_intent_recorded,
+        "destination_rollback_completed": analysis.destination_rollback_completed,
+        "all_completed_replacements_rolled_back": analysis.all_completed_replacements_rolled_back,
+        "postcheck_required": meta.postcheck_required,
+        "automatic_reentry_required": meta.automatic_reentry_required,
+        "manual_recovery_required": meta.manual_recovery_required,
         "final_result": journal.final_result.value if journal.final_result else None,
         "selected_backup_id": journal.selected_backup_id,
         "selected_backup_manifest_sha256": journal.selected_backup_manifest_sha256,
@@ -301,11 +355,11 @@ def inspect_operation(
     op_dir = root / f"operation-{clean_op_id}"
 
     if human:
-        output = _render_human_inspection(journal_dict, assessment_info, show_paths=show_local_paths, operation_dir=op_dir)
+        output = _render_human_inspection(journal_dict, analysis, show_paths=show_local_paths, operation_dir=op_dir)
     else:
         output = json.dumps(journal_dict, indent=2, sort_keys=True)
 
-    return output, assessment_info.exit_code
+    return output, meta.exit_code
 
 
 def main(argv: list[str] | None = None) -> int:

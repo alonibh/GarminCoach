@@ -89,32 +89,37 @@ The inspector reads the durable journal from `operator_restore_operations/operat
 | `0` | `EXIT_SUCCESS` | Command completed successfully; preconditions met; OR operation inspected is `COMPLETED` / `ready_for_replacement`. |
 | `1` | `EXIT_PRECONDITION_FAILED` | Restore planning precondition or backup verification failed (wrong root, malformed ID, unverified backup, configuration drift). |
 | `2` | `EXIT_INVALID_OPERATION` | Invalid or unavailable restore operation journal (malformed ID, missing journal, corrupted payload, path traversal). |
-| `3` | `EXIT_FAILED_SAFE` | Inspected operation is in a safe terminal state (`FAILED_SAFE` or `ROLLED_BACK`). |
+| `3` | `EXIT_FAILED_SAFE` | Inspected operation is in a safe terminal state (`FAILED_SAFE`). |
 | `4` | `EXIT_ROLLBACK_REQUIRED` | Inspected operation failed mid-replacement; automatic rollback from safety backup is required before any further action. |
 | `5` | `EXIT_MANUAL_RECOVERY_REQUIRED` | Inspected operation failed with mixed target states (`FAILED_MANUAL_RECOVERY_REQUIRED`). **Manual recovery required.** |
 | `6` | `EXIT_UNEXPECTED_FAILURE` | Unexpected bounded internal failure. |
 | `7` | `EXIT_PREPARATION_INCOMPLETE` | Operation is in a pre-staging or staging preparation stage (`PRECHECK` .. `STAGED_VERIFIED`); apply orchestration has not reached `REPLACEMENT_READY`. |
-| `8` | `EXIT_OPERATION_IN_PROGRESS` | Operation is active or interrupted during replacement (`REPLACING`, `REPLACED`, `POSTCHECK_PASSED`); requires guarded re-entry. |
+| `8` | `EXIT_OPERATION_IN_PROGRESS` | Operation is active, interrupted, or pending finalization (`REPLACING`, `REPLACED`, `POSTCHECK_PASSED`, `ROLLED_BACK`); requires guarded re-entry. |
 | `64` | `EXIT_INVALID_ARGUMENTS` | Invalid command-line arguments or usage. |
 
 ### Global Operation Stages & Assessment Mapping
 
-| Global Stage | Assessment | Exit Code | Description & Safety Semantics |
-| --- | --- | --- | --- |
-| `COMPLETED` | `completed` | `0` | Restore operation completed successfully. |
-| `REPLACEMENT_READY` | `ready_for_replacement` | `0` | Staging and pre-replacement verification completed; ready for apply. |
-| `PRECHECK` | `preparation_incomplete` | `7` | Precheck phase in progress; apply orchestration has not reached `REPLACEMENT_READY`. |
-| `VERIFIED` | `preparation_incomplete` | `7` | Source backup verified; apply orchestration has not reached `REPLACEMENT_READY`. |
-| `CURRENT_SNAPSHOT_CREATED` | `preparation_incomplete` | `7` | Safety backup created; apply orchestration has not reached `REPLACEMENT_READY`. |
-| `RESTORE_STAGED` | `preparation_incomplete` | `7` | Staging copy created; apply orchestration has not reached `REPLACEMENT_READY`. |
-| `STAGED_VERIFIED` | `preparation_incomplete` | `7` | Staged copies verified; apply orchestration has not reached `REPLACEMENT_READY`. |
-| `REPLACING` | `operation_in_progress` | `8` | Target replacement is active or interrupted and requires guarded re-entry. **Never treat as safe failure.** |
-| `REPLACED` | `operation_in_progress` | `8` | All target replacements durably recorded but postcheck remains required. **Never treat as safe failure or completed.** |
-| `POSTCHECK_PASSED` | `operation_in_progress` | `8` | Postcheck passed but `COMPLETED` still must be durably persisted and reread. **Never treat as completed.** |
-| `ROLLBACK_REQUIRED` | `rollback_required` | `4` | Failure during replacement or postcheck; automatic rollback from safety backup required. |
-| `ROLLED_BACK` | `failed_safely` | `3` | Rollback from safety backup completed; operation terminated safely. |
-| `FAILED_SAFE` | `failed_safely` | `3` | Operation terminated safely before database replacement. |
-| `FAILED_MANUAL_RECOVERY_REQUIRED` | `manual_recovery_required` | `5` | Interrupted/failed rollback with mixed target states. **Manual recovery required; automatic continuation MUST NOT be attempted.** |
+| Global Stage | Assessment | Exit Code | Terminal | Description & Safety Semantics |
+| --- | --- | --- | --- | --- |
+| `COMPLETED` | `completed` | `0` | `True` | Restore operation completed successfully. |
+| `REPLACEMENT_READY` | `ready_for_replacement` | `0` | `False` | Staging and pre-replacement verification completed; ready for apply. |
+| `PRECHECK` | `preparation_incomplete` | `7` | `False` | Precheck phase in progress; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `VERIFIED` | `preparation_incomplete` | `7` | `False` | Source backup verified; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `CURRENT_SNAPSHOT_CREATED` | `preparation_incomplete` | `7` | `False` | Safety backup created; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `RESTORE_STAGED` | `preparation_incomplete` | `7` | `False` | Staging copy created; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `STAGED_VERIFIED` | `preparation_incomplete` | `7` | `False` | Staged copies verified; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `REPLACING` | `operation_in_progress` | `8` | `False` | Target replacement is active or interrupted and requires guarded re-entry. Never treat as safe failure. |
+| `REPLACED` | `operation_in_progress` | `8` | `False` | All target replacements durably recorded but postcheck remains required. Never treat as completed or safe failure. |
+| `POSTCHECK_PASSED` | `operation_in_progress` | `8` | `False` | Postcheck passed but `COMPLETED` still must be durably persisted and reread. Never treat as completed. |
+| `ROLLBACK_REQUIRED` | `rollback_required` | `4` | `False` | Failure during replacement or postcheck; automatic rollback from safety backup required. |
+| `ROLLED_BACK` | `rollback_completed_pending_finalization` | `8` | `False` | Rollback is durably complete, but `FAILED_SAFE` has not yet been persisted and reread. Guarded re-entry is required only to finalize the journal. |
+| `FAILED_SAFE` | `failed_safely` | `3` | `True` | Operation failed safely (either before replacement began, without destination replacement, or after verified rollback of all replaced targets). |
+| `FAILED_MANUAL_RECOVERY_REQUIRED` | `manual_recovery_required` | `5` | `True` | Interrupted/failed rollback with mixed target states. **Manual recovery required; automatic continuation MUST NOT be attempted.** |
+
+> [!IMPORTANT]
+> **Mutation Evidence vs Global Stage**:
+> Replacement intent (`replacement_intent_recorded`) records that replacement preparation began, but does NOT prove that `os.replace` changed a destination file.
+> Actual destination changes are determined from per-target durable facts (`destination_replacement_completed`, `destination_rollback_completed`, `all_completed_replacements_rolled_back`).
 
 ---
 

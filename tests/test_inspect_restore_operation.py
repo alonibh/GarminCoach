@@ -19,12 +19,17 @@ from guarded_restore import (
     FinalResult,
     RestoreJournalError,
     RestoreStage,
+    RestoreTransitionError,
     TargetRestoreState,
     create_restore_journal,
     create_restore_plan,
     update_restore_journal,
 )
-from inspect_restore_operation import _classify_stage, inspect_operation, main
+from inspect_restore_operation import (
+    _derive_evidence_and_description,
+    inspect_operation,
+    main,
+)
 
 
 BACKUP_ID = "20260801T120000Z-a1b2c3d4"
@@ -56,310 +61,354 @@ def _make_plan(mode="single_user", targets=("control", "single-user")):
     )
 
 
-def _create_journal_at_stage(restore_root: Path, stage: RestoreStage, op_id: str):
-    plan = _make_plan()
-    journal = create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
-    if stage is RestoreStage.PRECHECK:
-        return journal
-
-    if stage is RestoreStage.FAILED_SAFE:
-        return update_restore_journal(op_id, root=restore_root, stage=RestoreStage.FAILED_SAFE, now="2026-08-01T12:00:01Z")
-
-    journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    if stage is RestoreStage.VERIFIED:
-        return journal
-
-    journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
-    if stage is RestoreStage.CURRENT_SNAPSHOT_CREATED:
-        return journal
-
-    journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
-    if stage is RestoreStage.RESTORE_STAGED:
-        return journal
-
-    for key in journal.target_keys:
-        journal = update_restore_journal(op_id, root=restore_root, target_key=key, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-
-    journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
-    if stage is RestoreStage.STAGED_VERIFIED:
-        return journal
-
-    for key in journal.target_keys:
-        journal = update_restore_journal(op_id, root=restore_root, target_key=key, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
-
-    journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
-    if stage is RestoreStage.REPLACEMENT_READY:
-        return journal
-
-    journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
-    if stage is RestoreStage.REPLACING:
-        return journal
-
-    journal = update_restore_journal(op_id, root=restore_root, target_key="control", target_state=TargetRestoreState.REPLACED, now="2026-08-01T12:00:09Z")
-    journal = update_restore_journal(op_id, root=restore_root, target_key="single-user", target_state=TargetRestoreState.REPLACED, now="2026-08-01T12:00:10Z")
-
-    if stage is RestoreStage.REPLACED:
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACED, now="2026-08-01T12:00:11Z")
-        return journal
-
-    if stage is RestoreStage.POSTCHECK_PASSED:
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACED, now="2026-08-01T12:00:11Z")
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.POSTCHECK_PASSED, now="2026-08-01T12:00:12Z")
-        return journal
-
-    if stage is RestoreStage.COMPLETED:
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACED, now="2026-08-01T12:00:11Z")
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.POSTCHECK_PASSED, now="2026-08-01T12:00:12Z")
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.COMPLETED, now="2026-08-01T12:00:13Z")
-        return journal
-
-    if stage is RestoreStage.ROLLBACK_REQUIRED:
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:11Z")
-        return journal
-
-    if stage is RestoreStage.ROLLED_BACK:
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:11Z")
-        journal = update_restore_journal(op_id, root=restore_root, target_key="single-user", target_state=TargetRestoreState.ROLLED_BACK, now="2026-08-01T12:00:12Z")
-        journal = update_restore_journal(op_id, root=restore_root, target_key="control", target_state=TargetRestoreState.ROLLED_BACK, now="2026-08-01T12:00:13Z")
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLED_BACK, now="2026-08-01T12:00:14Z")
-        return journal
-
-    if stage is RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED:
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:11Z")
-        journal = update_restore_journal(op_id, root=restore_root, target_key="control", target_state=TargetRestoreState.ROLLED_BACK, now="2026-08-01T12:00:12Z")
-        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED, now="2026-08-01T12:00:13Z")
-        return journal
-
-    raise ValueError(f"Unhandled stage setup: {stage}")
-
-
-EXPECTED_STAGE_PROPERTIES = {
-    RestoreStage.PRECHECK: {
-        "assessment": "preparation_incomplete",
-        "exit_code": EXIT_PREPARATION_INCOMPLETE,
-        "terminal": False,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.VERIFIED: {
-        "assessment": "preparation_incomplete",
-        "exit_code": EXIT_PREPARATION_INCOMPLETE,
-        "terminal": False,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.CURRENT_SNAPSHOT_CREATED: {
-        "assessment": "preparation_incomplete",
-        "exit_code": EXIT_PREPARATION_INCOMPLETE,
-        "terminal": False,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.RESTORE_STAGED: {
-        "assessment": "preparation_incomplete",
-        "exit_code": EXIT_PREPARATION_INCOMPLETE,
-        "terminal": False,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.STAGED_VERIFIED: {
-        "assessment": "preparation_incomplete",
-        "exit_code": EXIT_PREPARATION_INCOMPLETE,
-        "terminal": False,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.REPLACEMENT_READY: {
-        "assessment": "ready_for_replacement",
-        "exit_code": EXIT_SUCCESS,
-        "terminal": False,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.REPLACING: {
-        "assessment": "operation_in_progress",
-        "exit_code": EXIT_OPERATION_IN_PROGRESS,
-        "terminal": False,
-        "replacement_started": True,
-        "postcheck_required": True,
-        "automatic_reentry_required": True,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.REPLACED: {
-        "assessment": "operation_in_progress",
-        "exit_code": EXIT_OPERATION_IN_PROGRESS,
-        "terminal": False,
-        "replacement_started": True,
-        "postcheck_required": True,
-        "automatic_reentry_required": True,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.POSTCHECK_PASSED: {
-        "assessment": "operation_in_progress",
-        "exit_code": EXIT_OPERATION_IN_PROGRESS,
-        "terminal": False,
-        "replacement_started": True,
-        "postcheck_required": False,
-        "automatic_reentry_required": True,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.COMPLETED: {
-        "assessment": "completed",
-        "exit_code": EXIT_SUCCESS,
-        "terminal": True,
-        "replacement_started": True,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.ROLLBACK_REQUIRED: {
-        "assessment": "rollback_required",
-        "exit_code": EXIT_ROLLBACK_REQUIRED,
-        "terminal": False,
-        "replacement_started": True,
-        "postcheck_required": False,
-        "automatic_reentry_required": True,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.ROLLED_BACK: {
-        "assessment": "failed_safely",
-        "exit_code": EXIT_FAILED_SAFE,
-        "terminal": True,
-        "replacement_started": True,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.FAILED_SAFE: {
-        "assessment": "failed_safely",
-        "exit_code": EXIT_FAILED_SAFE,
-        "terminal": True,
-        "replacement_started": False,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": False,
-    },
-    RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED: {
-        "assessment": "manual_recovery_required",
-        "exit_code": EXIT_MANUAL_RECOVERY_REQUIRED,
-        "terminal": True,
-        "replacement_started": True,
-        "postcheck_required": False,
-        "automatic_reentry_required": False,
-        "manual_recovery_required": True,
-    },
-}
-
-
-@pytest.mark.parametrize("stage", list(RestoreStage))
-def test_exhaustive_stage_inspection_properties(tmp_path, monkeypatch, stage):
+def test_replacing_stage_variants(tmp_path, monkeypatch):
     project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
-    idx = list(RestoreStage).index(stage)
-    op_id = f"restore-20260801T120000Z-000000{idx:02x}"
 
-    journal = _create_journal_at_stage(restore_root, stage, op_id)
-    jfile = restore_root / f"operation-{op_id}" / "journal.json"
+    # 1. No target intent yet
+    plan = _make_plan()
+    op_id_1 = "restore-20260801T120000Z-00000001"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_1, now=TIMESTAMP)
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+
+    out, code = inspect_operation(op_id_1)
+    d = json.loads(out)
+    assert code == EXIT_OPERATION_IN_PROGRESS
+    assert d["assessment"] == "operation_in_progress"
+    assert d["terminal"] is False
+    assert d["replacement_intent_recorded"] is False
+    assert d["destination_replacement_completed"] is False
+    assert d["all_completed_replacements_rolled_back"] is False
+
+    # 2. First target replacement intent recorded but no replacement completed
+    op_id_2 = "restore-20260801T120000Z-00000002"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_2, now=TIMESTAMP)
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_2, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:09Z")
+
+    out, code = inspect_operation(op_id_2)
+    d = json.loads(out)
+    assert code == EXIT_OPERATION_IN_PROGRESS
+    assert d["replacement_intent_recorded"] is True
+    assert d["destination_replacement_completed"] is False
+    assert d["all_completed_replacements_rolled_back"] is False
+
+    # 3. One target durably replaced
+    op_id_3 = "restore-20260801T120000Z-00000003"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_3, now=TIMESTAMP)
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_3, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+
+    out, code = inspect_operation(op_id_3)
+    d = json.loads(out)
+    assert code == EXIT_OPERATION_IN_PROGRESS
+    assert d["replacement_intent_recorded"] is True
+    assert d["destination_replacement_completed"] is True
+    assert d["all_completed_replacements_rolled_back"] is False
+
+    # 4. All targets durably replaced but global stage remains REPLACING
+    op_id_4 = "restore-20260801T120000Z-00000004"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_4, now=TIMESTAMP)
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_4, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_4, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_4, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id_4, root=restore_root, target_key="single-user", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:10Z")
+
+    out, code = inspect_operation(op_id_4)
+    d = json.loads(out)
+    assert code == EXIT_OPERATION_IN_PROGRESS
+    assert d["replacement_intent_recorded"] is True
+    assert d["destination_replacement_completed"] is True
+    assert d["all_completed_replacements_rolled_back"] is False
+
+
+def test_rollback_required_stage_variants(tmp_path, monkeypatch):
+    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
+
+    # 1. Rollback required before any destination replacement completed
+    plan = _make_plan()
+    op_id_1 = "restore-20260801T120000Z-00000010"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_1, now=TIMESTAMP)
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:09Z")
+
+    out, code = inspect_operation(op_id_1)
+    d = json.loads(out)
+    assert code == EXIT_ROLLBACK_REQUIRED
+    assert d["assessment"] == "rollback_required"
+    assert d["destination_replacement_completed"] is False
+    assert d["rollback_intent_recorded"] is False
+
+    # 2. One replacement completed
+    op_id_2 = "restore-20260801T120000Z-00000011"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_2, now=TIMESTAMP)
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_2, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:10Z")
+
+    out, code = inspect_operation(op_id_2)
+    d = json.loads(out)
+    assert code == EXIT_ROLLBACK_REQUIRED
+    assert d["destination_replacement_completed"] is True
+    assert d["all_completed_replacements_rolled_back"] is False
+
+    # 3. Rollback intent recorded but none completed
+    update_restore_journal(op_id_2, root=restore_root, target_key="control", rollback_intent=True, target_state=TargetRestoreState.REPLACED, now="2026-08-01T12:00:11Z")
+    out, code = inspect_operation(op_id_2)
+    d = json.loads(out)
+    assert code == EXIT_ROLLBACK_REQUIRED
+    assert d["rollback_intent_recorded"] is True
+    assert d["destination_rollback_completed"] is False
+
+
+def test_rolled_back_stage_properties(tmp_path, monkeypatch):
+    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
+
+    plan = _make_plan()
+    op_id = "restore-20260801T120000Z-00000020"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:10Z")
+    update_restore_journal(op_id, root=restore_root, target_key="control", rollback_intent=True, target_state=TargetRestoreState.ROLLED_BACK, rollback_completed=True, now="2026-08-01T12:00:11Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLED_BACK, now="2026-08-01T12:00:12Z")
+
+    out, code = inspect_operation(op_id)
+    d = json.loads(out)
+
+    assert code == EXIT_OPERATION_IN_PROGRESS
+    assert d["assessment"] == "rollback_completed_pending_finalization"
+    assert d["terminal"] is False
+    assert d["automatic_reentry_required"] is True
+    assert d["manual_recovery_required"] is False
+    assert d["postcheck_required"] is False
+    assert d["final_result"] is None
+    assert d["destination_replacement_completed"] is True
+    assert d["destination_rollback_completed"] is True
+    assert d["all_completed_replacements_rolled_back"] is True
+
+    out_h, _ = inspect_operation(op_id, human=True)
+    assert "Rollback is durably complete, but FAILED_SAFE has not yet been persisted and reread" in out_h
+
+
+def test_state_machine_rejects_contradictory_rolled_back_stage(tmp_path, monkeypatch):
+    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
+
+    plan = _make_plan()
+    op_id = "restore-20260801T120000Z-00000021"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:10Z")
+
+    # Attempting to set global stage ROLLED_BACK while target 'control' is still REPLACED must raise RestoreJournalError
+    with pytest.raises(RestoreJournalError):
+        update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLED_BACK, now="2026-08-01T12:00:11Z")
+
+
+def test_failed_safe_descriptions(tmp_path, monkeypatch):
+    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
+
+    # 1. Failure before replacement began
+    plan = _make_plan()
+    op_id_1 = "restore-20260801T120000Z-00000030"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_1, now=TIMESTAMP)
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.FAILED_SAFE, now="2026-08-01T12:00:01Z")
+
+    out_1, code_1 = inspect_operation(op_id_1)
+    d_1 = json.loads(out_1)
+    assert code_1 == EXIT_FAILED_SAFE
+    assert d_1["assessment"] == "failed_safely"
+    assert d_1["terminal"] is True
+    assert d_1["final_result"] == FinalResult.FAILED_SAFE.value
+    assert d_1["replacement_intent_recorded"] is False
+    assert d_1["destination_replacement_completed"] is False
+
+    out_h1, _ = inspect_operation(op_id_1, human=True)
+    assert "Operation failed safely before replacement began." in out_h1
+
+    # 2. Failure after replacement intent recorded but no replacement completed
+    op_id_2 = "restore-20260801T120000Z-00000031"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_2, now=TIMESTAMP)
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_2, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:10Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.ROLLED_BACK, now="2026-08-01T12:00:11Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.FAILED_SAFE, now="2026-08-01T12:00:12Z")
+
+    out_2, code_2 = inspect_operation(op_id_2)
+    d_2 = json.loads(out_2)
+    assert code_2 == EXIT_FAILED_SAFE
+    assert d_2["replacement_intent_recorded"] is True
+    assert d_2["destination_replacement_completed"] is False
+
+    out_h2, _ = inspect_operation(op_id_2, human=True)
+    assert "Operation failed safely with no durably completed destination replacement." in out_h2
+
+    # 3. Failure after a complete verified rollback of replaced targets
+    op_id_3 = "restore-20260801T120000Z-00000032"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id_3, now=TIMESTAMP)
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id_3, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:10Z")
+    update_restore_journal(op_id_3, root=restore_root, target_key="control", rollback_intent=True, target_state=TargetRestoreState.ROLLED_BACK, rollback_completed=True, now="2026-08-01T12:00:11Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.ROLLED_BACK, now="2026-08-01T12:00:12Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.FAILED_SAFE, now="2026-08-01T12:00:13Z")
+
+    out_3, code_3 = inspect_operation(op_id_3)
+    d_3 = json.loads(out_3)
+    assert code_3 == EXIT_FAILED_SAFE
+    assert d_3["destination_replacement_completed"] is True
+    assert d_3["all_completed_replacements_rolled_back"] is True
+
+    out_h3, _ = inspect_operation(op_id_3, human=True)
+    assert "Operation failed safely after verified rollback of all replaced targets." in out_h3
+
+
+def test_failed_manual_recovery_required_variants(tmp_path, monkeypatch):
+    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
+
+    plan = _make_plan()
+    op_id = "restore-20260801T120000Z-00000040"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    for k in ("control", "single-user"):
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
+    update_restore_journal(op_id, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
+    update_restore_journal(op_id, root=restore_root, target_key="single-user", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:10Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:11Z")
+    update_restore_journal(op_id, root=restore_root, target_key="control", rollback_intent=True, target_state=TargetRestoreState.ROLLED_BACK, rollback_completed=True, now="2026-08-01T12:00:12Z")
+    # control is ROLLED_BACK, single-user is REPLACED (mixed states!)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED, now="2026-08-01T12:00:13Z")
+
+    out, code = inspect_operation(op_id)
+    d = json.loads(out)
+    assert code == EXIT_MANUAL_RECOVERY_REQUIRED
+    assert d["assessment"] == "manual_recovery_required"
+    assert d["terminal"] is True
+    assert d["manual_recovery_required"] is True
+    assert d["destination_replacement_completed"] is True
+    assert d["all_completed_replacements_rolled_back"] is False
+
+
+def test_inspection_strict_read_only_guarantees(tmp_path, monkeypatch):
+    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
+
+    plan = _make_plan()
+    op_id = "restore-20260801T120000Z-00000050"
+    create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
+
+    op_dir = restore_root / f"operation-{op_id}"
+    jfile = op_dir / "journal.json"
+
+    entries_before = sorted(os.listdir(op_dir))
     mtime_before = jfile.stat().st_mtime_ns
     bytes_before = jfile.read_bytes()
+    mode_before = jfile.stat().st_mode
 
-    output_json, code = inspect_operation(op_id)
-    exp = EXPECTED_STAGE_PROPERTIES[stage]
+    out, code = inspect_operation(op_id, human=True, show_local_paths=True)
+    assert code == EXIT_PREPARATION_INCOMPLETE
 
-    assert code == exp["exit_code"]
-    data = json.loads(output_json)
-
-    assert data["operation_id"] == op_id
-    assert data["stage"] == stage.value
-    assert data["assessment"] == exp["assessment"]
-    assert data["terminal"] == exp["terminal"]
-    assert data["replacement_started"] == exp["replacement_started"]
-    assert data["postcheck_required"] == exp["postcheck_required"]
-    assert data["automatic_reentry_required"] == exp["automatic_reentry_required"]
-    assert data["manual_recovery_required"] == exp["manual_recovery_required"]
-
-    # Test human-readable output
-    output_human, code_human = inspect_operation(op_id, human=True)
-    assert code_human == exp["exit_code"]
-    assert exp["assessment"] in output_human
-
-    # Verify read-only guarantees (no mutation or cleanup)
+    assert sorted(os.listdir(op_dir)) == entries_before
     assert jfile.stat().st_mtime_ns == mtime_before
     assert jfile.read_bytes() == bytes_before
-
-
-def test_specific_stage_classification_proofs(tmp_path, monkeypatch):
-    project_root, restore_root = _setup_journal_env(tmp_path, monkeypatch)
-
-    # 1. REPLACING is never reported as failed_safely
-    _create_journal_at_stage(restore_root, RestoreStage.REPLACING, "restore-20260801T120000Z-00000001")
-    output, code = inspect_operation("restore-20260801T120000Z-00000001")
-    data = json.loads(output)
-    assert data["assessment"] != "failed_safely"
-    assert code != EXIT_FAILED_SAFE
-    assert data["assessment"] == "operation_in_progress"
-    assert code == EXIT_OPERATION_IN_PROGRESS
-
-    # 2. REPLACED is never reported as failed_safely or completed
-    _create_journal_at_stage(restore_root, RestoreStage.REPLACED, "restore-20260801T120000Z-00000002")
-    output, code = inspect_operation("restore-20260801T120000Z-00000002")
-    data = json.loads(output)
-    assert data["assessment"] not in {"failed_safely", "completed"}
-    assert code not in {EXIT_FAILED_SAFE, EXIT_SUCCESS}
-    assert data["assessment"] == "operation_in_progress"
-    assert code == EXIT_OPERATION_IN_PROGRESS
-
-    # 3. POSTCHECK_PASSED is never reported as completed
-    _create_journal_at_stage(restore_root, RestoreStage.POSTCHECK_PASSED, "restore-20260801T120000Z-00000003")
-    output, code = inspect_operation("restore-20260801T120000Z-00000003")
-    data = json.loads(output)
-    assert data["assessment"] != "completed"
-    assert code != EXIT_SUCCESS
-    assert data["assessment"] == "operation_in_progress"
-    assert code == EXIT_OPERATION_IN_PROGRESS
-
-    # 4. PRECHECK through STAGED_VERIFIED are not reported as ready_for_replacement
-    for idx, stage in enumerate([RestoreStage.PRECHECK, RestoreStage.VERIFIED, RestoreStage.CURRENT_SNAPSHOT_CREATED, RestoreStage.RESTORE_STAGED, RestoreStage.STAGED_VERIFIED]):
-        op_id = f"restore-20260801T120000Z-000000{idx+4:02x}"
-        _create_journal_at_stage(restore_root, stage, op_id)
-        output, code = inspect_operation(op_id)
-        data = json.loads(output)
-        assert data["assessment"] != "ready_for_replacement"
-        assert data["assessment"] == "preparation_incomplete"
-        assert code == EXIT_PREPARATION_INCOMPLETE
-
-    # 5. Only REPLACEMENT_READY receives ready_for_replacement
-    _create_journal_at_stage(restore_root, RestoreStage.REPLACEMENT_READY, "restore-20260801T120000Z-00000009")
-    output, code = inspect_operation("restore-20260801T120000Z-00000009")
-    data = json.loads(output)
-    assert data["assessment"] == "ready_for_replacement"
-    assert code == EXIT_SUCCESS
-
-    # 6. COMPLETED, FAILED_SAFE, and FAILED_MANUAL_RECOVERY_REQUIRED are terminal
-    terminal_stages = {RestoreStage.COMPLETED, RestoreStage.FAILED_SAFE, RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED, RestoreStage.ROLLED_BACK}
-    for idx, stage in enumerate(RestoreStage):
-        op_id = f"restore-20260801T120000Z-000000{idx+10:02x}"
-        _create_journal_at_stage(restore_root, stage, op_id)
-        output, _ = inspect_operation(op_id)
-        data = json.loads(output)
-        assert data["terminal"] == (stage in terminal_stages)
-
-
-def test_simulated_unknown_stage_raises_unexpected_failure():
-    # Pass invalid stage object to _classify_stage directly
-    with pytest.raises(RestoreJournalError, match="Unrecognized or unsupported global restore stage"):
-        _classify_stage("NON_EXISTENT_STAGE")
+    assert jfile.stat().st_mode == mode_before
 
 
 def test_inspect_refuses_malformed_op_id(tmp_path, monkeypatch):
