@@ -1,22 +1,20 @@
 """Configured-runtime restore orchestration through REPLACEMENT_READY (Phase 6B3B1).
 
-Orchestrates configured-runtime restore preparation through global stage REPLACEMENT_READY:
-1. Canonical configured target discovery
-2. Project-root verification
-3. Selected backup and confirmation verification
-4. Application ProcessLock acquisition
-5. Dedicated RestoreLock acquisition
-6. Durable journal creation (PRECHECK -> VERIFIED)
-7. Ordinary public safety-backup creation (create_verified_backup)
-8. Strict safety-backup verification
-9. Non-recursive long-held BackupLock acquisition
-10. Configured-target staging and deep verification (RESTORE_STAGED -> STAGED_VERIFIED)
-11. Disk-space preflight
-12. Final read-only readiness proof
-13. Global transition to REPLACEMENT_READY
-14. Reverse lock release on exit
+Orchestrates configured-runtime restore preparation up to global stage REPLACEMENT_READY:
+1. Keyword-only API with mandatory target-set hash and restore confirmation validation.
+2. Exact project-root verification (CWD == PROJECT_ROOT, no symlinks, git toplevel/HEAD match).
+3. Canonical runtime target discovery from config.PROJECT_ROOT.
+4. ProcessLock -> RestoreLock -> safety backup creation -> long-held BackupLock acquisition chain.
+5. Strict safety-backup verification before journal recording.
+6. Same-filesystem target staging with canonical ownership bindings.
+7. Descriptor-safe staged file publication and deep SQLite integrity checks (with foreign keys).
+8. Destination database and sidecar baseline tracking and drift revalidation.
+9. Grouped per-filesystem disk-space preflight checks.
+10. Complete readiness proof barrier before global transition to REPLACEMENT_READY.
+11. Reverse lock release (BackupLock -> RestoreLock -> ProcessLock) BEFORE returning result.
+12. Immutable result object with locks_released=True and no internal lock/file handles.
 
-No configured database files or sidecars are modified or replaced by this module.
+Configured database files and sidecars are NOT modified by this module.
 Phase 6B3B2 (replacement/rollback) and Phase 6B3B3 (CLI/apply) remain unimplemented.
 """
 from __future__ import annotations
@@ -49,9 +47,13 @@ from guarded_restore import (
     validate_restore_root,
 )
 from guarded_restore_configured_staging import (
+    ConfiguredPreflightError,
     ConfiguredStagingError,
     ConfiguredStagingResult,
-    preflight_disk_space,
+    capture_destination_baselines,
+    preflight_backup_disk_space,
+    preflight_staging_disk_space,
+    revalidate_destination_baselines,
     stage_configured_targets,
     verify_configured_readiness,
 )
@@ -74,6 +76,8 @@ from verified_backup import (
 )
 
 _BACKUP_ID_PATTERN = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+_OPERATION_ID_PATTERN = re.compile(r"^restore-\d{8}T\d{6}Z-[0-9a-f]{8}$")
+_COMMIT_HEX_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 
 
 class ConfiguredRestoreError(RuntimeError):
@@ -81,265 +85,362 @@ class ConfiguredRestoreError(RuntimeError):
 
 
 class ConfiguredRestorePreconditionError(ConfiguredRestoreError):
-    """Precondition failure for configured restore preparation."""
+    """Precondition or confirmation failure for configured restore preparation."""
 
 
-def _commit() -> str:
+class ConfiguredRestoreLockReleaseError(ConfiguredRestoreError):
+    """Lock release failed during cleanup."""
+
+
+@dataclass(frozen=True)
+class ConfiguredRestorePreparationResult:
+    """Frozen bounded result object representing successful Phase 6B3B1 preparation."""
+    operation_id: str
+    stage: RestoreStage
+    selected_backup_id: str
+    selected_backup_manifest_sha256: str
+    safety_backup_id: str
+    runtime_mode: str
+    target_keys: tuple[str, ...]
+    target_set_hash: str
+    confirmation_value: str
+    staged_artifact_count: int
+    ready_for_future_apply: bool
+    configured_database_mutated: bool
+    locks_released: bool
+
+
+def _verify_project_root(expected_application_commit: str) -> Path:
+    """Enforce exact project-root execution boundary."""
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=config.PROJECT_ROOT,
-            text=True,
+        configured_root = safe_resolve(config.PROJECT_ROOT)
+        cwd = Path.cwd().resolve()
+    except (ValueError, OSError) as exc:
+        raise ConfiguredRestorePreconditionError("Project root path verification failed") from exc
+
+    if cwd != configured_root:
+        raise ConfiguredRestorePreconditionError("Current working directory does not match configured project root")
+
+    if has_symlink_component(config.PROJECT_ROOT) or has_symlink_component(Path.cwd()):
+        raise ConfiguredRestorePreconditionError("Project root path cannot contain symlinks")
+
+    try:
+        toplevel_out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=configured_root,
             stderr=subprocess.DEVNULL,
             timeout=5,
         ).strip()
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
+        toplevel_str = toplevel_out.decode("utf-8") if isinstance(toplevel_out, bytes) else str(toplevel_out)
+        toplevel_path = Path(toplevel_str).resolve()
+        if toplevel_path != configured_root:
+            raise ConfiguredRestorePreconditionError("Git repository top-level directory does not match project root")
+
+        if _COMMIT_HEX_PATTERN.fullmatch(expected_application_commit):
+            head_out = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=configured_root,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            ).strip()
+            git_head = head_out.decode("utf-8") if isinstance(head_out, bytes) else str(head_out)
+            if git_head != expected_application_commit:
+                raise ConfiguredRestorePreconditionError("Git HEAD commit does not match expected application commit")
+    except (OSError, subprocess.SubprocessError) as exc:
+        if isinstance(exc, ConfiguredRestorePreconditionError):
+            raise
+        raise ConfiguredRestorePreconditionError("Git execution boundary verification failed") from exc
+
+    return configured_root
 
 
-def _verify_project_root(provided_root: Path | str | None = None) -> Path:
-    target = Path(provided_root or config.PROJECT_ROOT).resolve()
-    if has_symlink_component(target) or target.is_symlink():
-        raise ConfiguredRestorePreconditionError("Project root cannot contain symlinks")
-    if not target.exists() or not target.is_dir():
-        raise ConfiguredRestorePreconditionError("Project root is invalid or missing")
-    return target
-
-
-@dataclass
-class ConfiguredRestoreContext:
-    """Active context holding acquired locks and preparation artifacts up to REPLACEMENT_READY."""
-    operation_id: str
-    journal: RestoreJournal
-    selected_backup_id: str
-    safety_backup_id: str
-    selected_snapshot: ValidatedBackupSnapshot
-    safety_snapshot: ValidatedBackupSnapshot
-    staging_result: ConfiguredStagingResult
-    process_lock: ProcessLock | None = None
-    restore_lock: RestoreLock | None = None
-    backup_lock: BackupLock | None = None
-    released: bool = False
-
-    def close(self) -> None:
-        """Release locks in reverse acquisition order: BackupLock -> RestoreLock -> ProcessLock."""
-        if self.released:
-            return
-        
-        # 1. Release long-held BackupLock
-        if self.backup_lock is not None:
-            try:
-                self.backup_lock.__exit__(None, None, None)
-            except Exception:
-                pass
-            self.backup_lock = None
-
-        # 2. Release dedicated RestoreLock
-        if self.restore_lock is not None:
-            try:
-                self.restore_lock.__exit__(None, None, None)
-            except Exception:
-                pass
-            self.restore_lock = None
-
-        # 3. Release application ProcessLock
-        if self.process_lock is not None:
-            try:
-                release_process_lock(self.process_lock)
-            except Exception:
-                pass
-            self.process_lock = None
-
-        self.released = True
-
-    def __enter__(self) -> ConfiguredRestoreContext:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
+def _settle_journal_failed_safe(operation_id: str, root: Path) -> None:
+    """Attempt to durably settle journal to FAILED_SAFE upon ordinary preparation failure."""
+    try:
+        journal = load_restore_journal(operation_id, root=root)
+        if journal.stage in {
+            RestoreStage.VERIFIED,
+            RestoreStage.CURRENT_SNAPSHOT_CREATED,
+            RestoreStage.RESTORE_STAGED,
+            RestoreStage.STAGED_VERIFIED,
+            RestoreStage.REPLACEMENT_READY,
+        } and journal.final_result is None:
+            update_restore_journal(operation_id, root=root, stage=RestoreStage.FAILED_SAFE)
+    except Exception:
+        pass
 
 
 def prepare_configured_restore(
-    selected_backup_id: str,
     *,
-    expected_application_commit: str | None = None,
+    selected_backup_id: str,
+    expected_application_commit: str,
+    confirmed_target_set_hash: str,
+    confirmed_restore_value: str,
     operation_id: str | None = None,
-    backup_root: Path | str | None = None,
-    restore_root: Path | str | None = None,
-    project_root: Path | str | None = None,
-) -> ConfiguredRestoreContext:
+) -> ConfiguredRestorePreparationResult:
     """Prepare a configured-runtime restore up to global stage REPLACEMENT_READY.
     
-    This function performs all non-mutating preparation, validation, lock acquisitions,
-    public safety-backup creation, and target staging.
-    
-    Configured database files and sidecars are NOT modified.
+    All arguments are keyword-only. No caller-supplied roots are accepted.
+    Re-evaluates and enforces mandatory confirmation values and exact project root.
+    Releases all locks before returning a frozen result.
+    Does NOT modify configured databases or sidecars.
     """
-    # 1. Verification of paths & preconditions
-    proj_root = _verify_project_root(project_root)
-    b_root = validate_backup_root(backup_root)
-    r_root = validate_restore_root(restore_root)
+    # 1. Exact project-root verification
+    project_root = _verify_project_root(expected_application_commit)
+    backup_root = validate_backup_root(config.OPERATOR_BACKUP_ROOT)
+    restore_root = validate_restore_root(config.OPERATOR_RESTORE_ROOT)
 
     if not _BACKUP_ID_PATTERN.fullmatch(selected_backup_id):
-        raise ConfiguredRestorePreconditionError(f"Invalid selected backup ID format: '{selected_backup_id}'")
+        raise ConfiguredRestorePreconditionError("Selected backup ID format is invalid")
 
-    selected_backup_dir = b_root / f"backup-{selected_backup_id}"
+    selected_backup_dir = backup_root / f"backup-{selected_backup_id}"
     if not selected_backup_dir.exists() or not selected_backup_dir.is_dir():
-        raise ConfiguredRestorePreconditionError(f"Selected backup '{selected_backup_id}' does not exist under backup root")
+        raise ConfiguredRestorePreconditionError("Selected backup directory does not exist under backup root")
 
-    # Discover current configured database targets
+    # Discover canonical runtime database targets
     try:
         configured_targets = discover_database_targets(profile=TargetProfile.RUNTIME)
     except Exception as exc:
         raise ConfiguredRestorePreconditionError("Canonical database target discovery failed") from exc
 
     if not configured_targets:
-        raise ConfiguredRestorePreconditionError("No configured database targets found")
+        raise ConfiguredRestorePreconditionError("No configured database targets discovered")
 
     for t in configured_targets:
         if t.required and not t.path.exists():
-            raise ConfiguredRestorePreconditionError(f"Required configured database '{t.target_key}' is missing")
+            raise ConfiguredRestorePreconditionError("Required configured database is missing")
         check = inspect_sqlite(t.path)
         if not check.readable or not check.quick_check_ok:
-            raise ConfiguredRestorePreconditionError(f"Configured database '{t.target_key}' failed read-only integrity inspection")
+            raise ConfiguredRestorePreconditionError("Configured database failed read-only integrity preflight")
 
-    # Load and strictly validate selected source backup
+    # Load and strictly validate selected source backup snapshot
     try:
         selected_snapshot = load_validated_backup_snapshot(selected_backup_dir, against_current_config=True)
     except BackupError as exc:
-        raise ConfiguredRestorePreconditionError(f"Selected backup verification failed: {exc}") from exc
+        raise ConfiguredRestorePreconditionError("Selected backup verification failed") from exc
 
-    commit_sha = expected_application_commit or _commit()
     runtime_mode = "multi_user" if config.MULTI_USER_ENABLED else "single_user"
     target_keys = tuple(t.target_key for t in configured_targets)
 
-    # Compute target set hash & confirmation value
+    # Recompute target-set hash and confirmation value
     try:
-        t_hash = target_set_hash(
+        recomputed_target_hash = target_set_hash(
             backup_id=selected_backup_id,
             manifest_sha256=selected_snapshot.manifest_sha256,
             runtime_mode=runtime_mode,
             target_keys=target_keys,
         )
-        c_val = confirmation_value(
-            target_hash=t_hash,
-            expected_application_commit=commit_sha,
-        )
-        plan = create_restore_plan(
-            selected_backup_id=selected_backup_id,
-            selected_backup_manifest_sha256=selected_snapshot.manifest_sha256,
-            expected_application_commit=commit_sha,
-            runtime_mode=runtime_mode,
-            target_keys=target_keys,
+        recomputed_confirmation_value = confirmation_value(
+            target_hash=recomputed_target_hash,
+            expected_application_commit=expected_application_commit,
         )
     except RestorePlanError as exc:
-        raise ConfiguredRestorePreconditionError(f"Restore planning failed: {exc}") from exc
+        raise ConfiguredRestorePreconditionError("Target set hash or confirmation value calculation failed") from exc
+
+    # Enforce exact mandatory confirmation boundary
+    if confirmed_target_set_hash != recomputed_target_hash:
+        raise ConfiguredRestorePreconditionError("Confirmed target-set hash mismatch")
+    if confirmed_restore_value != recomputed_confirmation_value:
+        raise ConfiguredRestorePreconditionError("Confirmed restore confirmation value mismatch")
 
     op_id = operation_id or f"restore-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
+    if not _OPERATION_ID_PATTERN.fullmatch(op_id):
+        raise ConfiguredRestorePreconditionError("Operation ID format is invalid")
 
-    # Lock acquisition objects tracking for safe cleanup on failure
-    process_lock: ProcessLock | None = None
-    restore_lock: RestoreLock | None = None
+    # Preflight backup disk space (before acquiring locks)
+    preflight_backup_disk_space(configured_targets, backup_root)
+
+    # Capture destination baselines
+    baselines = capture_destination_baselines(configured_targets)
+
+    # Lock acquisition objects tracking for safe cleanup
+    proc_lock: ProcessLock | None = None
+    rest_lock: RestoreLock | None = None
     long_held_backup_lock: BackupLock | None = None
+    is_reentry = False
 
     try:
         # Step A: Application ProcessLock acquisition
         try:
-            process_lock = acquire_process_lock(proj_root / "garmincoach.lock")
+            proc_lock = acquire_process_lock(project_root / "garmincoach.lock")
         except Exception as exc:
-            raise RestoreLockError("Could not acquire application process lock (garmincoach.lock)") from exc
+            raise RestoreLockError("Could not acquire application process lock") from exc
 
         # Step B: Dedicated RestoreLock acquisition
-        restore_lock = RestoreLock(r_root)
+        rest_lock = RestoreLock(restore_root)
         try:
-            restore_lock.__enter__()
+            rest_lock.__enter__()
         except Exception as exc:
-            raise RestoreLockError("Could not acquire dedicated restore lock (.garmincoach-restore.lock)") from exc
+            raise RestoreLockError("Could not acquire dedicated restore lock") from exc
 
-        # Step C: Journal creation (stage PRECHECK -> VERIFIED)
-        journal = create_restore_journal(plan, root=r_root, operation_id=op_id)
-        journal = update_restore_journal(op_id, root=r_root, stage=RestoreStage.VERIFIED)
+        # Step C: Journal creation or legal re-entry loading
+        op_dir = restore_root / f"operation-{op_id}"
+        journal_path = op_dir / "journal.json"
 
-        # Step D: Public safety-backup creation (create_verified_backup acquires and releases BackupLock internally)
-        try:
-            safety_backup_dir = create_verified_backup(output_root=b_root)
-        except Exception as exc:
-            raise ConfiguredRestoreError(f"Ordinary public safety-backup creation failed: {exc}") from exc
+        if journal_path.exists():
+            is_reentry = True
+            journal = load_restore_journal(op_id, root=restore_root)
+            if (
+                journal.selected_backup_id != selected_backup_id
+                or journal.selected_backup_manifest_sha256 != selected_snapshot.manifest_sha256
+                or journal.expected_application_commit != expected_application_commit
+                or journal.runtime_mode != runtime_mode
+                or journal.target_keys != target_keys
+                or journal.target_set_hash != recomputed_target_hash
+                or journal.confirmation_value != recomputed_confirmation_value
+            ):
+                raise ConfiguredRestorePreconditionError("Re-entry journal parameters mismatch")
 
-        safety_backup_id = safety_backup_dir.name.removeprefix("backup-")
-        journal = update_restore_journal(
-            op_id,
-            root=r_root,
-            stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,
-            safety_backup_id=safety_backup_id,
-        )
+            if journal.stage in {
+                RestoreStage.REPLACING,
+                RestoreStage.REPLACED,
+                RestoreStage.POSTCHECK_PASSED,
+                RestoreStage.ROLLBACK_REQUIRED,
+                RestoreStage.ROLLED_BACK,
+                RestoreStage.FAILED_SAFE,
+                RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED,
+                RestoreStage.COMPLETED,
+            }:
+                raise ConfiguredRestorePreconditionError(f"Re-entry refused for journal stage '{journal.stage}'")
+        else:
+            plan = create_restore_plan(
+                selected_backup_id=selected_backup_id,
+                selected_backup_manifest_sha256=selected_snapshot.manifest_sha256,
+                expected_application_commit=expected_application_commit,
+                runtime_mode=runtime_mode,
+                target_keys=target_keys,
+            )
+            journal = create_restore_journal(plan, root=restore_root, operation_id=op_id)
+            journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED)
 
-        # Step E: Strict safety-backup verification
-        try:
+        # Step D: Public safety-backup creation & strict verification ordering
+        safety_backup_id = journal.safety_backup_id
+        if safety_backup_id is None:
+            try:
+                safety_backup_dir = create_verified_backup(output_root=backup_root)
+            except Exception as exc:
+                raise ConfiguredRestoreError("Ordinary public safety-backup creation failed") from exc
+
+            s_id = safety_backup_dir.name.removeprefix("backup-")
+            if s_id == selected_backup_id:
+                raise ConfiguredRestoreError("Safety backup ID matches selected backup ID")
+
+            # Strictly verify safety backup BEFORE recording in journal
+            try:
+                safety_snapshot = load_validated_backup_snapshot(safety_backup_dir, against_current_config=True)
+            except BackupError as exc:
+                raise ConfiguredRestoreError("Newly created safety backup failed verification") from exc
+
+            if safety_snapshot.runtime_mode != runtime_mode or safety_snapshot.target_keys != target_keys:
+                raise ConfiguredRestoreError("Safety backup runtime mode or target set mismatch")
+
+            # ONLY NOW record safety_backup_id and transition to CURRENT_SNAPSHOT_CREATED
+            safety_backup_id = s_id
+            journal = update_restore_journal(
+                op_id,
+                root=restore_root,
+                stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,
+                safety_backup_id=safety_backup_id,
+            )
+        else:
+            safety_backup_dir = backup_root / f"backup-{safety_backup_id}"
             safety_snapshot = load_validated_backup_snapshot(safety_backup_dir, against_current_config=True)
-        except BackupError as exc:
-            raise ConfiguredRestoreError(f"Safety-backup verification failed: {exc}") from exc
 
-        # Step F: Non-recursive long-held BackupLock acquisition
-        # ONLY AFTER public safety-backup creation completed and released BackupLock, acquire BackupLock nonblockingly.
+        # Step E: Non-recursive long-held BackupLock acquisition
         try:
-            long_held_backup_lock = BackupLock(b_root)
+            long_held_backup_lock = BackupLock(backup_root)
             long_held_backup_lock.__enter__()
         except Exception as exc:
-            raise RestoreLockError("Could not acquire long-held BackupLock after safety backup creation") from exc
+            raise RestoreLockError("Could not acquire long-held BackupLock") from exc
 
-        # Step G: Disk-space preflight check
-        op_dir = r_root / f"operation-{op_id}"
-        preflight_disk_space(configured_targets, op_dir)
+        # Step F: Preflight staging disk space under long-held BackupLock
+        preflight_staging_disk_space(configured_targets, selected_snapshot)
 
-        # Step H: Configured-target staging & deep verification
-        staging_result = stage_configured_targets(
+        # Step G: Staging configured targets beside destinations with ownership bindings
+        stage_result = stage_configured_targets(
             op_id,
             selected_snapshot,
-            restore_root=r_root,
+            configured_targets,
+            restore_root=restore_root,
         )
 
-        # Step I: Final read-only readiness proof
+        # Step H: Complete readiness proof barrier
         verify_configured_readiness(
             op_id,
             selected_snapshot,
             configured_targets,
-            staging_result,
-            restore_root=r_root,
+            stage_result,
+            baselines,
+            restore_root=restore_root,
         )
 
-        # Step J: Transition to REPLACEMENT_READY
-        journal = update_restore_journal(op_id, root=r_root, stage=RestoreStage.REPLACEMENT_READY)
+        # Step I: Global stage transition to REPLACEMENT_READY
+        journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY)
 
-        ctx = ConfiguredRestoreContext(
+        # Step J: Release all locks BEFORE returning result in reverse acquisition order
+        # 1. BackupLock -> 2. RestoreLock -> 3. ProcessLock
+        lock_release_errors = []
+
+        if long_held_backup_lock is not None:
+            try:
+                long_held_backup_lock.__exit__(None, None, None)
+            except Exception as exc:
+                lock_release_errors.append(exc)
+            long_held_backup_lock = None
+
+        if rest_lock is not None:
+            try:
+                rest_lock.__exit__(None, None, None)
+            except Exception as exc:
+                lock_release_errors.append(exc)
+            rest_lock = None
+
+        if proc_lock is not None:
+            try:
+                release_process_lock(proc_lock)
+            except Exception as exc:
+                lock_release_errors.append(exc)
+            proc_lock = None
+
+        if lock_release_errors:
+            raise ConfiguredRestoreLockReleaseError("Failed to release all acquired locks cleanly")
+
+        return ConfiguredRestorePreparationResult(
             operation_id=op_id,
-            journal=journal,
+            stage=RestoreStage.REPLACEMENT_READY,
             selected_backup_id=selected_backup_id,
+            selected_backup_manifest_sha256=selected_snapshot.manifest_sha256,
             safety_backup_id=safety_backup_id,
-            selected_snapshot=selected_snapshot,
-            safety_snapshot=safety_snapshot,
-            staging_result=staging_result,
-            process_lock=process_lock,
-            restore_lock=restore_lock,
-            backup_lock=long_held_backup_lock,
+            runtime_mode=runtime_mode,
+            target_keys=target_keys,
+            target_set_hash=recomputed_target_hash,
+            confirmation_value=recomputed_confirmation_value,
+            staged_artifact_count=len(stage_result.staged_artifacts),
+            ready_for_future_apply=True,
+            configured_database_mutated=False,
+            locks_released=True,
         )
-        return ctx
 
-    except Exception:
-        # Cleanup locks in reverse order on failure
+    except Exception as exc:
+        # Failure settlement & cleanup
+        _settle_journal_failed_safe(op_id, restore_root)
+
         if long_held_backup_lock is not None:
             try:
                 long_held_backup_lock.__exit__(None, None, None)
             except Exception:
                 pass
-        if restore_lock is not None:
+        if rest_lock is not None:
             try:
-                restore_lock.__exit__(None, None, None)
+                rest_lock.__exit__(None, None, None)
             except Exception:
                 pass
-        if process_lock is not None:
+        if proc_lock is not None:
             try:
-                release_process_lock(process_lock)
+                release_process_lock(proc_lock)
             except Exception:
                 pass
-        raise
+
+        if isinstance(exc, (ConfiguredRestoreError, RestoreLockError)):
+            raise
+        raise ConfiguredRestoreError("Guarded restore preparation failed") from exc
