@@ -767,10 +767,6 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
             except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
                 _reconcile_failed_staged_transition(operation_id=operation_id,journal_root=journal_root,target_key=entry[0],artifact=file,stage_directory=dirs[dest.path.parent],cause=exc)
             staged.append((entry,file,index))
-        try:
-            update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.STAGED_VERIFIED)
-        except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
-            raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
         artifacts=[]
         for entry,file,index in staged:
             _verify(entry,file)
@@ -780,6 +776,10 @@ def stage_and_verify_synthetic_restore(*,operation_id: str,validated_backup: Val
                 raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
             baseline = destination_baselines[index].file
             artifacts.append(StagedArtifact(operation_id,entry[0],entry[1],index,file,entry[4],entry[5],entry[6],entry[7],baseline.size,baseline.sha256))
+        try:
+            update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.STAGED_VERIFIED)
+        except (RestoreJournalError, RestoreJournalPersistenceError) as exc:
+            raise _journal_failure(operation_id=operation_id,journal_root=journal_root) from exc
         try:
             journal_token=_final_revalidate_before_replacement_ready(operation_id=operation_id,validated_backup=validated_backup,destinations=destinations,fixture_root=fixture_root,journal_root=journal_root,staged=staged,baselines=destination_baselines)
             update_restore_journal(operation_id,root=journal_root,stage=RestoreStage.REPLACEMENT_READY)

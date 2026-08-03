@@ -73,9 +73,9 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
 
@@ -96,9 +96,9 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_2, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:09Z")
@@ -118,9 +118,9 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_3, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
@@ -140,9 +140,9 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_4, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_4, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_4, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_4, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
@@ -168,9 +168,9 @@ def test_rollback_required_stage_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.ROLLBACK_REQUIRED, now="2026-08-01T12:00:09Z")
@@ -190,9 +190,9 @@ def test_rollback_required_stage_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_2, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
@@ -224,9 +224,9 @@ def test_rolled_back_stage_properties(tmp_path, monkeypatch):
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
@@ -263,9 +263,9 @@ def test_state_machine_rejects_contradictory_rolled_back_stage(tmp_path, monkeyp
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
@@ -305,9 +305,9 @@ def test_failed_safe_descriptions(tmp_path, monkeypatch):
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_2, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:09Z")
@@ -332,9 +332,9 @@ def test_failed_safe_descriptions(tmp_path, monkeypatch):
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id_3, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")
@@ -364,9 +364,9 @@ def test_failed_manual_recovery_required_variants(tmp_path, monkeypatch):
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for k in ("control", "single-user"):
-        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.REPLACING, now="2026-08-01T12:00:08Z")
     update_restore_journal(op_id, root=restore_root, target_key="control", replacement_intent=True, target_state=TargetRestoreState.REPLACED, replacement_completed=True, now="2026-08-01T12:00:09Z")

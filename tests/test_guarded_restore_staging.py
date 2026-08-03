@@ -242,7 +242,7 @@ def test_verified_target_journal_failures_preserve_exact_owned_progress(tmp_path
     current = load_restore_journal(journal.operation_id, root=config.OPERATOR_RESTORE_ROOT)
     assert current.stage is RestoreStage.FAILED_SAFE and _states(current) == expected and len(_stage_files(root)) == 2
 
-@pytest.mark.parametrize("stage, states", [(RestoreStage.STAGED_VERIFIED, (TargetRestoreState.STAGED, TargetRestoreState.STAGED)), (RestoreStage.REPLACEMENT_READY, (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED_VERIFIED))])
+@pytest.mark.parametrize("stage, states", [(RestoreStage.STAGED_VERIFIED, (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED_VERIFIED)), (RestoreStage.REPLACEMENT_READY, (TargetRestoreState.STAGED_VERIFIED, TargetRestoreState.STAGED_VERIFIED))])
 def test_global_journal_failures_preserve_owned_artifacts(tmp_path, monkeypatch, stage, states):
     import guarded_restore_staging as staging
     validated, journal, root, destinations = _prepared(tmp_path, monkeypatch)

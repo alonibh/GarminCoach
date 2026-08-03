@@ -309,9 +309,9 @@ def _validate_journal(journal: RestoreJournal) -> None:
         raise RestoreJournalError("Invalid restore journal")
     if journal.stage is RestoreStage.CURRENT_SNAPSHOT_CREATED and (journal.safety_backup_id is None or any(s is not TargetRestoreState.PENDING for s in states)):
         raise RestoreJournalError("Invalid restore journal")
-    if journal.stage is RestoreStage.RESTORE_STAGED and any(s not in {TargetRestoreState.PENDING, TargetRestoreState.STAGED} for s in states):
+    if journal.stage is RestoreStage.RESTORE_STAGED and any(s not in {TargetRestoreState.PENDING, TargetRestoreState.STAGED, TargetRestoreState.STAGED_VERIFIED} for s in states):
         raise RestoreJournalError("Invalid restore journal")
-    if journal.stage is RestoreStage.STAGED_VERIFIED and any(s not in {TargetRestoreState.STAGED, TargetRestoreState.STAGED_VERIFIED} for s in states):
+    if journal.stage is RestoreStage.STAGED_VERIFIED and any(s is not TargetRestoreState.STAGED_VERIFIED for s in states):
         raise RestoreJournalError("Invalid restore journal")
     if journal.stage is RestoreStage.REPLACEMENT_READY and any(s is not TargetRestoreState.STAGED_VERIFIED for s in states):
         raise RestoreJournalError("Invalid restore journal")

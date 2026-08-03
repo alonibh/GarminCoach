@@ -76,6 +76,7 @@ from guarded_restore_configured_staging import (
     validate_existing_staging_directory,
     verify_configured_readiness,
     write_destination_baseline_evidence,
+    _sha256_file,
 )
 from operator_storage import (
     DatabaseTarget,
@@ -261,9 +262,17 @@ def verify_complete_preparation_barrier(
         if journal.destination_baseline_sha256 is not None and operation_id is not None:
             r_root = restore_root or config.OPERATOR_RESTORE_ROOT
             ev, sha_hex = load_destination_baseline_evidence(operation_id, restore_root=r_root)
-            if sha_hex != journal.destination_baseline_sha256:
-                raise ConfiguredRestorePreconditionError("Persisted destination baseline SHA-256 mismatch during barrier proof")
-            revalidate_destination_baseline_evidence(ev, targets, expected_application_commit)
+            revalidate_destination_baseline_evidence(
+                ev,
+                targets,
+                expected_application_commit,
+                operation_id=operation_id,
+                selected_backup_id=selected_backup_id,
+                selected_backup_manifest_sha256=selected_snapshot.manifest_sha256,
+                runtime_mode=runtime_mode,
+                target_set_hash=recomputed_hash,
+                confirmation_value=recomputed_val,
+            )
 
     return True
 
@@ -440,7 +449,17 @@ def prepare_configured_restore(
         if journal.destination_baseline_sha256 != loaded_baseline_sha:
             raise ConfiguredRestorePreconditionError("Journal destination baseline SHA-256 mismatch")
 
-        revalidate_destination_baseline_evidence(evidence, configured_targets, expected_application_commit)
+        revalidate_destination_baseline_evidence(
+            evidence,
+            configured_targets,
+            expected_application_commit,
+            operation_id=op_id,
+            selected_backup_id=selected_backup_id,
+            selected_backup_manifest_sha256=selected_snapshot.manifest_sha256,
+            runtime_mode=runtime_mode,
+            target_set_hash=recomputed_target_hash,
+            confirmation_value=recomputed_confirmation_value,
+        )
 
         # Barrier 1: Complete proof
         verify_complete_preparation_barrier(
@@ -481,7 +500,7 @@ def prepare_configured_restore(
             except BackupError as exc:
                 raise ConfiguredRestoreError("Newly created safety backup failed verification") from exc
 
-            if safety_snapshot.runtime_mode != runtime_mode or safety_snapshot.target_keys != target_keys:
+            if safety_snapshot.runtime_mode != runtime_mode or safety_snapshot.target_keys != tuple(t.target_key for t in configured_targets):
                 raise ConfiguredRestoreError("Safety backup runtime mode or target set mismatch")
 
             safety_backup_id = s_id
@@ -568,7 +587,7 @@ def prepare_configured_restore(
             backup_entries_by_key = {e.target_key: e for e in selected_snapshot.entries}
             targets_by_key = {t.target_key: t for t in configured_targets}
 
-            # 1. Update target PENDING -> STAGED under global RESTORE_STAGED
+            # Per-target processing under global RESTORE_STAGED
             for index, target_key in enumerate(journal.target_keys):
                 t_obj = targets_by_key[target_key]
                 entry = backup_entries_by_key[target_key]
@@ -582,44 +601,35 @@ def prepare_configured_restore(
                 staged_path = stage_dir / staged_name
 
                 if tf.state is TargetRestoreState.PENDING:
-                    if not staged_path.exists():
-                        raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' missing for PENDING target")
+                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes or _sha256_file(staged_path) != entry.sha256:
+                        raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' missing or invalid for PENDING target")
                     journal = update_restore_journal(op_id, root=restore_root, target_key=target_key, target_state=TargetRestoreState.STAGED)
-
-            # Reread journal & confirm all targets are STAGED
-            journal = load_restore_journal(op_id, root=restore_root)
-            if any(t_fact.state not in {TargetRestoreState.STAGED, TargetRestoreState.STAGED_VERIFIED} for t_fact in journal.targets):
-                raise ConfiguredJournalUncertaintyError("Not all targets are STAGED before global STAGED_VERIFIED transition")
-
-            # 2. Advance global stage RESTORE_STAGED -> STAGED_VERIFIED
-            journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED)
-
-            # 3. Run deep verification and update target STAGED -> STAGED_VERIFIED under global STAGED_VERIFIED
-            for index, target_key in enumerate(journal.target_keys):
-                t_obj = targets_by_key[target_key]
-                entry = backup_entries_by_key[target_key]
-                tf = next((f for f in journal.targets if f.target_key == target_key), None)
-                safe_key = target_key.replace(":", "-")
-                staged_name = f"{index:03d}-{safe_key}.sqlite.staged"
-                stage_dir = t_obj.path.parent.resolve() / f".garmincoach-restore-stage-{op_id}"
-                staged_path = stage_dir / staged_name
+                    tf = next((f for f in journal.targets if f.target_key == target_key), None)
 
                 if tf.state is TargetRestoreState.STAGED:
-                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes:
+                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes or _sha256_file(staged_path) != entry.sha256:
                         raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' incompatible or modified")
                     _deep_verify_staged_artifact(staged_path, entry)
                     journal = update_restore_journal(op_id, root=restore_root, target_key=target_key, target_state=TargetRestoreState.STAGED_VERIFIED)
-                elif tf.state is TargetRestoreState.STAGED_VERIFIED:
-                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes:
+                    tf = next((f for f in journal.targets if f.target_key == target_key), None)
+
+                if tf.state is TargetRestoreState.STAGED_VERIFIED:
+                    if not staged_path.exists() or staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes or _sha256_file(staged_path) != entry.sha256:
                         raise ConfiguredStagingPersistenceError(f"Staged artifact '{staged_name}' incompatible or modified")
                     _deep_verify_staged_artifact(staged_path, entry)
 
-            # Confirm ALL targets are STAGED_VERIFIED
+            # Reread journal & require EVERY target == STAGED_VERIFIED and mutation flags == False
             journal = load_restore_journal(op_id, root=restore_root)
             if any(t_fact.state is not TargetRestoreState.STAGED_VERIFIED for t_fact in journal.targets):
-                raise ConfiguredJournalUncertaintyError("Not all targets are STAGED_VERIFIED")
+                raise ConfiguredJournalUncertaintyError("Not all targets are STAGED_VERIFIED before global STAGED_VERIFIED transition")
             if any(t_fact.wal_removed or t_fact.shm_removed or t_fact.replacement_intent or t_fact.replacement_completed or t_fact.rollback_intent or t_fact.rollback_completed for t_fact in journal.targets):
                 raise ConfiguredJournalUncertaintyError("Mutation flags present before global STAGED_VERIFIED transition")
+
+            # Only then: advance global stage RESTORE_STAGED -> STAGED_VERIFIED
+            journal = update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED)
+            reread_j = load_restore_journal(op_id, root=restore_root)
+            if reread_j.stage is not RestoreStage.STAGED_VERIFIED:
+                raise ConfiguredJournalUncertaintyError("Global STAGED_VERIFIED transition failed reread")
         else:
             # Reconstruct staging result for STAGED_VERIFIED / REPLACEMENT_READY re-entry
             by_parent: dict[Path, list[tuple[int, str, DatabaseTarget, Any]]] = {}

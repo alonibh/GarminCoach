@@ -88,9 +88,9 @@ def _advance_to_ready(root: Path):
     journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for key in journal.target_keys:
         journal = update_restore_journal(journal.operation_id, root=root, target_key=key, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
-    journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
     for key in journal.target_keys:
-        journal = update_restore_journal(journal.operation_id, root=root, target_key=key, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
+        journal = update_restore_journal(journal.operation_id, root=root, target_key=key, target_state=TargetRestoreState.STAGED_VERIFIED, now="2026-08-01T12:00:05Z")
+    journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.STAGED_VERIFIED, now="2026-08-01T12:00:06Z")
     return update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.REPLACEMENT_READY, now="2026-08-01T12:00:07Z")
 
 
