@@ -267,7 +267,7 @@ Implementation requires separate approvals:
    on temporary synthetic fixtures only. Configured application databases remain
    excluded and untargetable.
 4. **6B3A**: complete: non-mutating operator restore planning CLI (`plan_verified_restore.py`), read-only restore-operation inspector CLI (`inspect_restore_operation.py`), operator runbook (`docs/GUARDED_RESTORE_RUNBOOK.md`), and deterministic tests. No apply or database mutation commands are included.
-5. **6B3B1**: in progress: configured-runtime restore preparation through `REPLACEMENT_READY` (`guarded_restore_configured.py`, `guarded_restore_configured_staging.py`, and deterministic tests). No database replacement, rollback, or apply CLI is included.
+5. **6B3B1**: complete: configured-runtime restore preparation through `REPLACEMENT_READY` (`guarded_restore_configured.py`, `guarded_restore_configured_staging.py`, and deterministic tests). No database replacement, rollback, or apply CLI is included.
 6. **6B3B2**: unimplemented: configured replacement, postcheck, rollback, and re-entry.
 7. **6B3B3**: unimplemented: operator apply CLI (`apply_verified_restore.py`) and separately approved production drill.
 8. A production restore drill requires a separate explicit review.
