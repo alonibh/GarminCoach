@@ -282,3 +282,18 @@ def test_transition_tables_are_closed_and_not_enum_order_based():
         TargetRestoreState.REPLACED: {TargetRestoreState.ROLLED_BACK},
         TargetRestoreState.ROLLED_BACK: set(),
     }
+
+
+def test_planning_and_inspector_never_invoke_mutation_functions(monkeypatch):
+    import subprocess
+    import process_lock
+    import verified_backup
+
+    def fail_mutation(*args, **kwargs):
+        pytest.fail("Forbidden mutation function invoked by Phase 6B3A CLI")
+
+    monkeypatch.setattr(verified_backup, "create_verified_backup", fail_mutation)
+    monkeypatch.setattr(process_lock, "acquire_process_lock", fail_mutation)
+    monkeypatch.setattr(subprocess, "run", fail_mutation)
+    monkeypatch.setattr(subprocess, "Popen", fail_mutation)
+    monkeypatch.setattr(subprocess, "call", fail_mutation)

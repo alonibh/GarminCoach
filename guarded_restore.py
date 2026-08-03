@@ -26,6 +26,15 @@ PLAN_FORMAT = "garmincoach-guarded-restore-plan-v1"
 JOURNAL_FORMAT = "garmincoach-guarded-restore-journal-v1"
 CONFIRMATION_DOMAIN = "garmincoach-guarded-restore-confirmation-v1"
 MAX_JOURNAL_BYTES = 128 * 1024
+
+EXIT_SUCCESS = 0
+EXIT_PRECONDITION_FAILED = 1
+EXIT_INVALID_OPERATION = 2
+EXIT_FAILED_SAFE = 3
+EXIT_ROLLBACK_REQUIRED = 4
+EXIT_MANUAL_RECOVERY_REQUIRED = 5
+EXIT_UNEXPECTED_FAILURE = 6
+EXIT_INVALID_ARGUMENTS = 64
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _BACKUP_ID = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
 _OPERATION_ID = re.compile(r"^restore-\d{8}T\d{6}Z-[0-9a-f]{8}$")
