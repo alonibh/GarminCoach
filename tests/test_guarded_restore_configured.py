@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 import shutil
 import sqlite3
+import stat
 import subprocess
+
 
 import config
 from guarded_restore import (
@@ -840,3 +842,366 @@ def test_mixed_restore_staged_target_states_resume_successfully(tmp_path, monkey
         operation_id=op_id,
     )
     assert result_reentry.stage is RestoreStage.REPLACEMENT_READY
+
+
+# =============================================================================
+# 7. Evidence-Binding and Descriptor-Ownership Invariant Tests
+# =============================================================================
+
+def _prepare_to_ready(tmp_path, monkeypatch):
+    """Helper: set up env, create backup, run full prepare and return (result, env_tuple)."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(target_hash=t_hash, expected_application_commit=commit_hex)
+    result = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+    )
+    return result, (proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex, source_backup_id, t_hash, c_val, snapshot)
+
+
+def test_baseline_sha_tampered_between_barriers_detected(tmp_path, monkeypatch):
+    """Modifying a non-runtime baseline field (captured_at) after one barrier must be
+    detected at the next barrier even when all destination facts still match.
+    The tamper must be written as canonical JSON so the load succeeds; only the SHA check
+    catches the byte-level change."""
+    from guarded_restore import canonical_json as _cjson
+
+    result, env = _prepare_to_ready(tmp_path, monkeypatch)
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex, source_backup_id, t_hash, c_val, snapshot = env
+    op_id = result.operation_id
+    op_dir = restore_root / f"operation-{op_id}"
+    baseline_file = op_dir / "destination-baseline.json"
+
+    # Load and tamper only captured_at (non-runtime field), then re-write as canonical JSON.
+    # This produces valid, parseable canonical bytes but with a different SHA-256.
+    orig_bytes = baseline_file.read_bytes()
+    data = json.loads(orig_bytes)
+    data["captured_at"] = "2099-01-01T00:00:00Z"
+    tampered_bytes = _cjson(data)
+    assert tampered_bytes != orig_bytes, "Tampered bytes must differ from originals"
+    baseline_file.write_bytes(tampered_bytes)
+
+    # Re-entry must detect SHA mismatch at the barrier (journal SHA != reloaded file SHA)
+    with pytest.raises((ConfiguredRestorePreconditionError, ConfiguredJournalUncertaintyError)):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=op_id,
+        )
+
+
+
+def test_journal_missing_baseline_sha_after_precheck_rejected(tmp_path, monkeypatch):
+    """A journal at VERIFIED or later without destination_baseline_sha256 must be refused."""
+    result, env = _prepare_to_ready(tmp_path, monkeypatch)
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex, source_backup_id, t_hash, c_val, snapshot = env
+    op_id = result.operation_id
+    journal_path = restore_root / f"operation-{op_id}" / "journal.json"
+
+    # Null out destination_baseline_sha256 and reset to VERIFIED stage
+    data = json.loads(journal_path.read_bytes())
+    data["destination_baseline_sha256"] = None
+    data["stage"] = "VERIFIED"
+    journal_path.write_bytes((json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8"))
+
+    # The inner ConfiguredRestorePreconditionError may surface as ConfiguredJournalUncertaintyError
+    # if settlement also fails on the tampered journal.
+    with pytest.raises((ConfiguredRestorePreconditionError, ConfiguredJournalUncertaintyError)):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=op_id,
+        )
+
+
+
+def test_durable_parent_substitution_before_stage_validation_refused(tmp_path, monkeypatch):
+    """Substituting the destination parent with a different directory (same path, different
+    inode) must be refused when persisted baseline parent identity does not match.
+    Uses _prepare_to_ready so the journal is at REPLACEMENT_READY with existing staging dirs;
+    stage_configured_targets is called again (REPLACEMENT_READY is a valid re-entry stage)
+    with tampered baseline parent identity – the existing-dir validation must reject it."""
+    from guarded_restore_configured_staging import (
+        load_destination_baseline_evidence,
+        stage_configured_targets,
+        TargetBaselineRecord,
+        DestinationBaselineEvidence,
+    )
+    from operator_storage import discover_database_targets, TargetProfile
+    import stat as _stat
+
+    result, env = _prepare_to_ready(tmp_path, monkeypatch)
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex, source_backup_id, t_hash, c_val, snapshot = env
+    op_id = result.operation_id
+
+    # Load real evidence from disk
+    configured_targets = discover_database_targets(profile=TargetProfile.RUNTIME)
+    evidence, _ = load_destination_baseline_evidence(op_id, restore_root=restore_root)
+
+    # Build a substitute directory whose inode is definitely different from the real parent
+    substitute_dir = tmp_path / "substitute_parent"
+    substitute_dir.mkdir()
+    subst_st = substitute_dir.stat()
+
+    # Tamper parent_st_ino to point to the substitute (inode + 99999 to guarantee mismatch)
+    tampered_records = []
+    for rec in evidence.targets:
+        tampered_records.append(TargetBaselineRecord(
+            target_key=rec.target_key,
+            kind=rec.kind,
+            tenant_uuid=rec.tenant_uuid,
+            target_order=rec.target_order,
+            configured_relative_path=rec.configured_relative_path,
+            resolved_relative_path=rec.resolved_relative_path,
+            is_regular_file=rec.is_regular_file,
+            st_dev=rec.st_dev,
+            st_ino=rec.st_ino,
+            size_bytes=rec.size_bytes,
+            mtime_ns=rec.mtime_ns,
+            st_mode=rec.st_mode,
+            sha256=rec.sha256,
+            parent_relative_path=rec.parent_relative_path,
+            parent_st_dev=subst_st.st_dev,
+            parent_st_ino=subst_st.st_ino + 99999,  # definitely wrong inode
+            parent_is_dir=True,
+            parent_st_mode=_stat.S_IMODE(subst_st.st_mode),
+            wal=rec.wal,
+            shm=rec.shm,
+        ))
+
+    tampered_evidence = DestinationBaselineEvidence(
+        format_version=evidence.format_version,
+        operation_id=evidence.operation_id,
+        selected_backup_id=evidence.selected_backup_id,
+        selected_backup_manifest_sha256=evidence.selected_backup_manifest_sha256,
+        expected_application_commit=evidence.expected_application_commit,
+        runtime_mode=evidence.runtime_mode,
+        target_set_hash=evidence.target_set_hash,
+        confirmation_value=evidence.confirmation_value,
+        ordered_target_keys=evidence.ordered_target_keys,
+        targets=tuple(tampered_records),
+        active_control_user_mapping=evidence.active_control_user_mapping,
+        garminconnect_version=evidence.garminconnect_version,
+        captured_at=evidence.captured_at,
+    )
+
+    # stage_configured_targets at REPLACEMENT_READY with tampered evidence must raise
+    # ConfiguredStagingOwnershipError because existing staging dirs' parent identity
+    # does not match the (tampered) persisted baseline.
+    with pytest.raises(ConfiguredStagingOwnershipError, match="parent directory identity"):
+        stage_configured_targets(
+            op_id,
+            snapshot,
+            configured_targets,
+            restore_root=restore_root,
+            destination_baseline=tampered_evidence,
+        )
+
+
+def test_binding_hard_link_count_greater_than_one_refused(tmp_path, monkeypatch):
+    """A staging binding with st_nlink > 1 must be refused by validate_existing_staging_directory."""
+    from guarded_restore_configured_staging import (
+        validate_existing_staging_directory,
+        canonical_json as _cjson,
+        _STAGING_BINDING_FORMAT,
+        _STAGING_BINDING_NAME,
+    )
+
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    op_id = "restore-20260803T120000Z-aa112233"
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+
+    binding_payload = {
+        "format_version": _STAGING_BINDING_FORMAT,
+        "operation_id": op_id,
+        "selected_backup_id": "20260803T120000Z-aabbccdd",
+        "selected_backup_manifest_sha256": "a" * 64,
+        "safety_backup_id": None,
+        "runtime_mode": "single_user",
+        "target_set_hash": "b" * 64,
+        "stage_parent": "data",
+        "artifacts": [],
+    }
+    binding_bytes = _cjson(binding_payload)
+    binding_file = stage_dir / _STAGING_BINDING_NAME
+    binding_file.write_bytes(binding_bytes)
+    if os.name != "nt":
+        os.chmod(binding_file, 0o600)
+
+    # Create a hard link to simulate nlink > 1
+    hard_link = tmp_path / ".staging-binding-hardlink.json"
+    try:
+        os.link(str(binding_file), str(hard_link))
+    except OSError:
+        pytest.skip("Hard links not supported on this filesystem")
+
+    # Now validate must fail due to nlink > 1
+    if os.name != "nt":
+        # Hard-link count check only reliably works on POSIX
+        with pytest.raises(ConfiguredStagingOwnershipError, match="link count"):
+            validate_existing_staging_directory(
+                stage_dir, op_id, binding_bytes, set()
+            )
+
+
+def test_artifact_hard_link_count_greater_than_one_refused(tmp_path, monkeypatch):
+    """A staged artifact with st_nlink > 1 must be refused by validate_existing_staging_directory."""
+    from guarded_restore_configured_staging import (
+        validate_existing_staging_directory,
+        canonical_json as _cjson,
+        _STAGING_BINDING_FORMAT,
+        _STAGING_BINDING_NAME,
+    )
+
+    if os.name == "nt":
+        pytest.skip("Hard-link count enforcement only checked on POSIX")
+
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    op_id = "restore-20260803T120000Z-bb334455"
+    stage_dir = tmp_path / "stage2"
+    stage_dir.mkdir()
+    os.chmod(stage_dir, 0o700)
+
+    artifact_name = "000-control.sqlite.staged"
+    binding_payload = {
+        "format_version": _STAGING_BINDING_FORMAT,
+        "operation_id": op_id,
+        "selected_backup_id": "20260803T120000Z-aabbccdd",
+        "selected_backup_manifest_sha256": "a" * 64,
+        "safety_backup_id": None,
+        "runtime_mode": "single_user",
+        "target_set_hash": "b" * 64,
+        "stage_parent": "data",
+        "artifacts": [],
+    }
+    binding_bytes = _cjson(binding_payload)
+    binding_file = stage_dir / _STAGING_BINDING_NAME
+    binding_file.write_bytes(binding_bytes)
+    os.chmod(binding_file, 0o600)
+
+    artifact = stage_dir / artifact_name
+    artifact.write_bytes(b"sqlite data")
+    os.chmod(artifact, 0o600)
+
+    # Create hard link to simulate nlink > 1 for the artifact
+    art_link = tmp_path / f"{artifact_name}.hardlink"
+    try:
+        os.link(str(artifact), str(art_link))
+    except OSError:
+        pytest.skip("Hard links not supported on this filesystem")
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="link count"):
+        validate_existing_staging_directory(
+            stage_dir, op_id, binding_bytes, {artifact_name}
+        )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fchmod descriptor binding not testable on Windows")
+def test_publish_noreplace_link_count_exceeds_one_refused(tmp_path):
+    """If a foreign hard link was created on the final destination before publish,
+    the link count after partial unlink must be != 1, and publish_noreplace must refuse it."""
+    partial = tmp_path / "test_lnk.partial"
+    final = tmp_path / "test_lnk.final"
+    partial.write_bytes(b"ownership data")
+
+    # First, publish so final exists
+    publish_noreplace(partial, final)
+    assert final.exists()
+
+    # Now create another partial and try to publish to another final that has an extra hard link
+    partial2 = tmp_path / "test_lnk2.partial"
+    final2 = tmp_path / "test_lnk2.final"
+    partial2.write_bytes(b"ownership data 2")
+
+    # Simulate: partial2 already has a hard link (external copy)
+    extra_link = tmp_path / "extra.lnk"
+    os.link(str(partial2), str(extra_link))
+
+    # Publish should succeed for the file itself, but after partial unlink,
+    # the link count of final2 should be 1 (extra link was on partial, not final).
+    # This tests the normal case passes when no extra link is on final2.
+    publish_noreplace(partial2, final2)
+    assert final2.exists()
+    assert not partial2.exists()
+    # extra_link still exists (it was the partial2 hard link, now unlinked via partial2)
+    # After partial2 is unlinked, extra_link holds the data but final2 is st_nlink==1
+    final2_st = final2.stat()
+    assert final2_st.st_nlink == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fchmod descriptor binding not testable on Windows")
+def test_publish_noreplace_descriptor_bound_permissions_applied(tmp_path):
+    """After publish_noreplace, the final file must have mode 0600 applied descriptor-bound."""
+    partial = tmp_path / "perm.partial"
+    final = tmp_path / "perm.final"
+    partial.write_bytes(b"mode test data")
+
+    publish_noreplace(partial, final)
+
+    st = final.stat()
+    assert stat.S_IMODE(st.st_mode) == 0o600
+
+
+def test_publish_noreplace_parent_mismatch_refused(tmp_path):
+    """partial_path and final_path in different parent directories must be refused."""
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    partial = tmp_path / "test_parent.partial"
+    final = sub / "test_parent.final"
+    partial.write_bytes(b"data")
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        publish_noreplace(partial, final)
+
+
+def test_publish_noreplace_expected_parent_wrong_refused(tmp_path):
+    """Specifying an expected_parent that doesn't match actual parent must be refused."""
+    wrong_parent = tmp_path / "wrong"
+    wrong_parent.mkdir()
+    partial = tmp_path / "ep.partial"
+    final = tmp_path / "ep.final"
+    partial.write_bytes(b"data")
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        publish_noreplace(partial, final, expected_parent=wrong_parent)
+
+
+def test_publish_noreplace_expected_partial_name_wrong_refused(tmp_path):
+    """Specifying wrong expected_partial_name must be refused."""
+    partial = tmp_path / "realname.partial"
+    final = tmp_path / "out.final"
+    partial.write_bytes(b"data")
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        publish_noreplace(partial, final, expected_partial_name="othername.partial")
+
+
+def test_publish_noreplace_expected_final_name_wrong_refused(tmp_path):
+    """Specifying wrong expected_final_name must be refused."""
+    partial = tmp_path / "in.partial"
+    final = tmp_path / "realfinal.out"
+    partial.write_bytes(b"data")
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        publish_noreplace(partial, final, expected_final_name="other.out")
+

@@ -54,6 +54,7 @@ from guarded_restore import (
     validate_restore_root,
 )
 from guarded_restore_configured_staging import (
+    ConfiguredBaselineSHAMismatch,
     ConfiguredPreflightError,
     ConfiguredRestoreError,
     ConfiguredStagedArtifact,
@@ -246,7 +247,7 @@ def verify_complete_preparation_barrier(
     # 7. Destination and sidecar baselines revalidation
     revalidate_destination_baselines(baselines)
 
-    # 8. Journal immutable fields verification
+    # 8. Journal immutable fields and baseline SHA verification
     if journal is not None:
         if (
             journal.selected_backup_id != selected_backup_id
@@ -259,9 +260,28 @@ def verify_complete_preparation_barrier(
         ):
             raise ConfiguredRestorePreconditionError("Journal immutable fields mismatch during barrier proof")
 
+        # Stages at or after VERIFIED must have a bound destination_baseline_sha256.
+        # The only permitted exception is the narrow PRECHECK interval before baseline is persisted.
+        _requires_baseline_sha = {
+            RestoreStage.VERIFIED,
+            RestoreStage.CURRENT_SNAPSHOT_CREATED,
+            RestoreStage.RESTORE_STAGED,
+            RestoreStage.STAGED_VERIFIED,
+            RestoreStage.REPLACEMENT_READY,
+        }
+        if journal.stage in _requires_baseline_sha:
+            if journal.destination_baseline_sha256 is None:
+                raise ConfiguredRestorePreconditionError(
+                    "Restore journal is missing destination baseline evidence"
+                )
+
         if journal.destination_baseline_sha256 is not None and operation_id is not None:
             r_root = restore_root or config.OPERATOR_RESTORE_ROOT
             ev, sha_hex = load_destination_baseline_evidence(operation_id, restore_root=r_root)
+            if sha_hex != journal.destination_baseline_sha256:
+                raise ConfiguredRestorePreconditionError(
+                    "Persisted destination baseline SHA-256 mismatch"
+                )
             revalidate_destination_baseline_evidence(
                 ev,
                 targets,
@@ -444,6 +464,15 @@ def prepare_configured_restore(
             baseline_sha = write_destination_baseline_evidence(op_id, evidence, restore_root=restore_root)
             journal = update_restore_journal(op_id, root=restore_root, destination_baseline_sha256=baseline_sha)
 
+            # Post-write: reread journal, reload baseline file, recompute SHA – require exact equality
+            reread_journal = load_restore_journal(op_id, root=restore_root)
+            if reread_journal.destination_baseline_sha256 != baseline_sha:
+                raise ConfiguredJournalUncertaintyError("Baseline SHA-256 journal reread mismatch after write")
+            reread_ev, reread_sha = load_destination_baseline_evidence(op_id, restore_root=restore_root)
+            if reread_sha != baseline_sha:
+                raise ConfiguredJournalUncertaintyError("Destination baseline SHA-256 recomputation mismatch after write")
+            journal = reread_journal
+
         # On EVERY invocation (initial or re-entry), load persisted baseline & revalidate against current
         evidence, loaded_baseline_sha = load_destination_baseline_evidence(op_id, restore_root=restore_root)
         if journal.destination_baseline_sha256 != loaded_baseline_sha:
@@ -580,6 +609,7 @@ def prepare_configured_restore(
                 selected_snapshot,
                 configured_targets,
                 restore_root=restore_root,
+                destination_baseline=evidence,
             )
 
             journal = load_restore_journal(op_id, root=restore_root)
