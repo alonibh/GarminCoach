@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Phase 6B3A is non-mutating.**
 > GarminCoach currently has no command to perform a database restore. Phase 6B3A provides only read-only planning and inspection tooling. No database, service, lock, backup, or file system mutation is performed by these tools.
-> Phase 6B3B (mutation apply orchestration) remains unimplemented and requires separate review and approval. No production restore drill has been approved.
+> Phase 6B3B (configured-runtime apply orchestration) remains unimplemented and requires separate review and approval. No production restore command or drill exists yet.
 
 ---
 
@@ -76,7 +76,7 @@ Options:
 - `--human`: Output concise human-readable text format instead of default machine-readable JSON.
 - `--show-local-paths`: Display local operation directory paths.
 
-The inspector reads the durable journal from `operator_restore_operations/operation-<ID>/journal.json` read-only. It makes no file mutations, performs no automatic continuation, and does not run cleanup.
+The inspector reads the durable journal from `operator_restore_operations/operation-<ID>/journal.json` read-only. It makes no file mutations, performs no automatic continuation, and does not run cleanup. Operators must **never manually normalize, edit, or delete** journal files.
 
 ---
 
@@ -86,25 +86,35 @@ The inspector reads the durable journal from `operator_restore_operations/operat
 
 | Exit Code | Name | Meaning |
 | --- | --- | --- |
-| `0` | `EXIT_SUCCESS` | Command completed successfully; planning preconditions met OR operation inspected is `COMPLETED` / `safe_to_proceed_to_apply`. |
+| `0` | `EXIT_SUCCESS` | Command completed successfully; preconditions met; OR operation inspected is `COMPLETED` / `ready_for_replacement`. |
 | `1` | `EXIT_PRECONDITION_FAILED` | Restore planning precondition or backup verification failed (wrong root, malformed ID, unverified backup, configuration drift). |
 | `2` | `EXIT_INVALID_OPERATION` | Invalid or unavailable restore operation journal (malformed ID, missing journal, corrupted payload, path traversal). |
 | `3` | `EXIT_FAILED_SAFE` | Inspected operation is in a safe terminal state (`FAILED_SAFE` or `ROLLED_BACK`). |
 | `4` | `EXIT_ROLLBACK_REQUIRED` | Inspected operation failed mid-replacement; automatic rollback from safety backup is required before any further action. |
 | `5` | `EXIT_MANUAL_RECOVERY_REQUIRED` | Inspected operation failed with mixed target states (`FAILED_MANUAL_RECOVERY_REQUIRED`). **Manual recovery required.** |
-| `6` | `EXIT_UNEXPECTED_FAILURE` | Unexpected internal failure. |
+| `6` | `EXIT_UNEXPECTED_FAILURE` | Unexpected bounded internal failure. |
+| `7` | `EXIT_PREPARATION_INCOMPLETE` | Operation is in a pre-staging or staging preparation stage (`PRECHECK` .. `STAGED_VERIFIED`); apply orchestration has not reached `REPLACEMENT_READY`. |
+| `8` | `EXIT_OPERATION_IN_PROGRESS` | Operation is active or interrupted during replacement (`REPLACING`, `REPLACED`, `POSTCHECK_PASSED`); requires guarded re-entry. |
 | `64` | `EXIT_INVALID_ARGUMENTS` | Invalid command-line arguments or usage. |
 
-### Global Operation Stages
+### Global Operation Stages & Assessment Mapping
 
-- `PRECHECK` / `VERIFIED`: Initial verification stages (mutation-free).
-- `CURRENT_SNAPSHOT_CREATED`: Verified safety backup of current live databases created and verified.
-- `RESTORE_STAGED` / `STAGED_VERIFIED` / `REPLACEMENT_READY`: Offline staging prepared and verified on destination filesystems. Safe to proceed to apply.
-- `REPLACING`: Active database replacement in progress.
-- `REPLACED` / `POSTCHECK_PASSED` / `COMPLETED`: Replacement finished and postcheck passed.
-- `ROLLBACK_REQUIRED`: Failure occurred during replacement/postcheck; rollback needed.
-- `ROLLED_BACK` / `FAILED_SAFE`: Rollback succeeded or safe failure recorded. Terminal state.
-- `FAILED_MANUAL_RECOVERY_REQUIRED`: Rollback failed or replacement state is ambiguous. Terminal state.
+| Global Stage | Assessment | Exit Code | Description & Safety Semantics |
+| --- | --- | --- | --- |
+| `COMPLETED` | `completed` | `0` | Restore operation completed successfully. |
+| `REPLACEMENT_READY` | `ready_for_replacement` | `0` | Staging and pre-replacement verification completed; ready for apply. |
+| `PRECHECK` | `preparation_incomplete` | `7` | Precheck phase in progress; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `VERIFIED` | `preparation_incomplete` | `7` | Source backup verified; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `CURRENT_SNAPSHOT_CREATED` | `preparation_incomplete` | `7` | Safety backup created; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `RESTORE_STAGED` | `preparation_incomplete` | `7` | Staging copy created; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `STAGED_VERIFIED` | `preparation_incomplete` | `7` | Staged copies verified; apply orchestration has not reached `REPLACEMENT_READY`. |
+| `REPLACING` | `operation_in_progress` | `8` | Target replacement is active or interrupted and requires guarded re-entry. **Never treat as safe failure.** |
+| `REPLACED` | `operation_in_progress` | `8` | All target replacements durably recorded but postcheck remains required. **Never treat as safe failure or completed.** |
+| `POSTCHECK_PASSED` | `operation_in_progress` | `8` | Postcheck passed but `COMPLETED` still must be durably persisted and reread. **Never treat as completed.** |
+| `ROLLBACK_REQUIRED` | `rollback_required` | `4` | Failure during replacement or postcheck; automatic rollback from safety backup required. |
+| `ROLLED_BACK` | `failed_safely` | `3` | Rollback from safety backup completed; operation terminated safely. |
+| `FAILED_SAFE` | `failed_safely` | `3` | Operation terminated safely before database replacement. |
+| `FAILED_MANUAL_RECOVERY_REQUIRED` | `manual_recovery_required` | `5` | Interrupted/failed rollback with mixed target states. **Manual recovery required; automatic continuation MUST NOT be attempted.** |
 
 ---
 
@@ -116,4 +126,5 @@ The inspector reads the durable journal from `operator_restore_operations/operat
 > Because target databases are in an inconsistent generation state:
 > 1. The application service MUST remain stopped.
 > 2. No automatic re-entry or continuation script may be run.
-> 3. An operator must inspect the durable facts and manually restore target databases from the recorded safety backup ID.
+> 3. Operators must **never edit, normalize, or delete** the operation journal.
+> 4. An operator must inspect the durable facts and manually restore target databases from the recorded safety backup ID.
