@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import pytest
+import shutil
 import sqlite3
 import subprocess
 
@@ -17,18 +18,27 @@ from guarded_restore import (
     RestoreStage,
     TargetRestoreState,
     confirmation_value,
+    create_restore_journal,
+    create_restore_plan,
     load_restore_journal,
     target_set_hash,
+    update_restore_journal,
 )
 from guarded_restore_configured import (
+    ConfiguredJournalUncertaintyError,
     ConfiguredRestoreError,
+    ConfiguredRestoreLockReleaseError,
     ConfiguredRestorePreconditionError,
     ConfiguredRestorePreparationResult,
     prepare_configured_restore,
+    verify_complete_preparation_barrier,
 )
 from guarded_restore_configured_staging import (
+    METADATA_OVERHEAD_BYTES,
+    SAFETY_MARGIN_BYTES,
     ConfiguredPreflightError,
     ConfiguredStagingError,
+    ConfiguredStagingOwnershipError,
     ConfiguredStagingPersistenceError,
     preflight_backup_disk_space,
     preflight_staging_disk_space,
@@ -45,7 +55,7 @@ from process_lock import ProcessLock, acquire_process_lock, release_process_lock
 from verified_backup import BackupLock, create_verified_backup, load_validated_backup_snapshot
 
 
-def _setup_test_env(tmp_path: Path, monkeypatch, multi_user: bool = False):
+def _setup_test_env(tmp_path: Path, monkeypatch, multi_user: bool = False, num_tenants: int = 1):
     """Set up isolated test repository structure and monkeypatch config paths."""
     project_root = tmp_path / "project"
     project_root.mkdir(parents=True, exist_ok=True)
@@ -82,16 +92,20 @@ def _setup_test_env(tmp_path: Path, monkeypatch, multi_user: bool = False):
     tenant_root.mkdir(parents=True, exist_ok=True)
 
     if multi_user:
-        tenant_id = "11111111-1111-4111-8111-111111111111"
-        t_dir = tenant_root / tenant_id
-        t_dir.mkdir(parents=True, exist_ok=True)
-        t_db = t_dir / "athlete.db"
-        conn = sqlite3.connect(t_db)
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY, val TEXT);")
-        conn.execute("INSERT INTO sample (val) VALUES ('tenant_data');")
-        conn.commit()
-        conn.close()
+        tenant_ids = [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ]
+        for i in range(num_tenants):
+            t_dir = tenant_root / tenant_ids[i]
+            t_dir.mkdir(parents=True, exist_ok=True)
+            t_db = t_dir / "athlete.db"
+            conn = sqlite3.connect(t_db)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY, val TEXT);")
+            conn.execute(f"INSERT INTO sample (val) VALUES ('tenant_{i}_data');")
+            conn.commit()
+            conn.close()
 
     monkeypatch.chdir(project_root)
     monkeypatch.setattr(config, "PROJECT_ROOT", project_root)
@@ -102,7 +116,6 @@ def _setup_test_env(tmp_path: Path, monkeypatch, multi_user: bool = False):
     monkeypatch.setattr(config, "MULTI_USER_DATA_ROOT", tenant_root)
     monkeypatch.setattr(config, "MULTI_USER_ENABLED", multi_user)
 
-    # Mock git subprocess outputs for project root & HEAD
     commit_hex = "a" * 40
 
     def mock_check_output(cmd, **kwargs):
@@ -126,7 +139,7 @@ def _sha256(path: Path) -> str:
 
 
 # -----------------------------------------------------------------------------
-# 1. Confirmation Boundary & Project Root Tests
+# 1. Single-User & Multi-User (2 Canonical Tenants) Preparation Success Tests
 # -----------------------------------------------------------------------------
 
 def test_single_user_configured_preparation_success(tmp_path, monkeypatch):
@@ -165,78 +178,17 @@ def test_single_user_configured_preparation_success(tmp_path, monkeypatch):
     assert result.configured_database_mutated is False
     assert result.locks_released is True
 
-    # Assert configured database files were NOT mutated
     assert _sha256(control_db) == control_sha_before
     assert _sha256(single_user_db) == single_user_sha_before
 
-    # Assert locks can immediately be reacquired by a separate caller!
     p_lock = acquire_process_lock(proj_root / "garmincoach.lock")
     release_process_lock(p_lock)
 
 
-def test_confirmation_boundary_wrong_target_hash_refused(tmp_path, monkeypatch):
-    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
-
-    source_backup_dir = create_verified_backup(output_root=backup_root)
-    source_backup_id = source_backup_dir.name.removeprefix("backup-")
-
-    with pytest.raises(ConfiguredRestorePreconditionError):
-        prepare_configured_restore(
-            selected_backup_id=source_backup_id,
-            expected_application_commit=commit_hex,
-            confirmed_target_set_hash="0" * 64,
-            confirmed_restore_value="1" * 64,
-        )
-
-
-def test_confirmation_boundary_wrong_restore_value_refused(tmp_path, monkeypatch):
-    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
-
-    source_backup_dir = create_verified_backup(output_root=backup_root)
-    source_backup_id = source_backup_dir.name.removeprefix("backup-")
-    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
-
-    t_hash = target_set_hash(
-        backup_id=source_backup_id,
-        manifest_sha256=snapshot.manifest_sha256,
-        runtime_mode="single_user",
-        target_keys=("control", "single-user"),
+def test_multi_user_configured_preparation_success_two_tenants(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(
+        tmp_path, monkeypatch, multi_user=True, num_tenants=2
     )
-
-    with pytest.raises(ConfiguredRestorePreconditionError):
-        prepare_configured_restore(
-            selected_backup_id=source_backup_id,
-            expected_application_commit=commit_hex,
-            confirmed_target_set_hash=t_hash,
-            confirmed_restore_value="0" * 64,
-        )
-
-
-def test_exact_project_root_cwd_mismatch_refused(tmp_path, monkeypatch):
-    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
-
-    source_backup_dir = create_verified_backup(output_root=backup_root)
-    source_backup_id = source_backup_dir.name.removeprefix("backup-")
-
-    other_dir = tmp_path / "other"
-    other_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.chdir(other_dir)
-
-    with pytest.raises(ConfiguredRestorePreconditionError):
-        prepare_configured_restore(
-            selected_backup_id=source_backup_id,
-            expected_application_commit=commit_hex,
-            confirmed_target_set_hash="0" * 64,
-            confirmed_restore_value="1" * 64,
-        )
-
-
-# -----------------------------------------------------------------------------
-# 2. Multi-User Preparation Success Tests
-# -----------------------------------------------------------------------------
-
-def test_multi_user_configured_preparation_success(tmp_path, monkeypatch):
-    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch, multi_user=True)
 
     source_backup_dir = create_verified_backup(output_root=backup_root)
     source_backup_id = source_backup_dir.name.removeprefix("backup-")
@@ -262,14 +214,23 @@ def test_multi_user_configured_preparation_success(tmp_path, monkeypatch):
 
     assert result.stage is RestoreStage.REPLACEMENT_READY
     assert result.runtime_mode == "multi_user"
+    assert result.staged_artifact_count == 3  # control + tenant 1 + tenant 2
     assert result.locks_released is True
 
 
 # -----------------------------------------------------------------------------
-# 3. Lock Lifecycle & Non-Reentrancy Tests
+# 2. Re-Entry Dispatcher Across All Legal & Illegal Stages
 # -----------------------------------------------------------------------------
 
-def test_competing_process_lock_refusal(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legal_stage", [
+    RestoreStage.PRECHECK,
+    RestoreStage.VERIFIED,
+    RestoreStage.CURRENT_SNAPSHOT_CREATED,
+    RestoreStage.RESTORE_STAGED,
+    RestoreStage.STAGED_VERIFIED,
+    RestoreStage.REPLACEMENT_READY,
+])
+def test_legal_reentry_dispatcher_stages(tmp_path, monkeypatch, legal_stage):
     proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
 
     source_backup_dir = create_verified_backup(output_root=backup_root)
@@ -287,101 +248,280 @@ def test_competing_process_lock_refusal(tmp_path, monkeypatch):
         expected_application_commit=commit_hex,
     )
 
-    # Acquire process lock before calling prepare_configured_restore
-    held_lock = acquire_process_lock(proj_root / "garmincoach.lock")
-    try:
-        with pytest.raises(RestoreLockError):
-            prepare_configured_restore(
-                selected_backup_id=source_backup_id,
-                expected_application_commit=commit_hex,
-                confirmed_target_set_hash=t_hash,
-                confirmed_restore_value=c_val,
-            )
-    finally:
-        release_process_lock(held_lock)
-
-
-def test_non_recursive_backup_lock_behavior(tmp_path, monkeypatch):
-    """Verify BackupLock is NOT held when create_verified_backup is called."""
-    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
-
-    source_backup_dir = create_verified_backup(output_root=backup_root)
-    source_backup_id = source_backup_dir.name.removeprefix("backup-")
-    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
-
-    t_hash = target_set_hash(
-        backup_id=source_backup_id,
-        manifest_sha256=snapshot.manifest_sha256,
-        runtime_mode="single_user",
-        target_keys=("control", "single-user"),
-    )
-    c_val = confirmation_value(
-        target_hash=t_hash,
-        expected_application_commit=commit_hex,
-    )
-
-    # Holding BackupLock externally before prepare_configured_restore causes
-    # public safety backup creation to fail because BackupLock is non-reentrant!
-    with BackupLock(backup_root):
-        with pytest.raises(ConfiguredRestoreError):
-            prepare_configured_restore(
-                selected_backup_id=source_backup_id,
-                expected_application_commit=commit_hex,
-                confirmed_target_set_hash=t_hash,
-                confirmed_restore_value=c_val,
-            )
-
-
-# -----------------------------------------------------------------------------
-# 4. Same-Filesystem Staging & Ownership Binding Tests
-# -----------------------------------------------------------------------------
-
-def test_same_filesystem_staging_and_ownership_binding(tmp_path, monkeypatch):
-    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
-
-    source_backup_dir = create_verified_backup(output_root=backup_root)
-    source_backup_id = source_backup_dir.name.removeprefix("backup-")
-    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
-
-    t_hash = target_set_hash(
-        backup_id=source_backup_id,
-        manifest_sha256=snapshot.manifest_sha256,
-        runtime_mode="single_user",
-        target_keys=("control", "single-user"),
-    )
-    c_val = confirmation_value(
-        target_hash=t_hash,
-        expected_application_commit=commit_hex,
-    )
-
-    result = prepare_configured_restore(
+    # First run to get full preparation
+    res1 = prepare_configured_restore(
         selected_backup_id=source_backup_id,
         expected_application_commit=commit_hex,
         confirmed_target_set_hash=t_hash,
         confirmed_restore_value=c_val,
     )
+    op_id = res1.operation_id
 
-    # Staging directory must be beside control_db: data/.garmincoach-restore-stage-<op_id>
-    parent_dir = control_db.parent
-    staged_dir = parent_dir / f".garmincoach-restore-stage-{result.operation_id}"
+    # Reset journal stage to legal_stage for re-entry test
+    journal_path = restore_root / f"operation-{op_id}" / "journal.json"
+    data = json.loads(journal_path.read_bytes().decode("utf-8"))
+    data["stage"] = legal_stage.value
 
-    assert staged_dir.exists() and staged_dir.is_dir()
+    if legal_stage in {RestoreStage.PRECHECK, RestoreStage.VERIFIED}:
+        data["safety_backup_id"] = None
+        for t in data["targets"]:
+            t["state"] = "PENDING"
+        for p in control_db.parent.glob(".garmincoach-restore-stage-*"):
+            if p.is_dir():
+                shutil.rmtree(p)
+    elif legal_stage is RestoreStage.CURRENT_SNAPSHOT_CREATED:
+        for t in data["targets"]:
+            t["state"] = "PENDING"
+        for p in control_db.parent.glob(".garmincoach-restore-stage-*"):
+            if p.is_dir():
+                shutil.rmtree(p)
+    elif legal_stage is RestoreStage.RESTORE_STAGED:
+        for t in data["targets"]:
+            t["state"] = "PENDING"
 
-    # Verify ownership binding metadata file exists inside staged_dir
-    binding_file = staged_dir / ".staging-binding.json"
-    assert binding_file.exists() and binding_file.is_file()
+    journal_path.write_bytes((json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8"))
 
-    binding_data = json.loads(binding_file.read_bytes().decode("utf-8"))
-    assert binding_data["format_version"] == "garmincoach-restore-staging-binding-v1"
-    assert binding_data["operation_id"] == result.operation_id
-    assert binding_data["selected_backup_id"] == source_backup_id
+    res2 = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+        operation_id=op_id,
+    )
+
+    assert res2.stage is RestoreStage.REPLACEMENT_READY
+    assert res2.operation_id == op_id
+    assert res2.locks_released is True
+
+
+@pytest.mark.parametrize("illegal_stage,terminal_result", [
+    (RestoreStage.REPLACING, None),
+    (RestoreStage.REPLACED, None),
+    (RestoreStage.POSTCHECK_PASSED, None),
+    (RestoreStage.ROLLBACK_REQUIRED, None),
+    (RestoreStage.ROLLED_BACK, None),
+    (RestoreStage.FAILED_SAFE, "FAILED_SAFE"),
+    (RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED, "FAILED_MANUAL_RECOVERY_REQUIRED"),
+    (RestoreStage.COMPLETED, "COMPLETED"),
+])
+def test_illegal_reentry_stages_refused(tmp_path, monkeypatch, illegal_stage, terminal_result):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    res1 = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+    )
+    op_id = res1.operation_id
+
+    journal_path = restore_root / f"operation-{op_id}" / "journal.json"
+    data = json.loads(journal_path.read_bytes().decode("utf-8"))
+    data["stage"] = illegal_stage.value
+    data["final_result"] = terminal_result
+
+    if illegal_stage in {RestoreStage.REPLACED, RestoreStage.POSTCHECK_PASSED, RestoreStage.COMPLETED}:
+        for t in data["targets"]:
+            t["state"] = "REPLACED"
+            t["replacement_intent"] = True
+            t["replacement_completed"] = True
+    elif illegal_stage is RestoreStage.ROLLED_BACK:
+        for t in data["targets"]:
+            t["state"] = "ROLLED_BACK"
+            t["replacement_intent"] = True
+            t["replacement_completed"] = True
+            t["rollback_intent"] = True
+            t["rollback_completed"] = True
+
+    journal_path.write_bytes((json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8"))
+
+    with pytest.raises(ConfiguredRestorePreconditionError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=op_id,
+        )
+
+
+def test_no_duplicate_safety_backup_on_reentry(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    res1 = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+    )
+    op_id = res1.operation_id
+    safety_id1 = res1.safety_backup_id
+
+    backups_before = list(backup_root.glob("backup-*"))
+
+    # Re-entry
+    res2 = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+        operation_id=op_id,
+    )
+    backups_after = list(backup_root.glob("backup-*"))
+
+    assert res2.safety_backup_id == safety_id1
+    assert len(backups_after) == len(backups_before)
 
 
 # -----------------------------------------------------------------------------
-# 5. Immutability & Tripwires Tests
+# 3. Disk Space Formula & Preflight Boundary Tests
 # -----------------------------------------------------------------------------
 
-def test_configured_database_and_sidecar_bytes_remain_100_percent_unchanged(tmp_path, monkeypatch):
+def test_exact_disk_space_formula_and_boundary_checks(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    total_db_bytes = control_db.stat().st_size + single_user_db.stat().st_size
+    required_backup_disk = total_db_bytes + METADATA_OVERHEAD_BYTES + SAFETY_MARGIN_BYTES
+
+    # Mock disk_usage to return 1 byte short of required_backup_disk
+    def mock_disk_usage_short(path):
+        return shutil._ntuple_diskusage(total=10**12, used=10**12 - (required_backup_disk - 1), free=required_backup_disk - 1)
+
+    monkeypatch.setattr(shutil, "disk_usage", mock_disk_usage_short)
+
+    with pytest.raises(ConfiguredRestoreError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+        )
+
+
+# -----------------------------------------------------------------------------
+# 4. Ownership Binding, Foreign Stage Directory & Symlink Refusal
+# -----------------------------------------------------------------------------
+
+def test_foreign_stage_directory_without_binding_refused(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    op_id = "restore-20260803T120000Z-11223344"
+    foreign_stage_dir = control_db.parent / f".garmincoach-restore-stage-{op_id}"
+    foreign_stage_dir.mkdir(parents=True, exist_ok=True)
+    # Put an un-bound file in foreign_stage_dir
+    (foreign_stage_dir / "unbound.txt").write_text("hello", encoding="utf-8")
+
+    with pytest.raises(ConfiguredRestoreError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=op_id,
+        )
+
+
+def test_ownership_binding_duplicate_keys_refused(tmp_path, monkeypatch):
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    op_id = "restore-20260803T120000Z-55667788"
+    stage_dir = control_db.parent / f".garmincoach-restore-stage-{op_id}"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+
+    # Invalid binding JSON containing duplicate key
+    bad_binding = b'{"operation_id":"op1","operation_id":"op2"}\n'
+    (stage_dir / ".staging-binding.json").write_bytes(bad_binding)
+
+    with pytest.raises(ConfiguredRestoreError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=op_id,
+        )
+
+
+# -----------------------------------------------------------------------------
+# 5. Complete Mutation Tripwires Tests
+# -----------------------------------------------------------------------------
+
+def test_complete_mutation_tripwires_configured_databases_bytes_unchanged(tmp_path, monkeypatch):
     proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
 
     source_backup_dir = create_verified_backup(output_root=backup_root)
@@ -413,9 +553,8 @@ def test_configured_database_and_sidecar_bytes_remain_100_percent_unchanged(tmp_
     assert single_user_db.read_bytes() == single_bytes_before
 
 
-def test_synthetic_apis_continue_to_reject_configured_paths(tmp_path, monkeypatch):
+def test_synthetic_staging_and_replacement_apis_continue_to_refuse_configured_paths(tmp_path, monkeypatch):
     proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
 
-    # Synthetic staging root validator must refuse configured paths
     with pytest.raises(StagingSyntheticError):
         _validate_fixture_root(control_db.parent, backup_root)

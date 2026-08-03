@@ -2,8 +2,8 @@
 
 Performs configured-target staging into private owned staging directories
 located beside each configured destination, creates canonical ownership bindings,
-runs deep SQLite verification (including foreign keys), performs per-filesystem
-disk space preflight, and executes read-only readiness proofs.
+runs deep SQLite verification (including foreign keys), performs exact per-filesystem
+disk space preflight, and executes complete read-only readiness proofs.
 
 No configured database files or sidecars are modified or replaced by this module.
 """
@@ -49,8 +49,15 @@ _STAGING_BINDING_FORMAT = "garmincoach-restore-staging-binding-v1"
 _STAGING_BINDING_NAME = ".staging-binding.json"
 _MAX_BINDING_BYTES = 64 * 1024
 
+METADATA_OVERHEAD_BYTES = 10_000_000
+SAFETY_MARGIN_BYTES = 10_000_000
 
-class ConfiguredStagingError(RuntimeError):
+
+class ConfiguredRestoreError(RuntimeError):
+    """Base error for configured restore preparation and staging failures."""
+
+
+class ConfiguredStagingError(ConfiguredRestoreError):
     """Base error for configured restore staging failures."""
 
 
@@ -60,6 +67,10 @@ class ConfiguredStagingSourceError(ConfiguredStagingError):
 
 class ConfiguredStagingPersistenceError(ConfiguredStagingError):
     """Staged artifact file creation or verification failed."""
+
+
+class ConfiguredStagingOwnershipError(ConfiguredStagingError):
+    """Stage directory or ownership binding is foreign, modified, or indeterminate."""
 
 
 class ConfiguredPreflightError(ConfiguredStagingError):
@@ -88,7 +99,8 @@ class ConfiguredStagingResult:
 @dataclass(frozen=True)
 class DestinationBaselineRecord:
     target_key: str
-    path: Path = field(repr=False)
+    raw_path: Path = field(repr=False)
+    resolved_path: Path = field(repr=False)
     dev: int
     ino: int
     size: int
@@ -115,9 +127,9 @@ class DestinationBaselineRecord:
 def _private(path: Path, directory: bool = False) -> None:
     try:
         os.chmod(path, 0o700 if directory else 0o600)
-    except OSError:
+    except OSError as exc:
         if os.name != "nt":
-            raise ConfiguredStagingPersistenceError("Could not set private permissions")
+            raise ConfiguredStagingPersistenceError("Could not set private permissions") from exc
 
 
 def _sha256_file(path: Path) -> str:
@@ -140,45 +152,89 @@ def _staged_artifact_name(index: int, target_key: str) -> str:
     return f"{index:03d}-{safe_key}.sqlite.staged"
 
 
+def _strict_json_loads(data_bytes: bytes) -> dict[str, Any]:
+    """Parse JSON bytes with duplicate key rejection and max byte check."""
+    if len(data_bytes) > _MAX_BINDING_BYTES:
+        raise ConfiguredStagingOwnershipError("Ownership binding file exceeds maximum size limit")
+
+    def _reject_duplicates(pairs):
+        d = {}
+        for k, v in pairs:
+            if k in d:
+                raise ConfiguredStagingOwnershipError(f"Duplicate key '{k}' in ownership binding")
+            d[k] = v
+        return d
+
+    try:
+        text = data_bytes.decode("utf-8")
+        parsed = json.loads(text, object_pairs_hook=_reject_duplicates)
+        if not isinstance(parsed, dict):
+            raise ConfiguredStagingOwnershipError("Ownership binding JSON root must be an object")
+        return parsed
+    except Exception as exc:
+        if isinstance(exc, ConfiguredStagingOwnershipError):
+            raise
+        raise ConfiguredStagingOwnershipError("Failed to parse ownership binding JSON") from exc
+
+
 def capture_destination_baselines(targets: tuple[DatabaseTarget, ...]) -> tuple[DestinationBaselineRecord, ...]:
-    """Capture snapshot baseline metrics for configured database files and sidecars."""
+    """Capture snapshot baseline metrics for configured database files and sidecars.
+
+    Checks original raw paths for symlinks BEFORE calling resolve.
+    """
     records: list[DestinationBaselineRecord] = []
     for t in targets:
-        if not t.path.exists():
+        raw_p = t.path
+        if has_symlink_component(raw_p) or raw_p.is_symlink():
+            raise ConfiguredStagingError("Configured database target path contains symlinks")
+
+        if not raw_p.exists():
             if t.required:
-                raise ConfiguredStagingError(f"Configured database target missing")
+                raise ConfiguredStagingError("Required configured database target missing")
             continue
 
-        p = t.path.resolve()
-        if p.is_symlink() or has_symlink_component(p):
-            raise ConfiguredStagingError("Configured database target cannot contain symlinks")
+        p = raw_p.resolve()
+        if p.is_symlink() or not stat.S_ISREG(p.stat().st_mode):
+            raise ConfiguredStagingError("Configured database target must be a regular file")
 
         st = p.stat()
-        parent_st = p.parent.stat()
+        parent_p = p.parent
+        if has_symlink_component(parent_p) or parent_p.is_symlink():
+            raise ConfiguredStagingError("Configured database target parent directory contains symlinks")
+        parent_st = parent_p.stat()
         sha = _sha256_file(p)
 
-        wal = p.with_name(p.name + "-wal")
+        wal = raw_p.with_name(raw_p.name + "-wal")
+        if has_symlink_component(wal) or wal.is_symlink():
+            raise ConfiguredStagingError("WAL sidecar path contains symlinks")
         wal_exists = wal.exists()
-        wal_dev = wal_ino = wal_size = wal_mtime = None
-        wal_sha = None
-        if wal_exists and wal.is_file() and not wal.is_symlink():
-            wst = wal.stat()
+        wal_dev = wal_ino = wal_size = wal_mtime = wal_sha = None
+        if wal_exists:
+            wal_resolved = wal.resolve()
+            wst = wal_resolved.stat()
+            if not stat.S_ISREG(wst.st_mode):
+                raise ConfiguredStagingError("WAL sidecar must be a regular file")
             wal_dev, wal_ino, wal_size, wal_mtime = wst.st_dev, wst.st_ino, wst.st_size, wst.st_mtime_ns
-            wal_sha = _sha256_file(wal)
+            wal_sha = _sha256_file(wal_resolved)
 
-        shm = p.with_name(p.name + "-shm")
+        shm = raw_p.with_name(raw_p.name + "-shm")
+        if has_symlink_component(shm) or shm.is_symlink():
+            raise ConfiguredStagingError("SHM sidecar path contains symlinks")
         shm_exists = shm.exists()
-        shm_dev = shm_ino = shm_size = shm_mtime = None
-        shm_sha = None
-        if shm_exists and shm.is_file() and not shm.is_symlink():
-            sst = shm.stat()
+        shm_dev = shm_ino = shm_size = shm_mtime = shm_sha = None
+        if shm_exists:
+            shm_resolved = shm.resolve()
+            sst = shm_resolved.stat()
+            if not stat.S_ISREG(sst.st_mode):
+                raise ConfiguredStagingError("SHM sidecar must be a regular file")
             shm_dev, shm_ino, shm_size, shm_mtime = sst.st_dev, sst.st_ino, sst.st_size, sst.st_mtime_ns
-            shm_sha = _sha256_file(shm)
+            shm_sha = _sha256_file(shm_resolved)
 
         records.append(
             DestinationBaselineRecord(
                 target_key=t.target_key,
-                path=p,
+                raw_path=raw_p,
+                resolved_path=p,
                 dev=st.st_dev,
                 ino=st.st_ino,
                 size=st.st_size,
@@ -189,12 +245,12 @@ def capture_destination_baselines(targets: tuple[DatabaseTarget, ...]) -> tuple[
                 parent_ino=parent_st.st_ino,
                 parent_mode=stat.S_IMODE(parent_st.st_mode),
                 wal_exists=wal_exists,
+                shm_exists=shm_exists,
                 wal_dev=wal_dev,
                 wal_ino=wal_ino,
                 wal_size=wal_size,
                 wal_mtime_ns=wal_mtime,
                 wal_sha256=wal_sha,
-                shm_exists=shm_exists,
                 shm_dev=shm_dev,
                 shm_ino=shm_ino,
                 shm_size=shm_size,
@@ -208,31 +264,31 @@ def capture_destination_baselines(targets: tuple[DatabaseTarget, ...]) -> tuple[
 def revalidate_destination_baselines(baselines: tuple[DestinationBaselineRecord, ...]) -> None:
     """Verify configured database destinations and sidecars have experienced ZERO mutation."""
     for b in baselines:
-        if not b.path.exists() or b.path.is_symlink() or has_symlink_component(b.path):
+        if has_symlink_component(b.raw_path) or b.raw_path.is_symlink() or not b.resolved_path.exists():
             raise ConfiguredStagingError("Configured destination revalidation failed")
 
-        st = b.path.stat()
+        st = b.resolved_path.stat()
         if (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns) != (b.dev, b.ino, b.size, b.mtime_ns):
             raise ConfiguredStagingError("Configured destination file metadata changed")
 
-        if _sha256_file(b.path) != b.sha256:
+        if _sha256_file(b.resolved_path) != b.sha256:
             raise ConfiguredStagingError("Configured destination file SHA-256 changed")
 
-        wal = b.path.with_name(b.path.name + "-wal")
-        if wal.exists() != b.wal_exists:
-            raise ConfiguredStagingError("Configured destination WAL sidecar existence changed")
+        wal = b.raw_path.with_name(b.raw_path.name + "-wal")
+        if has_symlink_component(wal) or wal.is_symlink() or wal.exists() != b.wal_exists:
+            raise ConfiguredStagingError("Configured destination WAL sidecar existence or path changed")
         if b.wal_exists and wal.exists():
-            wst = wal.stat()
+            wst = wal.resolve().stat()
             if (wst.st_dev, wst.st_ino, wst.st_size, wst.st_mtime_ns) != (b.wal_dev, b.wal_ino, b.wal_size, b.wal_mtime_ns):
                 raise ConfiguredStagingError("Configured destination WAL sidecar metadata changed")
             if _sha256_file(wal) != b.wal_sha256:
                 raise ConfiguredStagingError("Configured destination WAL sidecar SHA-256 changed")
 
-        shm = b.path.with_name(b.path.name + "-shm")
-        if shm.exists() != b.shm_exists:
-            raise ConfiguredStagingError("Configured destination SHM sidecar existence changed")
+        shm = b.raw_path.with_name(b.raw_path.name + "-shm")
+        if has_symlink_component(shm) or shm.is_symlink() or shm.exists() != b.shm_exists:
+            raise ConfiguredStagingError("Configured destination SHM sidecar existence or path changed")
         if b.shm_exists and shm.exists():
-            sst = shm.stat()
+            sst = shm.resolve().stat()
             if (sst.st_dev, sst.st_ino, sst.st_size, sst.st_mtime_ns) != (b.shm_dev, b.shm_ino, b.shm_size, b.shm_mtime_ns):
                 raise ConfiguredStagingError("Configured destination SHM sidecar metadata changed")
             if _sha256_file(shm) != b.shm_sha256:
@@ -242,12 +298,13 @@ def revalidate_destination_baselines(baselines: tuple[DestinationBaselineRecord,
 def preflight_backup_disk_space(
     targets: tuple[DatabaseTarget, ...],
     backup_root: Path,
-    multiplier: float = 2.0,
-    overhead_bytes: int = 10_000_000,
 ) -> int:
-    """Preflight check on the operator-backup filesystem before creating safety backup."""
+    """Preflight check on the operator-backup filesystem before creating safety backup.
+
+    Formula: sum of exact current DB sizes + METADATA_OVERHEAD_BYTES + SAFETY_MARGIN_BYTES.
+    """
     total_db_bytes = sum(t.path.stat().st_size for t in targets if t.path.exists())
-    required_bytes = int(total_db_bytes * multiplier) + overhead_bytes
+    required_bytes = total_db_bytes + METADATA_OVERHEAD_BYTES + SAFETY_MARGIN_BYTES
 
     try:
         usage = shutil.disk_usage(backup_root)
@@ -261,26 +318,34 @@ def preflight_backup_disk_space(
 
 def preflight_staging_disk_space(
     targets: tuple[DatabaseTarget, ...],
-    backup_snapshot: ValidatedBackupSnapshot,
-    multiplier: float = 2.0,
-    overhead_bytes: int = 10_000_000,
+    selected_snapshot: ValidatedBackupSnapshot,
+    safety_snapshot: ValidatedBackupSnapshot,
 ) -> None:
-    """Preflight check grouped by destination filesystem (dev) under long-held BackupLock."""
-    entries_by_key = {e.target_key: e for e in backup_snapshot.entries}
-    by_filesystem: dict[int, list[tuple[DatabaseTarget, int]]] = {}
+    """Preflight check grouped by destination filesystem (dev) under long-held BackupLock.
+
+    Formula per filesystem:
+    sum(selected backup entry sizes on this filesystem)
+    + sum(safety backup entry sizes on this filesystem)
+    + METADATA_OVERHEAD_BYTES
+    + SAFETY_MARGIN_BYTES.
+    """
+    selected_entries = {e.target_key: e for e in selected_snapshot.entries}
+    safety_entries = {e.target_key: e for e in safety_snapshot.entries}
+    by_filesystem: dict[int, list[tuple[DatabaseTarget, int, int]]] = {}
 
     for t in targets:
         if not t.path.exists():
             continue
-        st = t.path.parent.stat()
-        dev = st.st_dev
-        size = entries_by_key[t.target_key].size_bytes if t.target_key in entries_by_key else t.path.stat().st_size
-        by_filesystem.setdefault(dev, []).append((t, size))
+        dev = t.path.parent.stat().st_dev
+        sel_size = selected_entries[t.target_key].size_bytes if t.target_key in selected_entries else 0
+        saf_size = safety_entries[t.target_key].size_bytes if t.target_key in safety_entries else 0
+        by_filesystem.setdefault(dev, []).append((t, sel_size, saf_size))
 
-    for dev, target_items in by_filesystem.items():
-        filesystem_path = target_items[0][0].path.parent
-        sum_staged_bytes = sum(size for _, size in target_items)
-        required_bytes = int(sum_staged_bytes * multiplier) + overhead_bytes
+    for dev, items in by_filesystem.items():
+        filesystem_path = items[0][0].path.parent
+        sum_selected = sum(sel for _, sel, _ in items)
+        sum_safety = sum(saf for _, _, saf in items)
+        required_bytes = sum_selected + sum_safety + METADATA_OVERHEAD_BYTES + SAFETY_MARGIN_BYTES
 
         try:
             usage = shutil.disk_usage(filesystem_path)
@@ -293,23 +358,20 @@ def preflight_staging_disk_space(
 
 def _write_staging_binding(
     stage_dir: Path,
-    payload: dict[str, Any],
+    expected_data: bytes,
 ) -> None:
-    """Write canonical ownership binding metadata file with descriptor-safe atomic replace."""
+    """Write canonical ownership binding metadata file with exclusive publication."""
     binding_path = stage_dir / _STAGING_BINDING_NAME
     temp_path = stage_dir / f".{_STAGING_BINDING_NAME}.partial"
-    data = canonical_json(payload)
 
     if binding_path.exists():
-        # Check if existing binding matches exact payload
         try:
             existing_bytes = binding_path.read_bytes()
-            existing_parsed = json.loads(existing_bytes.decode("utf-8"))
-            if canonical_json(existing_parsed) == data:
+            if existing_bytes == expected_data:
                 return
         except Exception:
             pass
-        raise ConfiguredStagingPersistenceError("Foreign or incompatible staging binding exists")
+        raise ConfiguredStagingOwnershipError("Foreign or incompatible staging binding exists")
 
     fd: int | None = None
     try:
@@ -319,8 +381,8 @@ def _write_staging_binding(
             0o600,
         )
         offset = 0
-        while offset < len(data):
-            written = os.write(fd, data[offset:])
+        while offset < len(expected_data):
+            written = os.write(fd, expected_data[offset:])
             if written <= 0:
                 raise OSError("Write failed")
             offset += written
@@ -332,6 +394,9 @@ def _write_staging_binding(
 
         os.replace(temp_path, binding_path)
         _private(binding_path)
+
+        if binding_path.read_bytes() != expected_data:
+            raise ConfiguredStagingOwnershipError("Staging binding verification failed after publish")
 
         if os.name != "nt":
             dir_fd = os.open(str(stage_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -353,6 +418,40 @@ def _write_staging_binding(
         raise ConfiguredStagingPersistenceError("Failed to persist canonical staging binding metadata") from exc
 
 
+def validate_existing_staging_directory(
+    stage_dir: Path,
+    expected_operation_id: str,
+    expected_data: bytes,
+    expected_staged_names: set[str],
+) -> None:
+    """Strictly validate existing stage directory for legal re-entry."""
+    if stage_dir.is_symlink() or has_symlink_component(stage_dir):
+        raise ConfiguredStagingOwnershipError("Stage directory path contains symlinks")
+
+    if not stage_dir.exists() or not stat.S_ISDIR(stage_dir.stat().st_mode):
+        raise ConfiguredStagingOwnershipError("Stage directory is not a regular directory")
+
+    binding_file = stage_dir / _STAGING_BINDING_NAME
+    if not binding_file.exists() or binding_file.is_symlink():
+        raise ConfiguredStagingOwnershipError("Stage directory missing valid ownership binding")
+
+    raw_bytes = binding_file.read_bytes()
+    if raw_bytes != expected_data:
+        raise ConfiguredStagingOwnershipError("Stage directory ownership binding bytes do not match expected canonical bytes")
+
+    # Strict key set and strict duplicate rejection check
+    _strict_json_loads(raw_bytes)
+
+    # Allowed children check inside stage_dir
+    allowed_children = {_STAGING_BINDING_NAME} | expected_staged_names
+    for child in stage_dir.iterdir():
+        c_name = child.name
+        if c_name.startswith(".") and c_name.endswith(".partial"):
+            continue
+        if c_name not in allowed_children:
+            raise ConfiguredStagingOwnershipError(f"Stage directory contains unexpected foreign child '{c_name}'")
+
+
 def stage_configured_targets(
     operation_id: str,
     backup_snapshot: ValidatedBackupSnapshot,
@@ -364,8 +463,8 @@ def stage_configured_targets(
     root = validate_restore_root(restore_root)
     journal = load_restore_journal(operation_id, root=root)
 
-    if journal.stage not in {RestoreStage.CURRENT_SNAPSHOT_CREATED, RestoreStage.RESTORE_STAGED}:
-        raise ConfiguredStagingError(f"Journal stage is invalid for staging")
+    if journal.stage not in {RestoreStage.CURRENT_SNAPSHOT_CREATED, RestoreStage.RESTORE_STAGED, RestoreStage.STAGED_VERIFIED, RestoreStage.REPLACEMENT_READY}:
+        raise ConfiguredStagingError("Journal stage is invalid for staging")
 
     if journal.stage is RestoreStage.CURRENT_SNAPSHOT_CREATED:
         journal = update_restore_journal(operation_id, root=root, stage=RestoreStage.RESTORE_STAGED)
@@ -374,7 +473,6 @@ def stage_configured_targets(
     targets_by_key = {t.target_key: t for t in targets}
     staged_info: list[tuple[int, str, Path, Any, Path]] = []
 
-    # Map parent directory -> targets staged in that directory
     by_parent: dict[Path, list[tuple[int, str, DatabaseTarget, Any]]] = {}
 
     for index, target_key in enumerate(journal.target_keys):
@@ -386,24 +484,13 @@ def stage_configured_targets(
         parent_dir = t.path.parent.resolve()
         by_parent.setdefault(parent_dir, []).append((index, target_key, t, entry))
 
-    # Perform staging directory setup and target copying per parent directory
     for parent_dir, items in by_parent.items():
-        if parent_dir.is_symlink() or has_symlink_component(parent_dir):
+        if not parent_dir.exists() or parent_dir.is_symlink() or has_symlink_component(parent_dir):
             raise ConfiguredStagingPersistenceError("Destination parent directory cannot contain symlinks")
 
         stage_dir = parent_dir / _staged_dir_name(operation_id)
-        if stage_dir.is_symlink():
-            raise ConfiguredStagingPersistenceError("Staging directory cannot be a symlink")
+        expected_staged_names = {_staged_artifact_name(it[0], it[1]) for it in items}
 
-        # Create private staging directory if it doesn't exist
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        _private(stage_dir, directory=True)
-
-        # Same filesystem check: stage_dir and parent_dir MUST have same st_dev
-        if stage_dir.stat().st_dev != parent_dir.stat().st_dev:
-            raise ConfiguredStagingPersistenceError("Staging directory and destination parent reside on different filesystems")
-
-        # Create ownership binding metadata
         binding_payload = {
             "format_version": _STAGING_BINDING_FORMAT,
             "operation_id": operation_id,
@@ -426,23 +513,45 @@ def stage_configured_targets(
                 for item in items
             ],
         }
-        _write_staging_binding(stage_dir, binding_payload)
+        expected_binding_bytes = canonical_json(binding_payload)
 
-        # Copy each target artifact into stage_dir
+        if stage_dir.exists():
+            validate_existing_staging_directory(stage_dir, operation_id, expected_binding_bytes, expected_staged_names)
+        else:
+            try:
+                stage_dir.mkdir(parents=False, exist_ok=False)
+                _private(stage_dir, directory=True)
+
+                if os.name != "nt":
+                    parent_fd = os.open(str(parent_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(parent_fd)
+                    finally:
+                        os.close(parent_fd)
+            except OSError as exc:
+                raise ConfiguredStagingPersistenceError("Could not create exclusive stage directory") from exc
+
+        if stage_dir.stat().st_dev != parent_dir.stat().st_dev:
+            raise ConfiguredStagingPersistenceError("Staging directory and destination parent reside on different filesystems")
+
+        _write_staging_binding(stage_dir, expected_binding_bytes)
+
         for index, target_key, target_obj, entry in items:
-            src_file = backup_snapshot.directory / entry.filename
-            if not src_file.exists() or src_file.is_symlink() or has_symlink_component(src_file):
-                raise ConfiguredStagingSourceError("Backup source file is missing or unsafe")
-
+            tf = next((f for f in journal.targets if f.target_key == target_key), None)
+            if tf is None:
+                raise ConfiguredStagingError("Target key not found in journal target facts")
             staged_filename = _staged_artifact_name(index, target_key)
             staged_path = stage_dir / staged_filename
             partial_path = stage_dir / f".{staged_filename}.partial"
 
-            # Check if compatible staged file already exists (for re-entry)
-            if staged_path.exists():
+            if tf.state in {TargetRestoreState.STAGED, TargetRestoreState.STAGED_VERIFIED} and staged_path.exists():
                 if staged_path.is_symlink() or staged_path.stat().st_size != entry.size_bytes or _sha256_file(staged_path) != entry.sha256:
                     raise ConfiguredStagingPersistenceError("Existing staged artifact is incompatible or modified")
             else:
+                src_file = backup_snapshot.directory / entry.filename
+                if not src_file.exists() or src_file.is_symlink() or has_symlink_component(src_file):
+                    raise ConfiguredStagingSourceError("Backup source file is missing or unsafe")
+
                 src_fd = None
                 partial_fd = None
                 try:
@@ -510,20 +619,19 @@ def stage_configured_targets(
                             pass
                     raise ConfiguredStagingPersistenceError("Descriptor-safe staged file publication failed") from exc
 
-            # Record target state transition to STAGED in journal
-            journal = update_restore_journal(
-                operation_id,
-                root=root,
-                target_key=target_key,
-                target_state=TargetRestoreState.STAGED,
-            )
+            if tf.state is TargetRestoreState.PENDING:
+                journal = update_restore_journal(
+                    operation_id,
+                    root=root,
+                    target_key=target_key,
+                    target_state=TargetRestoreState.STAGED,
+                )
 
             staged_info.append((index, target_key, staged_path, entry, stage_dir))
 
-    # Transition global stage to STAGED_VERIFIED
-    journal = update_restore_journal(operation_id, root=root, stage=RestoreStage.STAGED_VERIFIED)
+    if journal.stage is RestoreStage.RESTORE_STAGED:
+        journal = update_restore_journal(operation_id, root=root, stage=RestoreStage.STAGED_VERIFIED)
 
-    # Deep verification of all staged SQLite artifacts (including foreign keys!)
     artifacts: list[ConfiguredStagedArtifact] = []
 
     for index, target_key, staged_path, entry, stage_dir in staged_info:
@@ -551,12 +659,14 @@ def stage_configured_targets(
         if staged_markers != expected_markers:
             raise ConfiguredStagingPersistenceError("Staged file migration markers mismatch")
 
-        journal = update_restore_journal(
-            operation_id,
-            root=root,
-            target_key=target_key,
-            target_state=TargetRestoreState.STAGED_VERIFIED,
-        )
+        tf = next((f for f in journal.targets if f.target_key == target_key), None)
+        if tf is not None and tf.state is TargetRestoreState.STAGED:
+            journal = update_restore_journal(
+                operation_id,
+                root=root,
+                target_key=target_key,
+                target_state=TargetRestoreState.STAGED_VERIFIED,
+            )
 
         artifacts.append(
             ConfiguredStagedArtifact(
@@ -594,10 +704,8 @@ def verify_configured_readiness(
     if journal.stage not in {RestoreStage.STAGED_VERIFIED, RestoreStage.REPLACEMENT_READY}:
         raise ConfiguredStagingError("Journal stage invalid for readiness proof")
 
-    # 1. Re-verify configured database baselines and sidecars
     revalidate_destination_baselines(baselines)
 
-    # 2. Re-verify staged artifacts and binding metadata
     for artifact in staging_result.staged_artifacts:
         if not artifact.staged_path.exists() or artifact.staged_path.is_symlink():
             raise ConfiguredStagingPersistenceError("Staged artifact missing or unsafe during readiness proof")
@@ -607,7 +715,6 @@ def verify_configured_readiness(
         if check.integrity_check_ok is not True or check.foreign_keys_ok is not True:
             raise ConfiguredStagingPersistenceError("Staged artifact SQLite check failed during readiness proof")
 
-    # 3. Verify all journal target facts at REPLACEMENT_READY
     for tf in journal.targets:
         if tf.state is not TargetRestoreState.STAGED_VERIFIED:
             raise ConfiguredStagingError("Journal target state is not STAGED_VERIFIED")
