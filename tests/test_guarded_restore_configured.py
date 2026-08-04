@@ -20,6 +20,7 @@ from guarded_restore import (
     RestoreLockError,
     RestoreStage,
     TargetRestoreState,
+    canonical_json,
     confirmation_value,
     create_restore_journal,
     create_restore_plan,
@@ -43,10 +44,14 @@ from guarded_restore_configured_staging import (
     ConfiguredStagingError,
     ConfiguredStagingOwnershipError,
     ConfiguredStagingPersistenceError,
+    DestinationBaselineEvidence,
     preflight_backup_disk_space,
     preflight_staging_disk_space,
     publish_noreplace,
     capture_destination_baseline_evidence,
+    write_destination_baseline_evidence,
+    stage_configured_targets,
+    validate_existing_staging_directory,
     _destination_baseline_from_payload,
     _verify_durable_parent,
 )
@@ -1317,3 +1322,487 @@ def test_publish_noreplace_does_not_apply_pathname_chmod_after_close(tmp_path):
     final_mode = stat.S_IMODE(final.stat().st_mode)
     assert final_mode == 0o600, f"Expected 0600 but got {oct(final_mode)} after publish_noreplace"
     assert not partial.exists(), "Partial file must be removed by publish_noreplace"
+
+
+def test_stage_configured_targets_refuses_none_destination_baseline(tmp_path, monkeypatch):
+    """stage_configured_targets must raise ConfiguredStagingOwnershipError when destination_baseline is None."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+    targets = discover_database_targets(profile=TargetProfile.RUNTIME)
+    plan = create_restore_plan(
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_keys=snapshot.target_keys,
+    )
+    journal = create_restore_journal(plan, root=restore_root, operation_id="restore-20260101T000000Z-00000000")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.VERIFIED)
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="destination_baseline"):
+        stage_configured_targets(
+            journal.operation_id,
+            snapshot,
+            targets,
+            restore_root=restore_root,
+            destination_baseline=None,
+        )
+
+
+def test_stage_configured_targets_refuses_missing_baseline_target_record(tmp_path, monkeypatch):
+    """stage_configured_targets must raise ConfiguredStagingOwnershipError when a target is missing from destination_baseline."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+    targets = discover_database_targets(profile=TargetProfile.RUNTIME)
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=snapshot.target_keys,
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+    evidence = capture_destination_baseline_evidence(
+        operation_id="restore-20260101T000000Z-00000000",
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_set_hash=t_hash,
+        confirmation_value=c_val,
+        targets=targets,
+    )
+    incomplete_evidence = DestinationBaselineEvidence(
+        format_version=evidence.format_version,
+        operation_id=evidence.operation_id,
+        selected_backup_id=evidence.selected_backup_id,
+        selected_backup_manifest_sha256=evidence.selected_backup_manifest_sha256,
+        expected_application_commit=evidence.expected_application_commit,
+        runtime_mode=evidence.runtime_mode,
+        target_set_hash=evidence.target_set_hash,
+        confirmation_value=evidence.confirmation_value,
+        ordered_target_keys=evidence.ordered_target_keys,
+        targets=evidence.targets[:1],
+        active_control_user_mapping=evidence.active_control_user_mapping,
+        garminconnect_version=evidence.garminconnect_version,
+        captured_at=evidence.captured_at,
+    )
+    plan = create_restore_plan(
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_keys=snapshot.target_keys,
+    )
+    journal = create_restore_journal(plan, root=restore_root, operation_id="restore-20260101T000000Z-00000000")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.VERIFIED)
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        stage_configured_targets(
+            journal.operation_id,
+            snapshot,
+            targets,
+            restore_root=restore_root,
+            destination_baseline=incomplete_evidence,
+        )
+
+
+def test_stage_configured_targets_refuses_duplicate_baseline_target_record(tmp_path, monkeypatch):
+    """stage_configured_targets must raise ConfiguredStagingOwnershipError when a baseline target record is duplicated."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+    targets = discover_database_targets(profile=TargetProfile.RUNTIME)
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=snapshot.target_keys,
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+    evidence = capture_destination_baseline_evidence(
+        operation_id="restore-20260101T000000Z-00000000",
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_set_hash=t_hash,
+        confirmation_value=c_val,
+        targets=targets,
+    )
+    dup_evidence = DestinationBaselineEvidence(
+        format_version=evidence.format_version,
+        operation_id=evidence.operation_id,
+        selected_backup_id=evidence.selected_backup_id,
+        selected_backup_manifest_sha256=evidence.selected_backup_manifest_sha256,
+        expected_application_commit=evidence.expected_application_commit,
+        runtime_mode=evidence.runtime_mode,
+        target_set_hash=evidence.target_set_hash,
+        confirmation_value=evidence.confirmation_value,
+        ordered_target_keys=evidence.ordered_target_keys,
+        targets=evidence.targets + (evidence.targets[0],),
+        active_control_user_mapping=evidence.active_control_user_mapping,
+        garminconnect_version=evidence.garminconnect_version,
+        captured_at=evidence.captured_at,
+    )
+    plan = create_restore_plan(
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_keys=snapshot.target_keys,
+    )
+    journal = create_restore_journal(plan, root=restore_root, operation_id="restore-20260101T000000Z-00000000")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.VERIFIED)
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
+
+    with pytest.raises(ConfiguredStagingOwnershipError):
+        stage_configured_targets(
+            journal.operation_id,
+            snapshot,
+            targets,
+            restore_root=restore_root,
+            destination_baseline=dup_evidence,
+        )
+
+
+def test_verify_durable_parent_refuses_mode_drift(tmp_path, monkeypatch):
+    """_verify_durable_parent must refuse when current parent directory mode differs from baseline mode."""
+    import config as cfg
+    monkeypatch.setattr(cfg, "PROJECT_ROOT", tmp_path)
+    parent = tmp_path / "data"
+    parent.mkdir()
+    p_st = parent.stat()
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="mode"):
+        _verify_durable_parent(
+            project_root=tmp_path,
+            current_parent_path=parent,
+            persisted_relative_path="data",
+            persisted_st_dev=p_st.st_dev,
+            persisted_st_ino=p_st.st_ino,
+            persisted_st_mode=0o755 if stat.S_IMODE(p_st.st_mode) != 0o755 else 0o700,
+        )
+
+
+def test_parent_substitution_before_new_stage_creation_refused_via_prepare(tmp_path, monkeypatch):
+    """parent substitution before new-stage creation must be refused through the real prepare_configured_restore production path."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    orig_capture = capture_destination_baseline_evidence
+    def monkeypatched_capture(op_id, s_id, s_sha, commit, mode, t_hash_arg, c_val_arg, targets_arg):
+        ev = orig_capture(op_id, s_id, s_sha, commit, mode, t_hash_arg, c_val_arg, targets_arg)
+        # Tamper parent_st_ino in the baseline evidence so that when stage_configured_targets
+        # verifies the parent directory against baseline, parent identity mismatch is detected.
+        from guarded_restore_configured_staging import TargetBaselineRecord
+        tampered_targets = []
+        for t_rec in ev.targets:
+            tampered_targets.append(
+                TargetBaselineRecord(
+                    target_key=t_rec.target_key,
+                    kind=t_rec.kind,
+                    tenant_uuid=t_rec.tenant_uuid,
+                    target_order=t_rec.target_order,
+                    configured_relative_path=t_rec.configured_relative_path,
+                    resolved_relative_path=t_rec.resolved_relative_path,
+                    is_regular_file=t_rec.is_regular_file,
+                    st_dev=t_rec.st_dev,
+                    st_ino=t_rec.st_ino,
+                    size_bytes=t_rec.size_bytes,
+                    mtime_ns=t_rec.mtime_ns,
+                    st_mode=t_rec.st_mode,
+                    sha256=t_rec.sha256,
+                    parent_relative_path=t_rec.parent_relative_path,
+                    parent_st_dev=t_rec.parent_st_dev,
+                    parent_st_ino=t_rec.parent_st_ino + 99999,
+                    parent_is_dir=t_rec.parent_is_dir,
+                    parent_st_mode=t_rec.parent_st_mode,
+                    wal=t_rec.wal,
+                    shm=t_rec.shm,
+                )
+            )
+        return DestinationBaselineEvidence(
+            format_version=ev.format_version,
+            operation_id=ev.operation_id,
+            selected_backup_id=ev.selected_backup_id,
+            selected_backup_manifest_sha256=ev.selected_backup_manifest_sha256,
+            expected_application_commit=ev.expected_application_commit,
+            runtime_mode=ev.runtime_mode,
+            target_set_hash=ev.target_set_hash,
+            confirmation_value=ev.confirmation_value,
+            ordered_target_keys=ev.ordered_target_keys,
+            targets=tuple(tampered_targets),
+            active_control_user_mapping=ev.active_control_user_mapping,
+            garminconnect_version=ev.garminconnect_version,
+            captured_at=ev.captured_at,
+        )
+
+    monkeypatch.setattr("guarded_restore_configured.capture_destination_baseline_evidence", monkeypatched_capture)
+    monkeypatch.setattr("guarded_restore_configured_staging.capture_destination_baseline_evidence", monkeypatched_capture)
+
+    with pytest.raises(ConfiguredRestoreError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+        )
+
+
+def test_parent_substitution_during_existing_stage_validation_refused_via_prepare(tmp_path, monkeypatch):
+    """parent substitution during existing-stage validation must be refused through prepare_configured_restore re-entry."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    res = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+    )
+    assert res.stage is RestoreStage.REPLACEMENT_READY
+
+    data_dir = proj_root / "data"
+    stage_dir = data_dir / f".garmincoach-restore-stage-{res.operation_id}"
+    temp_stage_backup = tmp_path / "temp_stage_backup"
+    shutil.copytree(stage_dir, temp_stage_backup)
+
+    shutil.rmtree(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    for db_file, table_val in [(control_db, "control_data"), (single_user_db, "single_user_data")]:
+        c = sqlite3.connect(db_file)
+        c.execute("PRAGMA foreign_keys = ON;")
+        c.execute("CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY, val TEXT);")
+        c.execute(f"INSERT INTO sample (val) VALUES ('{table_val}');")
+        c.commit()
+        c.close()
+
+    shutil.copytree(temp_stage_backup, stage_dir)
+
+    with pytest.raises(ConfiguredRestoreError):
+        prepare_configured_restore(
+            selected_backup_id=source_backup_id,
+            expected_application_commit=commit_hex,
+            confirmed_target_set_hash=t_hash,
+            confirmed_restore_value=c_val,
+            operation_id=res.operation_id,
+        )
+
+
+def test_staged_verified_reentry_passes_persisted_parent_and_expected_entries(tmp_path, monkeypatch):
+    """STAGED_VERIFIED re-entry must validate persisted parent identity and expected entries."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    safety_backup_dir = create_verified_backup(output_root=backup_root)
+    safety_backup_id = safety_backup_dir.name.removeprefix("backup-")
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    targets = discover_database_targets(profile=TargetProfile.RUNTIME)
+    op_id = "restore-20260101T000000Z-00000000"
+    evidence = capture_destination_baseline_evidence(
+        operation_id=op_id,
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_set_hash=t_hash,
+        confirmation_value=c_val,
+        targets=targets,
+    )
+
+    plan = create_restore_plan(
+        selected_backup_id=source_backup_id,
+        selected_backup_manifest_sha256=snapshot.manifest_sha256,
+        expected_application_commit=commit_hex,
+        runtime_mode="single_user",
+        target_keys=snapshot.target_keys,
+    )
+    journal = create_restore_journal(plan, root=restore_root, operation_id=op_id)
+    baseline_sha = write_destination_baseline_evidence(op_id, evidence, restore_root=restore_root)
+    update_restore_journal(op_id, root=restore_root, destination_baseline_sha256=baseline_sha)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=safety_backup_id)
+    stage_configured_targets(op_id, snapshot, targets, restore_root=restore_root, destination_baseline=evidence)
+    for key in journal.target_keys:
+        update_restore_journal(op_id, root=restore_root, target_key=key, target_state=TargetRestoreState.STAGED)
+        update_restore_journal(op_id, root=restore_root, target_key=key, target_state=TargetRestoreState.STAGED_VERIFIED)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.STAGED_VERIFIED)
+
+    res2 = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+        operation_id=op_id,
+    )
+    assert res2.stage is RestoreStage.REPLACEMENT_READY
+
+
+def test_replacement_ready_reentry_passes_persisted_parent_and_expected_entries(tmp_path, monkeypatch):
+    """REPLACEMENT_READY re-entry must validate persisted parent identity and expected entries."""
+    proj_root, backup_root, restore_root, control_db, single_user_db, commit_hex = _setup_test_env(tmp_path, monkeypatch)
+    source_backup_dir = create_verified_backup(output_root=backup_root)
+    source_backup_id = source_backup_dir.name.removeprefix("backup-")
+    snapshot = load_validated_backup_snapshot(source_backup_dir, against_current_config=True)
+
+    t_hash = target_set_hash(
+        backup_id=source_backup_id,
+        manifest_sha256=snapshot.manifest_sha256,
+        runtime_mode="single_user",
+        target_keys=("control", "single-user"),
+    )
+    c_val = confirmation_value(
+        target_hash=t_hash,
+        expected_application_commit=commit_hex,
+    )
+
+    res = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+    )
+    assert res.stage is RestoreStage.REPLACEMENT_READY
+
+    res2 = prepare_configured_restore(
+        selected_backup_id=source_backup_id,
+        expected_application_commit=commit_hex,
+        confirmed_target_set_hash=t_hash,
+        confirmed_restore_value=c_val,
+        operation_id=res.operation_id,
+    )
+    assert res2.stage is RestoreStage.REPLACEMENT_READY
+
+
+def test_validate_existing_staging_directory_refuses_unexpected_child(tmp_path):
+    """validate_existing_staging_directory must raise ConfiguredStagingOwnershipError when an unexpected child file is present."""
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    (stage_dir / ".staging-binding.json").write_bytes(binding_bytes)
+    (stage_dir / "000-control.sqlite.staged").write_bytes(b"data")
+    (stage_dir / "foreign_child.txt").write_bytes(b"intruder")
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="foreign"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+        )
+
+
+def test_validate_existing_staging_directory_refuses_tampered_binding_bytes(tmp_path):
+    """validate_existing_staging_directory must raise ConfiguredStagingOwnershipError when binding file bytes do not match expected."""
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    (stage_dir / ".staging-binding.json").write_bytes(b'{"tampered": true}')
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="bytes do not match"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            set(),
+        )
+
+
+def test_validate_existing_staging_directory_refuses_modified_artifact_sha(tmp_path):
+    """validate_existing_staging_directory must raise ConfiguredStagingOwnershipError when staged artifact SHA-256 does not match entry."""
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = "a" * 64
+
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    (stage_dir / ".staging-binding.json").write_bytes(binding_bytes)
+    (stage_dir / "000-control.sqlite.staged").write_bytes(b"data")
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="SHA-256 mismatch"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_publish_noreplace_failed_unlink_surfaces_error(tmp_path, monkeypatch):
+    """When os.unlink(partial) fails after publish link creation, publish_noreplace must raise ConfiguredStagingOwnershipError."""
+    partial = tmp_path / "test.partial"
+    final = tmp_path / "test.final"
+    partial.write_bytes(b"cleanup test data")
+
+    def failing_unlink(path):
+        raise OSError("Permission denied on unlink")
+
+    monkeypatch.setattr(os, "unlink", failing_unlink)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="unlink"):
+        publish_noreplace(partial, final)
+

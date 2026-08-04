@@ -1532,7 +1532,7 @@ def stage_configured_targets(
     targets: tuple[DatabaseTarget, ...],
     *,
     restore_root: Path | str | None = None,
-    destination_baseline: DestinationBaselineEvidence,
+    destination_baseline: DestinationBaselineEvidence | None = None,
 ) -> ConfiguredStagingResult:
     """Stage targets into private owned staging directories beside configured destinations.
 
@@ -1740,6 +1740,14 @@ def stage_configured_targets(
             raise ConfiguredStagingPersistenceError("Staging directory and destination parent reside on different filesystems")
 
         _write_staging_binding(stage_dir, expected_binding_bytes)
+        _verify_durable_parent(
+            project_root=config.PROJECT_ROOT,
+            current_parent_path=parent_dir,
+            persisted_relative_path=persisted_parent_rel,
+            persisted_st_dev=persisted_parent_dev,
+            persisted_st_ino=persisted_parent_ino,
+            persisted_st_mode=persisted_parent_mode,
+        )
 
         for index, target_key, target_obj, entry in items:
             tf = next((f for f in journal.targets if f.target_key == target_key), None)
@@ -1806,6 +1814,15 @@ def stage_configured_targets(
                     # Do NOT call _private(staged_path) here.
                     # publish_noreplace() is the sole authority for final-file permission
                     # finalization (descriptor-bound fchmod). No pathname chmod after publish.
+
+                    _verify_durable_parent(
+                        project_root=config.PROJECT_ROOT,
+                        current_parent_path=parent_dir,
+                        persisted_relative_path=persisted_parent_rel,
+                        persisted_st_dev=persisted_parent_dev,
+                        persisted_st_ino=persisted_parent_ino,
+                        persisted_st_mode=persisted_parent_mode,
+                    )
 
                     if os.name != "nt":
                         stage_dir_fd = os.open(str(stage_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
