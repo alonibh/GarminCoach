@@ -1734,11 +1734,18 @@ def test_validate_existing_staging_directory_refuses_unexpected_child(tmp_path):
     """validate_existing_staging_directory must raise ConfiguredStagingOwnershipError when an unexpected child file is present."""
     stage_dir = tmp_path / "stage"
     stage_dir.mkdir()
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
     op_id = "restore-20260101T000000Z-00000000"
     binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
     binding_bytes = canonical_json(binding_payload)
-    (stage_dir / ".staging-binding.json").write_bytes(binding_bytes)
-    (stage_dir / "000-control.sqlite.staged").write_bytes(b"data")
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
     (stage_dir / "foreign_child.txt").write_bytes(b"intruder")
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="foreign"):
@@ -1754,10 +1761,15 @@ def test_validate_existing_staging_directory_refuses_tampered_binding_bytes(tmp_
     """validate_existing_staging_directory must raise ConfiguredStagingOwnershipError when binding file bytes do not match expected."""
     stage_dir = tmp_path / "stage"
     stage_dir.mkdir()
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
     op_id = "restore-20260101T000000Z-00000000"
     binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
     binding_bytes = canonical_json(binding_payload)
-    (stage_dir / ".staging-binding.json").write_bytes(b'{"tampered": true}')
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(b'{"tampered": true}')
+    if os.name != "nt":
+        os.chmod(binding_file, 0o600)
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="bytes do not match"):
         validate_existing_staging_directory(
@@ -1776,11 +1788,18 @@ def test_validate_existing_staging_directory_refuses_modified_artifact_sha(tmp_p
 
     stage_dir = tmp_path / "stage"
     stage_dir.mkdir()
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
     op_id = "restore-20260101T000000Z-00000000"
     binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
     binding_bytes = canonical_json(binding_payload)
-    (stage_dir / ".staging-binding.json").write_bytes(binding_bytes)
-    (stage_dir / "000-control.sqlite.staged").write_bytes(b"data")
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="SHA-256 mismatch"):
         validate_existing_staging_directory(
@@ -1805,4 +1824,3 @@ def test_publish_noreplace_failed_unlink_surfaces_error(tmp_path, monkeypatch):
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="unlink"):
         publish_noreplace(partial, final)
-
