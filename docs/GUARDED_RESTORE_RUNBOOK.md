@@ -3,8 +3,19 @@
 > [!IMPORTANT]
 > **Phase 6B3A is non-mutating.**
 > GarminCoach currently has no command to perform a database restore. Phase 6B3A provides only read-only planning and inspection tooling. No database, service, lock, backup, or file system mutation is performed by these tools.
-> Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is complete. It enforces journal-bound destination-baseline SHA-256 at every barrier, descriptor-bound `fchmod` permission finalization, hard-link count validation for binding and staged artifacts, persisted baseline parent-identity verification during staging, and `publish_noreplace` parent/filename ownership checks.
+> Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is complete. It requires mandatory destination-baseline evidence, durable-parent proof before and after staging boundaries, strict `STAGED_VERIFIED` and `REPLACEMENT_READY` re-entry validation, descriptor-bound permission finalization, no pathname `chmod` after staged publication, exact child-set and artifact ownership validation, and post-staging destination-baseline rereads. Configured databases and WAL/SHM sidecars remain unmodified.
 > Phase 6B3B2 (configured replacement, postcheck, rollback, and re-entry) and Phase 6B3B3 (apply CLI) remain unimplemented and require separate review and approval. No production restore command or drill exists yet.
+
+### Phase 6B3B1 completion evidence
+
+The configured preparation implementation and deterministic tests establish all of the following before a future replacement phase can begin:
+
+- Destination baseline evidence is mandatory and remains journal-bound at every preparation barrier.
+- The durable parent identity is proven before staging and revalidated after staging/publication boundaries.
+- Re-entry at both `STAGED_VERIFIED` and `REPLACEMENT_READY` performs strict journal, binding, stage-directory, child-set, artifact type/mode/link-count, and content validation.
+- Binding and staged-artifact permissions are finalized through open descriptors; no pathname `chmod` is performed after staged publication.
+- Only the expected binding and staged artifact names may exist in each stage directory.
+- Destination database bytes, metadata, and named WAL/SHM sidecars are reread against their baselines and are not modified by Phase 6B3B1.
 
 
 ---
