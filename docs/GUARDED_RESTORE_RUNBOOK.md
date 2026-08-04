@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Phase 6B3A is non-mutating.**
 > GarminCoach currently has no command to perform a database restore. Phase 6B3A provides only read-only planning and inspection tooling. No database, service, lock, backup, or file system mutation is performed by these tools.
-> Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is complete. It requires mandatory destination-baseline evidence, durable-parent proof before and after staging boundaries, strict `STAGED_VERIFIED` and `REPLACEMENT_READY` re-entry validation, descriptor-bound permission finalization, no pathname `chmod` after staged publication, exact child-set and artifact ownership validation, and post-staging destination-baseline rereads. Configured databases and WAL/SHM sidecars remain unmodified.
+> Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is in progress. It requires mandatory destination-baseline evidence, durable-parent proof before and after staging boundaries, strict `STAGED_VERIFIED` and `REPLACEMENT_READY` re-entry validation, descriptor-bound permission finalization, no pathname `chmod` after staged publication, exact child-set and artifact ownership validation, and post-staging destination-baseline rereads. Configured databases and WAL/SHM sidecars remain unmodified.
 > Phase 6B3B2 (configured replacement, postcheck, rollback, and re-entry) and Phase 6B3B3 (apply CLI) remain unimplemented and require separate review and approval. No production restore command or drill exists yet.
 
 ### Phase 6B3B1 completion evidence
