@@ -78,6 +78,7 @@ from guarded_restore_configured_staging import (
     verify_configured_readiness,
     write_destination_baseline_evidence,
     _sha256_file,
+    _verify_durable_parent,
 )
 from operator_storage import (
     DatabaseTarget,
@@ -700,7 +701,51 @@ def prepare_configured_restore(
                     ],
                 }
                 expected_binding_bytes = canonical_json(binding_payload)
-                validate_existing_staging_directory(stage_dir, op_id, expected_binding_bytes, expected_staged_names)
+                # Derive expected parent identity from baseline evidence for this parent group.
+                # Use _verify_durable_parent before and after validate_existing_staging_directory.
+                b_recs_for_parent = [
+                    t_rec for t_rec in evidence.targets
+                    if t_rec.target_key in {it[1] for it in items}
+                ]
+                if not b_recs_for_parent:
+                    raise ConfiguredStagingOwnershipError(
+                        "No baseline records found for re-entry parent group"
+                    )
+                b_rep = b_recs_for_parent[0]  # All share the same parent identity (validated at stage_configured_targets entry)
+
+                # Pre-validate durable parent proof
+                _verify_durable_parent(
+                    project_root=config.PROJECT_ROOT,
+                    current_parent_path=parent_dir,
+                    persisted_relative_path=b_rep.parent_relative_path,
+                    persisted_st_dev=b_rep.parent_st_dev,
+                    persisted_st_ino=b_rep.parent_st_ino,
+                    persisted_st_mode=b_rep.parent_st_mode,
+                )
+
+                expected_entries_by_name = {
+                    f"{it[0]:03d}-{it[1].replace(':', '-')}.sqlite.staged": it[3]
+                    for it in items
+                }
+                validate_existing_staging_directory(
+                    stage_dir,
+                    op_id,
+                    expected_binding_bytes,
+                    expected_staged_names,
+                    expected_parent_st_dev=b_rep.parent_st_dev,
+                    expected_parent_st_ino=b_rep.parent_st_ino,
+                    expected_entries_by_name=expected_entries_by_name,
+                )
+
+                # Post-validate durable parent proof
+                _verify_durable_parent(
+                    project_root=config.PROJECT_ROOT,
+                    current_parent_path=parent_dir,
+                    persisted_relative_path=b_rep.parent_relative_path,
+                    persisted_st_dev=b_rep.parent_st_dev,
+                    persisted_st_ino=b_rep.parent_st_ino,
+                    persisted_st_mode=b_rep.parent_st_mode,
+                )
 
                 for index, target_key, t_obj, entry in items:
                     staged_name = f"{index:03d}-{target_key.replace(':', '-')}.sqlite.staged"

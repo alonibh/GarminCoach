@@ -188,6 +188,67 @@ def _private(path: Path, directory: bool = False) -> None:
             raise ConfiguredStagingPersistenceError("Could not set private permissions") from exc
 
 
+def _verify_durable_parent(
+    *,
+    project_root: Path,
+    current_parent_path: Path,
+    persisted_relative_path: str,
+    persisted_st_dev: int,
+    persisted_st_ino: int,
+    persisted_st_mode: int,
+) -> None:
+    """Verify current parent directory identity against persisted baseline evidence.
+
+    Checks:
+    - Parent path is inside canonical PROJECT_ROOT.
+    - No symlink components on current parent path.
+    - Current path is a directory.
+    - Project-relative path matches persisted relative path.
+    - Current device, inode, and mode match persisted values.
+    """
+    if has_symlink_component(current_parent_path) or current_parent_path.is_symlink():
+        raise ConfiguredStagingOwnershipError("Destination parent directory path contains symlink components")
+
+    try:
+        canon_root = safe_resolve(project_root)
+    except (OSError, ValueError) as exc:
+        raise ConfiguredStagingOwnershipError("Could not resolve canonical project root for parent proof") from exc
+
+    try:
+        curr_rel = str(current_parent_path.relative_to(canon_root)).replace("\\", "/")
+    except ValueError:
+        raise ConfiguredStagingOwnershipError("Destination parent directory is outside canonical project root")
+
+    if curr_rel != persisted_relative_path:
+        raise ConfiguredStagingOwnershipError(
+            f"Destination parent relative path '{curr_rel}' does not match persisted '{persisted_relative_path}'"
+        )
+
+    try:
+        p_st = os.stat(current_parent_path, follow_symlinks=False)
+    except OSError as exc:
+        raise ConfiguredStagingOwnershipError("Could not stat destination parent directory for durable proof") from exc
+
+    if not stat.S_ISDIR(p_st.st_mode):
+        raise ConfiguredStagingOwnershipError("Destination parent path is not a directory")
+
+    if p_st.st_dev != persisted_st_dev:
+        raise ConfiguredStagingOwnershipError(
+            f"Destination parent device {p_st.st_dev} != persisted {persisted_st_dev}"
+        )
+
+    if p_st.st_ino != persisted_st_ino:
+        raise ConfiguredStagingOwnershipError(
+            f"Destination parent inode {p_st.st_ino} != persisted {persisted_st_ino}"
+        )
+
+    curr_mode = stat.S_IMODE(p_st.st_mode)
+    if curr_mode != persisted_st_mode:
+        raise ConfiguredStagingOwnershipError(
+            f"Destination parent mode {oct(curr_mode)} != persisted {oct(persisted_st_mode)}"
+        )
+
+
 def publish_noreplace(
     partial_path: Path,
     final_path: Path,
@@ -1471,15 +1532,97 @@ def stage_configured_targets(
     targets: tuple[DatabaseTarget, ...],
     *,
     restore_root: Path | str | None = None,
-    destination_baseline: DestinationBaselineEvidence | None = None,
+    destination_baseline: DestinationBaselineEvidence,
 ) -> ConfiguredStagingResult:
     """Stage targets into private owned staging directories beside configured destinations.
+
+    destination_baseline is mandatory. Configured staging without persisted destination
+    evidence is not permitted.
 
     Uses persisted destination_baseline to derive and verify parent directory identity;
     never falls back to comparing a fresh stat() to itself.
     """
+    # --- Mandatory baseline evidence validation ---
+    if destination_baseline is None:
+        raise ConfiguredStagingOwnershipError(
+            "Configured staging requires persisted destination baseline evidence; destination_baseline must not be None"
+        )
+
+    # Verify baseline identity fields match this operation and journal
     root = validate_restore_root(restore_root)
     journal = load_restore_journal(operation_id, root=root)
+
+    if destination_baseline.operation_id != operation_id:
+        raise ConfiguredStagingOwnershipError("Destination baseline operation ID mismatch")
+    if destination_baseline.selected_backup_id != journal.selected_backup_id:
+        raise ConfiguredStagingOwnershipError("Destination baseline selected backup ID mismatch")
+    if destination_baseline.selected_backup_manifest_sha256 != journal.selected_backup_manifest_sha256:
+        raise ConfiguredStagingOwnershipError("Destination baseline manifest SHA-256 mismatch")
+    if destination_baseline.runtime_mode != journal.runtime_mode:
+        raise ConfiguredStagingOwnershipError("Destination baseline runtime mode mismatch")
+    if destination_baseline.target_set_hash != journal.target_set_hash:
+        raise ConfiguredStagingOwnershipError("Destination baseline target-set hash mismatch")
+
+    # Ordered target keys must match journal exactly
+    if destination_baseline.ordered_target_keys != journal.target_keys:
+        raise ConfiguredStagingOwnershipError("Destination baseline ordered target keys mismatch journal")
+
+    # Target count must match
+    if len(destination_baseline.targets) != len(targets):
+        raise ConfiguredStagingOwnershipError(
+            f"Destination baseline target count {len(destination_baseline.targets)} != runtime target count {len(targets)}"
+        )
+
+    # Every target in journal must have exactly one baseline record; check for missing and duplicates
+    baseline_by_key: dict[str, list] = {}
+    for t_rec in destination_baseline.targets:
+        baseline_by_key.setdefault(t_rec.target_key, []).append(t_rec)
+    for key in journal.target_keys:
+        recs = baseline_by_key.get(key, [])
+        if len(recs) == 0:
+            raise ConfiguredStagingOwnershipError(f"Missing baseline record for target '{key}'")
+        if len(recs) > 1:
+            raise ConfiguredStagingOwnershipError(f"Duplicate baseline record for target '{key}'")
+
+    # Target order must be contiguous 0..N-1 and match ordered_target_keys
+    for idx, t_rec in enumerate(destination_baseline.targets):
+        if t_rec.target_order != idx:
+            raise ConfiguredStagingOwnershipError(f"Baseline target order {t_rec.target_order} != expected {idx}")
+
+    # Target keys ordered in baseline must match journal target keys
+    baseline_ordered_keys = tuple(t_rec.target_key for t_rec in destination_baseline.targets)
+    if baseline_ordered_keys != journal.target_keys:
+        raise ConfiguredStagingOwnershipError("Baseline target ordering does not match journal target ordering")
+
+    # Target kinds must match runtime targets
+    targets_by_key_for_check = {t.target_key: t for t in targets}
+    for t_rec in destination_baseline.targets:
+        rt = targets_by_key_for_check.get(t_rec.target_key)
+        if rt is None:
+            raise ConfiguredStagingOwnershipError(f"Baseline target key '{t_rec.target_key}' not found in runtime targets")
+        if t_rec.kind != rt.kind:
+            raise ConfiguredStagingOwnershipError(
+                f"Baseline target kind '{t_rec.kind}' != runtime kind '{rt.kind}' for '{t_rec.target_key}'"
+            )
+        # Tenant identity check
+        if t_rec.tenant_uuid != rt.tenant_id:
+            raise ConfiguredStagingOwnershipError(
+                f"Baseline tenant UUID mismatch for target '{t_rec.target_key}'"
+            )
+
+    # Verify parent identity per parent group: every parent group must have exactly
+    # one unique persisted parent identity across all targets sharing that parent.
+    parent_identities: dict[str, tuple[int, int, int]] = {}  # rel_path -> (dev, ino, mode)
+    for t_rec in destination_baseline.targets:
+        p_rel = t_rec.parent_relative_path
+        identity = (t_rec.parent_st_dev, t_rec.parent_st_ino, t_rec.parent_st_mode)
+        if p_rel in parent_identities:
+            if parent_identities[p_rel] != identity:
+                raise ConfiguredStagingOwnershipError(
+                    f"Inconsistent persisted parent identity for parent group '{p_rel}'"
+                )
+        else:
+            parent_identities[p_rel] = identity
 
     if journal.stage not in {RestoreStage.CURRENT_SNAPSHOT_CREATED, RestoreStage.RESTORE_STAGED, RestoreStage.STAGED_VERIFIED, RestoreStage.REPLACEMENT_READY}:
         raise ConfiguredStagingError("Journal stage is invalid for staging")
@@ -1493,14 +1636,11 @@ def stage_configured_targets(
 
     by_parent: dict[Path, list[tuple[int, str, DatabaseTarget, Any]]] = {}
 
-    # Build a parent lookup from the persisted baseline evidence
-    # Format: list of (target_key, parent_relative_path, parent_st_dev, parent_st_ino, parent_st_mode)
-    baseline_parent_map: list[tuple[str, str, int, int, int]] | None = None
-    if destination_baseline is not None:
-        baseline_parent_map = [
-            (t_rec.target_key, t_rec.parent_relative_path, t_rec.parent_st_dev, t_rec.parent_st_ino, t_rec.parent_st_mode)
-            for t_rec in destination_baseline.targets
-        ]
+    # Build a parent lookup from the persisted baseline evidence (always present now)
+    baseline_parent_map: list[tuple[str, str, int, int, int]] = [
+        (t_rec.target_key, t_rec.parent_relative_path, t_rec.parent_st_dev, t_rec.parent_st_ino, t_rec.parent_st_mode)
+        for t_rec in destination_baseline.targets
+    ]
 
     for index, target_key in enumerate(journal.target_keys):
         if target_key not in backup_entries_by_key or target_key not in targets_by_key:
@@ -1543,33 +1683,34 @@ def stage_configured_targets(
         expected_binding_bytes = canonical_json(binding_payload)
 
         # Derive expected parent identity from persisted baseline records for this parent_dir.
-        # Never compare fresh stat() to itself; always use persisted evidence.
+        # Always use persisted evidence; never compare a fresh stat() to itself.
+        # Find the persisted parent identity for the first target in this group (all must agree).
         persisted_parent_dev: int | None = None
         persisted_parent_ino: int | None = None
-        if baseline_parent_map is not None:
-            # Find baseline records matching this parent_dir (by resolved path)
-            for b_target_key, b_parent_rel, b_parent_dev, b_parent_ino, b_parent_mode in baseline_parent_map:
-                if b_target_key in {it[1] for it in items}:
-                    # Verify current parent matches persisted identity
-                    p_curr_st = os.stat(parent_dir, follow_symlinks=False)
-                    if (p_curr_st.st_dev, p_curr_st.st_ino) != (b_parent_dev, b_parent_ino):
-                        raise ConfiguredStagingOwnershipError(
-                            f"Destination parent directory identity for target '{b_target_key}' does not match persisted baseline"
-                        )
-                    if not stat.S_ISDIR(p_curr_st.st_mode):
-                        raise ConfiguredStagingOwnershipError(
-                            f"Destination parent for target '{b_target_key}' is not a directory"
-                        )
-                    persisted_parent_dev = b_parent_dev
-                    persisted_parent_ino = b_parent_ino
-                    # Verify all targets sharing this parent have consistent baseline identity
-                    for b_target_key2, b_parent_rel2, b_parent_dev2, b_parent_ino2, b_parent_mode2 in baseline_parent_map:
-                        if b_target_key2 in {it[1] for it in items} and b_target_key2 != b_target_key:
-                            if (b_parent_dev2, b_parent_ino2) != (b_parent_dev, b_parent_ino):
-                                raise ConfiguredStagingOwnershipError(
-                                    f"Targets sharing a parent have inconsistent persisted baseline parent identity"
-                                )
-                    break
+        persisted_parent_mode: int | None = None
+        persisted_parent_rel: str | None = None
+
+        item_keys = {it[1] for it in items}
+        for b_target_key, b_parent_rel, b_parent_dev, b_parent_ino, b_parent_mode in baseline_parent_map:
+            if b_target_key in item_keys:
+                persisted_parent_dev = b_parent_dev
+                persisted_parent_ino = b_parent_ino
+                persisted_parent_mode = b_parent_mode
+                persisted_parent_rel = b_parent_rel
+                break
+
+        if persisted_parent_dev is None or persisted_parent_ino is None or persisted_parent_mode is None or persisted_parent_rel is None:
+            raise ConfiguredStagingOwnershipError("No persisted parent identity found for this target group")
+
+        # Apply the shared durable-parent proof before creating or validating the stage directory.
+        _verify_durable_parent(
+            project_root=config.PROJECT_ROOT,
+            current_parent_path=parent_dir,
+            persisted_relative_path=persisted_parent_rel,
+            persisted_st_dev=persisted_parent_dev,
+            persisted_st_ino=persisted_parent_ino,
+            persisted_st_mode=persisted_parent_mode,
+        )
 
         if stage_dir.exists():
             validate_existing_staging_directory(
@@ -1662,7 +1803,9 @@ def stage_configured_targets(
                         expected_size=entry.size_bytes,
                         expected_sha256=entry.sha256,
                     )
-                    _private(staged_path)
+                    # Do NOT call _private(staged_path) here.
+                    # publish_noreplace() is the sole authority for final-file permission
+                    # finalization (descriptor-bound fchmod). No pathname chmod after publish.
 
                     if os.name != "nt":
                         stage_dir_fd = os.open(str(stage_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

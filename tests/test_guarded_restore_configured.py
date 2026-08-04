@@ -48,6 +48,7 @@ from guarded_restore_configured_staging import (
     publish_noreplace,
     capture_destination_baseline_evidence,
     _destination_baseline_from_payload,
+    _verify_durable_parent,
 )
 from guarded_restore_replacement import SyntheticReplacementError as ReplacementSyntheticError
 from guarded_restore_staging import SyntheticDestinationError as StagingSyntheticError, _validate_fixture_root
@@ -1003,7 +1004,7 @@ def test_durable_parent_substitution_before_stage_validation_refused(tmp_path, m
     # stage_configured_targets at REPLACEMENT_READY with tampered evidence must raise
     # ConfiguredStagingOwnershipError because existing staging dirs' parent identity
     # does not match the (tampered) persisted baseline.
-    with pytest.raises(ConfiguredStagingOwnershipError, match="parent directory identity"):
+    with pytest.raises(ConfiguredStagingOwnershipError, match="parent"):
         stage_configured_targets(
             op_id,
             snapshot,
@@ -1212,3 +1213,107 @@ def test_publish_noreplace_expected_final_name_wrong_refused(tmp_path):
     with pytest.raises(ConfiguredStagingOwnershipError):
         publish_noreplace(partial, final, expected_final_name="other.out")
 
+
+# ---------------------------------------------------------------------------
+# Phase 6B3B1 production-path regression tests
+# ---------------------------------------------------------------------------
+
+def test_verify_durable_parent_matches_persisted_identity(tmp_path, monkeypatch):
+    """_verify_durable_parent must succeed when all fields match persisted baseline."""
+    import config as cfg
+    parent = tmp_path / "data"
+    parent.mkdir()
+    monkeypatch.setattr(cfg, "PROJECT_ROOT", tmp_path)
+    p_st = parent.stat()
+    # Should not raise
+    _verify_durable_parent(
+        project_root=tmp_path,
+        current_parent_path=parent,
+        persisted_relative_path="data",
+        persisted_st_dev=p_st.st_dev,
+        persisted_st_ino=p_st.st_ino,
+        persisted_st_mode=stat.S_IMODE(p_st.st_mode),
+    )
+
+
+def test_verify_durable_parent_refuses_inode_substitution(tmp_path, monkeypatch):
+    """_verify_durable_parent must refuse when a different directory replaces the parent
+    (simulating a parent-substitution race between baseline capture and staging)."""
+    import config as cfg
+    monkeypatch.setattr(cfg, "PROJECT_ROOT", tmp_path)
+
+    original = tmp_path / "data"
+    original.mkdir()
+    original_st = original.stat()
+    persisted_dev = original_st.st_dev
+    persisted_ino = original_st.st_ino
+    persisted_mode = stat.S_IMODE(original_st.st_mode)
+
+    # Simulate substitution: remove original, create a new directory at the same path
+    # (different inode)
+    shutil.rmtree(original)
+    original.mkdir()
+    new_st = original.stat()
+
+    # If the OS reuses inodes, skip rather than produce a false positive
+    if new_st.st_ino == persisted_ino:
+        pytest.skip("OS reused inode after directory recreation; cannot distinguish substitution")
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="inode"):
+        _verify_durable_parent(
+            project_root=tmp_path,
+            current_parent_path=original,
+            persisted_relative_path="data",
+            persisted_st_dev=persisted_dev,
+            persisted_st_ino=persisted_ino,
+            persisted_st_mode=persisted_mode,
+        )
+
+
+def test_verify_durable_parent_refuses_wrong_relative_path(tmp_path, monkeypatch):
+    """_verify_durable_parent must refuse when the current relative path does not
+    match the persisted relative path (injection of a different directory at a
+    path that differs from the baseline-recorded project-relative path)."""
+    import config as cfg
+    monkeypatch.setattr(cfg, "PROJECT_ROOT", tmp_path)
+
+    data = tmp_path / "data"
+    data.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    o_st = other.stat()
+
+    # Pass the current path of 'other' but claim persisted_relative_path was 'data'
+    with pytest.raises(ConfiguredStagingOwnershipError, match="relative path"):
+        _verify_durable_parent(
+            project_root=tmp_path,
+            current_parent_path=other,
+            persisted_relative_path="data",
+            persisted_st_dev=o_st.st_dev,
+            persisted_st_ino=o_st.st_ino,
+            persisted_st_mode=stat.S_IMODE(o_st.st_mode),
+        )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX only: chmod regression test")
+def test_publish_noreplace_does_not_apply_pathname_chmod_after_close(tmp_path):
+    """After publish_noreplace, the final file must have mode 0600 applied
+    descriptor-bound inside publish_noreplace. No additional pathname chmod
+    should be called on the final path after publish_noreplace returns.
+    Regression: _private(staged_path) must NOT exist after publish_noreplace.
+    This verifies the contract by checking publish_noreplace alone sets the mode
+    correctly, and that mode remains 0600 even without any post-publish chmod call."""
+    partial = tmp_path / "no_pathname_chmod.partial"
+    final = tmp_path / "no_pathname_chmod.final"
+    partial.write_bytes(b"regression test data for no-pathname-chmod")
+
+    # Set partial to a permissive mode to distinguish pre-publish from post-publish
+    os.chmod(partial, 0o644)
+
+    publish_noreplace(partial, final)
+
+    # The final file must have mode 0600 set only by publish_noreplace (descriptor-bound).
+    # No pathname chmod should have been called externally.
+    final_mode = stat.S_IMODE(final.stat().st_mode)
+    assert final_mode == 0o600, f"Expected 0600 but got {oct(final_mode)} after publish_noreplace"
+    assert not partial.exists(), "Partial file must be removed by publish_noreplace"
