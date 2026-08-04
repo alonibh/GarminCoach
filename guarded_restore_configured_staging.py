@@ -321,71 +321,74 @@ def publish_noreplace(
             raise ConfiguredStagingOwnershipError("Partial file SHA-256 mismatch against expectation")
 
         final_created_by_us = False
+        expected_final_dev = None
+        expected_final_ino = None
         final_fd_for_write: int | None = None
-
-        if final_path.exists() or final_path.is_symlink():
-            raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists or is unsafe")
+        final_verify_fd: int | None = None
 
         try:
-            os.link(str(partial_path), str(final_path))
-            final_created_by_us = True
-        except FileExistsError:
-            raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists")
-        except OSError:
-            if final_path.exists() or final_path.is_symlink():
-                raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists")
             try:
-                final_fd_for_write = os.open(
-                    str(final_path),
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW_FLAG | _BINARY_FLAG,
-                    0o600,
-                )
+                os.link(str(partial_path), str(final_path))
                 final_created_by_us = True
-                os.lseek(partial_fd, 0, os.SEEK_SET)
-                written_total = 0
-                while True:
-                    chunk = os.read(partial_fd, 1024 * 1024)
-                    if not chunk:
-                        break
-                    w_pos = 0
-                    while w_pos < len(chunk):
-                        n = os.write(final_fd_for_write, chunk[w_pos:])
-                        if n <= 0:
-                            raise OSError("Descriptor write failed")
-                        w_pos += n
-                    written_total += len(chunk)
-
-                if written_total != partial_st.st_size:
-                    raise ConfiguredStagingOwnershipError("Written bytes count mismatch during fallback publication")
-
-                os.fsync(final_fd_for_write)
-                os.close(final_fd_for_write)
-                final_fd_for_write = None
+                expected_final_dev = partial_st.st_dev
+                expected_final_ino = partial_st.st_ino
             except FileExistsError:
                 raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists")
-            except OSError as f_exc:
-                if final_fd_for_write is not None:
-                    try:
-                        os.close(final_fd_for_write)
-                    except OSError:
-                        pass
-                    final_fd_for_write = None
-                if final_created_by_us and final_path.exists():
-                    try:
-                        final_path.unlink()
-                    except OSError:
-                        pass
-                raise ConfiguredStagingOwnershipError("Failed to copy descriptor to destination file") from f_exc
+            except OSError:
+                if final_path.exists() or final_path.is_symlink():
+                    raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists")
+                try:
+                    final_fd_for_write = os.open(
+                        str(final_path),
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW_FLAG | _BINARY_FLAG,
+                        0o600,
+                    )
+                    final_created_by_us = True
+                    f_write_st = os.fstat(final_fd_for_write)
+                    expected_final_dev = f_write_st.st_dev
+                    expected_final_ino = f_write_st.st_ino
 
-        # --- Descriptor-bound: open final, verify identity + hash, apply permissions ---
-        final_verify_fd: int | None = None
-        try:
+                    os.lseek(partial_fd, 0, os.SEEK_SET)
+                    written_total = 0
+                    while True:
+                        chunk = os.read(partial_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        w_pos = 0
+                        while w_pos < len(chunk):
+                            n = os.write(final_fd_for_write, chunk[w_pos:])
+                            if n <= 0:
+                                raise OSError("Descriptor write failed")
+                            w_pos += n
+                        written_total += len(chunk)
+
+                    if written_total != partial_st.st_size:
+                        raise ConfiguredStagingOwnershipError("Written bytes count mismatch during fallback publication")
+
+                    os.fsync(final_fd_for_write)
+                    os.close(final_fd_for_write)
+                    final_fd_for_write = None
+                except FileExistsError:
+                    raise ConfiguredStagingOwnershipError(f"Publication destination '{final_path.name}' already exists")
+                except OSError as f_exc:
+                    if final_fd_for_write is not None:
+                        try:
+                            os.close(final_fd_for_write)
+                        except OSError:
+                            pass
+                        final_fd_for_write = None
+                    raise f_exc
+
+            # --- Descriptor-bound verification and finalization ---
             try:
                 final_verify_fd = os.open(str(final_path), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
             except OSError as exc:
                 raise ConfiguredStagingOwnershipError("Could not open final file for verification") from exc
 
             final_st = os.fstat(final_verify_fd)
+            if (final_st.st_dev, final_st.st_ino) != (expected_final_dev, expected_final_ino):
+                raise ConfiguredStagingOwnershipError("Opened final file does not match the linked or copied file")
+
             if not stat.S_ISREG(final_st.st_mode) or final_st.st_size != partial_st.st_size:
                 raise ConfiguredStagingOwnershipError("Final published file size verification failed")
 
@@ -415,7 +418,6 @@ def publish_noreplace(
                     raise ConfiguredStagingOwnershipError("Final file mode verification after fchmod failed")
 
                 # fsync the descriptor after permission change
-                # O_RDONLY cannot be fsync'd on Windows (WinError 9) - only do on POSIX
                 try:
                     os.fsync(final_verify_fd)
                 except OSError as exc:
@@ -430,11 +432,34 @@ def publish_noreplace(
             if pathname_restat.st_size != partial_st.st_size:
                 raise ConfiguredStagingOwnershipError("Final published file size changed after permission finalization")
 
-        except OSError as f_ver_exc:
-            if isinstance(f_ver_exc, ConfiguredStagingOwnershipError):
-                raise
-            raise ConfiguredStagingOwnershipError("Failed descriptor verification of published file") from f_ver_exc
-        finally:
+            os.close(final_verify_fd)
+            final_verify_fd = None
+
+            # On Windows, apply pathname-based permission after closing descriptor
+            if os.name == "nt":
+                try:
+                    os.chmod(final_path, 0o600)
+                except OSError:
+                    pass  # Windows does not enforce POSIX permission bits
+
+            # Post-close: re-stat pathname and confirm same dev/ino
+            post_close_st = os.stat(final_path, follow_symlinks=False)
+            if (post_close_st.st_dev, post_close_st.st_ino) != (expected_final_dev, expected_final_ino):
+                raise ConfiguredStagingOwnershipError("Final published path identity changed after descriptor close")
+
+            # Fsync parent directory
+            parent_dir = final_path.parent
+            if os.name != "nt":
+                try:
+                    p_fd = os.open(str(parent_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(p_fd)
+                    finally:
+                        os.close(p_fd)
+                except OSError as p_exc:
+                    raise ConfiguredStagingOwnershipError("Failed to fsync parent directory after publication") from p_exc
+
+        except Exception as run_exc:
             if final_verify_fd is not None:
                 try:
                     os.close(final_verify_fd)
@@ -442,29 +467,29 @@ def publish_noreplace(
                     pass
                 final_verify_fd = None
 
-        # On Windows, apply pathname-based permission after closing descriptor
-        if os.name == "nt":
-            try:
-                os.chmod(final_path, 0o600)
-            except OSError:
-                pass  # Windows does not enforce POSIX permission bits
-
-        # Post-close: re-stat pathname and confirm same dev/ino
-        post_close_st = os.stat(final_path, follow_symlinks=False)
-        if (post_close_st.st_dev, post_close_st.st_ino) != (final_st.st_dev, final_st.st_ino):
-            raise ConfiguredStagingOwnershipError("Final published path identity changed after descriptor close")
-
-        # Fsync parent directory
-        parent_dir = final_path.parent
-        if os.name != "nt":
-            try:
-                p_fd = os.open(str(parent_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            # Attempt safe cleanup only if descriptor/path identity proves ownership.
+            if final_created_by_us and expected_final_dev is not None and expected_final_ino is not None:
                 try:
-                    os.fsync(p_fd)
-                finally:
-                    os.close(p_fd)
-            except OSError as p_exc:
-                raise ConfiguredStagingOwnershipError("Failed to fsync parent directory after publication") from p_exc
+                    cleanup_st = os.stat(final_path, follow_symlinks=False)
+                    if (cleanup_st.st_dev, cleanup_st.st_ino) == (expected_final_dev, expected_final_ino):
+                        try:
+                            os.unlink(str(final_path))
+                        except OSError as unlink_exc:
+                            raise ConfiguredStagingOwnershipError(
+                                "Failed to clean up publication file after copy/verification failure"
+                            ) from unlink_exc
+                    else:
+                        raise ConfiguredStagingOwnershipError(
+                            "Publication cleanup aborted: final pathname identity changed, ownership uncertain"
+                        ) from run_exc
+                except OSError as stat_exc:
+                    if getattr(stat_exc, "errno", None) != 2:
+                        raise ConfiguredStagingOwnershipError(
+                            "Publication cleanup aborted: could not stat final path to prove ownership"
+                        ) from stat_exc
+            if isinstance(run_exc, ConfiguredStagingOwnershipError):
+                raise
+            raise ConfiguredStagingOwnershipError("Failed publication copy or verification") from run_exc
 
         # Verify partial file descriptor identity before unlink
         last_partial_st = os.fstat(partial_fd)
@@ -483,7 +508,7 @@ def publish_noreplace(
         # After partial link removal, verify final file link count == 1
         try:
             final_after_unlink_st = os.stat(final_path, follow_symlinks=False)
-            if (final_after_unlink_st.st_dev, final_after_unlink_st.st_ino) != (final_st.st_dev, final_st.st_ino):
+            if (final_after_unlink_st.st_dev, final_after_unlink_st.st_ino) != (expected_final_dev, expected_final_ino):
                 raise ConfiguredStagingOwnershipError("Final file identity changed after partial link removal")
             if final_after_unlink_st.st_nlink != 1:
                 raise ConfiguredStagingOwnershipError(
@@ -1389,6 +1414,51 @@ def validate_existing_staging_directory(
         if (p_st.st_dev, p_st.st_ino) != (expected_parent_st_dev, expected_parent_st_ino):
             raise ConfiguredStagingOwnershipError("Stage directory parent identity mismatch against baseline")
 
+    # Record stage directory facts before inspecting files
+    dir_dev = st1.st_dev
+    dir_ino = st1.st_ino
+    dir_type = stat.S_IFMT(st1.st_mode)
+    dir_mode = stat.S_IMODE(st1.st_mode)
+    dir_nlink = st1.st_nlink
+    dir_mtime_ns = st1.st_mtime_ns
+
+    # Enumerate exact child-name set
+    try:
+        initial_children = {child.name for child in stage_dir.iterdir()}
+    except OSError as exc:
+        raise ConfiguredStagingOwnershipError("Failed to list stage directory contents") from exc
+
+    expected_children = {_STAGING_BINDING_NAME} | expected_staged_names
+    if initial_children != expected_children:
+        extra = initial_children - expected_children
+        if extra:
+            raise ConfiguredStagingOwnershipError(f"Stage directory contains unexpected foreign child '{list(extra)[0]}'")
+        raise ConfiguredStagingOwnershipError("Stage directory children set mismatch against expected set")
+
+    def check_stage_dir_unchanged() -> None:
+        try:
+            current_children = {child.name for child in stage_dir.iterdir()}
+        except OSError as exc:
+            raise ConfiguredStagingOwnershipError("Failed to list stage directory contents during re-evaluation") from exc
+        if current_children != initial_children:
+            raise ConfiguredStagingOwnershipError("Stage directory children set changed during validation")
+        if current_children != expected_children:
+            extra = current_children - expected_children
+            if extra:
+                raise ConfiguredStagingOwnershipError(f"Stage directory contains unexpected foreign child '{list(extra)[0]}' during re-evaluation")
+            raise ConfiguredStagingOwnershipError("Stage directory children set mismatch against expected set during re-evaluation")
+
+        st_curr = os.stat(stage_dir, follow_symlinks=False)
+        if (
+            st_curr.st_dev != dir_dev
+            or st_curr.st_ino != dir_ino
+            or stat.S_IFMT(st_curr.st_mode) != dir_type
+            or stat.S_IMODE(st_curr.st_mode) != dir_mode
+            or st_curr.st_nlink != dir_nlink
+            or st_curr.st_mtime_ns != dir_mtime_ns
+        ):
+            raise ConfiguredStagingOwnershipError("Stage directory metadata changed during validation")
+
     binding_file = stage_dir / _STAGING_BINDING_NAME
     if not binding_file.exists() or binding_file.is_symlink():
         raise ConfiguredStagingOwnershipError("Stage directory missing valid ownership binding")
@@ -1422,6 +1492,15 @@ def validate_existing_staging_directory(
         if b_st_before.st_size > _MAX_BINDING_BYTES:
             raise ConfiguredStagingOwnershipError("Staging binding exceeds maximum size")
 
+        # Record facts before reading
+        b_dev = b_st_before.st_dev
+        b_ino = b_st_before.st_ino
+        b_type = stat.S_IFMT(b_st_before.st_mode)
+        b_size = b_st_before.st_size
+        b_mode = stat.S_IMODE(b_st_before.st_mode)
+        b_nlink = b_st_before.st_nlink
+        b_mtime_ns = b_st_before.st_mtime_ns
+
         raw_bytes_parts = []
         while True:
             chunk = os.read(binding_fd, 65536)
@@ -1430,13 +1509,39 @@ def validate_existing_staging_directory(
             raw_bytes_parts.append(chunk)
         raw_bytes = b"".join(raw_bytes_parts)
 
-        # Verify pathname identity after read
+        # Require bytes read == original descriptor size
+        if len(raw_bytes) != b_size:
+            raise ConfiguredStagingOwnershipError("Staging binding read bytes count mismatch against expected descriptor size")
+
         b_st_after = os.fstat(binding_fd)
         b_path_st_after = os.stat(binding_file, follow_symlinks=False)
-        if (b_path_st_after.st_dev, b_path_st_after.st_ino) != (b_st_before.st_dev, b_st_before.st_ino):
-            raise ConfiguredStagingOwnershipError("Staging binding pathname identity changed after read")
-        if (b_st_after.st_dev, b_st_after.st_ino) != (b_st_before.st_dev, b_st_before.st_ino):
-            raise ConfiguredStagingOwnershipError("Staging binding descriptor identity changed after read")
+
+        # Compare final descriptor facts with recorded facts
+        if (
+            b_st_after.st_dev != b_dev
+            or b_st_after.st_ino != b_ino
+            or stat.S_IFMT(b_st_after.st_mode) != b_type
+            or b_st_after.st_size != b_size
+            or stat.S_IMODE(b_st_after.st_mode) != b_mode
+            or b_st_after.st_nlink != b_nlink
+            or b_st_after.st_mtime_ns != b_mtime_ns
+        ):
+            raise ConfiguredStagingOwnershipError("Staging binding descriptor facts changed during read")
+
+        # Compare final pathname facts with recorded facts
+        if (
+            b_path_st_after.st_dev != b_dev
+            or b_path_st_after.st_ino != b_ino
+            or stat.S_IFMT(b_path_st_after.st_mode) != b_type
+            or b_path_st_after.st_size != b_size
+            or stat.S_IMODE(b_path_st_after.st_mode) != b_mode
+            or b_path_st_after.st_nlink != b_nlink
+            or b_path_st_after.st_mtime_ns != b_mtime_ns
+        ):
+            raise ConfiguredStagingOwnershipError("Staging binding pathname facts mismatch after read")
+
+        if (b_path_st_after.st_dev, b_path_st_after.st_ino) != (b_st_after.st_dev, b_st_after.st_ino):
+            raise ConfiguredStagingOwnershipError("Staging binding pathname and descriptor identity mismatch after read")
 
     finally:
         if binding_fd is not None:
@@ -1452,78 +1557,144 @@ def validate_existing_staging_directory(
     if parsed_binding.get("operation_id") != expected_operation_id:
         raise ConfiguredStagingOwnershipError("Staging binding operation ID mismatch")
 
-    allowed_children = {_STAGING_BINDING_NAME} | expected_staged_names
-    actual_children = set()
-    for child in stage_dir.iterdir():
-        c_name = child.name
-        actual_children.add(c_name)
-        if c_name not in allowed_children:
-            raise ConfiguredStagingOwnershipError(f"Stage directory contains unexpected foreign child '{c_name}'")
+    # Run check after binding inspection
+    check_stage_dir_unchanged()
 
-        if c_name != _STAGING_BINDING_NAME:
-            # Descriptor-bound artifact check
-            art_fd: int | None = None
+    # Loop through expected staged artifacts to inspect them
+    for c_name in expected_staged_names:
+        child = stage_dir / c_name
+        
+        # Descriptor-bound artifact check
+        art_fd: int | None = None
+        try:
             try:
+                art_fd = os.open(str(child), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
+            except OSError as exc:
+                raise ConfiguredStagingOwnershipError(f"Cannot open staged artifact '{c_name}' descriptor") from exc
+
+            art_st_before = os.fstat(art_fd)
+            if not stat.S_ISREG(art_st_before.st_mode):
+                raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' must be a regular file")
+            if os.name != "nt":
+                if stat.S_IMODE(art_st_before.st_mode) != 0o600:
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' permissions must be 0600")
+
+            # Verify pathname matches descriptor before hash
+            art_path_st = os.stat(child, follow_symlinks=False)
+            if (art_path_st.st_dev, art_path_st.st_ino) != (art_st_before.st_dev, art_st_before.st_ino):
+                raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' pathname identity mismatch before hash")
+
+            # Single hard-link requirement
+            if art_st_before.st_nlink != 1:
+                raise ConfiguredStagingOwnershipError(
+                    f"Staged artifact '{c_name}' has unexpected link count {art_st_before.st_nlink}; ownership uncertain"
+                )
+
+            # Record facts before hash
+            art_dev = art_st_before.st_dev
+            art_ino = art_st_before.st_ino
+            art_type = stat.S_IFMT(art_st_before.st_mode)
+            art_size = art_st_before.st_size
+            art_mode = stat.S_IMODE(art_st_before.st_mode)
+            art_nlink = art_st_before.st_nlink
+            art_mtime_ns = art_st_before.st_mtime_ns
+
+            if expected_entries_by_name is not None and c_name in expected_entries_by_name:
+                entry = expected_entries_by_name[c_name]
+                if art_size != entry.size_bytes:
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' size mismatch")
+
+                # Descriptor-bound SHA256
+                h = hashlib.sha256()
+                bytes_hashed = 0
+                while True:
+                    chunk = os.read(art_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+                    bytes_hashed += len(chunk)
+
+                # Require bytes hashed == original descriptor size
+                if bytes_hashed != art_size:
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' hashed bytes count mismatch against expected descriptor size")
+
+                # Verify pathname identity after hash
+                art_st_after = os.fstat(art_fd)
+                art_path_st_after = os.stat(child, follow_symlinks=False)
+
+                # Compare final descriptor facts with recorded facts
+                if (
+                    art_st_after.st_dev != art_dev
+                    or art_st_after.st_ino != art_ino
+                    or stat.S_IFMT(art_st_after.st_mode) != art_type
+                    or art_st_after.st_size != art_size
+                    or stat.S_IMODE(art_st_after.st_mode) != art_mode
+                    or art_st_after.st_nlink != art_nlink
+                    or art_st_after.st_mtime_ns != art_mtime_ns
+                ):
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' descriptor facts changed during hash")
+
+                # Compare final pathname facts with recorded facts
+                if (
+                    art_path_st_after.st_dev != art_dev
+                    or art_path_st_after.st_ino != art_ino
+                    or stat.S_IFMT(art_path_st_after.st_mode) != art_type
+                    or art_path_st_after.st_size != art_size
+                    or stat.S_IMODE(art_path_st_after.st_mode) != art_mode
+                    or art_path_st_after.st_nlink != art_nlink
+                    or art_path_st_after.st_mtime_ns != art_mtime_ns
+                ):
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' pathname facts mismatch after hash")
+
+                if (art_path_st_after.st_dev, art_path_st_after.st_ino) != (art_st_after.st_dev, art_st_after.st_ino):
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' pathname and descriptor identity mismatch after hash")
+
+                if h.hexdigest() != entry.sha256:
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' SHA-256 mismatch")
+            else:
+                # If expected_entries_by_name is None or c_name is not in it, we still check descriptor integrity
+                h = hashlib.sha256()
+                bytes_hashed = 0
+                while True:
+                    chunk = os.read(art_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+                    bytes_hashed += len(chunk)
+                if bytes_hashed != art_size:
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' hashed bytes count mismatch")
+                art_st_after = os.fstat(art_fd)
+                art_path_st_after = os.stat(child, follow_symlinks=False)
+                if (
+                    art_st_after.st_dev != art_dev
+                    or art_st_after.st_ino != art_ino
+                    or stat.S_IFMT(art_st_after.st_mode) != art_type
+                    or art_st_after.st_size != art_size
+                    or stat.S_IMODE(art_st_after.st_mode) != art_mode
+                    or art_st_after.st_nlink != art_nlink
+                    or art_st_after.st_mtime_ns != art_mtime_ns
+                ):
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' descriptor facts changed during hash")
+                if (
+                    art_path_st_after.st_dev != art_dev
+                    or art_path_st_after.st_ino != art_ino
+                    or stat.S_IFMT(art_path_st_after.st_mode) != art_type
+                    or art_path_st_after.st_size != art_size
+                    or stat.S_IMODE(art_path_st_after.st_mode) != art_mode
+                    or art_path_st_after.st_nlink != art_nlink
+                    or art_path_st_after.st_mtime_ns != art_mtime_ns
+                ):
+                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' pathname facts mismatch after hash")
+
+        finally:
+            if art_fd is not None:
                 try:
-                    art_fd = os.open(str(child), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
-                except OSError as exc:
-                    raise ConfiguredStagingOwnershipError(f"Cannot open staged artifact '{c_name}' descriptor") from exc
+                    os.close(art_fd)
+                except OSError:
+                    pass
 
-                art_st_before = os.fstat(art_fd)
-                if not stat.S_ISREG(art_st_before.st_mode):
-                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' must be a regular file")
-                if os.name != "nt":
-                    if stat.S_IMODE(art_st_before.st_mode) != 0o600:
-                        raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' permissions must be 0600")
-
-                # Verify pathname matches descriptor before hash
-                art_path_st = os.stat(child, follow_symlinks=False)
-                if (art_path_st.st_dev, art_path_st.st_ino) != (art_st_before.st_dev, art_st_before.st_ino):
-                    raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' pathname identity mismatch before hash")
-
-                # Single hard-link requirement
-                if art_st_before.st_nlink != 1:
-                    raise ConfiguredStagingOwnershipError(
-                        f"Staged artifact '{c_name}' has unexpected link count {art_st_before.st_nlink}; ownership uncertain"
-                    )
-
-                if expected_entries_by_name is not None and c_name in expected_entries_by_name:
-                    entry = expected_entries_by_name[c_name]
-                    if art_st_before.st_size != entry.size_bytes:
-                        raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' size mismatch")
-
-                    # Descriptor-bound SHA256
-                    h = hashlib.sha256()
-                    while True:
-                        chunk = os.read(art_fd, 1024 * 1024)
-                        if not chunk:
-                            break
-                        h.update(chunk)
-
-                    # Verify pathname identity after hash
-                    art_st_after = os.fstat(art_fd)
-                    art_path_st_after = os.stat(child, follow_symlinks=False)
-                    if (art_path_st_after.st_dev, art_path_st_after.st_ino) != (art_st_before.st_dev, art_st_before.st_ino):
-                        raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' pathname identity changed after hash")
-                    if (art_st_after.st_dev, art_st_after.st_ino) != (art_st_before.st_dev, art_st_before.st_ino):
-                        raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' descriptor identity changed after hash")
-
-                    if h.hexdigest() != entry.sha256:
-                        raise ConfiguredStagingOwnershipError(f"Staged artifact '{c_name}' SHA-256 mismatch")
-
-            finally:
-                if art_fd is not None:
-                    try:
-                        os.close(art_fd)
-                    except OSError:
-                        pass
-
-    if actual_children != allowed_children:
-        raise ConfiguredStagingOwnershipError("Stage directory children count mismatch")
-
-    st2 = os.stat(stage_dir, follow_symlinks=False)
-    if (st1.st_dev, st1.st_ino) != (st2.st_dev, st2.st_ino):
-        raise ConfiguredStagingOwnershipError("Stage directory identity changed during inspection")
+        # Run check after each artifact inspection
+        check_stage_dir_unchanged()
 
 
 def stage_configured_targets(

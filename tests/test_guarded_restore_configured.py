@@ -1518,64 +1518,68 @@ def test_parent_substitution_before_new_stage_creation_refused_via_prepare(tmp_p
         expected_application_commit=commit_hex,
     )
 
-    orig_capture = capture_destination_baseline_evidence
-    def monkeypatched_capture(op_id, s_id, s_sha, commit, mode, t_hash_arg, c_val_arg, targets_arg):
-        ev = orig_capture(op_id, s_id, s_sha, commit, mode, t_hash_arg, c_val_arg, targets_arg)
-        # Tamper parent_st_ino in the baseline evidence so that when stage_configured_targets
-        # verifies the parent directory against baseline, parent identity mismatch is detected.
-        from guarded_restore_configured_staging import TargetBaselineRecord
-        tampered_targets = []
-        for t_rec in ev.targets:
-            tampered_targets.append(
-                TargetBaselineRecord(
-                    target_key=t_rec.target_key,
-                    kind=t_rec.kind,
-                    tenant_uuid=t_rec.tenant_uuid,
-                    target_order=t_rec.target_order,
-                    configured_relative_path=t_rec.configured_relative_path,
-                    resolved_relative_path=t_rec.resolved_relative_path,
-                    is_regular_file=t_rec.is_regular_file,
-                    st_dev=t_rec.st_dev,
-                    st_ino=t_rec.st_ino,
-                    size_bytes=t_rec.size_bytes,
-                    mtime_ns=t_rec.mtime_ns,
-                    st_mode=t_rec.st_mode,
-                    sha256=t_rec.sha256,
-                    parent_relative_path=t_rec.parent_relative_path,
-                    parent_st_dev=t_rec.parent_st_dev,
-                    parent_st_ino=t_rec.parent_st_ino + 99999,
-                    parent_is_dir=t_rec.parent_is_dir,
-                    parent_st_mode=t_rec.parent_st_mode,
-                    wal=t_rec.wal,
-                    shm=t_rec.shm,
-                )
+    import guarded_restore_configured_staging
+
+    # Real data directory
+    data_dir = control_db.parent.resolve()
+    data_dir_renamed = data_dir.parent / "data_renamed"
+
+    orig_verify = guarded_restore_configured_staging._verify_durable_parent
+    verify_called = False
+
+    def mock_verify_durable_parent(project_root, current_parent_path, persisted_relative_path, persisted_st_dev, persisted_st_ino, persisted_st_mode):
+        nonlocal verify_called
+        if not verify_called:
+            verify_called = True
+            # rename the real configured parent directory away
+            data_dir.rename(data_dir_renamed)
+            # create a different directory at the same pathname
+            data_dir.mkdir(parents=True, exist_ok=True)
+            # touch substitute database files
+            (data_dir / "garmincoach.db").touch()
+            (data_dir / "garminconnect.db").touch()
+        orig_verify(project_root, current_parent_path, persisted_relative_path, persisted_st_dev, persisted_st_ino, persisted_st_mode)
+
+    monkeypatch.setattr(guarded_restore_configured_staging, "_verify_durable_parent", mock_verify_durable_parent)
+
+    try:
+        with pytest.raises(ConfiguredRestoreError) as exc_info:
+            prepare_configured_restore(
+                selected_backup_id=source_backup_id,
+                expected_application_commit=commit_hex,
+                confirmed_target_set_hash=t_hash,
+                confirmed_restore_value=c_val,
             )
-        return DestinationBaselineEvidence(
-            format_version=ev.format_version,
-            operation_id=ev.operation_id,
-            selected_backup_id=ev.selected_backup_id,
-            selected_backup_manifest_sha256=ev.selected_backup_manifest_sha256,
-            expected_application_commit=ev.expected_application_commit,
-            runtime_mode=ev.runtime_mode,
-            target_set_hash=ev.target_set_hash,
-            confirmation_value=ev.confirmation_value,
-            ordered_target_keys=ev.ordered_target_keys,
-            targets=tuple(tampered_targets),
-            active_control_user_mapping=ev.active_control_user_mapping,
-            garminconnect_version=ev.garminconnect_version,
-            captured_at=ev.captured_at,
-        )
+        
+        # Verify preparation failed closed
+        cause = exc_info.value.__cause__
+        assert cause is not None
+        assert "parent" in str(cause).lower() or "identity" in str(cause).lower() or "durable" in str(cause).lower()
 
-    monkeypatch.setattr("guarded_restore_configured.capture_destination_baseline_evidence", monkeypatched_capture)
-    monkeypatch.setattr("guarded_restore_configured_staging.capture_destination_baseline_evidence", monkeypatched_capture)
+        # no stage directory is created in the substitute parent
+        substitute_stage_dirs = list(data_dir.glob(".garmincoach-restore-stage-*"))
+        assert len(substitute_stage_dirs) == 0, f"Stage directory created in substitute parent: {substitute_stage_dirs}"
 
-    with pytest.raises(ConfiguredRestoreError):
-        prepare_configured_restore(
-            selected_backup_id=source_backup_id,
-            expected_application_commit=commit_hex,
-            confirmed_target_set_hash=t_hash,
-            confirmed_restore_value=c_val,
-        )
+        # no substitute parent file is chmodded, deleted, or adopted
+        assert (data_dir / "garmincoach.db").exists()
+        assert (data_dir / "garminconnect.db").exists()
+
+        # the original configured directory remains preserved at its renamed location
+        assert data_dir_renamed.exists()
+        assert (data_dir_renamed / "garmincoach.db").exists()
+        assert (data_dir_renamed / "garminconnect.db").exists()
+
+    finally:
+        # Clean up substitute and restore original data_dir
+        if data_dir.exists():
+            for f in data_dir.iterdir():
+                if f.is_dir():
+                    shutil.rmtree(f)
+                else:
+                    f.unlink()
+            data_dir.rmdir()
+        if data_dir_renamed.exists():
+            data_dir_renamed.rename(data_dir)
 
 
 def test_parent_substitution_during_existing_stage_validation_refused_via_prepare(tmp_path, monkeypatch):
@@ -1824,3 +1828,576 @@ def test_publish_noreplace_failed_unlink_surfaces_error(tmp_path, monkeypatch):
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="unlink"):
         publish_noreplace(partial, final)
+
+
+def test_race_child_added_after_initial_enumeration(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_read = os.read
+    def mock_read(fd, n):
+        (stage_dir / "unexpected.txt").write_bytes(b"bad")
+        return orig_read(fd, n)
+
+    monkeypatch.setattr(os, "read", mock_read)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="children set changed"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_child_removed_after_initial_enumeration(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_read = os.read
+    def mock_read(fd, n):
+        if staged_artifact.exists():
+            staged_artifact.unlink()
+        return orig_read(fd, n)
+
+    monkeypatch.setattr(os, "read", mock_read)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="children set changed"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_binding_mode_changed_during_descriptor_read(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_fstat = os.fstat
+    read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal read_called
+        read_called = True
+        return orig_read(fd, n)
+
+    def mock_fstat(fd):
+        st = orig_fstat(fd)
+        if read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode ^ 0o111
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="facts changed during read"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_binding_hard_link_added_during_descriptor_read(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_fstat = os.fstat
+    read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal read_called
+        read_called = True
+        return orig_read(fd, n)
+
+    def mock_fstat(fd):
+        st = orig_fstat(fd)
+        if read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = 2
+                st_mtime_ns = st.st_mtime_ns
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="facts changed during read"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_binding_size_or_mtime_changed_during_descriptor_read(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_fstat = os.fstat
+    read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal read_called
+        read_called = True
+        return orig_read(fd, n)
+
+    def mock_fstat(fd):
+        st = orig_fstat(fd)
+        if read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns + 1000
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="facts changed during read"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_artifact_mode_changed_during_hash(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_fstat = os.fstat
+    hash_read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal hash_read_called
+        if n == 1048576:
+            hash_read_called = True
+        return orig_read(fd, n)
+
+    def mock_fstat(fd):
+        st = orig_fstat(fd)
+        if hash_read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode ^ 0o111
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="descriptor facts changed during hash"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_artifact_hard_link_added_during_hash(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_fstat = os.fstat
+    hash_read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal hash_read_called
+        if n == 1048576:
+            hash_read_called = True
+        return orig_read(fd, n)
+
+    def mock_fstat(fd):
+        st = orig_fstat(fd)
+        if hash_read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = 2
+                st_mtime_ns = st.st_mtime_ns
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="descriptor facts changed during hash"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_artifact_size_or_mtime_changed_during_hash(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_fstat = os.fstat
+    hash_read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal hash_read_called
+        if n == 1048576:
+            hash_read_called = True
+        return orig_read(fd, n)
+
+    def mock_fstat(fd):
+        st = orig_fstat(fd)
+        if hash_read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns + 1000
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="descriptor facts changed during hash"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_stage_directory_mode_changed_during_validation(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_stat = os.stat
+    read_called = False
+    
+    orig_read = os.read
+    def mock_read(fd, n):
+        nonlocal read_called
+        read_called = True
+        return orig_read(fd, n)
+
+    def mock_stat(path, *args, **kwargs):
+        st = orig_stat(path, *args, **kwargs)
+        if str(path) == str(stage_dir) and read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode ^ 0o111
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns
+            return MockStat()
+        return st
+
+    monkeypatch.setattr(os, "read", mock_read)
+    monkeypatch.setattr(os, "stat", mock_stat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="directory metadata changed"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_stage_directory_child_set_changed_and_then_restored_before_return(tmp_path, monkeypatch):
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    op_id = "restore-20260101T000000Z-00000000"
+    binding_payload = {"format_version": "garmincoach-restore-staging-binding-v1", "operation_id": op_id}
+    binding_bytes = canonical_json(binding_payload)
+    binding_file = stage_dir / ".staging-binding.json"
+    binding_file.write_bytes(binding_bytes)
+    
+    staged_artifact = stage_dir / "000-control.sqlite.staged"
+    staged_artifact.write_bytes(b"data")
+
+    class DummyEntry:
+        size_bytes = 4
+        sha256 = hashlib.sha256(b"data").hexdigest()
+
+    orig_read = os.read
+    def mock_read(fd, n):
+        temp_file = stage_dir / "temp.txt"
+        temp_file.touch()
+        temp_file.unlink()
+        return orig_read(fd, n)
+
+    orig_stat = os.stat
+    read_called = False
+    def mock_stat(path, *args, **kwargs):
+        st = orig_stat(path, *args, **kwargs)
+        if str(path) == str(stage_dir) and read_called:
+            class MockStat:
+                st_dev = st.st_dev
+                st_ino = st.st_ino
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns + 5000000
+            return MockStat()
+        return st
+
+    def mock_read_with_flag(fd, n):
+        nonlocal read_called
+        read_called = True
+        return mock_read(fd, n)
+
+    monkeypatch.setattr(os, "read", mock_read_with_flag)
+    monkeypatch.setattr(os, "stat", mock_stat)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="metadata changed"):
+        validate_existing_staging_directory(
+            stage_dir,
+            op_id,
+            binding_bytes,
+            {"000-control.sqlite.staged"},
+            expected_entries_by_name={"000-control.sqlite.staged": DummyEntry()},
+        )
+
+
+def test_race_fallback_created_final_cleanup_unlink_failure_surfaced(tmp_path, monkeypatch):
+    partial = tmp_path / "test.partial"
+    final = tmp_path / "test.final"
+    partial.write_bytes(b"data")
+
+    def mock_link(src, dst):
+        raise OSError("Link not supported")
+    monkeypatch.setattr(os, "link", mock_link)
+
+    def mock_fsync(fd):
+        raise OSError("Fsync failed")
+    monkeypatch.setattr(os, "fsync", mock_fsync)
+
+    def mock_unlink(path):
+        if str(path) == str(final):
+            raise OSError("Unlink failed permission denied")
+        os.remove(path)
+    monkeypatch.setattr(os, "unlink", mock_unlink)
+
+    with pytest.raises(ConfiguredStagingOwnershipError) as exc_info:
+        publish_noreplace(partial, final)
+    
+    assert "clean up publication file" in str(exc_info.value)
+    assert exc_info.value.__cause__ is not None
+    assert "Unlink failed permission denied" in str(exc_info.value.__cause__)
+
+
+def test_race_fallback_final_pathname_replaced_before_cleanup_preserved(tmp_path, monkeypatch):
+    partial = tmp_path / "test.partial"
+    final = tmp_path / "test.final"
+    partial.write_bytes(b"data")
+
+    def mock_link(src, dst):
+        raise OSError("Link not supported")
+    monkeypatch.setattr(os, "link", mock_link)
+
+    orig_close = os.close
+    def mock_close(fd):
+        orig_close(fd)
+    monkeypatch.setattr(os, "close", mock_close)
+
+    orig_open = os.open
+    def mock_open(path, flags, *args, **kwargs):
+        if str(path) == str(final) and (flags & os.O_RDONLY):
+            raise OSError("Verification open failed")
+        return orig_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(os, "open", mock_open)
+
+    orig_stat = os.stat
+    def mock_stat(path, *args, **kwargs):
+        st = orig_stat(path, *args, **kwargs)
+        if str(path) == str(final):
+            class MockStat:
+                st_dev = st.st_dev + 1
+                st_ino = st.st_ino + 1
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns
+            return MockStat()
+        return st
+    monkeypatch.setattr(os, "stat", mock_stat)
+
+    unlink_called = False
+    orig_unlink = os.unlink
+    def mock_unlink(path):
+        nonlocal unlink_called
+        if str(path) == str(final):
+            unlink_called = True
+        orig_unlink(path)
+    monkeypatch.setattr(os, "unlink", mock_unlink)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="ownership uncertain"):
+        publish_noreplace(partial, final)
+
+    assert not unlink_called, "Final path must not be unlinked when ownership is uncertain"
