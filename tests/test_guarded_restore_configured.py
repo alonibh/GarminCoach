@@ -1971,6 +1971,10 @@ def test_race_binding_hard_link_added_during_descriptor_read(tmp_path, monkeypat
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
@@ -2022,6 +2026,10 @@ def test_race_binding_size_or_mtime_changed_during_descriptor_read(tmp_path, mon
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
@@ -2073,6 +2081,10 @@ def test_race_artifact_mode_changed_during_hash(tmp_path, monkeypatch):
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
@@ -2125,6 +2137,10 @@ def test_race_artifact_hard_link_added_during_hash(tmp_path, monkeypatch):
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
@@ -2177,6 +2193,10 @@ def test_race_artifact_size_or_mtime_changed_during_hash(tmp_path, monkeypatch):
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
@@ -2229,6 +2249,10 @@ def test_race_stage_directory_mode_changed_during_validation(tmp_path, monkeypat
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
@@ -2280,6 +2304,10 @@ def test_race_stage_directory_child_set_changed_and_then_restored_before_return(
     
     staged_artifact = stage_dir / "000-control.sqlite.staged"
     staged_artifact.write_bytes(b"data")
+    if os.name != "nt":
+        os.chmod(stage_dir, 0o700)
+        os.chmod(binding_file, 0o600)
+        os.chmod(staged_artifact, 0o600)
 
     class DummyEntry:
         size_bytes = 4
