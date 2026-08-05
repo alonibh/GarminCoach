@@ -2429,3 +2429,377 @@ def test_race_fallback_final_pathname_replaced_before_cleanup_preserved(tmp_path
         publish_noreplace(partial, final)
 
     assert not unlink_called, "Final path must not be unlinked when ownership is uncertain"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6B3B1 descriptor-lifecycle regression tests (fix: close fallback
+# write descriptor before cleanup)
+# ---------------------------------------------------------------------------
+
+if os.name != "nt":
+    import fcntl as _fcntl
+
+    def _open_fd_set() -> set:
+        """Return the set of open file-descriptor numbers for this process."""
+        result = set()
+        for _fd in range(3, 1024):
+            try:
+                _fcntl.fcntl(_fd, _fcntl.F_GETFD)
+                result.add(_fd)
+            except OSError:
+                pass
+        return result
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fd leak detection uses fcntl (POSIX only)")
+def test_publish_noreplace_fallback_ownership_error_before_close_no_fd_leak(tmp_path, monkeypatch):
+    """Test A: When os.link fails and the fallback copy raises ConfiguredStagingOwnershipError
+    before the normal final_fd_for_write close (via written_total mismatch), the outer
+    exception handler must:
+    - close final_fd_for_write exactly once before cleanup
+    - unlink the owned final pathname
+    - preserve the partial file unchanged
+    - re-raise the original ConfiguredStagingOwnershipError
+    - leave no descriptor leak
+    """
+    partial = tmp_path / "a_fallback.partial"
+    final = tmp_path / "a_fallback.final"
+    content = b"test data for fallback descriptor fix"
+    partial.write_bytes(content)
+
+    # Force os.link to fail so the fallback O_CREAT|O_EXCL path is taken.
+    orig_link = os.link
+    monkeypatch.setattr(os, "link", lambda src, dst: (_ for _ in ()).throw(OSError("hard link not supported")))
+
+    # Force written_total mismatch: after the 2nd os.lseek on partial_fd (the fallback
+    # copy rewind), make os.read return b"" immediately so written_total stays 0.
+    lseek_count = [0]
+    orig_lseek = os.lseek
+
+    def mock_lseek(fd, pos, whence):
+        lseek_count[0] += 1
+        return orig_lseek(fd, pos, whence)
+
+    monkeypatch.setattr(os, "lseek", mock_lseek)
+
+    orig_read = os.read
+
+    def mock_read(fd, n):
+        if lseek_count[0] >= 2:
+            return b""  # EOF in fallback copy -> written_total == 0 != len(content)
+        return orig_read(fd, n)
+
+    monkeypatch.setattr(os, "read", mock_read)
+
+    fds_before = _open_fd_set()
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="Written bytes"):
+        publish_noreplace(partial, final)
+
+    fds_after = _open_fd_set()
+    leaked = fds_after - fds_before
+    assert not leaked, f"Descriptor leak detected after fallback ownership error: new open fds {leaked}"
+
+    # Owned final pathname must be cleaned up (0-byte file created by O_CREAT|O_EXCL).
+    assert not final.exists(), "final path must be removed after ownership error cleanup"
+
+    # Partial file must be preserved and unchanged.
+    assert partial.exists(), "partial file must be preserved"
+    assert partial.read_bytes() == content, "partial file must be unchanged"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fd simulation uses fcntl (POSIX only)")
+def test_publish_noreplace_fallback_close_failure_preserves_final(tmp_path, monkeypatch):
+    """Test B: When the outer handler tries to close final_fd_for_write and os.close raises
+    OSError, the function must:
+    - preserve the final pathname (no unlink attempted)
+    - raise ConfiguredStagingOwnershipError describing descriptor-closure uncertainty
+    - retain the close OSError as __cause__
+    """
+    partial = tmp_path / "b_fallback.partial"
+    final = tmp_path / "b_fallback.final"
+    content = b"descriptor close failure test"
+    partial.write_bytes(content)
+
+    # Force link to fail -> fallback path.
+    monkeypatch.setattr(os, "link", lambda src, dst: (_ for _ in ()).throw(OSError("no hard link")))
+
+    # Force written_total mismatch so ConfiguredStagingOwnershipError is raised before
+    # the normal close of final_fd_for_write.
+    lseek_count = [0]
+    orig_lseek = os.lseek
+
+    def mock_lseek(fd, pos, whence):
+        lseek_count[0] += 1
+        return orig_lseek(fd, pos, whence)
+
+    monkeypatch.setattr(os, "lseek", mock_lseek)
+
+    orig_read = os.read
+
+    def mock_read(fd, n):
+        if lseek_count[0] >= 2:
+            return b""
+        return orig_read(fd, n)
+
+    monkeypatch.setattr(os, "read", mock_read)
+
+    # Track which fd is the fallback write descriptor.
+    fallback_write_fd = [None]
+    orig_open = os.open
+
+    def mock_open(path, flags, *args, **kwargs):
+        fd = orig_open(path, flags, *args, **kwargs)
+        if str(path) == str(final) and (flags & os.O_CREAT) and (flags & os.O_EXCL):
+            fallback_write_fd[0] = fd
+        return fd
+
+    monkeypatch.setattr(os, "open", mock_open)
+
+    # Make os.close raise for the fallback write fd, but actually close it to avoid
+    # a real fd leak in the test process.
+    unlink_called_for_final = [False]
+    orig_close = os.close
+    simulated_close_error = OSError("simulated write-descriptor close failure")
+
+    def mock_close(fd):
+        if fd == fallback_write_fd[0] and fallback_write_fd[0] is not None:
+            try:
+                orig_close(fd)  # close at OS level to avoid real leak
+            except OSError:
+                pass
+            raise simulated_close_error
+        orig_close(fd)
+
+    monkeypatch.setattr(os, "close", mock_close)
+
+    orig_unlink = os.unlink
+
+    def mock_unlink(path):
+        if str(path) == str(final):
+            unlink_called_for_final[0] = True
+        orig_unlink(path)
+
+    monkeypatch.setattr(os, "unlink", mock_unlink)
+
+    with pytest.raises(ConfiguredStagingOwnershipError) as exc_info:
+        publish_noreplace(partial, final)
+
+    err = exc_info.value
+    assert "close" in str(err).lower() or "descriptor" in str(err).lower(), (
+        f"Error message should describe descriptor-closure uncertainty; got: {err}"
+    )
+    assert isinstance(err.__cause__, OSError), "Close OSError must be retained as __cause__"
+    assert err.__cause__ is simulated_close_error, "Exact close exception must be __cause__"
+
+    assert not unlink_called_for_final[0], "final path must NOT be unlinked when close fails"
+    assert final.exists(), "final path must be preserved when close fails"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fd detection uses fcntl (POSIX only)")
+def test_publish_noreplace_fallback_foreign_replacement_before_cleanup_preserved(tmp_path, monkeypatch):
+    """Test C: When the fallback write descriptor closes successfully but the final pathname
+    is replaced by a foreign file before cleanup identity verification, the foreign
+    pathname must be preserved, not deleted, and ownership uncertainty raised.
+    """
+    partial = tmp_path / "c_fallback.partial"
+    final = tmp_path / "c_fallback.final"
+    content = b"foreign replacement test"
+    partial.write_bytes(content)
+
+    # Force link to fail so fallback path is taken.
+    monkeypatch.setattr(os, "link", lambda src, dst: (_ for _ in ()).throw(OSError("no hard link")))
+
+    # Track the fallback write fd so we can record its expected dev/ino.
+    fallback_write_fd = [None]
+    orig_open = os.open
+
+    def mock_open(path, flags, *args, **kwargs):
+        fd = orig_open(path, flags, *args, **kwargs)
+        if str(path) == str(final) and (flags & os.O_CREAT) and (flags & os.O_EXCL):
+            fallback_write_fd[0] = fd
+        return fd
+
+    monkeypatch.setattr(os, "open", mock_open)
+
+    # After the fallback write fd is closed (normal close in the copy success path),
+    # make the verification open (O_RDONLY on final) fail to reach the outer handler
+    # with final_fd_for_write == None.
+    write_fd_closed = [False]
+    orig_close = os.close
+
+    def mock_close(fd):
+        orig_close(fd)
+        if fd == fallback_write_fd[0] and fallback_write_fd[0] is not None:
+            write_fd_closed[0] = True
+
+    monkeypatch.setattr(os, "close", mock_close)
+
+    # After the write fd is closed, fail the next open of final that lacks O_CREAT
+    # (the verification open).  os.O_RDONLY == 0 on POSIX so use absence of O_CREAT.
+    def mock_open2(path, flags, *args, **kwargs):
+        if str(path) == str(final) and not (flags & os.O_CREAT) and write_fd_closed[0]:
+            raise OSError("simulated verification open failure")
+        return mock_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", mock_open2)
+
+    # Simulate foreign replacement: make os.stat(final, follow_symlinks=False) return
+    # a different dev/ino than what was recorded in expected_final_dev/ino.
+    orig_stat = os.stat
+
+    def mock_stat(path, *args, **kwargs):
+        st = orig_stat(path, *args, **kwargs)
+        if str(path) == str(final) and kwargs.get("follow_symlinks") is False:
+            class _ForeignStat:
+                st_dev = st.st_dev + 9999
+                st_ino = st.st_ino + 9999
+                st_mode = st.st_mode
+                st_size = st.st_size
+                st_nlink = st.st_nlink
+                st_mtime_ns = st.st_mtime_ns
+            return _ForeignStat()
+        return st
+
+    monkeypatch.setattr(os, "stat", mock_stat)
+
+    unlink_called_for_final = [False]
+    orig_unlink = os.unlink
+
+    def mock_unlink(path):
+        if str(path) == str(final):
+            unlink_called_for_final[0] = True
+        orig_unlink(path)
+
+    monkeypatch.setattr(os, "unlink", mock_unlink)
+
+    with pytest.raises(ConfiguredStagingOwnershipError, match="ownership uncertain"):
+        publish_noreplace(partial, final)
+
+    assert not unlink_called_for_final[0], "foreign pathname must NOT be unlinked"
+    assert final.exists(), "foreign pathname must be preserved"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX only")
+def test_publish_noreplace_fallback_cleanup_unlink_failure_surfaced(tmp_path, monkeypatch):
+    """Test D: When the fallback write descriptor closes normally, the final pathname
+    matches the owned dev/ino, but cleanup os.unlink raises OSError, the function must:
+    - surface the unlink failure
+    - retain the unlink OSError as __cause__
+    - not silently continue
+    """
+    partial = tmp_path / "d_fallback.partial"
+    final = tmp_path / "d_fallback.final"
+    content = b"cleanup unlink failure test"
+    partial.write_bytes(content)
+
+    # Force link to fail -> fallback path.
+    monkeypatch.setattr(os, "link", lambda src, dst: (_ for _ in ()).throw(OSError("no hard link")))
+
+    # Track fallback write fd and mark when it's closed.
+    fallback_write_fd = [None]
+    orig_open = os.open
+
+    def mock_open(path, flags, *args, **kwargs):
+        fd = orig_open(path, flags, *args, **kwargs)
+        if str(path) == str(final) and (flags & os.O_CREAT) and (flags & os.O_EXCL):
+            fallback_write_fd[0] = fd
+        return fd
+
+    monkeypatch.setattr(os, "open", mock_open)
+
+    write_fd_closed = [False]
+    orig_close = os.close
+
+    def mock_close(fd):
+        orig_close(fd)
+        if fd == fallback_write_fd[0] and fallback_write_fd[0] is not None:
+            write_fd_closed[0] = True
+
+    monkeypatch.setattr(os, "close", mock_close)
+
+    # After fallback write fd is closed, fail the verification open to reach outer handler.
+    # After fallback write fd is closed, fail the next open of final that
+    # lacks O_CREAT (the verification O_RDONLY open).  Note: os.O_RDONLY == 0 on
+    # POSIX so checking "flags & os.O_RDONLY" is always false; instead detect the
+    # verification open by the absence of O_CREAT after the write fd was closed.
+    def mock_open2(path, flags, *args, **kwargs):
+        if str(path) == str(final) and not (flags & os.O_CREAT) and write_fd_closed[0]:
+            raise OSError("simulated verification open failure")
+        return mock_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", mock_open2)
+
+    # Make os.unlink(final) fail during cleanup.
+    simulated_unlink_error = OSError("permission denied on cleanup unlink")
+    orig_unlink = os.unlink
+
+    def mock_unlink(path):
+        if str(path) == str(final):
+            raise simulated_unlink_error
+        orig_unlink(path)
+
+    monkeypatch.setattr(os, "unlink", mock_unlink)
+
+    with pytest.raises(ConfiguredStagingOwnershipError) as exc_info:
+        publish_noreplace(partial, final)
+
+    err = exc_info.value
+    assert "clean up" in str(err).lower() or "unlink" in str(err).lower(), (
+        f"Error should describe cleanup unlink failure; got: {err}"
+    )
+    assert err.__cause__ is simulated_unlink_error, "Unlink OSError must be retained as __cause__"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fd leak detection uses fcntl (POSIX only)")
+def test_publish_noreplace_hardlink_success_no_fd_leak(tmp_path):
+    """Test E (hard-link path): successful hard-link publication leaves no descriptor leak,
+    correct bytes and SHA-256, size correct, mode 0600, nlink==1, partial removed.
+    """
+    content = b"hard link success no fd leak"
+    partial = tmp_path / "e_hl.partial"
+    final = tmp_path / "e_hl.final"
+    partial.write_bytes(content)
+
+    fds_before = _open_fd_set()
+    publish_noreplace(partial, final, expected_size=len(content), expected_sha256=hashlib.sha256(content).hexdigest())
+    fds_after = _open_fd_set()
+
+    leaked = fds_after - fds_before
+    assert not leaked, f"Descriptor leak after hard-link publication: {leaked}"
+
+    assert final.read_bytes() == content
+    assert hashlib.sha256(final.read_bytes()).hexdigest() == hashlib.sha256(content).hexdigest()
+    assert final.stat().st_size == len(content)
+    assert stat.S_IMODE(final.stat().st_mode) == 0o600
+    assert final.stat().st_nlink == 1
+    assert not partial.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fd leak detection uses fcntl (POSIX only)")
+def test_publish_noreplace_fallback_copy_success_no_fd_leak(tmp_path, monkeypatch):
+    """Test E (fallback-copy path): when os.link fails, successful fallback copy leaves no
+    descriptor leak, correct bytes and SHA-256, size correct, mode 0600, nlink==1,
+    partial removed.
+    """
+    content = b"fallback copy success no fd leak test"
+    partial = tmp_path / "e_fc.partial"
+    final = tmp_path / "e_fc.final"
+    partial.write_bytes(content)
+
+    # Force os.link to fail so the fallback O_CREAT|O_EXCL copy path is exercised.
+    monkeypatch.setattr(os, "link", lambda src, dst: (_ for _ in ()).throw(OSError("hard link not supported")))
+
+    fds_before = _open_fd_set()
+    publish_noreplace(partial, final, expected_size=len(content), expected_sha256=hashlib.sha256(content).hexdigest())
+    fds_after = _open_fd_set()
+
+    leaked = fds_after - fds_before
+    assert not leaked, f"Descriptor leak after fallback-copy publication: {leaked}"
+
+    assert final.read_bytes() == content
+    assert hashlib.sha256(final.read_bytes()).hexdigest() == hashlib.sha256(content).hexdigest()
+    assert final.stat().st_size == len(content)
+    assert stat.S_IMODE(final.stat().st_mode) == 0o600
+    assert final.stat().st_nlink == 1
+    assert not partial.exists()

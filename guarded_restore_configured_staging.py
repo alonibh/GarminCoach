@@ -467,10 +467,31 @@ def publish_noreplace(
                     pass
                 final_verify_fd = None
 
+            # Close the owned write descriptor before any final-path cleanup decision.
+            # A non-OSError (e.g. ConfiguredStagingOwnershipError) raised inside the
+            # fallback copy block bypasses the inner OSError handler, leaving
+            # final_fd_for_write open.  Must close it here before deciding whether to
+            # unlink, to avoid attempting cleanup while the owned write descriptor is
+            # still open.
+            if final_fd_for_write is not None:
+                try:
+                    os.close(final_fd_for_write)
+                except OSError as close_exc:
+                    raise ConfiguredStagingOwnershipError(
+                        "Could not close fallback write descriptor; final-path ownership and lifecycle uncertain"
+                    ) from close_exc
+                final_fd_for_write = None
+
             # Attempt safe cleanup only if descriptor/path identity proves ownership.
             if final_created_by_us and expected_final_dev is not None and expected_final_ino is not None:
                 try:
                     cleanup_st = os.stat(final_path, follow_symlinks=False)
+                except OSError as stat_exc:
+                    if getattr(stat_exc, "errno", None) != 2:
+                        raise ConfiguredStagingOwnershipError(
+                            "Publication cleanup aborted: could not stat final path to prove ownership"
+                        ) from stat_exc
+                else:
                     if (cleanup_st.st_dev, cleanup_st.st_ino) == (expected_final_dev, expected_final_ino):
                         try:
                             os.unlink(str(final_path))
@@ -482,11 +503,6 @@ def publish_noreplace(
                         raise ConfiguredStagingOwnershipError(
                             "Publication cleanup aborted: final pathname identity changed, ownership uncertain"
                         ) from run_exc
-                except OSError as stat_exc:
-                    if getattr(stat_exc, "errno", None) != 2:
-                        raise ConfiguredStagingOwnershipError(
-                            "Publication cleanup aborted: could not stat final path to prove ownership"
-                        ) from stat_exc
             if isinstance(run_exc, ConfiguredStagingOwnershipError):
                 raise
             raise ConfiguredStagingOwnershipError("Failed publication copy or verification") from run_exc
