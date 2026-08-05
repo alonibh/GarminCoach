@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Phase 6B3A is non-mutating.**
 > GarminCoach currently has no command to perform a database restore. Phase 6B3A provides only read-only planning and inspection tooling. No database, service, lock, backup, or file system mutation is performed by these tools.
-> Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is in progress. It requires mandatory destination-baseline evidence, durable-parent proof before and after staging boundaries via parent-substitution verification, strict `STAGED_VERIFIED` and `REPLACEMENT_READY` re-entry validation, descriptor-bound permission finalization, no pathname `chmod` after staged publication, exact child-set and artifact ownership validation (including second child-set enumeration and complete before/after descriptor-fact comparisons to defeat directory/descriptor race conditions), clean publication cleanup-uncertainty handling without swallowing errors, and post-staging destination-baseline rereads. Configured databases and WAL/SHM sidecars remain unmodified.
+> Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is complete. It requires mandatory destination-baseline evidence, durable-parent proof before and after staging boundaries via parent-substitution verification, strict `STAGED_VERIFIED` and `REPLACEMENT_READY` re-entry validation, descriptor-bound permission finalization, no pathname `chmod` after staged publication, exact child-set and artifact ownership validation (including second child-set enumeration and complete before/after descriptor-fact comparisons to defeat directory/descriptor race conditions), clean publication cleanup-uncertainty handling without swallowing errors, and post-staging destination-baseline rereads. Configured databases and WAL/SHM sidecars remain unmodified.
 > Phase 6B3B2 (configured replacement, postcheck, rollback, and re-entry) and Phase 6B3B3 (apply CLI) remain unimplemented and require separate review and approval. No production restore command or drill exists yet.
 
 ### Phase 6B3B1 completion evidence
@@ -16,6 +16,7 @@ The configured preparation implementation and deterministic tests establish all 
 - Binding and staged-artifact permissions are finalized through open descriptors; no pathname `chmod` is performed after staged publication.
 - Exact child sets in the staging directories are validated before and after inspections (second child-set enumeration and complete before/after descriptor-fact comparisons) to defeat directory/descriptor race conditions.
 - Publication fallback copy and verification are wrapped safely, and any cleanup uncertainty (like pathname identity changes) is handled cleanly, raising ownership errors rather than silently swallowing unlinking/cleanup failures.
+- The fallback write descriptor (`final_fd_for_write`) is closed before any final-path cleanup decision; descriptor-close uncertainty (close raises `OSError`) prevents unlink and raises `ConfiguredStagingOwnershipError`; foreign replacement paths detected during cleanup are preserved without deletion or chmod; cleanup unlink failures are surfaced with the unlink exception retained as `__cause__`.
 - Destination database bytes, metadata, and named WAL/SHM sidecars are reread against their baselines and are not modified by Phase 6B3B1.
 
 
