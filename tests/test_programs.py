@@ -633,3 +633,227 @@ def test_muscle_mania_uses_source_defined_compound_and_isolation_rest():
         for e in s["exercises"]
     }
     assert rests == {60, 45}, f"muscle_mania_6: expected {{60, 45}} source rest, got {rests}"
+
+
+# ---------------------------------------------------------------------------
+# Audit-accounting tests (Gate B bookkeeping)
+# Parse CURATED_ROUTINE_AUDIT.md line-by-line; derive counts from individual
+# routine sections; cross-check against the summary table.
+# ---------------------------------------------------------------------------
+
+_VALID_CLASSIFICATIONS = {
+    "source_exact",
+    "source_exact_with_equivalent_names",
+    "source_permitted_optional_omission",
+    "garmin_adapted",
+    "source_mismatch",
+    "source_unverified",
+}
+
+_EXPECTED_COUNTS = {
+    "source_exact": 7,
+    "source_exact_with_equivalent_names": 14,
+    "source_permitted_optional_omission": 3,
+    "garmin_adapted": 1,
+    "source_mismatch": 0,
+    "source_unverified": 0,
+}
+
+_SOURCE_EXACT_KEYS = {
+    "beginner_full_body_3",
+    "total_package_3",
+    "dumbbell_full_body_3",
+    "split_full_4",
+    "barbell_upper_lower_4",
+    "maul_5",
+    "dumbbell_split_5",
+}
+
+
+def _parse_audit_sections() -> dict[str, str]:
+    """Return {internal_key: classification} from individual routine sections.
+
+    Parses only rows of the form:
+        | **Internal key** | `key_name` |
+        | **Classification** | `classification_name` |
+    where the value cell contains exactly one backtick-delimited token and
+    nothing else (excluding surrounding whitespace and pipe characters).
+    This avoids matching the header-description row which reads:
+        | **Internal key** | `PROGRAMS` dict key in `coach/programs.py` |
+    """
+    import re
+    # Matches a table row whose second column is exactly one backtick token.
+    _cell_re = re.compile(r"^\|\s*\*\*[^*]+\*\*\s*\|\s*`([^`]+)`\s*\|")
+    key_to_classification: dict[str, str] = {}
+    current_key: str | None = None
+    with open(_AUDIT_PATH, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            m = _cell_re.match(line)
+            if not m:
+                continue
+            label_start = line.index("**") + 2
+            label_end = line.index("**", label_start)
+            label = line[label_start:label_end]
+            value = m.group(1).strip()
+            if label == "Internal key":
+                current_key = value
+            elif label == "Classification" and current_key is not None:
+                key_to_classification[current_key] = value
+                current_key = None
+    return key_to_classification
+
+
+def _parse_summary_counts() -> dict[str, int]:
+    """Return {classification: count} from the Summary table."""
+    counts: dict[str, int] = {}
+    in_summary = False
+    with open(_AUDIT_PATH, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if line.strip() == "## Summary":
+                in_summary = True
+                continue
+            if in_summary and line.startswith("## ") and "Summary" not in line:
+                break
+            if in_summary and line.startswith("|") and "`" in line:
+                parts = line.split("`")
+                if len(parts) >= 3:
+                    cls = parts[1].strip()
+                    if cls in _VALID_CLASSIFICATIONS:
+                        # count is the number immediately after the second backtick section
+                        after = parts[2].lstrip(" |").split()[0].rstrip(",")
+                        try:
+                            counts[cls] = int(after)
+                        except ValueError:
+                            pass
+    return counts
+
+
+def _parse_summary_key_lists() -> dict[str, set[str]]:
+    """Return {classification: set_of_keys} from the parenthesised lists in the Summary table."""
+    key_lists: dict[str, set[str]] = {}
+    in_summary = False
+    with open(_AUDIT_PATH, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if line.strip() == "## Summary":
+                in_summary = True
+                continue
+            if in_summary and line.startswith("## ") and "Summary" not in line:
+                break
+            if in_summary and line.startswith("|") and "`" in line:
+                # Extract classification from first backtick pair
+                parts = line.split("`")
+                if len(parts) < 3:
+                    continue
+                cls = parts[1].strip()
+                if cls not in _VALID_CLASSIFICATIONS:
+                    continue
+                # Extract everything inside the parentheses (if present)
+                paren_start = line.find("(")
+                paren_end = line.rfind(")")
+                if paren_start == -1 or paren_end == -1:
+                    key_lists[cls] = set()
+                    continue
+                raw = line[paren_start + 1:paren_end]
+                # Keys are separated by commas; strip spaces and trailing annotation after " — "
+                keys: set[str] = set()
+                for token in raw.split(","):
+                    token = token.strip().split(" ")[0].split("—")[0].strip()
+                    if token:
+                        keys.add(token)
+                key_lists[cls] = keys
+    return key_lists
+
+
+def test_audit_contains_exactly_25_routine_sections():
+    """The audit must have exactly one section per PROGRAMS entry (25 total)."""
+    sections = _parse_audit_sections()
+    assert len(sections) == 25, (
+        f"Expected 25 routine sections in audit; found {len(sections)}: {sorted(sections)}"
+    )
+
+
+def test_every_programs_key_appears_exactly_once_in_audit():
+    """Every key in PROGRAMS must appear exactly once in the audit."""
+    sections = _parse_audit_sections()
+    missing = sorted(set(PROGRAMS) - set(sections))
+    extra = sorted(set(sections) - set(PROGRAMS))
+    assert not missing, f"Keys in PROGRAMS missing from audit: {missing}"
+    assert not extra, f"Keys in audit not in PROGRAMS: {extra}"
+
+
+def test_every_audit_section_has_a_valid_classification():
+    """Every routine section must carry exactly one valid classification."""
+    sections = _parse_audit_sections()
+    invalid = {k: v for k, v in sections.items() if v not in _VALID_CLASSIFICATIONS}
+    assert not invalid, (
+        f"Audit sections with invalid/missing classification: {invalid}"
+    )
+
+
+def test_audit_section_classification_counts_match_expected():
+    """Counts derived from individual sections must match the required totals."""
+    sections = _parse_audit_sections()
+    from collections import Counter
+    derived = Counter(sections.values())
+    for cls, expected_count in _EXPECTED_COUNTS.items():
+        actual = derived.get(cls, 0)
+        assert actual == expected_count, (
+            f"Classification '{cls}': expected {expected_count}, got {actual}. "
+            f"Keys: {sorted(k for k, v in sections.items() if v == cls)}"
+        )
+
+
+def test_audit_section_counts_sum_to_25():
+    """The sum of all section-derived classification counts must equal len(PROGRAMS) == 25."""
+    sections = _parse_audit_sections()
+    assert len(sections) == len(PROGRAMS) == 25, (
+        f"Section count {len(sections)} != PROGRAMS count {len(PROGRAMS)}"
+    )
+
+
+def test_audit_summary_counts_match_section_derived_counts():
+    """Summary-table counts must equal the counts derived from individual sections."""
+    sections = _parse_audit_sections()
+    from collections import Counter
+    derived = Counter(sections.values())
+    summary = _parse_summary_counts()
+    for cls in _VALID_CLASSIFICATIONS:
+        derived_count = derived.get(cls, 0)
+        summary_count = summary.get(cls, 0)
+        assert derived_count == summary_count, (
+            f"Classification '{cls}': sections say {derived_count}, summary says {summary_count}. "
+            "Fix either the individual section or the summary table."
+        )
+
+
+def test_audit_summary_key_lists_match_section_derived_classifications():
+    """The parenthesised key lists in the summary must match the individual section classifications."""
+    sections = _parse_audit_sections()
+    summary_lists = _parse_summary_key_lists()
+    for cls, summary_keys in summary_lists.items():
+        if not summary_keys:
+            continue  # count-zero rows have no key list
+        section_keys = {k for k, v in sections.items() if v == cls}
+        missing_from_summary = sorted(section_keys - summary_keys)
+        extra_in_summary = sorted(summary_keys - section_keys)
+        assert not missing_from_summary, (
+            f"'{cls}' summary list missing keys present in sections: {missing_from_summary}"
+        )
+        assert not extra_in_summary, (
+            f"'{cls}' summary list has keys not found in sections: {extra_in_summary}"
+        )
+
+
+def test_maul_5_and_dumbbell_split_5_in_source_exact_summary():
+    """maul_5 and dumbbell_split_5 must be listed in the source_exact summary row."""
+    summary_lists = _parse_summary_key_lists()
+    source_exact_keys = summary_lists.get("source_exact", set())
+    assert "maul_5" in source_exact_keys, (
+        f"'maul_5' missing from source_exact summary list; found: {sorted(source_exact_keys)}"
+    )
+    assert "dumbbell_split_5" in source_exact_keys, (
+        f"'dumbbell_split_5' missing from source_exact summary list; found: {sorted(source_exact_keys)}"
+    )

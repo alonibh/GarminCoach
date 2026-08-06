@@ -295,12 +295,12 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 |---|---|
 | **Internal key** | `dumbbell_upper_lower_4` |
 | **Display name** | Dumbbell Upper / Lower · 4 days |
-| **Classification** | `source_exact` |
+| **Classification** | `source_exact_with_equivalent_names` |
 | **Source URL** | https://www.muscleandstrength.com/workouts/dumbbell-only-upper-lower-workout-routine |
 | **Reviewed** | 2026-07-22 (detailed exercise audit) |
 | **Source sessions** | Upper A; Lower A; Upper B; Lower B |
 | **Required source exercises** | All exercises in all four sessions per 2026-07-22 review |
-| **Equivalent-name substitutions** | None |
+| **Equivalent-name substitutions** | Garmin-normalized exercise names used; exact source terminology not preserved from 2026-07-22 review (source page not re-fetched 2026-08-06) |
 | **Optional omissions** | None |
 | **Garmin adaptations** | None |
 | **Corrections made** | None |
@@ -505,7 +505,7 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 | Source pages successfully reviewed 2026-08-06 (cdn fallback) | 8 |
 | Source pages reviewed 2026-07-22 | 17 |
 | Source pages with unresolved review | 0 |
-| `source_exact` | 5 (beginner_full_body_3, total_package_3, dumbbell_full_body_3, split_full_4, barbell_upper_lower_4) |
+| `source_exact` | 7 (beginner_full_body_3, total_package_3, dumbbell_full_body_3, split_full_4, barbell_upper_lower_4, maul_5, dumbbell_split_5) |
 | `source_exact_with_equivalent_names` | 14 (full_body_2, ms_full_body_3, upper_lower_4, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, barbell_no_rack_4, muscle_strength_5, ppl_6, low_volume_high_intensity_6, muscle_mania_6) |
 | `source_permitted_optional_omission` | 3 (shul_4, powerbuilding_ppl_6, built_different_ppl_6) |
 | `garmin_adapted` | 1 (long_cycle_full_body_3 — auto-regulation progression not implemented) |
