@@ -256,8 +256,6 @@ on fixtures), 6B3A (planning CLI + inspector), 6B3B1 (configured preparation),
 - Web or Telegram restore controls.
 - Restore while the application is running.
 - Schema downgrade, repair, or automatic migration during restore.
-- Production restore drill (not a completion requirement; production use requires
-  separately approved operator action following the runbook).
 
 ---
 

@@ -166,9 +166,8 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
 
 **Phase 6 is complete.** The operator restore CLI (`apply_verified_restore.py`)
 is implemented and tested. It requires the service to be stopped manually before
-invocation and never starts or stops the service itself. No production restore
-drill has been performed; production use requires separately approved operator
-action following `docs/GUARDED_RESTORE_RUNBOOK.md`.
+invocation and never starts or stops the service itself. Restore invocation is
+an explicit operator action following `docs/GUARDED_RESTORE_RUNBOOK.md`.
 
 See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for the canonical
 per-phase status summary.

@@ -341,21 +341,21 @@ def test_primary_muscle_groups_cover_close_and_cross_category_alternatives():
 def test_expansion_routine_session_and_exercise_counts():
     """Each expansion routine has its source-reviewed session and exercise structure."""
     expected = {
-        "planet_fitness_full_body_3": (3, [6, 6, 6]),
-        "long_cycle_full_body_3": (3, [4, 4, 4]),
-        "whole_body_toning_3": (3, [4, 4, 4]),
-        "planet_fitness_upper_lower_4": (4, [4, 4, 4, 4]),
-        "optimized_volume_4": (4, [4, 4, 4, 4]),
-        "phul_4": (4, [4, 4, 4, 4]),
+        "planet_fitness_full_body_3": (3, [7, 8, 8]),
+        "long_cycle_full_body_3": (3, [7, 7, 7]),
+        "whole_body_toning_3": (3, [7, 7, 6]),
+        "planet_fitness_upper_lower_4": (4, [8, 6, 8, 6]),
+        "optimized_volume_4": (4, [7, 5, 7, 5]),
+        "phul_4": (4, [7, 5, 7, 6]),
         "dumbbell_upper_lower_4": (4, [7, 6, 7, 6]),
-        "barbell_no_rack_4": (4, [6, 6, 6, 6]),
+        "barbell_no_rack_4": (4, [6, 6, 6, 7]),
         "barbell_upper_lower_4": (4, [5, 5, 5, 5]),
         "maul_5": (5, [4, 4, 4, 4, 4]),
         "dumbbell_split_5": (5, [6, 7, 6, 7, 7]),
         "powerbuilding_ppl_6": (6, [3, 3, 3, 3, 3, 3]),
         "low_volume_high_intensity_6": (6, [4, 3, 4, 4, 3, 4]),
         "built_different_ppl_6": (6, [4, 4, 4, 4, 4, 4]),
-        "muscle_mania_6": (6, [4, 4, 4, 4, 4, 4]),
+        "muscle_mania_6": (6, [6, 6, 6, 6, 6, 6]),
     }
     for key, (num_sessions, exercise_counts) in expected.items():
         program = PROGRAMS[key]
@@ -403,18 +403,32 @@ def test_powerbuilding_ppl_uses_source_reviewed_rest_values():
                 )
 
 
-def test_expansion_routines_use_acsm_default_rest_where_source_not_audited():
-    """Expansion routines without a documented source rest rule use 60 s (ACSM default)."""
-    acsm_default_keys = {
-        "planet_fitness_full_body_3", "long_cycle_full_body_3", "whole_body_toning_3",
-        "planet_fitness_upper_lower_4", "optimized_volume_4",
+def test_expansion_routines_use_garmincoach_default_rest_where_source_is_silent():
+    """Expansion routines where source specifies no rest use 60 s (GarminCoach product default)."""
+    # Routines where source is silent on rest — 60 s is the GarminCoach default, not attributed to ACSM.
+    # Routines where source is silent on rest — 60 s GarminCoach default, not ACSM-attributed.
+    garmincoach_default_keys = {
+        "planet_fitness_full_body_3", "long_cycle_full_body_3",
+        "planet_fitness_upper_lower_4",
         "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
         "maul_5", "dumbbell_split_5",
-        "low_volume_high_intensity_6", "built_different_ppl_6", "muscle_mania_6",
+        "low_volume_high_intensity_6", "built_different_ppl_6",
     }
-    for key in acsm_default_keys:
+    for key in garmincoach_default_keys:
         rests = {e["rest_seconds"] for s in PROGRAMS[key]["sessions"] for e in s["exercises"]}
-        assert rests == {60}, f"{key}: expected only 60s rest, got {rests}"
+        assert rests == {60}, f"{key}: expected only 60s rest (GarminCoach default), got {rests}"
+
+    # whole_body_toning_3: source prescribes 30-45 s rest; upper bound (45 s) applied.
+    wbt_rests = {e["rest_seconds"] for s in PROGRAMS["whole_body_toning_3"]["sessions"] for e in s["exercises"]}
+    assert wbt_rests == {45}, f"whole_body_toning_3: expected 45s rest (source-defined upper bound), got {wbt_rests}"
+
+    # optimized_volume_4: source is silent on rest; 60 s GarminCoach default applied.
+    ovw_rests = {e["rest_seconds"] for s in PROGRAMS["optimized_volume_4"]["sessions"] for e in s["exercises"]}
+    assert ovw_rests == {60}, f"optimized_volume_4: expected only 60s rest (GarminCoach default), got {ovw_rests}"
+
+    # muscle_mania_6: source specifies 60 s compound, 45 s isolation (source-defined, not GarminCoach default).
+    mm_rests = {e["rest_seconds"] for s in PROGRAMS["muscle_mania_6"]["sessions"] for e in s["exercises"]}
+    assert mm_rests == {60, 45}, f"muscle_mania_6: expected 60s (compound) and 45s (isolation) rest, got {mm_rests}"
 
 
 def test_ppl_6_all_exercises_have_transition_timer_and_no_superset_group():
@@ -512,3 +526,110 @@ def test_powerbuilding_ppl_uses_rep_goal_progression_rule_for_five_set_anchors()
                 assert exercise["progression_rule_key"] == rule, (
                     f"powerbuilding anchor {exercise['exercise_name']} should have rule {rule!r}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Audit-enforcement tests (Gate B)
+# ---------------------------------------------------------------------------
+
+import os as _os
+
+_AUDIT_PATH = _os.path.join(_os.path.dirname(__file__), "..", "docs", "CURATED_ROUTINE_AUDIT.md")
+
+
+def _audit_text() -> str:
+    with open(_AUDIT_PATH, encoding="utf-8") as f:
+        return f.read()
+
+
+def test_audit_doc_contains_no_acsm_derived_default_label():
+    """No routine in the audit may label rest as 'ACSM-derived'; use 'GarminCoach product default'."""
+    assert "ACSM-derived default" not in _audit_text(), (
+        "CURATED_ROUTINE_AUDIT.md still contains 'ACSM-derived default' language; "
+        "correct to 'GarminCoach product default' for routines where source is silent on rest."
+    )
+
+
+def test_audit_doc_source_mismatch_count_is_zero():
+    """The audit summary must report zero source_mismatch routines."""
+    text = _audit_text()
+    # The summary table must contain 'source_mismatch | 0'
+    assert "| `source_mismatch` | 0 |" in text, (
+        "CURATED_ROUTINE_AUDIT.md summary must show source_mismatch = 0."
+    )
+
+
+def test_audit_doc_source_unverified_count_is_zero():
+    """The audit summary must report zero source_unverified routines."""
+    text = _audit_text()
+    assert "| `source_unverified` | 0 |" in text, (
+        "CURATED_ROUTINE_AUDIT.md summary must show source_unverified = 0."
+    )
+
+
+def test_audit_doc_garmin_adapted_routine_clearly_named():
+    """The garmin_adapted routine must be named as an adaptation, not as source-exact."""
+    text = _audit_text()
+    # long_cycle_full_body_3 is the only garmin_adapted routine
+    assert "Long Cycle Full Body (Adapted)" in text, (
+        "The garmin_adapted routine must be named to indicate it is an adaptation."
+    )
+    # It must not be classified as source_exact anywhere
+    assert "`source_exact`\n| **Source URL** | https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout" not in text, (
+        "long_cycle_full_body_3 must not be classified as source_exact."
+    )
+
+
+def test_audit_doc_garmincoach_default_rest_not_attributed_to_source():
+    """Routes with GarminCoach default rest must not claim it is source-defined."""
+    text = _audit_text()
+    # Any line that says "source-defined" must not immediately follow a GarminCoach-default-rest note
+    # Pragmatic check: ensure the text does not attribute 60 s default to ACSM
+    assert "60 s (ACSM" not in text, (
+        "CURATED_ROUTINE_AUDIT.md must not attribute the 60 s GarminCoach default to ACSM."
+    )
+
+
+def test_long_cycle_classified_garmin_adapted_in_programs():
+    """long_cycle_full_body_3 display name must indicate it is an adapted routine."""
+    name = PROGRAMS["long_cycle_full_body_3"]["name"]
+    assert "Adapted" in name, (
+        f"long_cycle_full_body_3 display name must contain 'Adapted'; got {name!r}"
+    )
+
+
+def test_source_silent_routines_use_garmincoach_default_rest_not_higher():
+    """Source-silent routines must use exactly 60 s between-set rest (GarminCoach default)."""
+    source_silent = {
+        "planet_fitness_full_body_3", "long_cycle_full_body_3",
+        "planet_fitness_upper_lower_4",
+        "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
+        "maul_5", "dumbbell_split_5",
+        "low_volume_high_intensity_6", "built_different_ppl_6",
+        "optimized_volume_4",
+    }
+    for key in source_silent:
+        rests = {e["rest_seconds"] for s in PROGRAMS[key]["sessions"] for e in s["exercises"]}
+        assert rests == {60}, (
+            f"{key}: source is silent on rest; expected only 60 s (GarminCoach default), got {rests}"
+        )
+
+
+def test_whole_body_toning_uses_source_defined_rest():
+    """whole_body_toning_3 must use 45 s rest (source-defined upper bound of 30-45 s range)."""
+    rests = {
+        e["rest_seconds"]
+        for s in PROGRAMS["whole_body_toning_3"]["sessions"]
+        for e in s["exercises"]
+    }
+    assert rests == {45}, f"whole_body_toning_3: expected 45 s source rest, got {rests}"
+
+
+def test_muscle_mania_uses_source_defined_compound_and_isolation_rest():
+    """muscle_mania_6 must use 60 s for compound and 45 s for isolation (source-defined)."""
+    rests = {
+        e["rest_seconds"]
+        for s in PROGRAMS["muscle_mania_6"]["sessions"]
+        for e in s["exercises"]
+    }
+    assert rests == {60, 45}, f"muscle_mania_6: expected {{60, 45}} source rest, got {rests}"
