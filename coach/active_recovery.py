@@ -11,22 +11,8 @@ import logging
 import threading
 from typing import Any, Mapping
 
-from garminconnect import GarminConnectAuthenticationError
-try:
-    from garminconnect import GarminConnectNotFoundError
-except ImportError:
-    # garminconnect<0.3 does not export this error; provide a shim so the
-    # except-clause in sync logic compiles.  In a pre-0.3 runtime the except
-    # block simply never matches (the error is never raised by the older
-    # library), which is the same safe behaviour as "not found → upload new".
-    class GarminConnectNotFoundError(Exception):  # type: ignore[no-redef]
-        """Compatibility shim for environments that lack garminconnect>=0.3."""
-try:
-    from garminconnect.workout import ExecutableStep, WalkingWorkout, WorkoutSegment
-except ImportError as _gc_import_err:
-    raise ImportError(
-        "garminconnect.workout is required; install garminconnect[typed]>=0.3"
-    ) from _gc_import_err
+from garminconnect import GarminConnectAuthenticationError, GarminConnectNotFoundError
+from garminconnect.workout import ExecutableStep, WalkingWorkout, WorkoutSegment
 from sqlalchemy.orm import Session
 
 from db import SyncState

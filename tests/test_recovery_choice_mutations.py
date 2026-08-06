@@ -8,19 +8,7 @@ import pytest
 
 from garminconnect import GarminConnectAuthenticationError
 
-try:
-    from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME, ActiveRecoveryTemplateResult
-    _garminconnect_030_available = True
-except ImportError:
-    _garminconnect_030_available = False
-
-pytestmark = pytest.mark.skipif(
-    not _garminconnect_030_available,
-    reason="requires garminconnect[typed]>=0.3 (garminconnect.workout submodule)",
-)
-
-if _garminconnect_030_available:
-    from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME, ActiveRecoveryTemplateResult
+from coach.active_recovery import ACTIVE_RECOVERY_WORKOUT_NAME, ActiveRecoveryTemplateResult
 from coach.decision_engine import evaluate_selected_workout_recovery
 from coach.interactions import (
     _compensate_remote_recovery,
