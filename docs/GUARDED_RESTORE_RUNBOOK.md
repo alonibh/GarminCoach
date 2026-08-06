@@ -148,3 +148,97 @@ The inspector reads the durable journal from `operator_restore_operations/operat
 > 2. No automatic re-entry or continuation script may be run.
 > 3. Operators must **never edit, normalize, or delete** the operation journal.
 > 4. An operator must inspect the durable facts and manually restore target databases from the recorded safety backup ID.
+
+---
+
+## 7. Apply CLI operator flow (Phase 6B3B3)
+
+`apply_verified_restore.py` is the operator-only, noninteractive CLI for executing a guarded restore. It wraps `prepare_configured_restore` (Phase 6B3B1) and `replace_and_verify_configured_restore` (Phase 6B3B2) without duplicating or weakening their security logic.
+
+### 7.1 Required confirmation arguments
+
+Every invocation must supply all four arguments:
+
+| Argument | Description |
+|---|---|
+| `--backup-id <id>` | Exact verified backup ID from `plan_verified_restore.py` output |
+| `--expected-current-commit <sha\|unknown>` | Expected application git commit or `unknown` |
+| `--confirm-target-set-hash <sha256>` | Target-set SHA-256 from plan output |
+| `--confirm-restore <sha256>` | Confirmation value from plan output |
+| `--operation-id <id>` | (Re-entry only) Existing operation ID from a prior interrupted run |
+
+Missing or invalid arguments exit `64`.
+
+There is no `--force`, `--yes`, interactive prompt, generic confirmation, arbitrary database path, partial target selection, tenant selection, service start/stop option, or migration option.
+
+### 7.2 Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success or verified idempotent COMPLETED re-entry |
+| 64 | CLI usage error or invalid argument |
+| 65 | Precondition or verification refusal (no configured database mutated) |
+| 66 | Safe failure: automatic rollback succeeded and verified (FAILED_SAFE) |
+| 67 | Automatic rollback completed and verified (rollback from live run) |
+| 68 | Manual recovery required; do not auto-resume |
+| 69 | Evidence cleanup required; database outcome is known |
+| 70 | Journal or persistence state is uncertain |
+| 71 | Lock acquisition or release uncertainty |
+| 72 | Unexpected internal failure |
+
+### 7.3 Fresh apply sequence
+
+1. Verify deployed code SHA is the expected commit.
+2. **Stop the service manually** outside the tool. The CLI does not start or stop services.
+3. Confirm the service is stopped.
+4. Run `plan_verified_restore.py --backup-id <id>` and review the plan output.
+5. Copy the `target_set_hash` and `confirmation_value` from the plan output.
+6. Run the apply CLI from the exact configured project root:
+   ```
+   python apply_verified_restore.py \
+     --backup-id <id> \
+     --expected-current-commit <sha> \
+     --confirm-target-set-hash <target_set_hash> \
+     --confirm-restore <confirmation_value>
+   ```
+7. Review the JSON result on stdout. Check `exit_code`, `stage`, `rollback_occurred`, `configured_database_mutated`.
+8. **Manually start the service only after** a verified success (`stage=COMPLETED`) or verified rollback (`stage=FAILED_SAFE`), and only after separate operator judgment.
+9. If exit code is 68 (`FAILED_MANUAL_RECOVERY_REQUIRED`): do NOT restart the service; follow manual recovery rules in section 6.
+
+### 7.4 Re-entry sequence (interrupted apply)
+
+If a previous apply was interrupted or left a non-terminal journal:
+
+1. Run `inspect_restore_operation.py --operation-id <id>` to determine the current stage.
+2. If `stage=FAILED_MANUAL_RECOVERY_REQUIRED`: do NOT re-enter; follow section 6.
+3. For any other non-terminal stage:
+   ```
+   python apply_verified_restore.py \
+     --backup-id <id> \
+     --expected-current-commit <sha> \
+     --confirm-target-set-hash <target_set_hash> \
+     --confirm-restore <confirmation_value> \
+     --operation-id <operation_id>
+   ```
+4. The CLI delegates legal re-entry entirely to the replacement engine.
+
+### 7.5 Service boundary
+
+- The CLI **never** starts, stops, or restarts the application service.
+- The CLI **never** runs migrations.
+- Operators must stop the service before invoking the apply CLI and must start it manually after a verified outcome.
+- Never start the service automatically after a `FAILED_MANUAL_RECOVERY_REQUIRED` outcome.
+
+### 7.6 Manual-recovery boundary
+
+- `apply_verified_restore.py` refuses to re-enter a `FAILED_MANUAL_RECOVERY_REQUIRED` journal (exits 68).
+- Use `inspect_restore_operation.py` to read journal facts and safety backup ID.
+- Manual database restore from the safety backup must be performed outside the tool.
+
+### 7.7 Production drill
+
+No production restore drill has been performed. Completion of Phase 6B3B3 means the tooling is implemented and tested; it does not authorize or perform a production restore.
+
+### 7.8 Inspector new fields
+
+`inspect_restore_operation.py` now reports `safety_backup_manifest_sha256` in both JSON and human-readable output. This field confirms the immutable binding between the journal and the safety backup created at preparation time.
