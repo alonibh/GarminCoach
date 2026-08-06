@@ -332,3 +332,183 @@ def test_primary_muscle_groups_cover_close_and_cross_category_alternatives():
     assert muscle_group_for("ROW:SEATED_CABLE_ROW") == "back"
     assert muscle_group_for("Seated Dumbbell Press") == "shoulders"
     assert muscle_group_for("Seated Leg Curl") == "hamstrings_glutes"
+
+
+# ---------------------------------------------------------------------------
+# Gate C regression tests — expansion routines audited 2026-07-22
+# ---------------------------------------------------------------------------
+
+def test_expansion_routine_session_and_exercise_counts():
+    """Each expansion routine has its source-reviewed session and exercise structure."""
+    expected = {
+        "planet_fitness_full_body_3": (3, [6, 6, 6]),
+        "long_cycle_full_body_3": (3, [4, 4, 4]),
+        "whole_body_toning_3": (3, [4, 4, 4]),
+        "planet_fitness_upper_lower_4": (4, [4, 4, 4, 4]),
+        "optimized_volume_4": (4, [4, 4, 4, 4]),
+        "phul_4": (4, [4, 4, 4, 4]),
+        "dumbbell_upper_lower_4": (4, [7, 6, 7, 6]),
+        "barbell_no_rack_4": (4, [6, 6, 6, 6]),
+        "barbell_upper_lower_4": (4, [5, 5, 5, 5]),
+        "maul_5": (5, [4, 4, 4, 4, 4]),
+        "dumbbell_split_5": (5, [6, 7, 6, 7, 7]),
+        "powerbuilding_ppl_6": (6, [3, 3, 3, 3, 3, 3]),
+        "low_volume_high_intensity_6": (6, [4, 3, 4, 4, 3, 4]),
+        "built_different_ppl_6": (6, [4, 4, 4, 4, 4, 4]),
+        "muscle_mania_6": (6, [4, 4, 4, 4, 4, 4]),
+    }
+    for key, (num_sessions, exercise_counts) in expected.items():
+        program = PROGRAMS[key]
+        assert len(program["sessions"]) == num_sessions, f"{key}: session count"
+        for idx, count in enumerate(exercise_counts):
+            actual = len(program["sessions"][idx]["exercises"])
+            assert actual == count, f"{key} session[{idx}]: expected {count} exercises, got {actual}"
+
+
+def test_phul_uses_source_reviewed_rest_values():
+    """PHUL uses 180 s for main power-set compounds and 60 s for accessories/hypertrophy."""
+    # Power sessions: main 3-rep lifts get 180 s; 6-rep accessories use 60 s default.
+    # Hypertrophy sessions: all exercises use 60 s default.
+    for session in PROGRAMS["phul_4"]["sessions"]:
+        if session["name"] in ("Upper Power", "Lower Power"):
+            for exercise in session["exercises"]:
+                if exercise["reps"] == 3:
+                    assert exercise["rest_seconds"] == 180, (
+                        f"PHUL {session['name']} main lift {exercise['exercise_name']} should be 180s"
+                    )
+                else:
+                    assert exercise["rest_seconds"] == 60, (
+                        f"PHUL {session['name']} accessory {exercise['exercise_name']} should be 60s"
+                    )
+        else:
+            rests = {e["rest_seconds"] for e in session["exercises"]}
+            assert rests == {60}, f"PHUL {session['name']} should be all 60s, got {rests}"
+
+
+def test_powerbuilding_ppl_uses_source_reviewed_rest_values():
+    """Powerbuilding PPL uses 120 s for compound anchors and 60 s for accessories."""
+    anchor_names = {
+        "Barbell Bench Press", "Deadlift", "Barbell Back Squat",
+        "Standing Overhead Barbell Press", "Front Squat",
+    }
+    for session in PROGRAMS["powerbuilding_ppl_6"]["sessions"]:
+        for exercise in session["exercises"]:
+            if exercise["exercise_name"] in anchor_names:
+                assert exercise["rest_seconds"] == 120, (
+                    f"Powerbuilding anchor {exercise['exercise_name']} should be 120s"
+                )
+            else:
+                assert exercise["rest_seconds"] == 60, (
+                    f"Powerbuilding accessory {exercise['exercise_name']} should be 60s"
+                )
+
+
+def test_expansion_routines_use_acsm_default_rest_where_source_not_audited():
+    """Expansion routines without a documented source rest rule use 60 s (ACSM default)."""
+    acsm_default_keys = {
+        "planet_fitness_full_body_3", "long_cycle_full_body_3", "whole_body_toning_3",
+        "planet_fitness_upper_lower_4", "optimized_volume_4",
+        "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
+        "maul_5", "dumbbell_split_5",
+        "low_volume_high_intensity_6", "built_different_ppl_6", "muscle_mania_6",
+    }
+    for key in acsm_default_keys:
+        rests = {e["rest_seconds"] for s in PROGRAMS[key]["sessions"] for e in s["exercises"]}
+        assert rests == {60}, f"{key}: expected only 60s rest, got {rests}"
+
+
+def test_ppl_6_all_exercises_have_transition_timer_and_no_superset_group():
+    """ppl_6 has 45 s between-set rest and 90 s between-exercise transition; no superset groups."""
+    for session in PROGRAMS["ppl_6"]["sessions"]:
+        for exercise in session["exercises"]:
+            assert exercise["rest_seconds"] == 45
+            assert exercise["transition_rest_seconds"] == 90
+            assert exercise["superset_group"] is None
+
+
+def test_muscle_strength_5_superset_pairs_and_transitions():
+    """muscle_strength_5 size sessions encode exactly 8 source superset pairs."""
+    expected_pairs = {
+        "Back & Shoulders Size": [
+            ("Wide Grip Pull Down", "Narrow Grip Pull Down"),
+            ("Straight Arm Rope Pull Down", "Lower Back Hyperextensions"),
+            ("Cable EZ Bar Upright Row", "Rope Face Pull"),
+        ],
+        "Chest & Arms Size": [("Flat Machine Chest Press", "Incline Dumbbell Fly")],
+        "Legs Size": [
+            ("Seated Hamstring Curl", "Leg Extension"),
+            ("Leg Press", "Barbell Walking Lunge"),
+            ("Abductor Machine", "Adductor Machine"),
+            ("Seated Calf Raise", "Single Leg Calf Press"),
+        ],
+    }
+    total_pairs = sum(len(v) for v in expected_pairs.values())
+    assert total_pairs == 8
+    for session in PROGRAMS["muscle_strength_5"]["sessions"]:
+        if session["name"] in expected_pairs:
+            exercises = session["exercises"]
+            paired_groups = {e["superset_group"] for e in exercises if e["superset_group"]}
+            assert len(paired_groups) == len(expected_pairs[session["name"]])
+            assert all(e["transition_rest_seconds"] == 90 for e in exercises)
+
+
+def test_expansion_routines_have_two_weekly_lower_push_pull_exposures():
+    """All expansion routines satisfy the catalog's mandatory two-exposure gate."""
+    expansion_keys = [
+        "planet_fitness_full_body_3", "long_cycle_full_body_3", "whole_body_toning_3",
+        "planet_fitness_upper_lower_4", "optimized_volume_4", "phul_4",
+        "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
+        "maul_5", "dumbbell_split_5", "powerbuilding_ppl_6",
+        "low_volume_high_intensity_6", "built_different_ppl_6", "muscle_mania_6",
+    ]
+    for key in expansion_keys:
+        program = PROGRAMS[key]
+        assert all(count >= 2 for count in program["region_exposures"].values()), (
+            f"{key}: region_exposures gate failed: {program['region_exposures']}"
+        )
+
+
+def test_every_expansion_routine_is_garmin_representable():
+    """Every exercise in every expansion routine maps to the Garmin exercise catalog."""
+    expansion_keys = [
+        "planet_fitness_full_body_3", "long_cycle_full_body_3", "whole_body_toning_3",
+        "planet_fitness_upper_lower_4", "optimized_volume_4", "phul_4",
+        "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
+        "maul_5", "dumbbell_split_5", "powerbuilding_ppl_6",
+        "low_volume_high_intensity_6", "built_different_ppl_6", "muscle_mania_6",
+    ]
+    missing = [
+        (key, session["name"], exercise["exercise_name"])
+        for key in expansion_keys
+        for session in PROGRAMS[key]["sessions"]
+        for exercise in session["exercises"]
+        if exercise_metadata(exercise["exercise_name"]) is None
+    ]
+    assert missing == [], f"Unmapped exercises: {missing}"
+
+
+def test_expansion_routine_warmup_anchors():
+    """First exercise of each expansion-routine session that is a qualifying compound gets a warm-up."""
+    for key in [
+        "phul_4", "powerbuilding_ppl_6", "muscle_mania_6",
+        "barbell_upper_lower_4", "barbell_no_rack_4",
+    ]:
+        for session in PROGRAMS[key]["sessions"]:
+            first = session["exercises"][0]
+            if first["garmin_category"] in {
+                "SQUAT", "DEADLIFT", "BENCH_PRESS", "SHOULDER_PRESS", "ROW", "PULL_UP",
+            }:
+                assert first["warmup_enabled"] is True, (
+                    f"{key}/{session['name']}: first compound {first['exercise_name']} should have warm-up"
+                )
+
+
+def test_powerbuilding_ppl_uses_rep_goal_progression_rule_for_five_set_anchors():
+    """The five-set compound anchors in powerbuilding_ppl_6 carry the rep-goal progression rule."""
+    rule = "powerbuilding_rep_goal_15_v1"
+    for session in PROGRAMS["powerbuilding_ppl_6"]["sessions"]:
+        for exercise in session["exercises"]:
+            if exercise["sets"] == 5:
+                assert exercise["progression_rule_key"] == rule, (
+                    f"powerbuilding anchor {exercise['exercise_name']} should have rule {rule!r}"
+                )
