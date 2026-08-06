@@ -160,9 +160,13 @@ def _fsync_path(path: Path, *, directory: bool = False) -> None:
 def _open_nf(path: Path) -> int:
     """Open with no-follow; verify regular file; return fd.
 
-    The descriptor is closed at most once.  On non-regular-file detection the
-    descriptor is closed exactly once (tracked via _fd_closed) before raising;
-    the except handler only closes if the earlier close did not happen.
+    Descriptor is closed at most once (tracked via _fd_closed).  On
+    non-regular-file detection the descriptor is closed exactly once.  If that
+    close fails, a bounded descriptor-ownership uncertainty error is raised with
+    the close failure as its direct ``__cause__`` and the original validation
+    failure as ``__context__``; no raw path or OS error text appears in the
+    public message.  Successful return transfers descriptor ownership to the
+    caller; the caller is responsible for exactly one subsequent close.
     """
     try:
         fd = os.open(str(path), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
@@ -171,18 +175,32 @@ def _open_nf(path: Path) -> int:
     _fd_closed = False
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
+            _validation_failure = ConfiguredReplacementPreconditionError(
+                "Opened descriptor is not a regular file"
+            )
+            _close_exc: OSError | None = None
             try:
                 os.close(fd)
-            except OSError:
-                pass
+            except OSError as _ce:
+                _close_exc = _ce
             _fd_closed = True
-            raise ConfiguredReplacementPreconditionError("Opened descriptor is not a regular file")
+            if _close_exc is not None:
+                # Raise outside the except block so Python does not implicitly override
+                # __context__ with the close exception; explicit assignment is preserved.
+                _unc = ConfiguredReplacementPreconditionError(
+                    "Descriptor ownership uncertain: non-regular-file close failed"
+                )
+                _unc.__cause__ = _close_exc
+                _unc.__context__ = _validation_failure
+                raise _unc
+            raise _validation_failure
     except ConfiguredReplacementPreconditionError:
         if not _fd_closed:
             try:
                 os.close(fd)
             except OSError:
                 pass
+            _fd_closed = True
         raise
     return fd
 

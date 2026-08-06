@@ -67,6 +67,15 @@ from process_lock import ProcessLock, acquire_process_lock, release_process_lock
 from verified_backup import BackupLock, create_verified_backup, load_validated_backup_snapshot
 
 
+class _MutatedStat:
+    """Wrap a real stat result and override specific fields for deterministic tests."""
+
+    def __init__(self, real, **overrides):
+        for attr in ("st_dev", "st_ino", "st_size", "st_mode", "st_nlink"):
+            setattr(self, attr, overrides.get(attr, getattr(real, attr)))
+        self.st_mtime_ns = overrides.get("st_mtime_ns", getattr(real, "st_mtime_ns", None))
+
+
 def _setup_test_env(tmp_path: Path, monkeypatch, multi_user: bool = False, num_tenants: int = 1):
     """Set up isolated test repository structure and monkeypatch config paths."""
     project_root = tmp_path / "project"
@@ -1244,8 +1253,17 @@ def test_verify_durable_parent_matches_persisted_identity(tmp_path, monkeypatch)
 
 def test_verify_durable_parent_refuses_inode_substitution(tmp_path, monkeypatch):
     """_verify_durable_parent must refuse when a different directory replaces the parent
-    (simulating a parent-substitution race between baseline capture and staging)."""
+    (simulating a parent-substitution race between baseline capture and staging).
+
+    This test is deterministic: rather than relying on the OS not reusing inodes
+    after directory recreation (which can skip on Linux), it monkeypatches os.stat
+    to return a plausible substitute inode that is guaranteed to differ from the
+    baseline-persisted value.  The tested code path — inode comparison after the
+    baseline snapshot was captured — is always exercised.
+    """
     import config as cfg
+    import guarded_restore_configured_staging as _staging_mod
+
     monkeypatch.setattr(cfg, "PROJECT_ROOT", tmp_path)
 
     original = tmp_path / "data"
@@ -1255,15 +1273,27 @@ def test_verify_durable_parent_refuses_inode_substitution(tmp_path, monkeypatch)
     persisted_ino = original_st.st_ino
     persisted_mode = stat.S_IMODE(original_st.st_mode)
 
-    # Simulate substitution: remove original, create a new directory at the same path
-    # (different inode)
-    shutil.rmtree(original)
-    original.mkdir()
-    new_st = original.stat()
+    # Patch os.stat so that reading the current parent path returns a plausibly
+    # different inode — guaranteed to differ from persisted_ino — without touching
+    # the real filesystem or relying on OS inode-reuse behaviour.
+    substitute_ino = persisted_ino + 99999
+    assert substitute_ino != persisted_ino  # sanity check
 
-    # If the OS reuses inodes, skip rather than produce a false positive
-    if new_st.st_ino == persisted_ino:
-        pytest.skip("OS reused inode after directory recreation; cannot distinguish substitution")
+    # Use the real inode of the newly created 'original' directory as the "old" inode.
+    # Determine the absolute path string once before patching to avoid any Path.resolve()
+    # inside fake_stat (which would recurse into os.stat again).
+    _original_str = str(original.absolute())
+    original_os_stat = os.stat
+
+    def fake_stat(path_arg, *, follow_symlinks=True):
+        real = original_os_stat(path_arg, follow_symlinks=follow_symlinks)
+        # Simple string comparison against the absolute path — no resolve() inside the
+        # patched function to avoid infinite recursion.
+        if str(Path(str(path_arg)).absolute()) == _original_str:
+            return _MutatedStat(real, st_ino=substitute_ino)
+        return real
+
+    monkeypatch.setattr(_staging_mod.os, "stat", fake_stat)
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="inode"):
         _verify_durable_parent(

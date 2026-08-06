@@ -2326,38 +2326,95 @@ def test_rolled_back_reentry_never_replaced_sidecar_added(tmp_path, monkeypatch)
         _call_replace(env)
 
 
+def _inject_wal_into_baseline_evidence(
+    op_dir: Path, target_key: str, wal_path: Path, project_root: Path
+) -> None:
+    """Inject WAL-present info for *target_key* into the stored baseline evidence JSON.
+
+    Creates a deterministic test baseline that records the WAL sidecar as present
+    (with the actual on-disk inode/dev/size/sha256) without needing the WAL to
+    exist at the time prepare_configured_restore was called.  The baseline file is
+    replaced atomically with updated canonical JSON.
+    """
+    baseline_file = op_dir / "destination-baseline.json"
+    raw_bytes = baseline_file.read_bytes()
+    payload = json.loads(raw_bytes.decode("utf-8"))
+
+    wal_st = wal_path.stat()
+    wal_sha = hashlib.sha256(wal_path.read_bytes()).hexdigest()
+
+    try:
+        w_rel = str(wal_path.relative_to(project_root)).replace("\\", "/")
+    except ValueError:
+        w_rel = wal_path.name
+
+    wal_info = {
+        "present": True,
+        "configured_relative_path": w_rel,
+        "resolved_relative_path": w_rel,
+        "is_regular_file": True,
+        "st_dev": wal_st.st_dev,
+        "st_ino": wal_st.st_ino,
+        "size_bytes": wal_st.st_size,
+        "mtime_ns": wal_st.st_mtime_ns,
+        "st_mode": stat.S_IMODE(wal_st.st_mode),
+        "sha256": wal_sha,
+    }
+
+    updated = False
+    for tgt_rec in payload.get("targets", []):
+        if tgt_rec.get("target_key") == target_key:
+            tgt_rec["wal"] = wal_info
+            updated = True
+
+    assert updated, f"No target with key {target_key!r} found in baseline"
+
+    new_bytes = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    tmp_file = baseline_file.with_suffix(".tmp")
+    tmp_file.write_bytes(new_bytes)
+    if os.name != "nt":
+        os.chmod(str(tmp_file), 0o600)
+    os.replace(str(tmp_file), str(baseline_file))
+
+
 def test_rolled_back_reentry_never_replaced_sidecar_replaced(tmp_path, monkeypatch):
-    """ROLLED_BACK re-entry fails if an existing sidecar identity changes for a never-replaced target."""
+    """ROLLED_BACK re-entry fails if an existing sidecar identity changes for a never-replaced target.
+
+    This test is deterministic: it injects WAL-present=True into the stored baseline
+    evidence JSON after prepare, then patches os.lstat to return a different inode for
+    the WAL sidecar.  No environment-dependent skip is needed; the security condition is
+    always exercised.
+    """
     env, _targets, _saf_snap, _saf_entries = _setup_mixed_rolled_back(tmp_path, monkeypatch)
 
     ctrl = env["control_db"]
     wal_path = ctrl.parent / (ctrl.name + "-wal")
-    wal_path.write_bytes(b"original wal content")
+    wal_path.write_bytes(b"deterministic wal content for sidecar-replaced test")
 
-    # Re-capture baseline with WAL present by running a fresh prepare on a new operation;
-    # instead, directly assert that the existing baseline records wal_present=False
-    # and that adding a WAL causes rejection (covered by the previous test).
-    # This test verifies that REPLACING the WAL's inode is also rejected when it WAS recorded.
-    # We simulate this by patching os.lstat for the wal_path to return a different inode.
-    from guarded_restore_configured_staging import load_destination_baseline_evidence
+    # Inject WAL-present info into the baseline evidence so re-entry checks the identity.
+    op_dir = env["restore_root"] / f"operation-{env['op_id']}"
+    _inject_wal_into_baseline_evidence(op_dir, "control", wal_path, env["project_root"])
+
+    # Verify the injection succeeded.
     evidence, _ = load_destination_baseline_evidence(
         env["op_id"], restore_root=env["restore_root"]
     )
-    # Find control baseline record.
     base_rec = next((t for t in evidence.targets if t.target_key == "control"), None)
-    if base_rec is None:
-        pytest.skip("No control baseline record found")
+    assert base_rec is not None, "control baseline record must exist"
+    assert base_rec.wal.get("present", False), (
+        "baseline must record wal_present=True after injection"
+    )
 
-    wal_data = base_rec.wal
-    if not wal_data.get("present", False):
-        # WAL was not present at baseline: adding one already triggers failure (covered above).
-        pytest.skip("WAL was not present in baseline; this scenario is covered by sidecar_added test")
-
+    # Simulate inode substitution of the WAL sidecar by patching os.lstat to
+    # return a different inode — this is the security condition being tested.
     orig_lstat = os.lstat
+    wal_path_str = str(wal_path)
 
     def fake_lstat(path_arg):
         real = orig_lstat(path_arg)
-        if str(path_arg) == str(wal_path):
+        if str(path_arg) == wal_path_str:
             return _MutatedStat(real, st_ino=real.st_ino + 99999)
         return real
 
@@ -2484,6 +2541,194 @@ def test_open_nf_success_does_not_close(tmp_path, monkeypatch):
     fd = _rmod._open_nf(test_file)
     assert close_count[0] == 0, "Successful _open_nf must not close the fd"
     os.close(fd)
+
+
+def test_open_nf_non_regular_close_failure_surfaces_bounded_error(tmp_path, monkeypatch):
+    """_open_nf surfaces a bounded error when close fails on a non-regular descriptor.
+
+    Requirements:
+    - The close OSError is the direct cause (__cause__).
+    - The original non-regular-file validation failure is available as context (__context__).
+    - No raw path or OS error text appears in the public message.
+    - No double close occurs (descriptor is not closed a second time in the except handler).
+    """
+    import guarded_restore_configured_replacement as _rmod
+    import stat as _stat
+
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(b"test data")
+
+    original_fstat = os.fstat
+    original_close = os.close
+    close_count = [0]
+
+    class _FakeStat:
+        def __init__(self, real):
+            self._r = real
+            self.st_mode = _stat.S_IFIFO  # non-regular
+            self.st_dev = real.st_dev
+            self.st_ino = real.st_ino
+            self.st_nlink = real.st_nlink
+            self.st_size = real.st_size
+            self.st_mtime_ns = getattr(real, "st_mtime_ns", 0)
+
+    def fake_fstat(fd):
+        return _FakeStat(original_fstat(fd))
+
+    def failing_close(fd):
+        close_count[0] += 1
+        raise OSError(9, "Bad file descriptor (injected close failure)")
+
+    monkeypatch.setattr(_rmod.os, "fstat", fake_fstat)
+    monkeypatch.setattr(_rmod.os, "close", failing_close)
+
+    with pytest.raises(_rmod.ConfiguredReplacementPreconditionError) as exc_info:
+        _rmod._open_nf(test_file)
+
+    exc = exc_info.value
+
+    # Public message must be bounded — no raw path or OS error string.
+    msg = str(exc)
+    assert str(test_file) not in msg, f"Raw path leaked into public error: {msg!r}"
+    assert "Bad file descriptor" not in msg, f"Raw OS error leaked into public error: {msg!r}"
+
+    # Close exception is the direct cause.
+    assert isinstance(exc.__cause__, OSError), (
+        f"__cause__ must be the OSError from the close failure; got {exc.__cause__!r}"
+    )
+
+    # Original non-regular-file validation failure is available as context.
+    assert exc.__context__ is not None, (
+        "__context__ must preserve the original non-regular-file validation failure"
+    )
+    assert "not a regular file" in str(exc.__context__).lower() or \
+           isinstance(exc.__context__, _rmod.ConfiguredReplacementPreconditionError), (
+        f"__context__ should be the original validation failure; got {exc.__context__!r}"
+    )
+
+    # Descriptor was closed exactly once (the failing close attempt).
+    assert close_count[0] == 1, (
+        f"Close must be attempted exactly once even on failure; got {close_count[0]}"
+    )
+
+
+def test_open_nf_non_regular_close_failure_no_double_close(tmp_path, monkeypatch):
+    """_open_nf does not attempt a second close after a close failure on non-regular file."""
+    import guarded_restore_configured_replacement as _rmod
+    import stat as _stat
+
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(b"test data")
+
+    original_fstat = os.fstat
+    close_calls = []
+
+    class _FakeStat:
+        def __init__(self, real):
+            self._r = real
+            self.st_mode = _stat.S_IFIFO  # non-regular
+            self.st_dev = real.st_dev
+            self.st_ino = real.st_ino
+            self.st_nlink = real.st_nlink
+            self.st_size = real.st_size
+            self.st_mtime_ns = getattr(real, "st_mtime_ns", 0)
+
+    def fake_fstat(fd):
+        return _FakeStat(original_fstat(fd))
+
+    def recording_close(fd):
+        close_calls.append(fd)
+        raise OSError(9, "injected close failure")
+
+    monkeypatch.setattr(_rmod.os, "fstat", fake_fstat)
+    monkeypatch.setattr(_rmod.os, "close", recording_close)
+
+    with pytest.raises(_rmod.ConfiguredReplacementPreconditionError):
+        _rmod._open_nf(test_file)
+
+    assert len(close_calls) == 1, (
+        f"Descriptor must be closed exactly once — no double close; got calls: {close_calls}"
+    )
+    # All close calls must reference the same fd opened above.
+    assert len(set(close_calls)) == 1, "Multiple distinct fds closed — possible unrelated descriptor close"
+
+
+def test_open_nf_successful_ownership_transfer(tmp_path, monkeypatch):
+    """_open_nf returns the fd without closing it on success; caller owns exactly one close."""
+    import guarded_restore_configured_replacement as _rmod
+
+    test_file = tmp_path / "regular.db"
+    test_file.write_bytes(b"regular file data for ownership test")
+
+    close_count = [0]
+    original_close = os.close
+
+    def counting_close(fd):
+        close_count[0] += 1
+        original_close(fd)
+
+    monkeypatch.setattr(_rmod.os, "close", counting_close)
+
+    fd = _rmod._open_nf(test_file)
+    assert close_count[0] == 0, (
+        "Successful _open_nf must not close the fd; caller is the owner"
+    )
+    # Verify the returned fd is valid by reading from it.
+    os.lseek(fd, 0, os.SEEK_SET)
+    data = os.read(fd, 1024)
+    assert data == b"regular file data for ownership test"
+    original_close(fd)  # Caller's close.
+    assert close_count[0] == 0, "Only the original_close path was used; counting_close not involved"
+
+
+def test_open_nf_no_reused_descriptor_close(tmp_path, monkeypatch):
+    """_open_nf only closes the fd it opened — not any unrelated fd."""
+    import guarded_restore_configured_replacement as _rmod
+    import stat as _stat
+
+    # Open a sentinel file to occupy a descriptor before calling _open_nf.
+    sentinel = tmp_path / "sentinel.db"
+    sentinel.write_bytes(b"sentinel")
+    sentinel_fd = os.open(str(sentinel), os.O_RDONLY)
+
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(b"test data")
+
+    original_fstat = os.fstat
+    original_close = os.close
+    closed_fds = []
+
+    class _FakeStat:
+        def __init__(self, real):
+            self.st_mode = _stat.S_IFIFO
+            self.st_dev = real.st_dev
+            self.st_ino = real.st_ino
+            self.st_nlink = real.st_nlink
+            self.st_size = real.st_size
+            self.st_mtime_ns = getattr(real, "st_mtime_ns", 0)
+
+    def fake_fstat(fd):
+        return _FakeStat(original_fstat(fd))
+
+    def recording_close(fd):
+        closed_fds.append(fd)
+        original_close(fd)
+
+    monkeypatch.setattr(_rmod.os, "fstat", fake_fstat)
+    monkeypatch.setattr(_rmod.os, "close", recording_close)
+
+    try:
+        with pytest.raises(_rmod.ConfiguredReplacementPreconditionError):
+            _rmod._open_nf(test_file)
+    finally:
+        original_close(sentinel_fd)
+
+    assert sentinel_fd not in closed_fds, (
+        f"_open_nf must not close the unrelated sentinel fd {sentinel_fd}; closed: {closed_fds}"
+    )
+    assert len(closed_fds) == 1, (
+        f"Exactly one fd must be closed (the opened one); got {closed_fds}"
+    )
 
 
 def test_verify_file_owned_verification_failure_closes_exactly_once(tmp_path, monkeypatch):
