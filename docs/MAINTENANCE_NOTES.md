@@ -75,6 +75,6 @@ a shared path-convention module. Deferred.
 
 - `db.naive_utc()` helper added; all `datetime.utcnow` column defaults and
   call sites in first-party modules replaced.
-- `GarminConnectNotFoundError` and `garminconnect.workout` import failures
-  handled with compatibility shims; tests that require garminconnect>=0.3
-  skip gracefully with a platform-specific reason.
+- `GarminConnectNotFoundError` and `garminconnect.workout` import shims removed;
+  direct imports from the pinned `garminconnect[typed]==0.3.7` API restored.
+  Tests execute unconditionally; no dependency-based skips remain.

@@ -108,8 +108,8 @@ for the canonical per-phase status summary.
 - Source templates can be edited, but metric-driven decisions never rewrite
   them. Customized rest timers are preserved by catalog migrations.
 
-The complete 25-routine source audit is in
-[`docs/routine_source_audit.md`](docs/routine_source_audit.md).
+The complete 25-routine source audit, including classifications and 2026-08-06
+corrections, is in [`docs/CURATED_ROUTINE_AUDIT.md`](docs/CURATED_ROUTINE_AUDIT.md).
 
 ### Deterministic Telegram coach
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-06 - Supported runtime enforcement and routine fidelity audit
+
+- Removed `GarminConnectNotFoundError` and `garminconnect.workout` compatibility
+  shims from `coach/active_recovery.py`. Restored direct imports from the
+  pinned `garminconnect[typed]==0.3.7` API.
+- Removed module-level `_garminconnect_030_available` detection and
+  dependency-based `pytest.mark.skipif` from `tests/test_active_recovery_workout.py`
+  and `tests/test_recovery_choice_mutations.py`. Tests now execute unconditionally.
+- Corrected curated-routine fidelity audit: added all missing source exercises to
+  `planet_fitness_full_body_3`, `long_cycle_full_body_3`, `whole_body_toning_3`,
+  `planet_fitness_upper_lower_4`, `optimized_volume_4`, `phul_4`,
+  `barbell_no_rack_4`, and `muscle_mania_6`.
+- Renamed `long_cycle_full_body_3` to "Long Cycle Full Body (Adapted) · 3 days"
+  and classified as `garmin_adapted`; source auto-regulation progression is not
+  implemented.
+- Applied source-defined rest for `whole_body_toning_3` (45 s) and `muscle_mania_6`
+  (60 s compound / 45 s isolation). Corrected 60 s for `optimized_volume_4` from
+  incorrectly attributed ACSM default to GarminCoach product default.
+- Rewrote `docs/CURATED_ROUTINE_AUDIT.md` with honest per-routine classifications,
+  required source exercises, 2026-08-06 review dates, and corrected ACSM attribution.
+  Added 9 audit-enforcement tests.
+- Removed restore drill statement from `ROADMAP.md` and `docs/PHASE_STATUS.md`.
+- Full suite: 1223 collected, 1222 passed, 1 skipped (Windows binary descriptor
+  regression), 0 failures, 0 errors. Python 3.12, garminconnect 0.3.7.
+- **Phase 1–6 status: all phases complete.**
+
 ## 2026-08-06 - Phase 1–6 final reconciliation
 
 - Closed guarded-restore descriptor gaps: `_open_nf()` now surfaces `os.close()`
