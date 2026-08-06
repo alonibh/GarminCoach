@@ -271,7 +271,7 @@ def test_transition_tables_are_closed_and_not_enum_order_based():
         RestoreStage.REPLACED: {RestoreStage.POSTCHECK_PASSED, RestoreStage.ROLLBACK_REQUIRED},
         RestoreStage.POSTCHECK_PASSED: {RestoreStage.COMPLETED, RestoreStage.ROLLBACK_REQUIRED},
         RestoreStage.ROLLBACK_REQUIRED: {RestoreStage.ROLLED_BACK, RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED},
-        RestoreStage.ROLLED_BACK: {RestoreStage.FAILED_SAFE},
+        RestoreStage.ROLLED_BACK: {RestoreStage.FAILED_SAFE, RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED},
         RestoreStage.COMPLETED: set(), RestoreStage.FAILED_SAFE: set(),
         RestoreStage.FAILED_MANUAL_RECOVERY_REQUIRED: set(),
     }
