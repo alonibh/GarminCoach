@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-06 - Phase 1–6 final reconciliation
+
+- Closed guarded-restore descriptor gaps: `_open_nf()` now surfaces `os.close()`
+  failure as a bounded `ConfiguredReplacementPreconditionError` with the close
+  error as `__cause__` and the original validation failure as `__context__`.
+  Added 8 deterministic tests for this path.
+- Replaced environment-dependent nondeterministic test skips with deterministic
+  mocks: inode substitution uses `_MutatedStat` + `monkeypatch`; WAL sidecar
+  test uses `_inject_wal_into_baseline_evidence` + `os.lstat` patch.
+- Created `docs/CURATED_ROUTINE_AUDIT.md`: compact audit tables for all 25
+  curated routines with source URL, review date, confirmed matches, Garmin
+  adaptations, and unresolved facts. Added 10 regression tests.
+- Replaced all first-party `datetime.utcnow()` usages with `db.naive_utc()`
+  helper across `db.py`, `app.py`, and three coach modules. Added 5 boundary
+  tests.
+- Added `GarminConnectNotFoundError` and `garminconnect.workout` compatibility
+  shims; 54 tests that require garminconnect>=0.3 now skip gracefully with a
+  documented platform-specific reason.
+- Created `docs/MAINTENANCE_NOTES.md` documenting optional architectural
+  restructuring for `sync/sync_service.py` and
+  `guarded_restore_configured_replacement.py` that was deferred.
+- Documentation reconciliation: updated `ROADMAP.md`, `PHASE_STATUS.md`, all
+  phase contracts, and `GUARDED_RESTORE_CONTRACT.md` to remove stale
+  future-tense language; created `docs/PHASE_STATUS.md` as the canonical
+  per-phase status summary.
+- **Phase 1–6 status: all phases complete.**
+
 ## 2026-08-01 - Guarded restore staging verification
 
 - Added fixture-only offline staged-copy and strict SQLite verification through
