@@ -4,7 +4,7 @@
 > **Phase 6B3A** provides read-only planning and inspection tooling. No database, service, lock, backup, or file system mutation is performed by the Phase 6B3A tools (`plan_verified_restore.py`, `inspect_restore_operation.py`).
 > **Phase 6B3B** implements the full guarded restore pipeline. The operator apply CLI (`apply_verified_restore.py`) exists and is tested. It is operator-only and noninteractive. It requires the service to be stopped manually before invocation and never starts or stops the service itself. No production restore drill has been performed; production use requires separately approved operator action following section 7 of this runbook.
 > Phase 6B3B1 (configured-runtime restore preparation through `REPLACEMENT_READY`) is complete. It requires mandatory destination-baseline evidence, durable-parent proof before and after staging boundaries via parent-substitution verification, strict `STAGED_VERIFIED` and `REPLACEMENT_READY` re-entry validation, descriptor-bound permission finalization, no pathname `chmod` after staged publication, exact child-set and artifact ownership validation (including second child-set enumeration and complete before/after descriptor-fact comparisons to defeat directory/descriptor race conditions), clean publication cleanup-uncertainty handling without swallowing errors, and post-staging destination-baseline rereads. Configured databases and WAL/SHM sidecars remain unmodified.
-> Phase 6B3B2 (configured replacement, postcheck, automatic rollback, safe re-entry, and manual-recovery boundary) is in progress. `replace_and_verify_configured_restore` in `guarded_restore_configured_replacement.py` acquires all three locks, runs a full pre-mutation proof barrier, stages verified rollback artifacts, replaces data targets before control via atomic `os.replace`, runs a complete postcheck, and performs automatic rollback on failure. Security corrections applied in this phase: explicit service-stopped proof (injectable for tests) before and after process lock; descriptor-bound permissions only (no pathname `chmod` after publication on POSIX, `os.fchmod` verified through open descriptor); race-complete file ownership checks (pre/post fstat/stat, device, inode, type, size, mode=0600, nlink=1, mtime_ns, SHA-256); per-target immediate baseline revalidation before each `replacement_intent` using `TargetBaselineRecord.wal`/`.shm` dicts; sidecar identity protection on re-entry using `DestinationBaselineEvidence` (unlink only proven unchanged object); complete rollback verification after every `os.replace` (descriptor/path identity, type, 0600 mode, single-link, exact safety bytes, SQLite quick/integrity/foreign_key, schema fingerprint, migration markers, file and parent fsync); mode/sidecar checks only for targets with `rollback_intent=True`; verified `COMPLETED` re-entry runs full postcheck and raises manual recovery if any database has drifted; verified `ROLLED_BACK` re-entry calls `_verify_complete_rollback_state` before `FAILED_SAFE`, settling to `FAILED_MANUAL_RECOVERY_REQUIRED` via a new `ROLLED_BACK → FAILED_MANUAL_RECOVERY_REQUIRED` transition if verification fails; journal-settlement uncertainty raised as `ConfiguredJournalUncertaintyError` (never silently swallowed); lock-release outcome precedence preserves primary failure; strict owned-evidence cleanup (descriptor-bound identity verification before every unlink). Legal re-entry is supported for all stages from REPLACEMENT_READY through COMPLETED; FAILED_MANUAL_RECOVERY_REQUIRED is set on any ambiguous state. Phase 6B3B3 (apply CLI) is in progress. `apply_verified_restore.py` is implemented and under final contract review. No production restore drill has been performed. The tooling exists; production use requires separately approved operator action following section 7 of this runbook.
+> Phase 6B3B2 (configured replacement, postcheck, automatic rollback, safe re-entry, and manual-recovery boundary) is complete. `replace_and_verify_configured_restore` in `guarded_restore_configured_replacement.py` acquires all three locks, runs a full pre-mutation proof barrier, stages verified rollback artifacts, replaces data targets before control via atomic `os.replace`, runs a complete postcheck, and performs automatic rollback on failure. Security corrections applied in this phase: explicit service-stopped proof (injectable for tests) before and after process lock; descriptor-bound permissions only (no pathname `chmod` after publication on POSIX, `os.fchmod` verified through open descriptor); race-complete file ownership checks (pre/post fstat/stat, device, inode, type, size, mode=0600, nlink=1, mtime_ns, SHA-256); per-target immediate baseline revalidation before each `replacement_intent` using `TargetBaselineRecord.wal`/`.shm` dicts; sidecar identity protection on re-entry using `DestinationBaselineEvidence` (unlink only proven unchanged object); complete rollback verification after every `os.replace` (descriptor/path identity, type, 0600 mode, single-link, exact safety bytes, SQLite quick/integrity/foreign_key, schema fingerprint, migration markers, file and parent fsync); mode/sidecar checks only for targets with `rollback_intent=True`; verified `COMPLETED` re-entry runs full postcheck and raises manual recovery if any database has drifted; verified `ROLLED_BACK` re-entry calls `_verify_complete_rollback_state` before `FAILED_SAFE`, settling to `FAILED_MANUAL_RECOVERY_REQUIRED` via a new `ROLLED_BACK → FAILED_MANUAL_RECOVERY_REQUIRED` transition if verification fails; journal-settlement uncertainty raised as `ConfiguredJournalUncertaintyError` (never silently swallowed); lock-release outcome precedence preserves primary failure; strict owned-evidence cleanup (descriptor-bound identity verification before every unlink). Legal re-entry is supported for all stages from REPLACEMENT_READY through COMPLETED; FAILED_MANUAL_RECOVERY_REQUIRED is set on any ambiguous state. Phase 6B3B3 (apply CLI) is complete. `apply_verified_restore.py` is implemented and tested. No production restore drill has been performed. The tooling exists; production use requires separately approved operator action following section 7 of this runbook.
 
 ### Phase 6B3B1 completion evidence
 
@@ -175,16 +175,18 @@ There is no `--force`, `--yes`, interactive prompt, generic confirmation, arbitr
 
 | Code | Meaning |
 |---|---|
-| 0 | Success or verified idempotent COMPLETED re-entry |
-| 64 | CLI usage error or invalid argument |
-| 65 | Precondition or verification refusal (no configured database mutated) |
-| 66 | Safe failure: automatic rollback succeeded and verified (FAILED_SAFE) |
-| 67 | Automatic rollback completed and verified (rollback from live run) |
-| 68 | Manual recovery required; do not auto-resume |
+| 0 | `success`: fresh apply completed and verified; or `success_idempotent`: COMPLETED re-entry verified by engine |
+| 64 | CLI usage error, missing required argument, or unknown option |
+| 65 | Precondition or verification refusal (no configured database mutated); includes service-not-stopped |
+| 66 | Explicit re-entry on already-settled FAILED_SAFE journal; no configured mutation performed this invocation |
+| 67 | Replacement/postcheck failed during this invocation and automatic rollback completed and verified |
+| 68 | Manual recovery required; do not auto-resume; use `inspect_restore_operation.py` |
 | 69 | Evidence cleanup required; database outcome is known |
 | 70 | Journal or persistence state is uncertain |
 | 71 | Lock acquisition or release uncertainty |
 | 72 | Unexpected internal failure |
+
+Exit codes 66 and 67 are unambiguous. Code 66 is returned only when re-entering an operation that was already in terminal state `FAILED_SAFE` before the current invocation began; no database was mutated by the current invocation. Code 67 is returned only when rollback occurred live during the current invocation.
 
 ### 7.3 Fresh apply sequence
 
@@ -201,7 +203,7 @@ There is no `--force`, `--yes`, interactive prompt, generic confirmation, arbitr
      --confirm-target-set-hash <target_set_hash> \
      --confirm-restore <confirmation_value>
    ```
-7. Review the JSON result on stdout. Check `exit_code`, `stage`, `rollback_occurred`, `configured_database_mutated`.
+7. Review the JSON result on stdout. Check `exit_code`, `outcome`, `stage`, `target_set_hash`, `rollback_occurred`, `configured_database_mutated`. A successful fresh apply returns `"outcome":"success"`; a verified idempotent COMPLETED re-entry returns `"outcome":"success_idempotent"`.
 8. **Manually start the service only after** a verified success (`stage=COMPLETED`) or verified rollback (`stage=FAILED_SAFE`), and only after separate operator judgment.
 9. If exit code is 68 (`FAILED_MANUAL_RECOVERY_REQUIRED`): do NOT restart the service; follow manual recovery rules in section 6.
 
@@ -242,3 +244,25 @@ No production restore drill has been performed. Completion of Phase 6B3B3 means 
 ### 7.8 Inspector new fields
 
 `inspect_restore_operation.py` now reports `safety_backup_manifest_sha256` in both JSON and human-readable output. This field confirms the immutable binding between the journal and the safety backup created at preparation time.
+
+### 7.9 Apply CLI stdout JSON fields
+
+A successful apply writes one JSON object to stdout containing:
+
+| Field | Description |
+|---|---|
+| `format_version` | Always `"apply-v1"` |
+| `outcome` | `"success"` for fresh apply; `"success_idempotent"` for COMPLETED re-entry |
+| `operation_id` | Restore operation ID |
+| `stage` | Final journal stage (e.g. `"COMPLETED"`) |
+| `selected_backup_id` | Backup used for this restore |
+| `safety_backup_id` | Safety backup created during preparation |
+| `runtime_mode` | `"single_user"` or `"multi_user"` |
+| `target_set_hash` | The exact `--confirm-target-set-hash` value confirmed by this invocation |
+| `target_key_count` | Number of database targets |
+| `rollback_occurred` | Whether automatic rollback occurred |
+| `configured_database_mutated` | Whether any configured database was replaced |
+| `locks_released` | Whether all locks were released cleanly |
+| `exit_code` | Numeric exit code |
+
+Errors are written as a JSON object to stderr with fields `format_version`, `outcome`, `error_kind`, `message`, and `exit_code`.
