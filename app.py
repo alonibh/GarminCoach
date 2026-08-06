@@ -40,6 +40,7 @@ from db import (
     CoachMessage,
     get_session,
     init_db,
+    naive_utc as _naive_utc,
 )
 from coach.onboarding import (
     analyze_user_history,
@@ -1820,11 +1821,11 @@ def edit_set(
         report = process_activity_recalculation(s, aid, cause=RecalculationCause.MANUAL_SET_CORRECTED)
         if report.boundary_id and report.material_proposal_changes:
             recorded = record_material_proposals(s, boundary_id=report.boundary_id,
-                changes=report.material_proposal_changes, now=datetime.utcnow())
+                changes=report.material_proposal_changes, now=_naive_utc())
             if recorded.batch_id:
                 try:
                     with s.begin_nested():
-                        bridge_pending_progression_notifications(s, now=datetime.utcnow(), limit=1,
+                        bridge_pending_progression_notifications(s, now=_naive_utc(), limit=1,
                             batch_ids=(recorded.batch_id,))
                 except Exception:
                     logger.exception("strength progression notification bridge failed after set correction")
@@ -2439,7 +2440,7 @@ def post_program_duration_review_action(
             fingerprint=review_fingerprint,
             action=action,
             local_today=get_local_date(),
-            now_utc=datetime.utcnow(),
+            now_utc=_naive_utc(),
         )
         if outcome in {"applied", "already"}:
             if action == "deload_planned":
@@ -2460,7 +2461,7 @@ def get_progression_page(request: Request, result: str = ""):
         "stale": "This proposal changed and is no longer available for review.",
     }
     with get_session() as session:
-        page = list_progression_review(session, now=datetime.utcnow())
+        page = list_progression_review(session, now=_naive_utc())
         return templates.TemplateResponse(request, "progression.html", {
             "page": page, "result_message": messages.get(result), "format_weight": format_weight_grams,
         })
@@ -2470,7 +2471,7 @@ def get_progression_page(request: Request, result: str = ""):
 def approve_progression(proposal_id: str, approved_weight_kg: str = Form(...)):
     with get_session() as session:
         action = approve_progression_proposal(session, proposal_id,
-            entered_weight_kg=approved_weight_kg, now=datetime.utcnow())
+            entered_weight_kg=approved_weight_kg, now=_naive_utc())
         if action.outcome in {ProgressionActionOutcome.APPLIED, ProgressionActionOutcome.ALREADY_APPLIED}:
             return RedirectResponse("/progression?result=applied", status_code=303)
         if action.outcome == ProgressionActionOutcome.STALE:
@@ -2485,7 +2486,7 @@ def approve_progression(proposal_id: str, approved_weight_kg: str = Form(...)):
 @app.post("/progression/{proposal_id}/reject")
 def reject_progression(proposal_id: str):
     with get_session() as session:
-        action = reject_progression_proposal(session, proposal_id, now=datetime.utcnow())
+        action = reject_progression_proposal(session, proposal_id, now=_naive_utc())
         if action.outcome in {ProgressionActionOutcome.REJECTED, ProgressionActionOutcome.ALREADY_REJECTED}:
             return RedirectResponse("/progression?result=rejected", status_code=303)
         if action.outcome == ProgressionActionOutcome.STALE:
@@ -2535,7 +2536,7 @@ def approve_program(program_id: int):
         initialize_program_cursor(session, program, activated_at=program.activated_at)
         from coach.program_duration_review import reconcile_program_duration_review
         reconcile_program_duration_review(
-            session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+            session, local_today=get_local_date(), now_utc=_naive_utc(),
         )
     # If this morning was deferred because no program was active—or an older
     # NO_ACTION brief was already sent—activation immediately produces the
@@ -2580,7 +2581,7 @@ def reset_program_to_template(program_id: int):
         program.updated_at = datetime.now()
         from coach.program_duration_review import reconcile_program_duration_review
         reconcile_program_duration_review(
-            session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+            session, local_today=get_local_date(), now_utc=_naive_utc(),
         )
         target = f"/program?proposal={program.id}" if program.status == "draft" else "/program?view=active"
     return RedirectResponse(url=target, status_code=303)

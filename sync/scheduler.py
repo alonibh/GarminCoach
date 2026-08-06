@@ -16,8 +16,8 @@ _scheduler: BackgroundScheduler | None = None
 
 def _program_duration_review_maintenance(*, enqueue_notification: bool) -> None:
     """Daily local review reconciliation; never authenticates or sends directly."""
-    from datetime import datetime
     from time_utils import get_local_date
+    from db import naive_utc as _naive_utc
     from coach.program_duration_review import (
         enqueue_due_program_duration_review_notifications,
         reconcile_program_duration_review,
@@ -25,11 +25,11 @@ def _program_duration_review_maintenance(*, enqueue_notification: bool) -> None:
     with get_session() as session:
         if enqueue_notification:
             enqueue_due_program_duration_review_notifications(
-                session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+                session, local_today=get_local_date(), now_utc=_naive_utc(),
             )
         else:
             reconcile_program_duration_review(
-                session, local_today=get_local_date(), now_utc=datetime.utcnow(),
+                session, local_today=get_local_date(), now_utc=_naive_utc(),
             )
 
 

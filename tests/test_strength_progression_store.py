@@ -194,3 +194,65 @@ def test_init_db_migrates_and_seeds_progression_foundation_idempotently(tmp_path
     assert "strength_progression_evidence" in inspect(engine).get_table_names()
     assert "strength_progression_evidence_boundaries" in inspect(engine).get_table_names()
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Gate D1 — naive_utc boundary tests
+# ---------------------------------------------------------------------------
+
+def test_naive_utc_returns_naive_datetime():
+    """naive_utc() returns a naive (tzinfo=None) datetime representing UTC."""
+    from db import naive_utc
+    from datetime import timezone
+    t = naive_utc()
+    assert t.tzinfo is None
+
+
+def test_naive_utc_matches_utcnow_within_one_second():
+    """naive_utc() value is within 1 s of the deprecated datetime.utcnow() baseline."""
+    from db import naive_utc
+    from datetime import datetime, timezone
+    # Build a reference from the aware path to avoid calling the deprecated method.
+    ref = datetime.now(timezone.utc).replace(tzinfo=None)
+    t = naive_utc()
+    delta = abs((t - ref).total_seconds())
+    assert delta < 1.0, f"naive_utc() deviated {delta:.3f}s from UTC reference"
+
+
+def test_naive_utc_column_default_produces_naive_datetime(session):
+    """SQLAlchemy column default=naive_utc inserts a naive datetime into SQLite."""
+    from db import StrengthProgressionPolicy, naive_utc
+    from datetime import datetime
+    policy = StrengthProgressionPolicy(
+        policy_version="test_boundary_v1",
+        global_increment_grams=1250,
+        weight_quantum_grams=250,
+        required_consecutive=2,
+        evidence_window_days=90,
+        is_active=False,
+    )
+    session.add(policy)
+    session.flush()
+    assert isinstance(policy.created_at, datetime)
+    assert policy.created_at.tzinfo is None
+
+
+def test_naive_utc_ordering_is_deterministic():
+    """Two consecutive naive_utc() calls produce non-decreasing values."""
+    import time
+    from db import naive_utc
+    t1 = naive_utc()
+    time.sleep(0.001)
+    t2 = naive_utc()
+    assert t2 >= t1
+
+
+def test_naive_utc_iso_format_roundtrips_without_timezone_info():
+    """naive_utc().isoformat() can be parsed back to a naive datetime."""
+    from db import naive_utc
+    from datetime import datetime
+    t = naive_utc()
+    iso = t.isoformat(timespec="microseconds")
+    parsed = datetime.fromisoformat(iso)
+    assert parsed.tzinfo is None
+    assert parsed == t

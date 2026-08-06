@@ -8,8 +8,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Iterator, Optional
+
+
+def naive_utc() -> datetime:
+    """Return the current UTC time as a naive datetime, as expected by this schema.
+
+    Replaces ``datetime.utcnow()`` which is deprecated in Python 3.12+.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from sqlalchemy import (
     Boolean,
@@ -406,7 +414,7 @@ class StrengthProgressionPolicy(Base):
     required_consecutive: Mapped[int] = mapped_column(Integer)
     evidence_window_days: Mapped[int] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc)
     activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     __table_args__ = (
@@ -462,7 +470,7 @@ class StrengthProgressionEvidence(Base):
     supersedes_evidence_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("strength_progression_evidence.evidence_id", ondelete="SET NULL")
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, index=True)
 
     __table_args__ = (
         Index("ix_strength_evidence_exercise_policy_prescription", "session_exercise_id_snapshot", "policy_version", "prescription_fingerprint"),
@@ -477,7 +485,7 @@ class StrengthProgressionEvidenceHead(Base):
     current_evidence_id: Mapped[str] = mapped_column(
         ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT"), unique=True
     )
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, onupdate=naive_utc)
 
 
 class StrengthProgressionEvidenceBoundary(Base):
@@ -502,7 +510,7 @@ class StrengthProgressionEvidenceBoundary(Base):
         ForeignKey("strength_progression_evidence.evidence_id", ondelete="RESTRICT")
     )
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, index=True)
 
     __table_args__ = (
         Index("ix_strength_boundary_exercise_policy_prescription", "session_exercise_id_snapshot", "policy_version", "prescription_fingerprint"),
@@ -521,7 +529,7 @@ class StrengthProgressionStreak(Base):
     last_classification: Mapped[str] = mapped_column(String(32), default="unscorable")
     last_relevant_appearance_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
     decisive_evidence_ids_json: Mapped[str] = mapped_column(Text, default="[]")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, onupdate=naive_utc)
 
 
 class StrengthProgressionProposal(Base):
@@ -549,8 +557,8 @@ class StrengthProgressionProposal(Base):
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     current_pending_key: Mapped[Optional[str]] = mapped_column(String(196), unique=True, index=True)
     supersedes_proposal_id: Mapped[Optional[str]] = mapped_column(ForeignKey("strength_progression_proposals.proposal_id", ondelete="SET NULL"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, onupdate=naive_utc)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
@@ -568,7 +576,7 @@ class StrengthProgressionNotificationBatch(Base):
     )
     outbox_id_snapshot: Mapped[Optional[int]] = mapped_column(Integer)
     proposal_count: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc, index=True)
     queued_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     terminal_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     terminal_reason: Mapped[Optional[str]] = mapped_column(String(64))
@@ -591,7 +599,7 @@ class StrengthProgressionNotificationReceipt(Base):
     )
     proposal_id_snapshot: Mapped[str] = mapped_column(String(64), index=True)
     material_fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc)
 
 
 class CoachMessage(Base):

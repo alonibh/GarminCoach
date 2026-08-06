@@ -28,6 +28,7 @@ from db import (
     StrengthProgressionPolicy,
     StrengthProgressionProposal,
     StrengthProgressionStreak,
+    naive_utc as _naive_utc,
 )
 
 
@@ -147,7 +148,7 @@ def create_or_replace_pending_proposal(
     if existing:
         existing.status = "superseded"
         existing.current_pending_key = None
-        existing.resolved_at = datetime.utcnow()
+        existing.resolved_at = _naive_utc()
     row = StrengthProgressionProposal(
         proposal_id=proposal.idempotency_key, program_id=program_id, program_session_id=program_session_id,
         session_exercise_id=session_exercise_id, program_id_snapshot=program_id,
@@ -175,7 +176,7 @@ def mark_pending_proposal_stale(session: Session, *, session_exercise_id: int,
         current_pending_key=_pending_key(session_exercise_id, policy_version, prescription_fingerprint)
     ).one_or_none()
     if row:
-        row.status, row.current_pending_key, row.resolved_at = status, None, datetime.utcnow()
+        row.status, row.current_pending_key, row.resolved_at = status, None, _naive_utc()
     return row
 
 
@@ -331,7 +332,7 @@ def stale_pending_proposals_for_exercises(
         StrengthProgressionProposal.session_exercise_id_snapshot.in_(ids),
     ).all()
     for row in rows:
-        row.status, row.current_pending_key, row.resolved_at = status, None, datetime.utcnow()
+        row.status, row.current_pending_key, row.resolved_at = status, None, _naive_utc()
     return len(rows)
 
 
@@ -343,5 +344,5 @@ def stale_pending_proposals_for_program(
         StrengthProgressionProposal.program_id_snapshot == program_id,
     ).all()
     for row in rows:
-        row.status, row.current_pending_key, row.resolved_at = status, None, datetime.utcnow()
+        row.status, row.current_pending_key, row.resolved_at = status, None, _naive_utc()
     return len(rows)

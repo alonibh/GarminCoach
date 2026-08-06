@@ -25,6 +25,7 @@ from db import (
     ProgramDurationReview,
     ProgramSession,
     TrainingProgram,
+    naive_utc as _naive_utc,
 )
 from time_utils import get_local_tz
 
@@ -188,7 +189,7 @@ def _supersede_rows(session: Session, rows: Iterable[ProgramDurationReview], now
 
 def reconcile_program_duration_review(session: Session, *, local_today: date, now_utc: datetime) -> ProgramDurationReview | None:
     """Reconcile one active curated activation, preserving all prior review history."""
-    now_utc = _activation_utc(now_utc) or datetime.utcnow()
+    now_utc = _activation_utc(now_utc) or _naive_utc()
     program = _active_program(session)
     facts = build_program_duration_review_facts(session, program)
     active_rows = session.query(ProgramDurationReview).filter(
@@ -284,7 +285,7 @@ def record_program_duration_review_delivery(session: Session, *, review_id: obje
         return
     row = session.get(ProgramDurationReview, review_id)
     if row and row.status == "pending" and row.reminder_sequence == reminder_sequence:
-        row.notified_at = _activation_utc(now_utc) or datetime.utcnow()
+        row.notified_at = _activation_utc(now_utc) or _naive_utc()
         row.updated_at = row.notified_at
 
 
@@ -333,7 +334,7 @@ def apply_program_duration_review_action(session: Session, *, review_id: int, fi
     facts = build_program_duration_review_facts(session, _active_program(session))
     if facts is None or facts.fingerprint != review.review_fingerprint:
         return "stale"
-    now_utc = _activation_utc(now_utc) or datetime.utcnow()
+    now_utc = _activation_utc(now_utc) or _naive_utc()
     if action == "snooze":
         if review.status == "snoozed":
             return "already"

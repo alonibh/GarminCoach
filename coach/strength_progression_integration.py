@@ -10,6 +10,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from db import naive_utc as _naive_utc
 from enum import Enum
 from typing import Collection
 
@@ -109,7 +110,7 @@ def _journal_key(activity_id: int) -> str:
 
 
 def _now() -> str:
-    return datetime.utcnow().isoformat(timespec="microseconds")
+    return _naive_utc().isoformat(timespec="microseconds")
 
 
 def _activity_boundary_id(session: Session, activity_id: int, cause: RecalculationCause) -> str:
