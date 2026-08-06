@@ -35,6 +35,7 @@ from inspect_restore_operation import (
 BACKUP_ID = "20260801T120000Z-a1b2c3d4"
 SAFETY_ID = "20260801T120100Z-b1c2d3e4"
 MANIFEST_SHA = "a" * 64
+SAFETY_MANIFEST_SHA = "c" * 64
 COMMIT_SHA = "b" * 40
 TIMESTAMP = "2026-08-01T12:00:00Z"
 
@@ -69,7 +70,7 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     op_id_1 = "restore-20260801T120000Z-00000001"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_1, now=TIMESTAMP)
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -92,7 +93,7 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     op_id_2 = "restore-20260801T120000Z-00000002"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_2, now=TIMESTAMP)
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -114,7 +115,7 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     op_id_3 = "restore-20260801T120000Z-00000003"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_3, now=TIMESTAMP)
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -136,7 +137,7 @@ def test_replacing_stage_variants(tmp_path, monkeypatch):
     op_id_4 = "restore-20260801T120000Z-00000004"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_4, now=TIMESTAMP)
     update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_4, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_4, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -164,7 +165,7 @@ def test_rollback_required_stage_variants(tmp_path, monkeypatch):
     op_id_1 = "restore-20260801T120000Z-00000010"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_1, now=TIMESTAMP)
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_1, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_1, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -186,7 +187,7 @@ def test_rollback_required_stage_variants(tmp_path, monkeypatch):
     op_id_2 = "restore-20260801T120000Z-00000011"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_2, now=TIMESTAMP)
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -220,7 +221,7 @@ def test_rolled_back_stage_properties(tmp_path, monkeypatch):
     op_id = "restore-20260801T120000Z-00000020"
     create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -259,7 +260,7 @@ def test_state_machine_rejects_contradictory_rolled_back_stage(tmp_path, monkeyp
     op_id = "restore-20260801T120000Z-00000021"
     create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -301,7 +302,7 @@ def test_failed_safe_descriptions(tmp_path, monkeypatch):
     op_id_2 = "restore-20260801T120000Z-00000031"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_2, now=TIMESTAMP)
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_2, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_2, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -328,7 +329,7 @@ def test_failed_safe_descriptions(tmp_path, monkeypatch):
     op_id_3 = "restore-20260801T120000Z-00000032"
     create_restore_journal(plan, root=restore_root, operation_id=op_id_3, now=TIMESTAMP)
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id_3, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id_3, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -360,7 +361,7 @@ def test_failed_manual_recovery_required_variants(tmp_path, monkeypatch):
     op_id = "restore-20260801T120000Z-00000040"
     create_restore_journal(plan, root=restore_root, operation_id=op_id, now=TIMESTAMP)
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, now="2026-08-01T12:00:02Z")
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY_ID, safety_backup_manifest_sha256=SAFETY_MANIFEST_SHA, now="2026-08-01T12:00:02Z")
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for k in ("control", "single-user"):
         update_restore_journal(op_id, root=restore_root, target_key=k, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")

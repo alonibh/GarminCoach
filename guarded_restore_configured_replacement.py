@@ -201,69 +201,105 @@ def _verify_file_owned(
 ) -> tuple:
     """Race-complete file ownership verification.
 
-    Records device/inode/mode/nlink/mtime_ns BEFORE hashing through the
-    descriptor, then re-runs fstat AND no-follow pathname stat AFTER reading
-    to prove no substitution or mutation occurred during the hash.
+    Records all seven mutable facts (device, inode, file type, size, mode,
+    link count, mtime_ns) from BOTH fstat AND no-follow pathname stat BEFORE
+    hashing.  Requires descriptor/pathname agreement on all seven facts before
+    reading.  Hashes through the descriptor.  Re-runs both fstat and no-follow
+    pathname stat AFTER hashing and requires all seven facts to be unchanged.
+    Mode-0600 and single-link requirements are enforced before AND after hash.
+    Surfaces descriptor-close failure as a bounded ownership error.
 
     Returns (dev, ino, mode, nlink, mtime_ns).
     """
     fd = _open_nf(path)
     try:
-        pre_st = os.fstat(fd)
-        if not stat.S_ISREG(pre_st.st_mode):
-            raise ConfiguredReplacementPreconditionError("File is not a regular file")
-        if pre_st.st_size != expected_size:
-            raise ConfiguredReplacementPreconditionError(
-                f"File size {pre_st.st_size} != expected {expected_size}"
-            )
-        if require_mode_0600 and os.name != "nt":
-            if stat.S_IMODE(pre_st.st_mode) != 0o600:
-                raise ConfiguredReplacementPreconditionError(
-                    f"File mode {oct(stat.S_IMODE(pre_st.st_mode))} != 0600"
-                )
-        if require_single_link and os.name != "nt":
-            if pre_st.st_nlink != 1:
-                raise ConfiguredReplacementPreconditionError(
-                    f"File link count {pre_st.st_nlink} != 1"
-                )
-        # Pre-hash pathname identity check
+        pre_fst = os.fstat(fd)
         pre_pst = os.stat(str(path), follow_symlinks=False)
-        if (pre_pst.st_dev, pre_pst.st_ino) != (pre_st.st_dev, pre_st.st_ino):
+
+        # Both must be regular files.
+        if not stat.S_ISREG(pre_fst.st_mode):
+            raise ConfiguredReplacementPreconditionError("Descriptor is not a regular file")
+        if not stat.S_ISREG(pre_pst.st_mode):
+            raise ConfiguredReplacementPreconditionError("Pathname is not a regular file before hash")
+
+        pre_fst_mtime = getattr(pre_fst, "st_mtime_ns", None)
+        pre_pst_mtime = getattr(pre_pst, "st_mtime_ns", None)
+
+        # Descriptor and pathname must agree on all seven facts before hashing.
+        if (pre_fst.st_dev, pre_fst.st_ino, pre_fst.st_size, pre_fst.st_mode,
+                pre_fst.st_nlink, pre_fst_mtime) != (
+            pre_pst.st_dev, pre_pst.st_ino, pre_pst.st_size, pre_pst.st_mode,
+                pre_pst.st_nlink, pre_pst_mtime):
             raise ConfiguredReplacementPreconditionError(
-                "File path/descriptor identity mismatch before hash"
+                "Descriptor/pathname disagreement on file facts before hash"
             )
-        # Hash through descriptor
+
+        if pre_fst.st_size != expected_size:
+            raise ConfiguredReplacementPreconditionError("File size mismatch before hash")
+        if require_mode_0600 and os.name != "nt":
+            if stat.S_IMODE(pre_fst.st_mode) != 0o600:
+                raise ConfiguredReplacementPreconditionError("File mode not 0600 before hash")
+        if require_single_link and os.name != "nt":
+            if pre_fst.st_nlink != 1:
+                raise ConfiguredReplacementPreconditionError("File link count not 1 before hash")
+
+        # Hash through descriptor; size mismatch raises from _sha256_fd.
         actual_sha = _sha256_fd(fd, expected_size)
         if actual_sha != expected_sha256:
             raise ConfiguredReplacementPreconditionError("File SHA-256 mismatch")
-        # Post-hash descriptor re-stat
-        post_st = os.fstat(fd)
-        pre_mtime = getattr(pre_st, "st_mtime_ns", None)
-        post_mtime = getattr(post_st, "st_mtime_ns", None)
-        if (post_st.st_dev, post_st.st_ino, post_st.st_size, post_mtime) != (
-            pre_st.st_dev, pre_st.st_ino, pre_st.st_size, pre_mtime
-        ):
-            raise ConfiguredReplacementPreconditionError(
-                "File metadata changed during hash"
-            )
-        # Post-hash pathname re-stat
+
+        # Re-run both fstat and no-follow pathname stat after hashing.
+        post_fst = os.fstat(fd)
         post_pst = os.stat(str(path), follow_symlinks=False)
-        if (post_pst.st_dev, post_pst.st_ino) != (pre_st.st_dev, pre_st.st_ino):
+        post_fst_mtime = getattr(post_fst, "st_mtime_ns", None)
+        post_pst_mtime = getattr(post_pst, "st_mtime_ns", None)
+
+        # All seven facts must be unchanged in fstat.
+        if (post_fst.st_dev, post_fst.st_ino, post_fst.st_size, post_fst.st_mode,
+                post_fst.st_nlink, post_fst_mtime) != (
+            pre_fst.st_dev, pre_fst.st_ino, pre_fst.st_size, pre_fst.st_mode,
+                pre_fst.st_nlink, pre_fst_mtime):
             raise ConfiguredReplacementPreconditionError(
-                "File path/descriptor identity mismatch after hash"
+                "File facts changed during hash (fstat)"
             )
-        return (
-            pre_st.st_dev,
-            pre_st.st_ino,
-            stat.S_IMODE(pre_st.st_mode),
-            pre_st.st_nlink,
-            pre_mtime,
-        )
-    finally:
+
+        # All seven facts must be unchanged in pathname stat; inode must still name descriptor.
+        if (post_pst.st_dev, post_pst.st_ino, post_pst.st_size, post_pst.st_mode,
+                post_pst.st_nlink, post_pst_mtime) != (
+            pre_pst.st_dev, pre_pst.st_ino, pre_pst.st_size, pre_pst.st_mode,
+                pre_pst.st_nlink, pre_pst_mtime):
+            raise ConfiguredReplacementPreconditionError(
+                "File facts changed during hash (pathname)"
+            )
+        if (post_pst.st_dev, post_pst.st_ino) != (pre_fst.st_dev, pre_fst.st_ino):
+            raise ConfiguredReplacementPreconditionError(
+                "Pathname no longer names the descriptor's inode after hash"
+            )
+
+        # Mode and link-count requirements must hold after hashing.
+        if require_mode_0600 and os.name != "nt":
+            if stat.S_IMODE(post_fst.st_mode) != 0o600:
+                raise ConfiguredReplacementPreconditionError("File mode not 0600 after hash")
+        if require_single_link and os.name != "nt":
+            if post_fst.st_nlink != 1:
+                raise ConfiguredReplacementPreconditionError("File link count not 1 after hash")
+
+        result = (pre_fst.st_dev, pre_fst.st_ino, stat.S_IMODE(pre_fst.st_mode), pre_fst.st_nlink, pre_fst_mtime)
+    except BaseException:
         try:
             os.close(fd)
         except OSError:
             pass
+        raise
+
+    # Verification succeeded; surface close failure as a bounded ownership error.
+    try:
+        os.close(fd)
+    except OSError as exc:
+        raise ConfiguredReplacementPreconditionError(
+            "Descriptor close failed during ownership verification"
+        ) from exc
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +903,7 @@ def _require_service_stopped(checker=None) -> None:
             raise
         except Exception as exc:
             raise ConfiguredReplacementPreconditionError(
-                f"Service-stopped proof failed: {exc}"
+                "Service-stopped proof failed"
             ) from exc
         return
 
@@ -882,7 +918,7 @@ def _require_service_stopped(checker=None) -> None:
         require_service_stopped()
     except Exception as exc:
         raise ConfiguredReplacementPreconditionError(
-            f"Service-stopped proof failed: {exc}"
+            "Service-stopped proof failed"
         ) from exc
 
 
@@ -1208,6 +1244,10 @@ def _verify_barrier_pre_mutation(
         ) from exc
     if rsel.manifest_sha256 != selected_snapshot.manifest_sha256:
         raise ConfiguredReplacementPreconditionError("Selected backup manifest SHA-256 drift")
+    if rsel.manifest_sha256 != journal.selected_backup_manifest_sha256:
+        raise ConfiguredReplacementPreconditionError(
+            "Reloaded selected backup manifest SHA-256 does not match journal"
+        )
 
     if safety_backup_id == selected_backup_id:
         raise ConfiguredReplacementPreconditionError(
@@ -1222,6 +1262,10 @@ def _verify_barrier_pre_mutation(
         ) from exc
     if rsaf.manifest_sha256 != safety_snapshot.manifest_sha256:
         raise ConfiguredReplacementPreconditionError("Safety backup manifest SHA-256 drift")
+    if journal.safety_backup_manifest_sha256 is not None and rsaf.manifest_sha256 != journal.safety_backup_manifest_sha256:
+        raise ConfiguredReplacementPreconditionError(
+            "Reloaded safety backup manifest SHA-256 does not match journal"
+        )
 
     runtime_mode = "multi_user" if config.MULTI_USER_ENABLED else "single_user"
     try:
@@ -1596,23 +1640,25 @@ def _run_complete_postcheck(
                     f"Postcheck: {sfx} sidecar present for '{tgt.target_key}'"
                 )
 
-    # Backup integrity: validate without comparing against current (possibly replaced) DBs.
+    # Backup integrity: validate against immutable journal-bound manifest SHAs,
+    # not against the snapshots' own manifest_sha256 (which would be circular).
     _validate_snapshot_post_mutation(
         selected_snapshot,
-        expected_backup_id=selected_snapshot.backup_id,
-        expected_manifest_sha256=selected_snapshot.manifest_sha256,
+        expected_backup_id=journal.selected_backup_id,
+        expected_manifest_sha256=journal.selected_backup_manifest_sha256,
         runtime_mode=runtime_mode,
-        expected_target_keys=selected_snapshot.target_keys,
+        expected_target_keys=journal.target_keys,
         backup_root=backup_root,
     )
-    _validate_snapshot_post_mutation(
-        safety_snapshot,
-        expected_backup_id=safety_snapshot.backup_id,
-        expected_manifest_sha256=safety_snapshot.manifest_sha256,
-        runtime_mode=runtime_mode,
-        expected_target_keys=safety_snapshot.target_keys,
-        backup_root=backup_root,
-    )
+    if journal.safety_backup_manifest_sha256 is not None:
+        _validate_snapshot_post_mutation(
+            safety_snapshot,
+            expected_backup_id=journal.safety_backup_id,
+            expected_manifest_sha256=journal.safety_backup_manifest_sha256,
+            runtime_mode=runtime_mode,
+            expected_target_keys=journal.target_keys,
+            backup_root=backup_root,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1627,11 +1673,15 @@ def _verify_complete_rollback_state(
     selected_snapshot: ValidatedBackupSnapshot,
     restore_root: Path,
     backup_root: Path,
+    evidence: DestinationBaselineEvidence | None,
 ) -> None:
     """Full safety-state verification before ROLLED_BACK → FAILED_SAFE transition.
 
-    Verifies every target against safety backup, confirms no stale sidecars,
-    verifies private modes, and confirms both backups are unchanged.
+    For each target with rollback_intent: verifies exact safety bytes, private mode,
+    no sidecars, and full SQLite checks.  For never-replaced targets: verifies exact
+    original destination-baseline bytes, durable parent identity, original mode, and
+    original named sidecar presence/absence/identity.  Confirms both backups are
+    unchanged via immutable journal-bound manifest SHAs.
     """
     journal = load_restore_journal(operation_id, root=restore_root)
     runtime_mode = "multi_user" if config.MULTI_USER_ENABLED else "single_user"
@@ -1662,57 +1712,129 @@ def _verify_complete_rollback_state(
             raise ConfiguredReplacementManualRecoveryRequiredError(
                 f"Rollback safety check: no journal fact for '{tgt.target_key}'"
             )
+
         if fact.rollback_intent:
-            # Target was actively rolled back; require full rollback completion.
+            # Target was actively rolled back; require full rollback completion and exact safety bytes.
             if not fact.rollback_completed or fact.state is not TargetRestoreState.ROLLED_BACK:
                 raise ConfiguredReplacementManualRecoveryRequiredError(
                     f"Rollback safety check: '{tgt.target_key}' not fully rolled back"
                 )
-            # Verify exact safety bytes for targets that were rolled back.
             try:
                 _verify_file_owned(
                     tgt.path,
                     expected_size=sentry.size_bytes,
                     expected_sha256=sentry.sha256,
+                    require_mode_0600=True,
+                    require_single_link=True,
                 )
             except ConfiguredReplacementPreconditionError as exc:
                 raise ConfiguredReplacementManualRecoveryRequiredError(
                     f"Rollback safety check: '{tgt.target_key}' does not match safety bytes"
                 ) from exc
-        # (else: target was never replaced; the rollback loop already verified it
-        #  is at safety or baseline bytes, so no additional SHA check is needed here)
-        if fact.rollback_intent:
-            # Private mode check applies only to targets that were actively rolled back.
             if os.name != "nt":
                 pst = os.stat(str(tgt.path), follow_symlinks=False)
                 if stat.S_IMODE(pst.st_mode) not in {0o600, 0o400}:
                     raise ConfiguredReplacementManualRecoveryRequiredError(
                         f"Rollback safety check: mode not private for '{tgt.target_key}'"
                     )
-            # No stale sidecars expected for targets that went through rollback.
             for sfx in ("-wal", "-shm"):
                 if (tgt.path.parent / (tgt.path.name + sfx)).exists():
                     raise ConfiguredReplacementManualRecoveryRequiredError(
                         f"Rollback safety check: stale {sfx} sidecar for '{tgt.target_key}'"
                     )
+        else:
+            # Target was never replaced.  An inconsistent mixture of flags is manual recovery.
+            if fact.replacement_completed or fact.rollback_completed:
+                raise ConfiguredReplacementManualRecoveryRequiredError(
+                    f"Rollback safety check: inconsistent flags for never-replaced '{tgt.target_key}'"
+                )
+            # Freshly prove the target against original destination baseline.
+            if evidence is None:
+                raise ConfiguredReplacementManualRecoveryRequiredError(
+                    f"Rollback safety check: no baseline evidence for never-replaced '{tgt.target_key}'"
+                )
+            base_rec = next(
+                (t for t in evidence.targets if t.target_key == tgt.target_key), None
+            )
+            if base_rec is None:
+                raise ConfiguredReplacementManualRecoveryRequiredError(
+                    f"Rollback safety check: no baseline record for '{tgt.target_key}'"
+                )
+            try:
+                _verify_file_owned(
+                    tgt.path,
+                    expected_size=base_rec.size_bytes,
+                    expected_sha256=base_rec.sha256,
+                )
+            except ConfiguredReplacementPreconditionError as exc:
+                raise ConfiguredReplacementManualRecoveryRequiredError(
+                    f"Rollback safety check: '{tgt.target_key}' does not match original baseline bytes"
+                ) from exc
+            # Verify durable parent identity.
+            try:
+                _verify_durable_parent(
+                    project_root=config.PROJECT_ROOT,
+                    current_parent_path=tgt.path.parent.resolve(),
+                    persisted_relative_path=base_rec.parent_relative_path,
+                    persisted_st_dev=base_rec.parent_st_dev,
+                    persisted_st_ino=base_rec.parent_st_ino,
+                    persisted_st_mode=base_rec.parent_st_mode,
+                )
+            except Exception as exc:
+                raise ConfiguredReplacementManualRecoveryRequiredError(
+                    f"Rollback safety check: parent identity changed for '{tgt.target_key}'"
+                ) from exc
+            # Verify original mode has not changed.
+            if os.name != "nt":
+                cur_st = os.stat(str(tgt.path), follow_symlinks=False)
+                if stat.S_IMODE(cur_st.st_mode) != stat.S_IMODE(base_rec.st_mode):
+                    raise ConfiguredReplacementManualRecoveryRequiredError(
+                        f"Rollback safety check: mode changed for never-replaced '{tgt.target_key}'"
+                    )
+            # Verify original named sidecar presence/absence and identity.
+            for sfx, sc_key in (("-wal", "wal"), ("-shm", "shm")):
+                sc_path = tgt.path.parent / (tgt.path.name + sfx)
+                sc_dict: dict = getattr(base_rec, sc_key, {})
+                sc_was_present = sc_dict.get("present", False)
+                if sc_was_present:
+                    if not sc_path.exists():
+                        raise ConfiguredReplacementManualRecoveryRequiredError(
+                            f"Rollback safety check: sidecar {sfx} disappeared for '{tgt.target_key}'"
+                        )
+                    try:
+                        cur_sc = os.lstat(str(sc_path))
+                    except OSError as exc:
+                        raise ConfiguredReplacementManualRecoveryRequiredError(
+                            f"Rollback safety check: cannot stat sidecar {sfx} for '{tgt.target_key}'"
+                        ) from exc
+                    if (cur_sc.st_dev, cur_sc.st_ino) != (sc_dict.get("st_dev"), sc_dict.get("st_ino")):
+                        raise ConfiguredReplacementManualRecoveryRequiredError(
+                            f"Rollback safety check: sidecar {sfx} identity changed for '{tgt.target_key}'"
+                        )
+                else:
+                    if sc_path.exists():
+                        raise ConfiguredReplacementManualRecoveryRequiredError(
+                            f"Rollback safety check: unexpected sidecar {sfx} for '{tgt.target_key}'"
+                        )
 
-    # Backups unchanged.
+    # Backups unchanged: validate against immutable journal-bound manifest SHAs.
     _validate_snapshot_post_mutation(
         selected_snapshot,
-        expected_backup_id=selected_snapshot.backup_id,
-        expected_manifest_sha256=selected_snapshot.manifest_sha256,
+        expected_backup_id=journal.selected_backup_id,
+        expected_manifest_sha256=journal.selected_backup_manifest_sha256,
         runtime_mode=runtime_mode,
-        expected_target_keys=selected_snapshot.target_keys,
+        expected_target_keys=journal.target_keys,
         backup_root=backup_root,
     )
-    _validate_snapshot_post_mutation(
-        safety_snapshot,
-        expected_backup_id=safety_snapshot.backup_id,
-        expected_manifest_sha256=safety_snapshot.manifest_sha256,
-        runtime_mode=runtime_mode,
-        expected_target_keys=safety_snapshot.target_keys,
-        backup_root=backup_root,
-    )
+    if journal.safety_backup_manifest_sha256 is not None:
+        _validate_snapshot_post_mutation(
+            safety_snapshot,
+            expected_backup_id=journal.safety_backup_id,
+            expected_manifest_sha256=journal.safety_backup_manifest_sha256,
+            runtime_mode=runtime_mode,
+            expected_target_keys=journal.target_keys,
+            backup_root=backup_root,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2039,6 +2161,7 @@ def _run_rollback(
             selected_snapshot=selected_snapshot,
             restore_root=restore_root,
             backup_root=backup_root,
+            evidence=baseline_evidence,
         )
 
         _journal_transition(operation_id, restore_root, stage=RestoreStage.ROLLED_BACK)
@@ -2419,13 +2542,39 @@ def replace_and_verify_configured_restore(
                 "Safety backup validation failed"
             ) from exc
 
+        # Backward-compat: refuse operations on journals missing the immutable safety
+        # manifest SHA.  Pre-mutation journals (up to REPLACEMENT_READY) require a new
+        # prepare operation; post-mutation journals signal manual recovery.
+        if journal.safety_backup_id is not None and journal.safety_backup_manifest_sha256 is None:
+            if journal.stage in {RestoreStage.REPLACEMENT_READY}:
+                raise ConfiguredReplacementPreconditionError(
+                    "Safety backup manifest SHA-256 missing from journal; prepare a new operation"
+                )
+            _primary_exc = ConfiguredReplacementManualRecoveryRequiredError(
+                "Safety backup manifest SHA-256 missing from journal; cannot verify backup identity"
+            )
+            raise _primary_exc
+
+        # Bind loaded snapshots to immutable journal evidence.
+        if sel_snap.manifest_sha256 != journal.selected_backup_manifest_sha256:
+            _settle_safe(operation_id, restore_root, journal)
+            raise ConfiguredReplacementPreconditionError(
+                "Selected backup manifest SHA-256 does not match journal"
+            )
+        if journal.safety_backup_manifest_sha256 is not None:
+            if saf_snap.manifest_sha256 != journal.safety_backup_manifest_sha256:
+                _settle_safe(operation_id, restore_root, journal)
+                raise ConfiguredReplacementPreconditionError(
+                    "Safety backup manifest SHA-256 does not match journal"
+                )
+
         # Explicitly validate post-mutation snapshot fields without current-config check.
         if not _check_current:
             try:
                 _validate_snapshot_post_mutation(
                     sel_snap,
                     expected_backup_id=selected_backup_id,
-                    expected_manifest_sha256=sel_snap.manifest_sha256,
+                    expected_manifest_sha256=journal.selected_backup_manifest_sha256,
                     runtime_mode=runtime_mode,
                     expected_target_keys=journal.target_keys,
                     backup_root=backup_root,
@@ -2433,7 +2582,7 @@ def replace_and_verify_configured_restore(
                 _validate_snapshot_post_mutation(
                     saf_snap,
                     expected_backup_id=safety_backup_id,
-                    expected_manifest_sha256=saf_snap.manifest_sha256,
+                    expected_manifest_sha256=journal.safety_backup_manifest_sha256,
                     runtime_mode=runtime_mode,
                     expected_target_keys=journal.target_keys,
                     backup_root=backup_root,
@@ -2454,7 +2603,7 @@ def replace_and_verify_configured_restore(
 
         # ---- ROLLED_BACK re-entry ----
         if journal.stage is RestoreStage.ROLLED_BACK:
-            # Full safety state verification before FAILED_SAFE.
+            # Full safety state verification before FAILED_SAFE (freshly proves every target).
             try:
                 _verify_complete_rollback_state(
                     operation_id=operation_id,
@@ -2463,6 +2612,7 @@ def replace_and_verify_configured_restore(
                     selected_snapshot=sel_snap,
                     restore_root=restore_root,
                     backup_root=backup_root,
+                    evidence=evidence,
                 )
             except ConfiguredReplacementManualRecoveryRequiredError as exc:
                 _primary_exc = exc

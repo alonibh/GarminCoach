@@ -31,6 +31,7 @@ from guarded_restore import (
 BACKUP = "20260801T120000Z-a1b2c3d4"
 SAFETY = "20260801T120100Z-b1c2d3e4"
 MANIFEST = "a" * 64
+SAFETY_MANIFEST = "c" * 64
 COMMIT = "b" * 40
 TIME = "2026-08-01T12:00:00Z"
 
@@ -84,7 +85,7 @@ def test_plan_rejects_malformed_bounded_inputs(kwargs):
 def _advance_to_ready(root: Path):
     journal = create_restore_journal(_plan(), root=root, operation_id="restore-20260801T120000Z-a1b2c3d4", now=TIME)
     journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.VERIFIED, now="2026-08-01T12:00:01Z")
-    journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY, now="2026-08-01T12:00:02Z")
+    journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY, safety_backup_manifest_sha256=SAFETY_MANIFEST, now="2026-08-01T12:00:02Z")
     journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:03Z")
     for key in journal.target_keys:
         journal = update_restore_journal(journal.operation_id, root=root, target_key=key, target_state=TargetRestoreState.STAGED, now="2026-08-01T12:00:04Z")
@@ -151,7 +152,7 @@ def test_update_timestamps_are_monotonic_and_failed_update_preserves_bytes(tmp_p
     with pytest.raises(RestoreTransitionError): update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.VERIFIED, now="2026-08-01T11:59:59Z")
     assert path.read_bytes() == before
     journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.VERIFIED, now=TIME)
-    journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY, now="2026-08-01T12:00:03Z")
+    journal = update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=SAFETY, safety_backup_manifest_sha256=SAFETY_MANIFEST, now="2026-08-01T12:00:03Z")
     after = path.read_bytes()
     with pytest.raises(RestoreTransitionError): update_restore_journal(journal.operation_id, root=root, stage=RestoreStage.RESTORE_STAGED, now="2026-08-01T12:00:02Z")
     assert path.read_bytes() == after

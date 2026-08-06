@@ -539,6 +539,7 @@ def prepare_configured_restore(
                 root=restore_root,
                 stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,
                 safety_backup_id=safety_backup_id,
+                safety_backup_manifest_sha256=safety_snapshot.manifest_sha256,
             )
 
             # Reread journal & verify exact update equality

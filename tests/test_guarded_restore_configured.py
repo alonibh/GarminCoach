@@ -276,6 +276,7 @@ def test_legal_reentry_dispatcher_stages(tmp_path, monkeypatch, legal_stage):
 
     if legal_stage in {RestoreStage.PRECHECK, RestoreStage.VERIFIED}:
         data["safety_backup_id"] = None
+        data.pop("safety_backup_manifest_sha256", None)
         for t in data["targets"]:
             t["state"] = "PENDING"
         for p in control_db.parent.glob(".garmincoach-restore-stage-*"):
@@ -1340,7 +1341,7 @@ def test_stage_configured_targets_refuses_none_destination_baseline(tmp_path, mo
     )
     journal = create_restore_journal(plan, root=restore_root, operation_id="restore-20260101T000000Z-00000000")
     update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.VERIFIED)
-    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111", safety_backup_manifest_sha256="d"*64)
     update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
 
     with pytest.raises(ConfiguredStagingOwnershipError, match="destination_baseline"):
@@ -1404,7 +1405,7 @@ def test_stage_configured_targets_refuses_missing_baseline_target_record(tmp_pat
     )
     journal = create_restore_journal(plan, root=restore_root, operation_id="restore-20260101T000000Z-00000000")
     update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.VERIFIED)
-    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111", safety_backup_manifest_sha256="d"*64)
     update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
 
     with pytest.raises(ConfiguredStagingOwnershipError):
@@ -1468,7 +1469,7 @@ def test_stage_configured_targets_refuses_duplicate_baseline_target_record(tmp_p
     )
     journal = create_restore_journal(plan, root=restore_root, operation_id="restore-20260101T000000Z-00000000")
     update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.VERIFIED)
-    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111")
+    update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id="20260101T000000Z-11111111", safety_backup_manifest_sha256="d"*64)
     update_restore_journal(journal.operation_id, root=restore_root, stage=RestoreStage.RESTORE_STAGED)
 
     with pytest.raises(ConfiguredStagingOwnershipError):
@@ -1645,6 +1646,7 @@ def test_staged_verified_reentry_passes_persisted_parent_and_expected_entries(tm
 
     safety_backup_dir = create_verified_backup(output_root=backup_root)
     safety_backup_id = safety_backup_dir.name.removeprefix("backup-")
+    safety_snapshot = load_validated_backup_snapshot(safety_backup_dir, against_current_config=False)
 
     t_hash = target_set_hash(
         backup_id=source_backup_id,
@@ -1681,7 +1683,7 @@ def test_staged_verified_reentry_passes_persisted_parent_and_expected_entries(tm
     baseline_sha = write_destination_baseline_evidence(op_id, evidence, restore_root=restore_root)
     update_restore_journal(op_id, root=restore_root, destination_baseline_sha256=baseline_sha)
     update_restore_journal(op_id, root=restore_root, stage=RestoreStage.VERIFIED)
-    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=safety_backup_id)
+    update_restore_journal(op_id, root=restore_root, stage=RestoreStage.CURRENT_SNAPSHOT_CREATED, safety_backup_id=safety_backup_id, safety_backup_manifest_sha256=safety_snapshot.manifest_sha256)
     stage_configured_targets(op_id, snapshot, targets, restore_root=restore_root, destination_baseline=evidence)
     for key in journal.target_keys:
         update_restore_journal(op_id, root=restore_root, target_key=key, target_state=TargetRestoreState.STAGED)

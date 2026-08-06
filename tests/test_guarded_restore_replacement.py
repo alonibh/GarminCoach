@@ -74,6 +74,7 @@ def _prepared(tmp_path: Path, monkeypatch):
         root=config.OPERATOR_RESTORE_ROOT,
         stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,
         safety_backup_id=safety.backup_id,
+        safety_backup_manifest_sha256=safety.manifest_sha256,
     )
     root = tmp_path / "fixture"
     root.mkdir()
@@ -146,6 +147,7 @@ def _prepared_multi_user(tmp_path: Path, monkeypatch):
         root=config.OPERATOR_RESTORE_ROOT,
         stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,
         safety_backup_id=safety.backup_id,
+        safety_backup_manifest_sha256=safety.manifest_sha256,
     )
     root = tmp_path / "fixture"
     root.mkdir()

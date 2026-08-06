@@ -17,7 +17,7 @@ def _prepared(tmp_path,monkeypatch):
     _db(config.CONTROL_DB_PATH,"migration_versions","version"); _db(config.DB_PATH,"app_migrations","migration_key")
     backup=create_verified_backup(tmp_path/"backups"); validated=load_validated_backup_snapshot(backup)
     plan=create_restore_plan(selected_backup_id=validated.backup_id,selected_backup_manifest_sha256=validated.manifest_sha256,expected_application_commit=validated.application_commit,runtime_mode="single_user",target_keys=("control","single-user"))
-    journal=create_restore_journal(plan,root=config.OPERATOR_RESTORE_ROOT); update_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT,stage=RestoreStage.VERIFIED); update_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT,stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,safety_backup_id="20260801T120001Z-a1b2c3d4")
+    journal=create_restore_journal(plan,root=config.OPERATOR_RESTORE_ROOT); update_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT,stage=RestoreStage.VERIFIED); update_restore_journal(journal.operation_id,root=config.OPERATOR_RESTORE_ROOT,stage=RestoreStage.CURRENT_SNAPSHOT_CREATED,safety_backup_id="20260801T120001Z-a1b2c3d4",safety_backup_manifest_sha256="c"*64)
     root=tmp_path/"fixture"; root.mkdir();
     if __import__('os').name!='nt': __import__('os').chmod(root,0o700)
     a=root/"control.sqlite"; b=root/"single.sqlite"; _db(a,"migration_versions","version"); _db(b,"app_migrations","migration_key")
