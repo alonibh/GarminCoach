@@ -369,8 +369,9 @@ freshness signal IDs: `sleep` is numeric hours rounded to one decimal,
 `sleep_score` is one numeric Garmin score, `hrv_status` is Garmin text, and
 `recovery_time` is integer minutes. Formatting belongs only to presentation.
 Sleep, HRV Status, and Recovery Time are shown in Telegram as factual context,
-not a replacement for fresh supported Training Readiness. The fixed Active
-Recovery target and the body-composition fixture gate remain future work.
+not a replacement for fresh supported Training Readiness. The fixed Active Recovery walking template is implemented (30-minute walk,
+duration-only, no HR/pace/distance target). The body-composition fixture gate
+remains pending its sanitized payload-and-units contract.
 
 These checks may change adapters or request strategy, but not the approved product authority above.
 

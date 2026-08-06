@@ -1,14 +1,18 @@
 # Guarded verified restore contract (Phase 6B1)
 
-This is the authoritative design contract for a future guarded restore. It is
-approved design only: GarminCoach currently has no restore command and performs
-no restore mutation. Phase 6A remains the authority for target discovery,
-read-only integrity inspection, verified backup creation, and backup
+This is the authoritative design and implementation contract for the Phase 6B
+guarded restore. Phases 6B2A through 6B3B3 are complete. The operator apply
+CLI (`apply_verified_restore.py`) exists and is tested. It requires the service
+to be stopped manually before invocation and never starts, stops, or restarts
+the service itself. No production restore drill has been performed; production
+use requires separately approved operator action following
+`docs/GUARDED_RESTORE_RUNBOOK.md`. Phase 6A remains the authority for target
+discovery, read-only integrity inspection, verified backup creation, and backup
 verification.
 
 ## 1. Goal and non-goals
 
-The only supported future goal is to restore **all canonical runtime databases**
+The only supported goal is to restore **all canonical runtime databases**
 from one verified, current-configuration-compatible Phase 6A backup after an
 explicit operator action. A runtime set is control plus single-user in
 single-user mode, or control plus the existing canonical tenant `athlete.db`
@@ -60,7 +64,7 @@ a missing store, so it is not a restore discovery primitive.
 
 ## 4. Required operator preconditions
 
-The future engine must require the exact project root; supported Python and the
+The engine requires the exact project root; supported Python and the
 pinned `garminconnect` distribution; a clean verified source backup; and a
 successful `verify_verified_backup(..., against_current_config=True)` immediately
 before restore. It must rediscover current runtime targets, require their exact
@@ -78,7 +82,7 @@ contract.
 
 ## 5. State machine and durable journal
 
-The future restore journal is private, local, and atomic-rewrite (or
+The restore journal is private, local, and atomic-rewrite (or
 append-only) metadata at a path under a dedicated restore-operations root,
 never in the selected backup or a database directory. It is 0600 on POSIX;
 its parent is 0700. It contains format version, operation ID, selected backup
@@ -199,12 +203,12 @@ locks while invoking ordinary backup; and no operation holding `BackupLock`
 waits for the restore lock. A competing backup after the safety snapshot simply
 makes the restore's nonblocking long-held acquisition fail safely before
 mutation. Phase 6B2 does not invoke `systemctl`, start/stop a service, or reuse
-the reset tool's service-control code. A Phase 6B3 wrapper, if approved, may
-document service verification before and after but not weaken these checks.
+the reset tool's service-control code. The Phase 6B3B3 apply CLI documents the
+service-verification requirement but does not start, stop, or restart services.
 
-## 9. Confirmation boundary and future CLI
+## 9. Confirmation boundary and CLI
 
-A future noninteractive interface must require all of:
+The noninteractive CLI (`apply_verified_restore.py`) requires all of:
 
 ```text
 --backup-id <exact-id>
@@ -216,9 +220,9 @@ A future noninteractive interface must require all of:
 The target-set hash is canonical JSON over ordered non-secret target keys, mode,
 source backup ID, and source manifest hash. The derived value is a documented
 hash of that value and the expected commit. There is no generic confirmation or
-`--force` override. Future commands may be `plan_verified_restore.py`,
-`apply_verified_restore.py`, and a separate manual-recovery inspector rather
-than automatic resume; ambiguous journals must never be resumed automatically.
+`--force` override. The implemented commands are `plan_verified_restore.py`,
+`apply_verified_restore.py`, and `inspect_restore_operation.py` as a separate
+manual-recovery inspector; ambiguous journals are never resumed automatically.
 JSON is versioned and bounded; stderr is sanitized; invalid arguments exit 64.
 Later exit codes must distinguish precondition/verification failure, safe
 failure, rollback completed, manual recovery required, and success.

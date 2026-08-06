@@ -2,8 +2,10 @@
 
 - [x] Phase 3 foundation: capability registry for one Garmin watch per user, with normalized model detection and versioned, officially sourced mappings. Track Training Readiness, Training Status, Recovery Time, HRV Status, Body Battery, Fitness Age, and VO₂ max independently as supported, unsupported, or unknown; successful observations may promote support, while empty results do not prove unsupported. Use bounded low-frequency probing only for unknown capabilities and skip verified unsupported endpoints.
 
-Updated 2026-07-29. The approved target metric and sync policy is
-[`docs/METRIC_SYNC_POLICY.md`](docs/METRIC_SYNC_POLICY.md).
+Updated 2026-08-06. Phases 1–6 are complete; final Phase 1–6 reconciliation
+in progress. The canonical per-phase status summary is
+[`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md). The approved target metric
+and sync policy is [`docs/METRIC_SYNC_POLICY.md`](docs/METRIC_SYNC_POLICY.md).
 
 ## Completed baseline
 
@@ -132,6 +134,8 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
   programs, with factual local completion context, outbox notification, web-only
   acknowledgement/snooze, and no automatic deload or workout mutation.
 
+**Phase 5 is complete.**
+
 ## Phase 6: Operator safety and recovery
 
 - [x] Phase 6A: read-only operator health, fail-closed database integrity,
@@ -143,8 +147,31 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
   dedicated restore-lock primitives with no database staging or replacement.
 - [x] Phase 6B2B: fixture-only offline restore staging and strict verification;
   no configured-database replacement or rollback mutation.
-- [ ] Phase 6B2C: guarded replacement and automatic rollback with temporary fixtures only.
-- [ ] Phase 6B3: operator CLI and operational validation.
+- [x] Phase 6B2C: guarded replacement and automatic rollback with temporary
+  fixtures only.
+- [x] Phase 6B3A: non-mutating operator restore-planning CLI
+  (`plan_verified_restore.py`), read-only restore-operation inspector CLI
+  (`inspect_restore_operation.py`), and operator runbook
+  (`docs/GUARDED_RESTORE_RUNBOOK.md`).
+- [x] Phase 6B3B1: configured-runtime restore preparation through
+  `REPLACEMENT_READY` (`guarded_restore_configured.py`,
+  `guarded_restore_configured_staging.py`) with mandatory baseline evidence,
+  descriptor-bound permissions, and deterministic tests.
+- [x] Phase 6B3B2: configured replacement, postcheck, automatic rollback,
+  safe re-entry, and manual-recovery boundary
+  (`guarded_restore_configured_replacement.py`).
+- [x] Phase 6B3B3: operator apply CLI (`apply_verified_restore.py`) with
+  exact exit codes, bounded confirmation arguments, and service-boundary
+  enforcement.
+
+**Phase 6 is complete.** The operator restore CLI (`apply_verified_restore.py`)
+is implemented and tested. It requires the service to be stopped manually before
+invocation and never starts or stops the service itself. No production restore
+drill has been performed; production use requires separately approved operator
+action following `docs/GUARDED_RESTORE_RUNBOOK.md`.
+
+See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md) for the canonical
+per-phase status summary.
 
 ## Later product work
 

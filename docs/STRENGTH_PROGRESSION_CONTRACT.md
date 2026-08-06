@@ -1,11 +1,11 @@
 # Strength-progression proposal contract
 
-**Status:** Phase 4D deduplicated Telegram notification flow is implemented.
-**Scope:** Deterministic, exercise-level proposals to change a future local template weight
+**Status:** Phase 4A–4D complete. All progression stages are implemented.
+**Scope:** Deterministic, exercise-level proposals to change a local template weight
 
 This is the canonical contract for Phase 4 strength progression. Phase 4B
-persistence/recalculation and Phase 4C local web review/actions are implemented;
-unimplemented future stages are explicitly identified below.
+persistence/recalculation, Phase 4C local web review/actions, and Phase 4D
+deduplicated Telegram notification flow are all implemented.
 
 Ordinary rows remain governed by this generic contract. The sole source-specific
 exception is the server-owned Powerbuilding PPL 15-rep rule, whose additional
@@ -18,7 +18,7 @@ The web application is the sole review surface. It will show all current proposa
 
 Telegram MAY send one notification that proposals are ready or materially changed, directing the athlete to the web review page. Telegram MUST NOT expose progression approval or rejection buttons.
 
-The future engine MUST be deterministic. An LLM MUST NOT match or classify an activity/exercise, propose or choose a weight, approve or reject a proposal, or execute a mutation. Garmin RPE, Garmin Feel, subjective feedback, Training Readiness, sleep, HRV, Recovery Time, Body Battery, stress, ACWR, and every other biometric have zero progression authority. Training Readiness remains the sole biometric with direct recovery authority under the separate recovery contract; that does not give it any strength-progression authority.
+The engine is deterministic. An LLM MUST NOT match or classify an activity/exercise, propose or choose a weight, approve or reject a proposal, or execute a mutation. Garmin RPE, Garmin Feel, subjective feedback, Training Readiness, sleep, HRV, Recovery Time, Body Battery, stress, ACWR, and every other biometric have zero progression authority. Training Readiness remains the sole biometric with direct recovery authority under the separate recovery contract; that does not give it any strength-progression authority.
 
 Progression MAY change only `SessionExercise.weight_kg`. It MUST NOT change an exercise identity or order, sets, reps, duration, rest, warm-up, or Garmin mapping. In particular, quarter-kilogram weights and a 60-second warm-up rest remain representable and must be preserved. Already scheduled Garmin workouts MUST remain unchanged. An approved local template weight applies only when a future workout is compiled. Evaluation is local and MUST make zero Garmin calls.
 
@@ -26,7 +26,7 @@ Private external calendars remain outside Ask Coach and any AI snapshot.
 
 ## 2. Existing domain ownership
 
-The future design uses these existing entities:
+The implementation uses these entities:
 
 | Entity | Contract role |
 | --- | --- |
@@ -110,15 +110,15 @@ After two consecutive materially under-target appearances, propose exactly `W - 
 
 Existing manually corrected `ExerciseSet` values are authoritative and their protection from Garmin re-sync overwrite MUST be preserved. Future evidence and audit records distinguish Garmin-origin and manually corrected values. Editing or reverting a correction recalculates the affected exact `SessionExercise`; it may make evidence scorable, change classification, reset/advance a streak, or create, supersede, invalidate, or stale a proposal. A correction never approves a template mutation.
 
-The future implementation MUST version a `SessionExercise` prescription. A prescription change to target weight, sets, reps, identity/key, Garmin mapping, eligibility, or program/session ownership resets both streaks and supersedes incompatible pending proposals. Old activities MUST NOT be reinterpreted under a changed prescription. An approved proposal or ordinary manual editor weight change starts with zero evidence; it follows the same reset and audit boundary.
+The implementation versions a `SessionExercise` prescription. A prescription change to target weight, sets, reps, identity/key, Garmin mapping, eligibility, or program/session ownership resets both streaks and supersedes incompatible pending proposals. Old activities MUST NOT be reinterpreted under a changed prescription. An approved proposal or ordinary manual editor weight change starts with zero evidence; it follows the same reset and audit boundary.
 
-## 7. Proposal lifecycle and future review
+## 7. Proposal lifecycle and web review
 
 The conceptual proposal states are `pending`, `applied`, `rejected`, `superseded`, and `stale`. Terminal history is immutable. At most one `pending` proposal may exist for an exact `SessionExercise` and its current prescription and policy version.
 
 Recalculation evaluates new evidence against the unchanged current template. If direction and suggested value are unchanged, it keeps the current proposal without a duplicate state or notification. A material direction/value change supersedes the old proposal and creates one new current proposal. Neutral, opposite, expired, corrected, or template-change evidence supersedes or stales an incompatible proposal. Generation and recalculation MUST be idempotent.
 
-Every future proposal identifies the exact program, session, `SessionExercise`, prescription version, policy version, source activities, decisive sets, current weight, suggested weight, direction, timestamps, and correction provenance. Before a future approval/rejection it MUST reload and revalidate this decisive state, failing closed if it has become stale.
+Every proposal identifies the exact program, session, `SessionExercise`, prescription version, policy version, source activities, decisive sets, current weight, suggested weight, direction, timestamps, and correction provenance. Before approval/rejection it reloads and revalidates this decisive state, failing closed if it has become stale.
 
 The web review page will show all current proposals. Each independently shows the program/session/exercise, current and proposed weight/direction, global increment, two decisive appearances with their sets/reps/weights, manual correction provenance, evidence age/expiry, and policy/prescription versions.
 
@@ -126,9 +126,9 @@ Independent actions are approve, reject, and edit-final-weight-and-approve. Edit
 
 Reject marks the proposal rejected, leaves the template unchanged, resets both streaks, and MUST NOT reuse the same two source appearances: two entirely new consecutive qualifying appearances are required. There is no dedicated proposal-rollback button. Reversal is an ordinary program-editor weight edit; it follows ordinary audit/reset/supersession rules, affects only future compilation, and does not rewrite scheduled workouts.
 
-## 8. Conceptual persistence and notification design
+## 8. Persistence and notification design
 
-Phase 4B will add conceptual persistence, not necessarily the names below. It SHOULD prefer immutable evidence and history and record:
+Phase 4B persistence records and Phase 4D notification design are implemented:
 
 - a versioned progression policy, including the global increment;
 - a versioned `SessionExercise` prescription fingerprint;
@@ -138,18 +138,19 @@ Phase 4B will add conceptual persistence, not necessarily the names below. It SH
 - suggested versus athlete-approved values, status transitions, correction provenance, recalculation cause, timestamps, and idempotency keys; and
 - notification-dedup records and enough previous state for audit, without a proposal rollback action.
 
-A future Telegram outbox summary has a stable conceptual dedup identity such as `(policy_version, recalculation_boundary_id, sorted material proposal fingerprints)`. It sends one immediate deduplicated summary for proposals created in the same recalculation/sync boundary, names affected exercises, and directs the athlete to web review. It MUST NOT send per-exercise spam or repeat when nothing material changed. It MAY notify again only for a new proposal, a changed direction, a changed proposed weight, or an exercise becoming eligible from entirely new evidence.
+The Telegram outbox summary uses a stable dedup identity
+`(policy_version, recalculation_boundary_id, sorted material proposal fingerprints)`. It sends one immediate deduplicated summary for proposals created in the same recalculation/sync boundary, names affected exercises, and directs the athlete to web review. It does not send per-exercise spam or repeat when nothing material changed. It may notify again only for a new proposal, a changed direction, a changed proposed weight, or an exercise becoming eligible from entirely new evidence.
 
-## 9. Future triggers and implementation stages
+## 9. Evaluation triggers
 
-Future evaluation runs after strength sets finish syncing for a matched activity; an activity becomes confidently matched; an authoritative manual correction changes; a `SessionExercise` prescription/mapping changes; a proposal is approved/rejected; or the global increment changes. It SHOULD recalculate only affected exercises where possible. A global increment change is an explicit whole-population invalidation. All evaluation is idempotent and makes no Garmin call.
+Evaluation runs after strength sets finish syncing for a matched activity; an activity becomes confidently matched; an authoritative manual correction changes; a `SessionExercise` prescription/mapping changes; a proposal is approved/rejected; or the global increment changes. It recalculates only affected exercises where possible. A global increment change is an explicit whole-population invalidation. All evaluation is idempotent and makes no Garmin call.
 
-| Stage | Future scope |
+| Stage | Status |
 | --- | --- |
-| Phase 4B | Persistence and read-only deterministic engine; matching, classification, incremental recalculation, and pending proposals only. No web mutation or Telegram. |
-| Phase 4C | Web list/detail plus independent edit/approve/reject, exact revalidation, local `SessionExercise.weight_kg` mutation only, immutable audit, and no scheduled-workout rewrite. |
-| Phase 4D | Deduplicated Telegram outbox summary; bounded sync/match/correction/editor/proposal triggers; stale/duplicate/retry/concurrency hardening; verify future compiler consumption of approved local weight. |
-| Later Phase 4 | Separate work for 28-day recovery/health trends, Fitness Age/VO2 max history, capability-aware Training Status, weekly-summary improvements, and compact aggregate AI context. |
+| Phase 4B | Complete: persistence and read-only deterministic engine; matching, classification, incremental recalculation, and pending proposals. |
+| Phase 4C | Complete: web list/detail plus independent edit/approve/reject, exact revalidation, local `SessionExercise.weight_kg` mutation only, immutable audit, no scheduled-workout rewrite. |
+| Phase 4D | Complete: deduplicated Telegram outbox summary; bounded sync/match/correction/editor/proposal triggers; stale/duplicate/retry/concurrency hardening; approved local weight consumed by future compilation. |
+| Phase 4E–4H | Complete: 28-day recovery/health trends, Fitness Age/VO₂ max history, capability-aware Training Status, weekly-summary improvements, and compact aggregate AI context. |
 
 ## 10. Phase 4B2/4C implementation boundary
 
@@ -178,6 +179,6 @@ workouts remain unchanged.
 
 ## 11. Explicit exclusions
 
-This documentation commit excludes runtime implementation; schema or migration work; remote Garmin replacement/update; changes to scheduled Garmin workouts; exercise/set/rep/rest/warm-up mutation; bodyweight, rep, or duration progression; subjective too-easy/too-hard flows; Garmin RPE/Feel authority; biometric/readiness/ACWR authority; LLM matching or decisions; private-calendar access; new Garmin endpoint calls; source-specific progression; deload logic; injury, medical, or nutrition claims; and dedicated rollback.
+Explicitly excluded by design: remote Garmin replacement/update; changes to scheduled Garmin workouts; exercise/set/rep/rest/warm-up mutation; bodyweight, rep, or duration progression; subjective too-easy/too-hard flows; Garmin RPE/Feel authority; biometric/readiness/ACWR authority; LLM matching or decisions; private-calendar access; new Garmin endpoint calls for progression; deload logic; injury, medical, or nutrition claims; and dedicated rollback.
 
 Body Composition remains separately unchecked and gated on its sanitized fixture-and-units contract. This contract does not enable probing, storage, UI, or implementation for it.

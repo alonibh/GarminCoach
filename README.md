@@ -54,6 +54,8 @@ confirmation before scheduling, cancelling, or rescheduling a workout.
 
 The complete authority model and decision order are documented in
 [`docs/coach_product_architecture.md`](docs/coach_product_architecture.md).
+Phases 1–6 are complete; see [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md)
+for the canonical per-phase status summary.
 
 ## Implemented capabilities
 
@@ -87,8 +89,8 @@ The complete authority model and decision order are documented in
 
 ### Strength programs and Garmin workouts
 
-- Ten selectable Muscle & Strength routines covering two through six training
-  days per cycle.
+- Twenty-five selectable Muscle & Strength routines covering two through six
+  training days per cycle.
 - Source-reviewed exercise order, rolling session sequence, required recovery
   intervals, optional recovery guidance, exclusions, between-set timers, and
   audited structural supersets. `ppl_6` uses 45-second set rests and 90-second
@@ -106,7 +108,7 @@ The complete authority model and decision order are documented in
 - Source templates can be edited, but metric-driven decisions never rewrite
   them. Customized rest timers are preserved by catalog migrations.
 
-The complete ten-routine audit is in
+The complete 25-routine source audit is in
 [`docs/routine_source_audit.md`](docs/routine_source_audit.md).
 
 ### Deterministic Telegram coach
@@ -267,9 +269,14 @@ Each backup also records its explicit runtime mode and runtime target set. The
 optional current-configuration check requires exact schema, migration-marker,
 mode, target-set, active-tenant mapping, and runtime-version compatibility.
 
-Phase 6B1 documents the separately reviewed future restore boundary in
-[`docs/GUARDED_RESTORE_CONTRACT.md`](docs/GUARDED_RESTORE_CONTRACT.md). Restore
-is not available yet; the document is a design contract, not an operator command.
+The Phase 6B guarded restore is fully implemented.
+[`docs/GUARDED_RESTORE_CONTRACT.md`](docs/GUARDED_RESTORE_CONTRACT.md) is the
+authoritative design and implementation contract. The operator apply CLI
+(`apply_verified_restore.py`) is available and tested; use
+`plan_verified_restore.py` to generate confirmation values before invoking it.
+The CLI never starts or stops the service; operators must stop it manually
+before and start it manually after a verified outcome. No production restore
+drill has been performed.
 
 ## Explicit database reset
 
