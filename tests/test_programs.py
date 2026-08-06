@@ -1,3 +1,5 @@
+import pytest
+
 from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommend_program
 from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
 from coach.program_policy import REJECTED_DEFAULT_ROUTINES, SOURCE_TRAINING_LEVELS
@@ -636,9 +638,11 @@ def test_muscle_mania_uses_source_defined_compound_and_isolation_rest():
 
 
 # ---------------------------------------------------------------------------
-# Audit-accounting tests (Gate B bookkeeping)
-# Parse CURATED_ROUTINE_AUDIT.md line-by-line; derive counts from individual
-# routine sections; cross-check against the summary table.
+# Audit-accounting tests
+# Parse CURATED_ROUTINE_AUDIT.md line-by-line using string operations only
+# (no regex). Derives a list of section records then validates structural
+# invariants before producing the {key: classification} mapping used by all
+# accounting tests.
 # ---------------------------------------------------------------------------
 
 _VALID_CLASSIFICATIONS = {
@@ -659,50 +663,129 @@ _EXPECTED_COUNTS = {
     "source_unverified": 0,
 }
 
-_SOURCE_EXACT_KEYS = {
-    "beginner_full_body_3",
-    "total_package_3",
-    "dumbbell_full_body_3",
-    "split_full_4",
-    "barbell_upper_lower_4",
-    "maul_5",
-    "dumbbell_split_5",
-}
+
+# ---------------------------------------------------------------------------
+# Core parser — no regex, accepts any iterable of lines
+# ---------------------------------------------------------------------------
+
+def _parse_audit_records_from_lines(lines):
+    """Parse an iterable of Markdown lines into a list of section records.
+
+    Each record:
+        {
+            "heading": str,           # text after "### "
+            "internal_keys": list,    # every Internal key value found in this section
+            "classifications": list,  # every Classification value found in this section
+        }
+
+    Rules:
+    - A new section begins at a line starting with "### ".
+    - Parsing of sections stops when a line whose strip equals "## Summary" is reached.
+    - A table row is matched when the pipe-split second cell is **exactly** one
+      backtick-delimited token (starts with "`", ends with "`", contains exactly
+      two backtick characters).  This excludes descriptive rows such as:
+          | **Internal key** | `PROGRAMS` dict key in `coach/programs.py` |
+      which have four backtick characters in the value cell.
+    - All occurrences of Internal key and Classification rows are preserved so
+      that duplicates within a section are detectable.
+    """
+    records = []
+    current = None
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        # Stop when the Summary section begins.
+        if line.strip() == "## Summary":
+            break
+        # A new ### heading begins a new section.
+        if line.startswith("### "):
+            if current is not None:
+                records.append(current)
+            current = {
+                "heading": line[4:].strip(),
+                "internal_keys": [],
+                "classifications": [],
+            }
+            continue
+        # Only parse table rows inside a section.
+        if current is None or not line.startswith("|"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 4:
+            continue
+        label_cell = parts[1].strip()
+        value_cell = parts[2].strip()
+        # Label cell must be **Label Name**.
+        if not (label_cell.startswith("**") and label_cell.endswith("**")):
+            continue
+        label = label_cell[2:-2]
+        # Value cell must be exactly one backtick-enclosed token.
+        if not (
+            value_cell.startswith("`")
+            and value_cell.endswith("`")
+            and value_cell.count("`") == 2
+        ):
+            continue
+        value = value_cell[1:-1]
+        if label == "Internal key":
+            current["internal_keys"].append(value)
+        elif label == "Classification":
+            current["classifications"].append(value)
+    # Flush the final section.
+    if current is not None:
+        records.append(current)
+    return records
+
+
+def _parse_audit_records():
+    """Parse CURATED_ROUTINE_AUDIT.md and return the list of section records."""
+    with open(_AUDIT_PATH, encoding="utf-8") as fh:
+        return _parse_audit_records_from_lines(fh)
+
+
+def _validate_records(records):
+    """Assert all structural invariants on parsed records; return {key: classification}.
+
+    Raises AssertionError with a descriptive message on the first violation:
+    - Each section must have exactly one Internal key row.
+    - Each section must have exactly one Classification row.
+    - The section heading must equal the Internal key.
+    - No Internal key may appear in more than one section.
+    """
+    seen_keys: dict[str, str] = {}  # key -> heading where it first appeared
+    result: dict[str, str] = {}
+    for rec in records:
+        heading = rec["heading"]
+        keys = rec["internal_keys"]
+        clss = rec["classifications"]
+        assert len(keys) == 1, (
+            f"Section '{heading}': expected exactly 1 Internal key row, "
+            f"got {len(keys)}: {keys}"
+        )
+        assert len(clss) == 1, (
+            f"Section '{heading}': expected exactly 1 Classification row, "
+            f"got {len(clss)}: {clss}"
+        )
+        key = keys[0]
+        assert heading == key, (
+            f"Section heading '{heading}' disagrees with Internal key '{key}'"
+        )
+        assert key not in seen_keys, (
+            f"Internal key '{key}' appears in both section "
+            f"'{seen_keys[key]}' and '{heading}'"
+        )
+        seen_keys[key] = heading
+        result[key] = clss[0]
+    return result
 
 
 def _parse_audit_sections() -> dict[str, str]:
-    """Return {internal_key: classification} from individual routine sections.
+    """Return {key: classification} after all structural invariants have been asserted."""
+    return _validate_records(_parse_audit_records())
 
-    Parses only rows of the form:
-        | **Internal key** | `key_name` |
-        | **Classification** | `classification_name` |
-    where the value cell contains exactly one backtick-delimited token and
-    nothing else (excluding surrounding whitespace and pipe characters).
-    This avoids matching the header-description row which reads:
-        | **Internal key** | `PROGRAMS` dict key in `coach/programs.py` |
-    """
-    import re
-    # Matches a table row whose second column is exactly one backtick token.
-    _cell_re = re.compile(r"^\|\s*\*\*[^*]+\*\*\s*\|\s*`([^`]+)`\s*\|")
-    key_to_classification: dict[str, str] = {}
-    current_key: str | None = None
-    with open(_AUDIT_PATH, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.rstrip("\n")
-            m = _cell_re.match(line)
-            if not m:
-                continue
-            label_start = line.index("**") + 2
-            label_end = line.index("**", label_start)
-            label = line[label_start:label_end]
-            value = m.group(1).strip()
-            if label == "Internal key":
-                current_key = value
-            elif label == "Classification" and current_key is not None:
-                key_to_classification[current_key] = value
-                current_key = None
-    return key_to_classification
 
+# ---------------------------------------------------------------------------
+# Summary parsers
+# ---------------------------------------------------------------------------
 
 def _parse_summary_counts() -> dict[str, int]:
     """Return {classification: count} from the Summary table."""
@@ -721,7 +804,6 @@ def _parse_summary_counts() -> dict[str, int]:
                 if len(parts) >= 3:
                     cls = parts[1].strip()
                     if cls in _VALID_CLASSIFICATIONS:
-                        # count is the number immediately after the second backtick section
                         after = parts[2].lstrip(" |").split()[0].rstrip(",")
                         try:
                             counts[cls] = int(after)
@@ -743,37 +825,94 @@ def _parse_summary_key_lists() -> dict[str, set[str]]:
             if in_summary and line.startswith("## ") and "Summary" not in line:
                 break
             if in_summary and line.startswith("|") and "`" in line:
-                # Extract classification from first backtick pair
                 parts = line.split("`")
                 if len(parts) < 3:
                     continue
                 cls = parts[1].strip()
                 if cls not in _VALID_CLASSIFICATIONS:
                     continue
-                # Extract everything inside the parentheses (if present)
                 paren_start = line.find("(")
                 paren_end = line.rfind(")")
                 if paren_start == -1 or paren_end == -1:
                     key_lists[cls] = set()
                     continue
                 raw = line[paren_start + 1:paren_end]
-                # Keys are separated by commas; strip spaces and trailing annotation after " — "
                 keys: set[str] = set()
                 for token in raw.split(","):
-                    token = token.strip().split(" ")[0].split("—")[0].strip()
+                    token = token.strip().split(" ")[0].split("\u2014")[0].strip()
                     if token:
                         keys.add(token)
                 key_lists[cls] = keys
     return key_lists
 
 
+def _check_summary_key_lists_match(
+    sections: dict[str, str],
+    summary_lists: dict[str, set[str]],
+) -> list[str]:
+    """Return a list of mismatch error messages (empty when everything matches)."""
+    errors = []
+    for cls, summary_keys in summary_lists.items():
+        if not summary_keys:
+            continue
+        section_keys = {k for k, v in sections.items() if v == cls}
+        missing = sorted(section_keys - summary_keys)
+        extra = sorted(summary_keys - section_keys)
+        if missing:
+            errors.append(f"'{cls}' summary list missing keys present in sections: {missing}")
+        if extra:
+            errors.append(f"'{cls}' summary list has keys not in sections: {extra}")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Structural invariant tests (operate on raw records from the real audit doc)
+# ---------------------------------------------------------------------------
+
 def test_audit_contains_exactly_25_routine_sections():
-    """The audit must have exactly one section per PROGRAMS entry (25 total)."""
-    sections = _parse_audit_sections()
-    assert len(sections) == 25, (
-        f"Expected 25 routine sections in audit; found {len(sections)}: {sorted(sections)}"
+    """The audit must have exactly 25 routine sections."""
+    records = _parse_audit_records()
+    assert len(records) == 25, (
+        f"Expected 25 sections; found {len(records)}: {[r['heading'] for r in records]}"
     )
 
+
+def test_audit_each_section_has_exactly_one_internal_key_row():
+    """Every section must contain exactly one Internal key row."""
+    records = _parse_audit_records()
+    bad = [r for r in records if len(r["internal_keys"]) != 1]
+    assert not bad, (
+        "Sections with wrong number of Internal key rows: "
+        + str({r["heading"]: r["internal_keys"] for r in bad})
+    )
+
+
+def test_audit_each_section_has_exactly_one_classification_row():
+    """Every section must contain exactly one Classification row."""
+    records = _parse_audit_records()
+    bad = [r for r in records if len(r["classifications"]) != 1]
+    assert not bad, (
+        "Sections with wrong number of Classification rows: "
+        + str({r["heading"]: r["classifications"] for r in bad})
+    )
+
+
+def test_audit_section_heading_matches_internal_key():
+    """Each section heading must equal its Internal key value."""
+    records = _parse_audit_records()
+    mismatches = [
+        (r["heading"], r["internal_keys"])
+        for r in records
+        if len(r["internal_keys"]) == 1 and r["heading"] != r["internal_keys"][0]
+    ]
+    assert not mismatches, (
+        f"Heading/key mismatches: {mismatches}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Semantic accounting tests (use validated {key: classification} mapping)
+# ---------------------------------------------------------------------------
 
 def test_every_programs_key_appears_exactly_once_in_audit():
     """Every key in PROGRAMS must appear exactly once in the audit."""
@@ -785,11 +924,11 @@ def test_every_programs_key_appears_exactly_once_in_audit():
 
 
 def test_every_audit_section_has_a_valid_classification():
-    """Every routine section must carry exactly one valid classification."""
+    """Every routine section must carry a valid classification."""
     sections = _parse_audit_sections()
     invalid = {k: v for k, v in sections.items() if v not in _VALID_CLASSIFICATIONS}
     assert not invalid, (
-        f"Audit sections with invalid/missing classification: {invalid}"
+        f"Audit sections with invalid classification: {invalid}"
     )
 
 
@@ -807,7 +946,7 @@ def test_audit_section_classification_counts_match_expected():
 
 
 def test_audit_section_counts_sum_to_25():
-    """The sum of all section-derived classification counts must equal len(PROGRAMS) == 25."""
+    """All classification counts must sum to len(PROGRAMS) == 25."""
     sections = _parse_audit_sections()
     assert len(sections) == len(PROGRAMS) == 25, (
         f"Section count {len(sections)} != PROGRAMS count {len(PROGRAMS)}"
@@ -815,7 +954,7 @@ def test_audit_section_counts_sum_to_25():
 
 
 def test_audit_summary_counts_match_section_derived_counts():
-    """Summary-table counts must equal the counts derived from individual sections."""
+    """Summary-table counts must equal counts derived from individual sections."""
     sections = _parse_audit_sections()
     from collections import Counter
     derived = Counter(sections.values())
@@ -824,31 +963,22 @@ def test_audit_summary_counts_match_section_derived_counts():
         derived_count = derived.get(cls, 0)
         summary_count = summary.get(cls, 0)
         assert derived_count == summary_count, (
-            f"Classification '{cls}': sections say {derived_count}, summary says {summary_count}. "
+            f"Classification '{cls}': sections say {derived_count}, "
+            f"summary says {summary_count}. "
             "Fix either the individual section or the summary table."
         )
 
 
 def test_audit_summary_key_lists_match_section_derived_classifications():
-    """The parenthesised key lists in the summary must match the individual section classifications."""
+    """Parenthesised key lists in the summary must match individual section classifications."""
     sections = _parse_audit_sections()
     summary_lists = _parse_summary_key_lists()
-    for cls, summary_keys in summary_lists.items():
-        if not summary_keys:
-            continue  # count-zero rows have no key list
-        section_keys = {k for k, v in sections.items() if v == cls}
-        missing_from_summary = sorted(section_keys - summary_keys)
-        extra_in_summary = sorted(summary_keys - section_keys)
-        assert not missing_from_summary, (
-            f"'{cls}' summary list missing keys present in sections: {missing_from_summary}"
-        )
-        assert not extra_in_summary, (
-            f"'{cls}' summary list has keys not found in sections: {extra_in_summary}"
-        )
+    errors = _check_summary_key_lists_match(sections, summary_lists)
+    assert not errors, "\n".join(errors)
 
 
 def test_maul_5_and_dumbbell_split_5_in_source_exact_summary():
-    """maul_5 and dumbbell_split_5 must be listed in the source_exact summary row."""
+    """maul_5 and dumbbell_split_5 must appear in the source_exact summary list."""
     summary_lists = _parse_summary_key_lists()
     source_exact_keys = summary_lists.get("source_exact", set())
     assert "maul_5" in source_exact_keys, (
@@ -857,3 +987,127 @@ def test_maul_5_and_dumbbell_split_5_in_source_exact_summary():
     assert "dumbbell_split_5" in source_exact_keys, (
         f"'dumbbell_split_5' missing from source_exact summary list; found: {sorted(source_exact_keys)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Parser mutation tests — inline Markdown, no file I/O
+# These prove that malformed documents are rejected rather than silently
+# producing wrong results.
+# ---------------------------------------------------------------------------
+
+def _lines(text):
+    """Split a multi-line string into a list of lines, each ending with \\n."""
+    return [ln + "\n" for ln in text.splitlines()]
+
+
+def _mk_section(heading, key=None, cls="source_exact"):
+    """Minimal well-formed routine section Markdown."""
+    if key is None:
+        key = heading
+    return (
+        f"### {heading}\n"
+        f"| **Internal key** | `{key}` |\n"
+        f"| **Classification** | `{cls}` |\n"
+    )
+
+
+def test_mutation_duplicate_key_across_sections():
+    """The same Internal key in two different sections must be rejected.
+
+    Both sections have matching heading and key so the heading/key check passes,
+    but the cross-section duplicate check must fire.
+    """
+    # Two structurally valid sections that share the same key.
+    text = _mk_section("routine_a") + _mk_section("routine_a")
+    records = _parse_audit_records_from_lines(_lines(text))
+    with pytest.raises(AssertionError, match="appears in both section"):
+        _validate_records(records)
+
+
+def test_mutation_duplicate_internal_key_rows_in_section():
+    """Two Internal key rows inside one section must be rejected."""
+    text = (
+        "### routine_a\n"
+        "| **Internal key** | `routine_a` |\n"
+        "| **Internal key** | `routine_a` |\n"
+        "| **Classification** | `source_exact` |\n"
+    )
+    records = _parse_audit_records_from_lines(_lines(text))
+    with pytest.raises(AssertionError, match="exactly 1 Internal key row"):
+        _validate_records(records)
+
+
+def test_mutation_duplicate_classification_rows_in_section():
+    """Two Classification rows inside one section must be rejected."""
+    text = (
+        "### routine_a\n"
+        "| **Internal key** | `routine_a` |\n"
+        "| **Classification** | `source_exact` |\n"
+        "| **Classification** | `garmin_adapted` |\n"
+    )
+    records = _parse_audit_records_from_lines(_lines(text))
+    with pytest.raises(AssertionError, match="exactly 1 Classification row"):
+        _validate_records(records)
+
+
+def test_mutation_missing_classification_row():
+    """A section with no Classification row must be rejected."""
+    text = (
+        "### routine_a\n"
+        "| **Internal key** | `routine_a` |\n"
+    )
+    records = _parse_audit_records_from_lines(_lines(text))
+    with pytest.raises(AssertionError, match="exactly 1 Classification row"):
+        _validate_records(records)
+
+
+def test_mutation_missing_internal_key_row():
+    """A section with no Internal key row must be rejected."""
+    text = (
+        "### routine_a\n"
+        "| **Classification** | `source_exact` |\n"
+    )
+    records = _parse_audit_records_from_lines(_lines(text))
+    with pytest.raises(AssertionError, match="exactly 1 Internal key row"):
+        _validate_records(records)
+
+
+def test_mutation_heading_disagrees_with_key():
+    """A section heading that does not match its Internal key must be rejected."""
+    text = (
+        "### routine_a\n"
+        "| **Internal key** | `routine_b` |\n"
+        "| **Classification** | `source_exact` |\n"
+    )
+    records = _parse_audit_records_from_lines(_lines(text))
+    with pytest.raises(AssertionError, match="disagrees with Internal key"):
+        _validate_records(records)
+
+
+def test_mutation_unknown_classification():
+    """A section with an unknown classification must be caught by the validity check."""
+    text = _mk_section("routine_a", cls="totally_wrong")
+    records = _parse_audit_records_from_lines(_lines(text))
+    sections = _validate_records(records)  # structural validation passes
+    invalid = {k: v for k, v in sections.items() if v not in _VALID_CLASSIFICATIONS}
+    assert invalid, (
+        "Expected 'totally_wrong' to be flagged as an invalid classification"
+    )
+
+
+def test_mutation_summary_missing_key():
+    """A summary list that omits a key present in sections must be detected."""
+    sections = {"key_a": "source_exact", "key_b": "source_exact"}
+    summary_lists = {"source_exact": {"key_a"}}  # key_b deliberately omitted
+    errors = _check_summary_key_lists_match(sections, summary_lists)
+    assert errors, "Expected an error for key_b missing from summary"
+    assert any("key_b" in e for e in errors), f"key_b not mentioned in errors: {errors}"
+
+
+def test_mutation_summary_extra_key():
+    """A summary list that contains a key absent from sections must be detected."""
+    sections = {"key_a": "source_exact"}
+    summary_lists = {"source_exact": {"key_a", "key_c"}}  # key_c is extra
+    errors = _check_summary_key_lists_match(sections, summary_lists)
+    assert errors, "Expected an error for key_c extra in summary"
+    assert any("key_c" in e for e in errors), f"key_c not mentioned in errors: {errors}"
