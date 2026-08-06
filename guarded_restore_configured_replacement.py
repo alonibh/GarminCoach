@@ -158,20 +158,31 @@ def _fsync_path(path: Path, *, directory: bool = False) -> None:
 
 
 def _open_nf(path: Path) -> int:
-    """Open with no-follow; verify regular file; return fd."""
+    """Open with no-follow; verify regular file; return fd.
+
+    The descriptor is closed at most once.  On non-regular-file detection the
+    descriptor is closed exactly once (tracked via _fd_closed) before raising;
+    the except handler only closes if the earlier close did not happen.
+    """
     try:
         fd = os.open(str(path), os.O_RDONLY | _NOFOLLOW_FLAG | _BINARY_FLAG)
     except OSError as exc:
         raise ConfiguredReplacementPreconditionError("Could not open file no-follow") from exc
+    _fd_closed = False
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            os.close(fd)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            _fd_closed = True
             raise ConfiguredReplacementPreconditionError("Opened descriptor is not a regular file")
     except ConfiguredReplacementPreconditionError:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        if not _fd_closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         raise
     return fd
 
@@ -285,11 +296,18 @@ def _verify_file_owned(
                 raise ConfiguredReplacementPreconditionError("File link count not 1 after hash")
 
         result = (pre_fst.st_dev, pre_fst.st_ino, stat.S_IMODE(pre_fst.st_mode), pre_fst.st_nlink, pre_fst_mtime)
-    except BaseException:
+    except BaseException as _orig_exc:
+        _close_exc: OSError | None = None
         try:
             os.close(fd)
-        except OSError:
-            pass
+        except OSError as _ce:
+            _close_exc = _ce
+        if _close_exc is not None:
+            # Both verification failed and close failed: surface close uncertainty.
+            # close exception is the direct cause; original verification failure is context.
+            raise ConfiguredReplacementPreconditionError(
+                "Descriptor ownership uncertain: verification failed and descriptor close failed"
+            ) from _close_exc
         raise
 
     # Verification succeeded; surface close failure as a bounded ownership error.

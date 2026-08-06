@@ -22,6 +22,8 @@ from apply_verified_restore import (
     APPLY_EXIT_ROLLBACK_COMPLETED,
     APPLY_EXIT_SUCCESS,
     APPLY_EXIT_UNEXPECTED_FAILURE,
+    _TerminalFailedSafeError,
+    _verify_project_root,
     main,
     _validate_backup_id,
     _validate_operation_id,
@@ -325,7 +327,223 @@ def test_validate_hex64_rejects_uppercase():
 
 
 # ---------------------------------------------------------------------------
-# 3. Fresh apply flow (B2)
+# 3. Argparse JSON-only error output (requirement 5)
+# ---------------------------------------------------------------------------
+
+def test_missing_arg_stderr_is_json_only_no_usage_text(tmp_path, monkeypatch, capsys):
+    """Missing required arg: exit 64, stdout empty, stderr is one valid JSON object, no usage prose."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+    args = [
+        "--backup-id", env["selected_id"],
+        # --expected-current-commit intentionally omitted
+        "--confirm-target-set-hash", env["t_hash"],
+        "--confirm-restore", env["c_val"],
+    ]
+    exit_code = main(args)
+    assert exit_code == APPLY_EXIT_INVALID_ARGUMENTS
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "", "stdout must be empty on argument error"
+    assert "usage:" not in captured.err.lower(), "No usage prose may appear in stderr"
+    err_obj = json.loads(captured.err.strip())
+    assert err_obj["format_version"] == "apply-error-v1"
+    assert err_obj["exit_code"] == APPLY_EXIT_INVALID_ARGUMENTS
+
+
+def test_unknown_option_stderr_is_json_only_no_usage_text(tmp_path, monkeypatch, capsys):
+    """Unknown option: exit 64, stdout empty, stderr is one valid JSON object, no usage prose."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+    args = _cli_args(env) + ["--force"]
+    exit_code = main(args)
+    assert exit_code == APPLY_EXIT_INVALID_ARGUMENTS
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "", "stdout must be empty on unknown option"
+    assert "usage:" not in captured.err.lower(), "No usage prose may appear in stderr"
+    err_obj = json.loads(captured.err.strip())
+    assert err_obj["exit_code"] == APPLY_EXIT_INVALID_ARGUMENTS
+
+
+def test_help_exits_0_help_to_stdout_stderr_empty(tmp_path, monkeypatch, capsys):
+    """--help: exit 0, help text on stdout only, stderr must be empty."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+    exit_code = main(["--help"])
+    assert exit_code == APPLY_EXIT_SUCCESS
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "", "stderr must be empty for --help"
+    assert len(captured.out) > 0, "stdout must contain help text"
+
+
+# ---------------------------------------------------------------------------
+# 4. Generic exception handler boundary (requirement 6)
+# ---------------------------------------------------------------------------
+
+def test_generic_exception_handler_is_not_base_exception():
+    """Source assertion: generic failure handler in main() must catch Exception, not BaseException."""
+    import apply_verified_restore as _av_mod
+    import inspect
+    src = inspect.getsource(_av_mod.main)
+    assert "except BaseException" not in src, \
+        "main() must not have a generic 'except BaseException' handler"
+    assert "except Exception" in src, \
+        "main() must have a generic 'except Exception' handler"
+
+
+def test_system_exit_not_swallowed_by_generic_handler(tmp_path, monkeypatch, capsys):
+    """SystemExit raised from engine must not be caught by the generic Exception handler."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+
+    def raising_replace(**kwargs):
+        raise SystemExit(99)
+
+    monkeypatch.setattr("apply_verified_restore.replace_and_verify_configured_restore", raising_replace)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(_cli_args(env))
+    assert exc_info.value.code == 99
+
+
+# ---------------------------------------------------------------------------
+# 5. Service-stopped proof ordering and behavior (requirement 2)
+# ---------------------------------------------------------------------------
+
+def test_fresh_apply_ordering_root_service_prepare_replace(tmp_path, monkeypatch):
+    """Exact ordering: project-root, service-stopped proof, prepare, replace.
+
+    Tracks the CLI's own _verify_project_root and _require_service_stopped_cli
+    functions (not the underlying engine calls) to isolate the CLI ordering.
+    """
+    import apply_verified_restore as _av_mod
+    call_order = []
+
+    original_prepare = prepare_configured_restore
+    original_replace = replace_and_verify_configured_restore
+
+    def tracked_root():
+        call_order.append("project_root")
+
+    def tracked_service_cli():
+        call_order.append("service_proof")
+
+    def tracked_prepare(**kwargs):
+        call_order.append("prepare")
+        return original_prepare(**kwargs)
+
+    def tracked_replace(**kwargs):
+        call_order.append("replace")
+        return original_replace(**kwargs)
+
+    # Track the CLI's own functions (not the engine's internal service proof).
+    monkeypatch.setattr(_av_mod, "_verify_project_root", tracked_root)
+    monkeypatch.setattr(_av_mod, "_require_service_stopped_cli", tracked_service_cli)
+    monkeypatch.setattr("apply_verified_restore.prepare_configured_restore", tracked_prepare)
+    monkeypatch.setattr("apply_verified_restore.replace_and_verify_configured_restore", tracked_replace)
+
+    env = _prepare_plan(tmp_path, monkeypatch)
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_SUCCESS
+    assert call_order == ["project_root", "service_proof", "prepare", "replace"]
+
+
+def test_service_proof_failure_prevents_prepare_and_replace(tmp_path, monkeypatch, capsys):
+    """When service proof fails, prepare and replace must not be called; exit 65."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+
+    prepare_called = []
+    replace_called = []
+
+    def svc_fails():
+        raise RuntimeError("Service is still running (injected)")
+
+    def spy_prepare(**kwargs):
+        prepare_called.append(True)
+
+    def spy_replace(**kwargs):
+        replace_called.append(True)
+
+    monkeypatch.setattr(database_reset, "require_service_stopped", svc_fails)
+    monkeypatch.setattr("apply_verified_restore.prepare_configured_restore", spy_prepare)
+    monkeypatch.setattr("apply_verified_restore.replace_and_verify_configured_restore", spy_replace)
+
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_PRECONDITION_FAILED
+    assert not prepare_called, "prepare must not be called when service proof fails"
+    assert not replace_called, "replace must not be called when service proof fails"
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+    err_obj = json.loads(captured.err.strip())
+    assert err_obj["exit_code"] == APPLY_EXIT_PRECONDITION_FAILED
+
+
+def test_service_proof_failure_no_journal_created(tmp_path, monkeypatch):
+    """When service proof fails before prepare, no operation journal is created."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+
+    def svc_fails():
+        raise RuntimeError("Service is still running (injected)")
+
+    monkeypatch.setattr(database_reset, "require_service_stopped", svc_fails)
+
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_PRECONDITION_FAILED
+
+    op_dirs = list(env["restore_root"].glob("operation-*"))
+    assert len(op_dirs) == 0, "No operation journal should be created when service proof fails"
+
+
+def test_service_proof_failure_stderr_is_bounded_json(tmp_path, monkeypatch, capsys):
+    """Service proof failure: stderr is one bounded JSON object, no raw exception text."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+    secret_content = "secret-service-path-/etc/garmincoach/token=xYzAbCdEfGhIjKlMn"
+
+    def svc_fails():
+        raise RuntimeError(f"Service check error: {secret_content}")
+
+    monkeypatch.setattr(database_reset, "require_service_stopped", svc_fails)
+
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_PRECONDITION_FAILED
+    captured = capsys.readouterr()
+    assert secret_content not in captured.err, "Raw exception text must not appear in stderr"
+    err_obj = json.loads(captured.err.strip())
+    assert "message" in err_obj
+
+
+def test_reentry_service_proof_before_replace(tmp_path, monkeypatch, capsys):
+    """Re-entry: service proof occurs before delegating to replace."""
+    import apply_verified_restore as _av_mod
+    call_order = []
+
+    original_replace = replace_and_verify_configured_restore
+
+    def tracked_service():
+        call_order.append("service_proof")
+
+    def tracked_replace(**kwargs):
+        call_order.append("replace")
+        return original_replace(**kwargs)
+
+    monkeypatch.setattr(database_reset, "require_service_stopped", tracked_service)
+    monkeypatch.setattr("apply_verified_restore.replace_and_verify_configured_restore", tracked_replace)
+
+    env = _prepare_plan(tmp_path, monkeypatch)
+    # Do fresh apply first to create a journal.
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_SUCCESS
+
+    call_order.clear()
+    op_dirs = list(env["restore_root"].glob("operation-*"))
+    op_id = op_dirs[0].name.removeprefix("operation-")
+    reentry_args = _cli_args(env) + ["--operation-id", op_id]
+    exit_code = main(reentry_args)
+
+    assert "service_proof" in call_order
+    svc_idx = call_order.index("service_proof")
+    if "replace" in call_order:
+        assert svc_idx < call_order.index("replace"), "service proof must precede replace"
+
+
+# ---------------------------------------------------------------------------
+# 6. Fresh apply flow (B2)
 # ---------------------------------------------------------------------------
 
 def test_fresh_apply_succeeds(tmp_path, monkeypatch, capsys):
@@ -390,24 +608,24 @@ def test_fresh_apply_not_at_project_root_exits_65(tmp_path, monkeypatch, capsys)
     assert exit_code == APPLY_EXIT_PRECONDITION_FAILED
 
 
-def test_fresh_apply_service_running_exits_65(tmp_path, monkeypatch, capsys):
-    """Service running causes precondition failure."""
-    import guarded_restore_configured_replacement as _rmod
-
+def test_fresh_apply_service_running_exits_65_exercises_cli_proof(tmp_path, monkeypatch, capsys):
+    """CLI's own service-proof call fails → exit 65; prepare and replace not called."""
     env = _prepare_plan(tmp_path, monkeypatch)
 
-    original_fn = prepare_configured_restore
+    prepare_called = []
 
-    def mock_prepare(**kwargs):
-        raise ConfiguredReplacementPreconditionError("Service-stopped proof failed")
+    def svc_fails():
+        raise RuntimeError("Service is running (injected)")
 
+    monkeypatch.setattr(database_reset, "require_service_stopped", svc_fails)
     monkeypatch.setattr(
         "apply_verified_restore.prepare_configured_restore",
-        mock_prepare,
+        lambda **kw: prepare_called.append(True),
     )
 
     exit_code = main(_cli_args(env))
     assert exit_code == APPLY_EXIT_PRECONDITION_FAILED
+    assert not prepare_called, "prepare must not be called when the CLI service proof fails"
 
 
 def test_fresh_apply_calls_prepare_before_replace(tmp_path, monkeypatch, capsys):
@@ -453,35 +671,32 @@ def test_fresh_apply_skips_prepare_for_reentry(tmp_path, monkeypatch):
     monkeypatch.setattr("apply_verified_restore.replace_and_verify_configured_restore", tracked_replace)
 
     env = _prepare_plan(tmp_path, monkeypatch)
-    # First, do a fresh apply to get an operation ID.
     exit_code = main(_cli_args(env))
     assert exit_code == APPLY_EXIT_SUCCESS
 
     call_log.clear()
-    # Now do re-entry. We need an operation that is not COMPLETED.
-    # Get the op_id from the restore_root.
     op_dirs = list(env["restore_root"].glob("operation-*"))
     assert len(op_dirs) == 1
     op_id = op_dirs[0].name.removeprefix("operation-")
 
-    # Re-entry on COMPLETED should succeed idempotently.
     reentry_args = _cli_args(env) + ["--operation-id", op_id]
     exit_code = main(reentry_args)
-    # COMPLETED re-entry: prepare not called, replace called.
     assert "prepare" not in call_log
     assert "replace" in call_log
 
 
 # ---------------------------------------------------------------------------
-# 4. Re-entry flows (B3)
+# 7. Re-entry flows (B3)
 # ---------------------------------------------------------------------------
 
 def test_reentry_on_completed_returns_success_idempotent(tmp_path, monkeypatch, capsys):
-    """Re-entry on a COMPLETED journal returns success_idempotent."""
+    """Re-entry on a COMPLETED journal returns outcome=success_idempotent exactly."""
     env = _prepare_plan(tmp_path, monkeypatch)
-    # Fresh apply.
     exit_code = main(_cli_args(env))
     assert exit_code == APPLY_EXIT_SUCCESS
+
+    out_fresh, _ = _parse_stdout(capsys)
+    assert out_fresh["outcome"] == "success", "Fresh apply must return 'success', not 'success_idempotent'"
 
     op_dirs = list(env["restore_root"].glob("operation-*"))
     op_id = op_dirs[0].name.removeprefix("operation-")
@@ -492,7 +707,18 @@ def test_reentry_on_completed_returns_success_idempotent(tmp_path, monkeypatch, 
     assert exit_code == APPLY_EXIT_SUCCESS
 
     out, _ = _parse_stdout(capsys)
-    assert out["outcome"] in ("success", "success_idempotent")
+    assert out["outcome"] == "success_idempotent", \
+        f"COMPLETED re-entry must return 'success_idempotent', got {out['outcome']!r}"
+
+
+def test_fresh_apply_outcome_is_success_not_idempotent(tmp_path, monkeypatch, capsys):
+    """Fresh apply must return 'success', never 'success_idempotent'."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_SUCCESS
+    out, _ = _parse_stdout(capsys)
+    assert out["outcome"] == "success"
+    assert out["outcome"] != "success_idempotent"
 
 
 def test_reentry_on_failed_manual_refuses(tmp_path, monkeypatch, capsys):
@@ -522,8 +748,13 @@ def test_reentry_on_failed_manual_refuses(tmp_path, monkeypatch, capsys):
     assert err["exit_code"] == APPLY_EXIT_MANUAL_RECOVERY_REQUIRED
 
 
-def test_reentry_on_failed_safe_refuses(tmp_path, monkeypatch, capsys):
-    """Re-entry on FAILED_SAFE exits with rollback-completed code."""
+def test_reentry_on_terminal_failed_safe_exits_66(tmp_path, monkeypatch, capsys):
+    """Explicit re-entry on already-settled FAILED_SAFE journal exits 66 (not 67).
+
+    Exit 66 = terminal FAILED_SAFE re-entry (no mutation this invocation).
+    Exit 67 = live rollback completed during this invocation.
+    These must be distinct.
+    """
     env = _prepare_plan(tmp_path, monkeypatch)
     prep = prepare_configured_restore(
         selected_backup_id=env["selected_id"],
@@ -542,7 +773,13 @@ def test_reentry_on_failed_safe_refuses(tmp_path, monkeypatch, capsys):
 
     reentry_args = _cli_args(env) + ["--operation-id", op_id]
     exit_code = main(reentry_args)
-    assert exit_code == APPLY_EXIT_ROLLBACK_COMPLETED
+    assert exit_code == APPLY_EXIT_FAILED_SAFE, (
+        f"Terminal FAILED_SAFE re-entry must exit {APPLY_EXIT_FAILED_SAFE} (exit 66), "
+        f"not {APPLY_EXIT_ROLLBACK_COMPLETED} (exit 67)"
+    )
+
+    err, _ = _parse_stderr(capsys)
+    assert err["exit_code"] == APPLY_EXIT_FAILED_SAFE
 
 
 def test_reentry_legal_replacing_delegates_to_engine(tmp_path, monkeypatch, capsys):
@@ -581,7 +818,6 @@ def test_reentry_requires_all_four_confirmation_args(tmp_path, monkeypatch):
     )
     op_id = prep.operation_id
 
-    # Missing --backup-id → exit 64.
     args_no_backup = [
         "--expected-current-commit", env["commit_hex"],
         "--confirm-target-set-hash", env["t_hash"],
@@ -593,19 +829,15 @@ def test_reentry_requires_all_four_confirmation_args(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 5. Exit codes (B4)
+# 8. Exit codes: 66 vs 67 distinction (requirement 3)
 # ---------------------------------------------------------------------------
 
-def test_failed_safe_outcome_exits_66(tmp_path, monkeypatch, capsys):
-    """FAILED_SAFE from replacement engine maps to exit 66 (rollback completed)."""
+def test_live_rollback_during_invocation_exits_67(tmp_path, monkeypatch, capsys):
+    """Live ConfiguredReplacementRollbackCompletedError during this invocation maps to exit 67."""
     env = _prepare_plan(tmp_path, monkeypatch)
 
-    import guarded_restore_configured_replacement as _rmod
-
-    original_replace = replace_and_verify_configured_restore
-
     def failing_replace(**kwargs):
-        raise ConfiguredReplacementRollbackCompletedError("Injected rollback completion")
+        raise ConfiguredReplacementRollbackCompletedError("Injected live rollback completion")
 
     monkeypatch.setattr("apply_verified_restore.replace_and_verify_configured_restore", failing_replace)
 
@@ -614,6 +846,19 @@ def test_failed_safe_outcome_exits_66(tmp_path, monkeypatch, capsys):
 
     err, _ = _parse_stderr(capsys)
     assert err["exit_code"] == APPLY_EXIT_ROLLBACK_COMPLETED
+
+
+def test_terminal_failed_safe_and_live_rollback_have_distinct_exit_codes():
+    """APPLY_EXIT_FAILED_SAFE (66) and APPLY_EXIT_ROLLBACK_COMPLETED (67) must be distinct."""
+    assert APPLY_EXIT_FAILED_SAFE != APPLY_EXIT_ROLLBACK_COMPLETED
+    assert APPLY_EXIT_FAILED_SAFE == 66
+    assert APPLY_EXIT_ROLLBACK_COMPLETED == 67
+
+
+def test_terminal_failed_safe_error_is_own_class():
+    """_TerminalFailedSafeError must be a separate class from ConfiguredReplacementRollbackCompletedError."""
+    assert not issubclass(_TerminalFailedSafeError, ConfiguredReplacementRollbackCompletedError)
+    assert not issubclass(ConfiguredReplacementRollbackCompletedError, _TerminalFailedSafeError)
 
 
 def test_manual_recovery_outcome_exits_68(tmp_path, monkeypatch, capsys):
@@ -701,7 +946,43 @@ def test_unexpected_failure_exits_72(tmp_path, monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# 6. Output contract (B5)
+# 9. target_set_hash in success JSON (requirement 4)
+# ---------------------------------------------------------------------------
+
+def test_single_user_success_output_contains_target_set_hash(tmp_path, monkeypatch, capsys):
+    """Single-user success JSON contains target_set_hash equal to the confirmed hash."""
+    env = _prepare_plan(tmp_path, monkeypatch, multi_user=False)
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_SUCCESS
+    out, _ = _parse_stdout(capsys)
+    assert "target_set_hash" in out, "target_set_hash field must be present in success JSON"
+    assert out["target_set_hash"] == env["t_hash"], \
+        "target_set_hash must equal the confirmed --confirm-target-set-hash value"
+
+
+def test_multi_user_success_output_contains_target_set_hash(tmp_path, monkeypatch, capsys):
+    """Multi-user success JSON contains target_set_hash equal to the confirmed hash."""
+    env = _prepare_plan(tmp_path, monkeypatch, multi_user=True)
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_SUCCESS
+    out, _ = _parse_stdout(capsys)
+    assert "target_set_hash" in out
+    assert out["target_set_hash"] == env["t_hash"]
+
+
+def test_no_raw_tenant_db_paths_in_success_output(tmp_path, monkeypatch, capsys):
+    """Success JSON must not contain raw database file paths."""
+    env = _prepare_plan(tmp_path, monkeypatch)
+    exit_code = main(_cli_args(env))
+    assert exit_code == APPLY_EXIT_SUCCESS
+    captured = capsys.readouterr()
+    out_str = captured.out
+    assert str(env["control_db"]) not in out_str, "control DB path must not appear in output"
+    assert str(env["single_user_db"]) not in out_str, "user DB path must not appear in output"
+
+
+# ---------------------------------------------------------------------------
+# 10. Output contract (B5)
 # ---------------------------------------------------------------------------
 
 def test_success_output_is_bounded_json_to_stdout(tmp_path, monkeypatch, capsys):
@@ -720,6 +1001,7 @@ def test_success_output_is_bounded_json_to_stdout(tmp_path, monkeypatch, capsys)
     assert "selected_backup_id" in out
     assert "safety_backup_id" in out
     assert "runtime_mode" in out
+    assert "target_set_hash" in out
     assert "target_key_count" in out
     assert "rollback_occurred" in out
     assert "configured_database_mutated" in out
@@ -827,7 +1109,7 @@ def test_stdout_output_is_deterministic_json(tmp_path, monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# 7. Crash and interruption behavior (B6)
+# 11. Crash and interruption behavior (B6)
 # ---------------------------------------------------------------------------
 
 def test_keyboard_interrupt_exits_without_traceback(tmp_path, monkeypatch, capsys):
@@ -849,7 +1131,7 @@ def test_keyboard_interrupt_exits_without_traceback(tmp_path, monkeypatch, capsy
 
 
 # ---------------------------------------------------------------------------
-# 8. CLI safety constraints (no direct DB access, no service control)
+# 12. CLI safety constraints (no direct DB access, no service control)
 # ---------------------------------------------------------------------------
 
 def test_cli_never_calls_os_replace(tmp_path, monkeypatch, capsys):
@@ -920,12 +1202,11 @@ def test_cli_confirmation_values_passed_unchanged_to_replace(tmp_path, monkeypat
 
 
 # ---------------------------------------------------------------------------
-# 9. Real configured path canary
+# 13. Real configured path canary
 # ---------------------------------------------------------------------------
 
 def test_real_configured_path_canary(tmp_path, monkeypatch):
     """Verifies apply CLI never touches real configured DB paths (canary fixture)."""
     env = _prepare_plan(tmp_path, monkeypatch)
     exit_code = main(_cli_args(env))
-    # The fixture validates real path integrity.
     assert exit_code in (APPLY_EXIT_SUCCESS, APPLY_EXIT_PRECONDITION_FAILED)

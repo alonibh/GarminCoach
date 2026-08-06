@@ -9,8 +9,8 @@ Exit codes
 0   success or verified idempotent COMPLETED re-entry
 64  CLI usage error or invalid argument
 65  precondition or verification refusal (no configured database mutated)
-66  safe failure: automatic rollback succeeded and verified (FAILED_SAFE)
-67  automatic rollback completed and verified (rollback path from live run)
+66  explicit re-entry on already-settled FAILED_SAFE; no configured mutation this invocation
+67  replacement/postcheck failed and engine completed automatic rollback during this invocation
 68  manual recovery required; do not auto-resume
 69  evidence cleanup required; database outcome is known
 70  journal or persistence state is uncertain
@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import config
+import database_reset
 from guarded_restore import (
     APPLY_EXIT_CLEANUP_REQUIRED,
     APPLY_EXIT_FAILED_SAFE,
@@ -66,6 +67,35 @@ _APPLY_FORMAT_VERSION = "apply-v1"
 _APPLY_ERROR_FORMAT_VERSION = "apply-error-v1"
 
 
+class _TerminalFailedSafeError(Exception):
+    """Raised when re-entering an already-settled FAILED_SAFE journal.
+
+    Distinct from ConfiguredReplacementRollbackCompletedError (exit 67), which is
+    raised when automatic rollback occurs live during this invocation.  This class
+    represents a terminal state that was set by a prior invocation; no configured
+    mutation was performed by the current invocation.
+    """
+
+
+class _BoundedUsageError(Exception):
+    """Raised by _BoundedArgumentParser on usage errors; carries a fixed message."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.bounded_message = message
+
+
+class _BoundedArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser subclass that raises _BoundedUsageError instead of printing to stderr and exiting.
+
+    Prevents argparse from writing 'usage: ...' prose to stderr before the JSON error object.
+    --help still prints to stdout and exits 0 via the standard argparse path.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        raise _BoundedUsageError("Invalid or missing CLI arguments")
+
+
 def _bounded_json(obj: dict) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
@@ -78,6 +108,7 @@ def _stdout_result(
     selected_backup_id: str,
     safety_backup_id: str | None,
     runtime_mode: str,
+    target_set_hash: str,
     target_key_count: int,
     rollback_occurred: bool,
     configured_database_mutated: bool,
@@ -92,6 +123,7 @@ def _stdout_result(
         "selected_backup_id": selected_backup_id,
         "safety_backup_id": safety_backup_id,
         "runtime_mode": runtime_mode,
+        "target_set_hash": target_set_hash,
         "target_key_count": target_key_count,
         "rollback_occurred": rollback_occurred,
         "configured_database_mutated": configured_database_mutated,
@@ -115,7 +147,7 @@ def _validate_backup_id(raw: str) -> str:
     if val.startswith("backup-"):
         val = val[7:]
     if not _BACKUP_ID.fullmatch(val):
-        raise ValueError(f"Invalid backup ID format: must match YYYYMMDDTHHMMSSZ-<8hex>")
+        raise ValueError("Invalid backup ID format: must match YYYYMMDDTHHMMSSZ-<8hex>")
     if "/" in raw or "\\" in raw or ".." in raw:
         raise ValueError("Backup ID cannot contain path separators or traversal components")
     return val
@@ -124,7 +156,7 @@ def _validate_backup_id(raw: str) -> str:
 def _validate_operation_id(raw: str) -> str:
     val = raw.strip()
     if not _OPERATION_ID.fullmatch(val):
-        raise ValueError(f"Invalid operation ID format: must match restore-YYYYMMDDTHHMMSSZ-<8hex>")
+        raise ValueError("Invalid operation ID format: must match restore-YYYYMMDDTHHMMSSZ-<8hex>")
     if "/" in val or "\\" in val or ".." in val:
         raise ValueError("Operation ID cannot contain path separators or traversal components")
     return val
@@ -160,10 +192,21 @@ def _verify_project_root() -> None:
         raise ConfiguredRestorePreconditionError("Project root path cannot contain symlinks")
 
 
+def _require_service_stopped_cli() -> None:
+    """Require service stopped before any mutation; map all failures to a bounded precondition error."""
+    try:
+        database_reset.require_service_stopped()
+    except Exception as exc:
+        raise ConfiguredRestorePreconditionError(
+            "Service-stopped proof failed"
+        ) from exc
+
+
 def _result_from_replacement(
     result: ConfiguredReplacementResult,
     *,
     outcome: str,
+    confirmed_target_set_hash: str,
     exit_code: int,
 ) -> str:
     return _stdout_result(
@@ -173,6 +216,7 @@ def _result_from_replacement(
         selected_backup_id=result.selected_backup_id,
         safety_backup_id=result.safety_backup_id,
         runtime_mode=result.runtime_mode,
+        target_set_hash=confirmed_target_set_hash,
         target_key_count=len(result.target_keys),
         rollback_occurred=result.rollback_occurred,
         configured_database_mutated=result.configured_database_mutated,
@@ -207,7 +251,12 @@ def _apply_fresh(
         confirmed_target_set_hash=target_set_hash,
         confirmed_restore_value=confirm_restore,
     )
-    output = _result_from_replacement(result, outcome="success", exit_code=APPLY_EXIT_SUCCESS)
+    output = _result_from_replacement(
+        result,
+        outcome="success",
+        confirmed_target_set_hash=target_set_hash,
+        exit_code=APPLY_EXIT_SUCCESS,
+    )
     return output, APPLY_EXIT_SUCCESS
 
 
@@ -234,11 +283,12 @@ def _apply_reentry(
             "Operation is in FAILED_MANUAL_RECOVERY_REQUIRED; inspect-only"
         )
 
-    _terminal_stages = {RestoreStage.COMPLETED, RestoreStage.FAILED_SAFE}
     if journal.stage is RestoreStage.FAILED_SAFE:
-        raise ConfiguredReplacementRollbackCompletedError(
+        raise _TerminalFailedSafeError(
             "Operation already settled FAILED_SAFE; no further apply possible"
         )
+
+    pre_delegation_stage = journal.stage
 
     result: ConfiguredReplacementResult = replace_and_verify_configured_restore(
         operation_id=operation_id,
@@ -248,11 +298,18 @@ def _apply_reentry(
         confirmed_restore_value=confirm_restore,
     )
 
-    if result.stage is RestoreStage.COMPLETED and not result.configured_database_mutated:
+    # Determine outcome based on the stage at the start of re-entry, not on result metadata.
+    # configured_database_mutated describes the overall operation history, not this invocation.
+    if pre_delegation_stage is RestoreStage.COMPLETED:
         outcome = "success_idempotent"
     else:
         outcome = "success"
-    output = _result_from_replacement(result, outcome=outcome, exit_code=APPLY_EXIT_SUCCESS)
+    output = _result_from_replacement(
+        result,
+        outcome=outcome,
+        confirmed_target_set_hash=target_set_hash,
+        exit_code=APPLY_EXIT_SUCCESS,
+    )
     return output, APPLY_EXIT_SUCCESS
 
 
@@ -266,6 +323,7 @@ def apply_restore(
 ) -> tuple[str, int]:
     """Core apply logic. Returns (stdout_json, exit_code). Raises on errors."""
     _verify_project_root()
+    _require_service_stopped_cli()
 
     if operation_id is not None:
         return _apply_reentry(
@@ -284,6 +342,11 @@ def apply_restore(
 
 
 _BOUNDED_MESSAGES: dict[type, tuple[str, int, str]] = {
+    _TerminalFailedSafeError: (
+        "terminal_failed_safe",
+        APPLY_EXIT_FAILED_SAFE,
+        "Operation already settled FAILED_SAFE; this invocation performed no configured mutation",
+    ),
     ConfiguredReplacementManualRecoveryRequiredError: (
         "manual_recovery_required",
         APPLY_EXIT_MANUAL_RECOVERY_REQUIRED,
@@ -332,8 +395,8 @@ _BOUNDED_MESSAGES: dict[type, tuple[str, int, str]] = {
 }
 
 
-def _map_exception_to_exit(exc: BaseException) -> tuple[str, int, str]:
-    """Map a raised exception to (error_kind, exit_code, bounded_message). No message-text matching."""
+def _map_exception_to_exit(exc: Exception) -> tuple[str, int, str]:
+    """Map a raised exception to (error_kind, exit_code, bounded_message). Type-based only."""
     for exc_type, (kind, code, msg) in _BOUNDED_MESSAGES.items():
         if isinstance(exc, exc_type):
             return kind, code, msg
@@ -341,7 +404,7 @@ def _map_exception_to_exit(exc: BaseException) -> tuple[str, int, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _BoundedArgumentParser(
         description="Operator apply CLI for GarminCoach guarded verified restore (Phase 6B3B3)",
         prog="apply_verified_restore.py",
         add_help=True,
@@ -379,14 +442,17 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         args = parser.parse_args(argv)
-    except SystemExit as exc:
+    except _BoundedUsageError:
         err = _stderr_error(
             error_kind="invalid_arguments",
             message="Invalid or missing CLI arguments",
             exit_code=APPLY_EXIT_INVALID_ARGUMENTS,
         )
         print(err, file=sys.stderr)
-        return APPLY_EXIT_INVALID_ARGUMENTS if exc.code != 0 else APPLY_EXIT_SUCCESS
+        return APPLY_EXIT_INVALID_ARGUMENTS
+    except SystemExit as exc:
+        # --help exits 0; no error JSON for help output.
+        return APPLY_EXIT_SUCCESS if exc.code == 0 else APPLY_EXIT_INVALID_ARGUMENTS
 
     try:
         backup_id = _validate_backup_id(args.backup_id)
@@ -423,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         print(err, file=sys.stderr)
         return APPLY_EXIT_UNEXPECTED_FAILURE
 
-    except BaseException as exc:
+    except Exception as exc:
         error_kind, exit_code, bounded_msg = _map_exception_to_exit(exc)
         err = _stderr_error(
             error_kind=error_kind,

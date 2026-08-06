@@ -2418,3 +2418,169 @@ def test_require_service_stopped_sanitizes_error_message(tmp_path, monkeypatch):
     assert token_like not in public_msg, "Token-like value must not appear in public error"
     assert long_content[:100] not in public_msg, "Long attacker content must not appear in public error"
     assert len(public_msg) < 500, "Public error message must be bounded"
+
+
+# ---------------------------------------------------------------------------
+# A7. Descriptor close lifecycle: _open_nf and _verify_file_owned
+# ---------------------------------------------------------------------------
+
+def test_open_nf_non_regular_file_closes_exactly_once(tmp_path, monkeypatch):
+    """_open_nf closes the descriptor exactly once when fstat shows non-regular file."""
+    import guarded_restore_configured_replacement as _rmod
+    import stat as _stat
+
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(b"test data")
+
+    close_count = [0]
+    original_close = os.close
+
+    def counting_close(fd):
+        close_count[0] += 1
+        original_close(fd)
+
+    original_fstat = os.fstat
+
+    class _FakeStat:
+        def __init__(self, real):
+            self._r = real
+            self.st_mode = _stat.S_IFIFO  # non-regular
+            self.st_dev = real.st_dev
+            self.st_ino = real.st_ino
+            self.st_nlink = real.st_nlink
+            self.st_size = real.st_size
+            self.st_mtime_ns = getattr(real, "st_mtime_ns", 0)
+
+    def fake_fstat(fd):
+        return _FakeStat(original_fstat(fd))
+
+    monkeypatch.setattr(_rmod.os, "fstat", fake_fstat)
+    monkeypatch.setattr(_rmod.os, "close", counting_close)
+
+    with pytest.raises(_rmod.ConfiguredReplacementPreconditionError, match="not a regular file"):
+        _rmod._open_nf(test_file)
+
+    assert close_count[0] == 1, (
+        f"Non-regular-file path must close fd exactly once, got {close_count[0]}"
+    )
+
+
+def test_open_nf_success_does_not_close(tmp_path, monkeypatch):
+    """_open_nf does not close the fd on success; caller is responsible."""
+    import guarded_restore_configured_replacement as _rmod
+
+    test_file = tmp_path / "regular.db"
+    test_file.write_bytes(b"regular file data")
+
+    close_count = [0]
+    original_close = os.close
+
+    def counting_close(fd):
+        close_count[0] += 1
+        original_close(fd)
+
+    monkeypatch.setattr(_rmod.os, "close", counting_close)
+
+    fd = _rmod._open_nf(test_file)
+    assert close_count[0] == 0, "Successful _open_nf must not close the fd"
+    os.close(fd)
+
+
+def test_verify_file_owned_verification_failure_closes_exactly_once(tmp_path, monkeypatch):
+    """On SHA-256 verification failure, fd is closed exactly once."""
+    import guarded_restore_configured_replacement as _rmod
+
+    data = b"test data for close tracking"
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(data)
+
+    close_count = [0]
+    original_close = os.close
+
+    def counting_close(fd):
+        close_count[0] += 1
+        original_close(fd)
+
+    monkeypatch.setattr(_rmod.os, "close", counting_close)
+
+    with pytest.raises(_rmod.ConfiguredReplacementPreconditionError):
+        _rmod._verify_file_owned(
+            test_file,
+            expected_size=len(data),
+            expected_sha256="a" * 64,  # Wrong SHA
+        )
+
+    assert close_count[0] == 1, (
+        f"Verification failure must close fd exactly once, got {close_count[0]}"
+    )
+
+
+def test_verify_file_owned_success_closes_exactly_once(tmp_path, monkeypatch):
+    """On successful verification, fd is closed exactly once."""
+    import hashlib
+    import guarded_restore_configured_replacement as _rmod
+
+    data = b"test data for success close tracking"
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(data)
+    test_file.chmod(0o600)
+    sha = hashlib.sha256(data).hexdigest()
+
+    close_count = [0]
+    original_close = os.close
+
+    def counting_close(fd):
+        close_count[0] += 1
+        original_close(fd)
+
+    monkeypatch.setattr(_rmod.os, "close", counting_close)
+
+    _rmod._verify_file_owned(
+        test_file,
+        expected_size=len(data),
+        expected_sha256=sha,
+        require_mode_0600=True,
+        require_single_link=True,
+    )
+
+    assert close_count[0] == 1, (
+        f"Successful verification must close fd exactly once, got {close_count[0]}"
+    )
+
+
+def test_verify_file_owned_dual_failure_surfaces_close_uncertainty(tmp_path, monkeypatch):
+    """When verification fails AND close fails, a bounded close-uncertainty error is raised.
+
+    The close exception must be the direct cause; the original verification failure
+    must be preserved as context; neither failure is silently discarded.
+    """
+    import guarded_restore_configured_replacement as _rmod
+
+    data = b"test data for dual failure"
+    test_file = tmp_path / "test.db"
+    test_file.write_bytes(data)
+
+    def failing_close(fd):
+        raise OSError(9, "Bad file descriptor (injected close failure)")
+
+    monkeypatch.setattr(_rmod.os, "close", failing_close)
+
+    with pytest.raises(_rmod.ConfiguredReplacementPreconditionError) as exc_info:
+        _rmod._verify_file_owned(
+            test_file,
+            expected_size=len(data),
+            expected_sha256="a" * 64,  # Wrong SHA → verification fails
+        )
+
+    exc = exc_info.value
+    assert "uncertain" in str(exc).lower() or "close" in str(exc).lower(), (
+        f"Close uncertainty error expected; got: {exc!r}"
+    )
+    # The close exception must be the direct cause.
+    assert isinstance(exc.__cause__, OSError), (
+        f"__cause__ must be the OSError close failure, got {exc.__cause__!r}"
+    )
+    # The original verification failure must be preserved as context.
+    assert exc.__context__ is not None, (
+        "Original verification failure must be preserved as __context__"
+    )

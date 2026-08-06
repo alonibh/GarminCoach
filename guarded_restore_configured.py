@@ -16,7 +16,8 @@ Orchestrates configured-runtime restore preparation up to global stage REPLACEME
 13. Immutable result object with locks_released=True and no internal lock/file handles.
 
 Configured database files and sidecars are NOT modified by this module.
-Phase 6B3B2 (replacement/rollback) and Phase 6B3B3 (CLI/apply) remain unimplemented.
+Phase 6B3B2 (replacement/rollback) is implemented in guarded_restore_configured_replacement.py.
+Phase 6B3B3 (operator apply CLI) is implemented in apply_verified_restore.py.
 """
 from __future__ import annotations
 
