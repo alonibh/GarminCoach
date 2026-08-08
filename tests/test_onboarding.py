@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from coach.onboarding import analyze_user_history
+from coach.programs import PROGRAMS
 from db import Activity, ExerciseSet, PlannedSession, SyncState, Workout
 
 
@@ -148,7 +149,7 @@ def test_history_recommends_push_pull_legs_from_repeated_exercise_patterns(sessi
     assert analysis["plan_matches"]["ppl_6"]["is_best"] is True
     assert analysis["plan_matches"]["ppl_6"]["rank"] == 1
     assert analysis["plan_matches"]["ppl_6"]["score"] >= 80
-    assert len(analysis["plan_matches"]) == 25
+    assert len(analysis["plan_matches"]) == len(PROGRAMS)
 
 
 def test_history_recommends_upper_lower_from_repeated_exercise_patterns(session):
@@ -194,7 +195,7 @@ def test_every_routine_has_an_explainable_ranked_match_score(session):
     analysis = analyze_user_history(session)
     matches = analysis["plan_matches"]
 
-    assert sorted(match["rank"] for match in matches.values()) == list(range(1, 26))
+    assert sorted(match["rank"] for match in matches.values()) == list(range(1, len(PROGRAMS) + 1))
     assert all(0 <= match["score"] <= 100 for match in matches.values())
     assert all(match["label"] in {"Strong match", "Good match", "Possible match", "Poor fit"} for match in matches.values())
     assert all(not match["evidence"] for match in matches.values())

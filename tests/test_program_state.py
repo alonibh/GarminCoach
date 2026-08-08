@@ -81,9 +81,13 @@ def _activity(session, activity_id, when, *, workout_id=None, exercise_name=None
     return activity
 
 
-def test_all_twenty_five_curated_program_policies_match_catalog():
+def test_all_curated_program_policies_match_catalog():
     validate_program_policies(PROGRAMS)
-    assert len(PROGRAM_POLICIES) == 25
+    assert set(PROGRAM_POLICIES) == set(PROGRAMS), (
+        f"PROGRAM_POLICIES keys differ from PROGRAMS keys: "
+        f"extra={set(PROGRAM_POLICIES)-set(PROGRAMS)}, missing={set(PROGRAMS)-set(PROGRAM_POLICIES)}"
+    )
+    assert len(PROGRAM_POLICIES) == 24
 
 
 def test_powerbuilding_uses_published_level_and_intermediate_cadence():
