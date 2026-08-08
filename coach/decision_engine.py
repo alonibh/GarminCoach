@@ -312,7 +312,7 @@ def evaluate_morning_decision(
     optional_rec = None
     policy_version = None
 
-    if program and cursor:
+    if program:
         state = program_state_facts(session, program, on_date=target)
         if state:
             policy_version = state.get("policy_version")

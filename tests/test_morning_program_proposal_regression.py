@@ -1,4 +1,4 @@
-"""Regression tests for morning program proposal, priority fetch, recovery, and plan page."""
+from contextlib import contextmanager
 from datetime import date, datetime
 import pytz
 
@@ -9,11 +9,25 @@ from coach.decision_engine import evaluate_morning_decision, selected_workouts_f
 from coach.interactions import prepare_recovery_morning, reply_markup_for_ids
 from db import DailyHealth, MorningBriefState, NotificationOutbox, PlannedSession, ProgramCursor, Sleep
 from metrics import freshness
+import notify.morning as morning
 from notify.morning import morning_deadline, priority_sync_finished, start_priority_fetch
+import tenant_context
 from tests.test_program_state import _add_program
 
 
 TARGET = date(2026, 7, 6)
+
+
+@pytest.fixture(autouse=True)
+def bind_test_tenant():
+    with tenant_context.tenant_scope(tenant_context.TenantIdentity("00000000-0000-0000-0000-000000000001")):
+        yield
+
+
+@contextmanager
+def _bound_session(session):
+    yield session
+    session.commit()
 
 
 def _fresh_data(session, readiness_score=75):
@@ -27,10 +41,17 @@ def _fresh_data(session, readiness_score=75):
 
 
 def test_active_program_no_planned_session_proposes_next_session(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
     program, source = _add_program(session)
     _fresh_data(session)
+    now_val = datetime(2026, 7, 6, 7, 30)
     monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
-    monkeypatch.setattr("time_utils.get_local_now", lambda: datetime(2026, 7, 6, 7, 30))
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
 
     result = evaluate_morning_decision(session, target=TARGET)
     assert result.decision_type == "PROPOSE_NEXT_SESSION"
@@ -47,13 +68,15 @@ def test_active_program_no_planned_session_proposes_next_session(session, monkey
 
 
 def test_morning_watch_starts_priority_fetch_and_waits_for_data(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr("notify.outbox.get_session", lambda: _bound_session(session))
     program, source = _add_program(session)
     tz = pytz.timezone("Asia/Jerusalem")
     now = tz.localize(datetime(2026, 7, 6, 7, 0))
     monkeypatch.setattr("time_utils.get_local_now", lambda: now)
     monkeypatch.setattr("time_utils.get_local_date", lambda: now.date())
-    monkeypatch.setattr("notify.morning.get_local_now", lambda: now)
-    monkeypatch.setattr("notify.morning.get_local_date", lambda: now.date())
+    monkeypatch.setattr(morning, "get_local_now", lambda: now)
+    monkeypatch.setattr(morning, "get_local_date", lambda: now.date())
     monkeypatch.setattr("sync.sync_runner.try_start_priority_sync", lambda: True)
 
     start_priority_fetch()
@@ -76,6 +99,7 @@ def test_morning_watch_starts_priority_fetch_and_waits_for_data(session, monkeyp
 
 
 def test_program_rest_day_does_not_propose_strength_session(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
     program, source = _add_program(session)
     _fresh_data(session)
     cursor = ProgramCursor(
@@ -98,6 +122,7 @@ def test_program_rest_day_does_not_propose_strength_session(session, monkeypatch
 
 
 def test_selected_workout_uses_training_readiness_recovery_flow(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
     _fresh_data(session, readiness_score=20)
     planned = PlannedSession(
         title="Upper Body", activity_type="strength_training", target_date=TARGET,
@@ -114,6 +139,7 @@ def test_selected_workout_uses_training_readiness_recovery_flow(session, monkeyp
 
 
 def test_training_readiness_not_used_to_force_rest_before_workout_selected(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
     program, source = _add_program(session)
     _fresh_data(session, readiness_score=15)
     monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
@@ -125,6 +151,8 @@ def test_training_readiness_not_used_to_force_rest_before_workout_selected(sessi
 
 
 def test_morning_deadline_1130_fallback(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr("notify.outbox.get_session", lambda: _bound_session(session))
     program, source = _add_program(session)
     tz = pytz.timezone("Asia/Jerusalem")
     now = tz.localize(datetime(2026, 7, 6, 11, 30))
@@ -142,6 +170,8 @@ def test_morning_deadline_1130_fallback(session, monkeypatch):
 
 
 def test_idempotency_and_no_duplicate_briefs(session, monkeypatch):
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr("notify.outbox.get_session", lambda: _bound_session(session))
     program, source = _add_program(session)
     _fresh_data(session)
     tz = pytz.timezone("Asia/Jerusalem")
@@ -161,19 +191,35 @@ def test_idempotency_and_no_duplicate_briefs(session, monkeypatch):
 
 
 def test_plan_page_renders_upcoming_planned_session(session, monkeypatch):
-    from app import app
+    import config
+    import db
+    import tenant_store
+    from control_db import User
+    import app as app_module
+
+    monkeypatch.setattr(config, "APP_USERNAME", "", raising=False)
+    monkeypatch.setattr("app.resolve_web_session", lambda sess, token: User(
+        id="00000000-0000-0000-0000-000000000001", email="test@example.com",
+        status="active", role="owner", onboarding_step="complete",
+    ))
+    monkeypatch.setattr(db, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(tenant_store, "engine_for_user", lambda uid, root=None: session.bind)
+
     program, source = _add_program(session)
+    today_val = date.today()
     planned = PlannedSession(
-        title="Legs & Core", activity_type="strength_training", target_date=TARGET,
+        title="Legs & Core", activity_type="strength_training", target_date=today_val,
         suggested_time="18:00", duration_min=60, status="planned", source="coach"
     )
     session.add(planned)
     session.commit()
 
-    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
-    client = TestClient(app)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: today_val)
+    client = TestClient(app_module.app, cookies={"gc_session": "test_token"})
     response = client.get("/program")
     assert response.status_code == 200
     assert "Legs &amp; Core" in response.text or "Legs & Core" in response.text
     assert "Next scheduled session" in response.text
     assert "Nothing scheduled yet" not in response.text
+
