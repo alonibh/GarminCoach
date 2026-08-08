@@ -431,3 +431,78 @@ def test_morning_facts_fingerprint_updates_decision_record_idempotency(session, 
     count_second = session.query(NotificationOutbox).filter_by(event_type="morning_briefing").count()
     assert count_second == 1
 
+
+def test_telegram_recommendation_menu_button_current_state_regressions(session, monkeypatch):
+    import json
+    from coach.renderers import render_recommendation
+    from db import DecisionRecord, PendingInteraction, NotificationOutbox, ProgramCursor
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
+    now_val = datetime(2026, 7, 6, 12, 0)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    stale_same_day = DecisionRecord(
+        decision_id="stale-same-day-id",
+        evaluated_at=datetime(2026, 7, 6, 6, 30),
+        decision_type="NO_SELECTED_WORKOUT",
+        result_json=json.dumps({"decision_type": "NO_SELECTED_WORKOUT", "workout_outcome": "NO_SELECTED_WORKOUT", "reason_codes": ["NO_ELIGIBLE_SELECTED_WORKOUT"]}),
+        idempotency_key="stale-key-1",
+    )
+    session.add(stale_same_day)
+
+    yesterday_rec = DecisionRecord(
+        decision_id="yesterday-id",
+        evaluated_at=datetime(2026, 7, 5, 18, 0),
+        decision_type="KEEP_SELECTED_WORKOUT",
+        result_json=json.dumps({"decision_type": "KEEP_SELECTED_WORKOUT"}),
+        idempotency_key="stale-key-2",
+    )
+    session.add(yesterday_rec)
+    session.commit()
+
+    program, source = _add_program(session)
+    _fresh_data(session)
+
+    counts_before = {
+        "decisions": session.query(DecisionRecord).count(),
+        "interactions": session.query(PendingInteraction).count(),
+        "outbox": session.query(NotificationOutbox).count(),
+    }
+
+    text_active = render_recommendation(session)
+    assert "Suggested today:" in text_active
+    assert "Full Body 1" in text_active
+    assert "NO_SELECTED_WORKOUT" not in text_active
+
+    counts_after = {
+        "decisions": session.query(DecisionRecord).count(),
+        "interactions": session.query(PendingInteraction).count(),
+        "outbox": session.query(NotificationOutbox).count(),
+    }
+    assert counts_before == counts_after
+
+    cursor = session.get(ProgramCursor, program.id)
+    cursor.last_completed_program_session_id = source[0].id
+    cursor.next_program_session_id = source[1].id
+    cursor.last_completed_at = datetime(2026, 7, 5, 9, 0)
+    session.commit()
+
+    text_rest = render_recommendation(session)
+    assert "Program rest day" in text_rest
+    assert "Full Body 2 is next" in text_rest
+
+    planned = PlannedSession(
+        title="Custom Upper Body", activity_type="strength_training", target_date=TARGET,
+        suggested_time="18:00", duration_min=60, status="planned", source="coach"
+    )
+    session.add(planned)
+    session.commit()
+
+    text_selected = render_recommendation(session)
+    assert "Custom Upper Body" in text_selected
+

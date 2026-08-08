@@ -184,11 +184,13 @@ def _stable_facts_summary(
     return summary
 
 
-def _recovery_record(session: Session, result: DecisionResult, identity: dict) -> DecisionResult:
+def _recovery_record(session: Session, result: DecisionResult, identity: dict, *, persist: bool = True) -> DecisionResult:
     result.idempotency_key = f"selected-recovery:{result.decision_date}:{_canonical_hash(identity)}"
     existing = session.query(DecisionRecord).filter_by(idempotency_key=result.idempotency_key).first()
     if existing:
         return DecisionResult(**json.loads(existing.result_json))
+    if not persist:
+        return result
     session.add(DecisionRecord(
         decision_id=result.decision_id, evaluated_at=datetime.fromisoformat(result.evaluated_at).replace(tzinfo=None),
         decision_type=result.decision_type, active_program_id=result.active_program_id,
@@ -207,7 +209,7 @@ def _recovery_record(session: Session, result: DecisionResult, identity: dict) -
 
 def evaluate_selected_workout_recovery(
     session: Session, *, planned_session_id: int | None = None, target: date | None = None,
-    evaluated_at: datetime | None = None,
+    evaluated_at: datetime | None = None, persist: bool = True,
 ) -> DecisionResult:
     """Make an advisory decision for one local selected workout, without any external calls or mutation."""
     target, now = target or get_local_date(), evaluated_at or get_local_now()
@@ -309,12 +311,12 @@ def evaluate_selected_workout_recovery(
         "recovery_action_policy": RECOVERY_ACTION_POLICY_VERSION,
         "permitted_actions": permitted_actions,
         "facts": _stable_facts_summary(result.observations, result.missing_observations, result.best_effort),
-    })
+    }, persist=persist)
 
 
 def evaluate_morning_decision(
     session: Session, *, allow_incomplete: bool = False, target: date | None = None,
-    evaluated_at: datetime | None = None,
+    evaluated_at: datetime | None = None, persist: bool = True,
 ) -> DecisionResult:
     """Evaluate today's morning decision for selected workout recovery or program proposal."""
     target = target or get_local_date()
@@ -327,6 +329,7 @@ def evaluate_morning_decision(
             planned_session_id=eligible[0].id if len(eligible) == 1 else None,
             target=target,
             evaluated_at=now,
+            persist=persist,
         )
 
     program = active_program(session)
@@ -426,6 +429,8 @@ def evaluate_morning_decision(
     existing = session.query(DecisionRecord).filter_by(idempotency_key=result.idempotency_key).first()
     if existing:
         return DecisionResult(**json.loads(existing.result_json))
+    if not persist:
+        return result
 
     session.add(DecisionRecord(
         decision_id=result.decision_id, evaluated_at=datetime.fromisoformat(result.evaluated_at).replace(tzinfo=None),

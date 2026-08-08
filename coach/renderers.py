@@ -30,37 +30,11 @@ def _json(value: str | None, fallback):
 
 
 def render_recommendation(session: Session) -> str:
-    record = (
-        session.query(DecisionRecord)
-        .order_by(DecisionRecord.evaluated_at.desc())
-        .first()
-    )
-    if record is None:
-        return "No official recommendation is available yet."
-    result = _json(record.result_json, {})
-    outcome = str(
-        result.get("workout_outcome")
-        or result.get("decision_type")
-        or record.decision_type
-    ).replace("_", " ").title()
-    readiness = result.get("readiness_score")
-    session_name = (
-        result.get("planned_session_name")
-        or result.get("next_program_session_name")
-    )
-    lines = [f"Official recommendation: {outcome}."]
-    if readiness is not None:
-        lines.append(f"Training readiness: {readiness}.")
-    if session_name:
-        lines.append(f"Session: {session_name}.")
-    reasons = result.get("reason_codes") or []
-    if reasons:
-        lines.append(
-            "Reasons: "
-            + ", ".join(str(reason).replace("_", " ").lower() for reason in reasons)
-            + "."
-        )
-    return "\n".join(lines)
+    from coach.decision_engine import evaluate_morning_decision
+    from coach.renderer import render_morning
+    result = evaluate_morning_decision(session, persist=False)
+    text, _, _ = render_morning(session, result)
+    return text or "No official recommendation is available yet."
 
 
 def render_next_workout(session: Session) -> str:
