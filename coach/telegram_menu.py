@@ -7,19 +7,16 @@ from __future__ import annotations
 MAIN_MENU_ACTIONS = {
     "Today's recommendation": "menu:recommendation",
     "Next workout": "menu:next_workout",
-    "Find a time": "menu:find_time",
     "Schedule": "menu:schedule",
     "Reschedule": "menu:reschedule",
     "Cancel workout": "menu:cancel",
+    "Calendar": "menu:calendar",
     "Recovery metrics": "menu:metrics",
     "Recent activities": "menu:activities",
     "Training program": "menu:program",
-    "Sync status": "menu:sync_status",
-    "Calendar": "menu:calendar",
-    "Start sync": "menu:start_sync",
+    "Garmin sync": "menu:garmin_sync",
     "Ask Coach": "menu:ask_coach",
-    "Privacy & Ask Coach": "menu:privacy",
-    "Unlink Telegram": "menu:unlink",
+    "Settings": "menu:settings",
 }
 
 ASK_COACH_BACK_LABEL = "Back to menu"
@@ -29,13 +26,11 @@ def main_menu_markup() -> dict:
     return {
         "keyboard": [
             ["Today's recommendation", "Next workout"],
-            ["Find a time", "Schedule"],
-            ["Reschedule", "Cancel workout"],
+            ["Schedule", "Reschedule"],
+            ["Cancel workout", "Calendar"],
             ["Recovery metrics", "Recent activities"],
-            ["Training program", "Sync status"],
-            ["Calendar", "Start sync"],
-            ["Ask Coach"],
-            ["Privacy & Ask Coach", "Unlink Telegram"],
+            ["Training program", "Garmin sync"],
+            ["Ask Coach", "Settings"],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -78,3 +73,13 @@ def privacy_markup(has_consent: bool) -> dict:
         )
     rows.append([{"text": "Back to menu", "callback_data": "menu:home"}])
     return {"inline_keyboard": rows}
+
+
+def settings_markup() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "Ask Coach privacy", "callback_data": "menu:privacy"}],
+            [{"text": "Unlink Telegram", "callback_data": "menu:unlink"}],
+            [{"text": "Back to menu", "callback_data": "menu:home"}],
+        ]
+    }

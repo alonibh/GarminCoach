@@ -105,6 +105,7 @@ def test_operational_text_receives_reply_menu(monkeypatch):
     assert response.status_code == 200
     assert sent[0][0] == OPERATIONAL_TEXT_GUIDANCE
     assert sent[0][2]["keyboard"]
+    # Row 3 (0-indexed) of the new 6-row menu is ["Recovery metrics", "Recent activities"]
     assert "Recovery metrics" in sent[0][2]["keyboard"][3]
     assert sent[0][3]["parse_mode"] is None
 
@@ -594,6 +595,118 @@ def test_confirm_progress_is_prompt_and_duplicate_taps_mutate_once(
         "Scheduling Full Body 2…",
         "Full Body 2 scheduled.",
     ]
+
+
+def test_garmin_sync_shows_status_and_start_sync_inline_button(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup)) or True
+        ),
+    )
+    response = client.post(
+        "/telegram/webhook",
+        headers=_headers(),
+        json={
+            "update_id": 3001,
+            "message": {
+                "chat": {"id": 123, "type": "private"},
+                "text": "Garmin sync",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert sent
+    text, markup = sent[0]
+    assert "Garmin" in text
+    assert markup is not None
+    assert "inline_keyboard" in markup
+    callbacks = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
+    assert "menu:start_sync" in callbacks
+
+
+def test_settings_shows_privacy_and_unlink(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup)) or True
+        ),
+    )
+    response = client.post(
+        "/telegram/webhook",
+        headers=_headers(),
+        json={
+            "update_id": 3002,
+            "message": {
+                "chat": {"id": 123, "type": "private"},
+                "text": "Settings",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert sent
+    _text, markup = sent[0]
+    assert markup is not None
+    assert "inline_keyboard" in markup
+    callbacks = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
+    assert "menu:privacy" in callbacks
+    assert "menu:unlink" in callbacks
+
+
+def test_unlink_shows_confirmation_before_acting(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "notify.telegram.answer_callback_query", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append((text, reply_markup)) or True
+        ),
+    )
+    response = client.post(
+        "/telegram/webhook",
+        headers=_headers(),
+        json={
+            "update_id": 3003,
+            "callback_query": {
+                "id": "u1",
+                "data": "menu:unlink",
+                "message": {"message_id": 10, "chat": {"id": 123, "type": "private"}},
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert sent
+    text, markup = sent[0]
+    assert "Unlink" in text
+    assert markup is not None
+    callbacks = [btn["callback_data"] for row in markup.get("inline_keyboard", []) for btn in row]
+    assert "menu:unlink_confirm" in callbacks
+
+
+def test_find_a_time_not_in_main_menu_keyboard(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "notify.telegram.send_message",
+        lambda text, chat_id=None, reply_markup=None, **kwargs: (
+            sent.append(reply_markup) or True
+        ),
+    )
+    client.post(
+        "/telegram/webhook",
+        headers=_headers(),
+        json={
+            "update_id": 3004,
+            "message": {"chat": {"id": 123, "type": "private"}, "text": "/start"},
+        },
+    )
+    assert sent
+    keyboard = sent[0].get("keyboard", [])
+    buttons = [label for row in keyboard for label in row]
+    assert "Find a time" not in buttons
 
 
 def test_worker_thread_binds_and_resets_immutable_tenant(monkeypatch):

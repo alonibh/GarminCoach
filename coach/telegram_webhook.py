@@ -30,6 +30,7 @@ from coach.telegram_menu import (
     consent_disclosure_markup,
     main_menu_markup,
     privacy_markup,
+    settings_markup,
 )
 from control_db import (
     get_ask_coach_consent,
@@ -651,10 +652,10 @@ def _operational_callback(
         advance_button_flow,
         apply_interaction,
         begin_alternate_time,
+        begin_cancel_flow,
         begin_reschedule_flow,
         begin_schedule_flow,
         reject_interaction,
-        stage_cancel_choices,
         stage_sync_confirmation,
     )
 
@@ -712,7 +713,7 @@ def _operational_callback(
             turn = begin_reschedule_flow(database)
             return turn.text, turn.reply_markup or main_menu_markup()
         if callback_data == "menu:cancel":
-            turn = stage_cancel_choices(database)
+            turn = begin_cancel_flow(database)
             return turn.text, turn.reply_markup or main_menu_markup()
         if callback_data == "menu:metrics":
             return renderers.render_metrics(database), main_menu_markup()
@@ -722,6 +723,12 @@ def _operational_callback(
             return renderers.render_program(database), main_menu_markup()
         if callback_data == "menu:sync_status":
             return renderers.render_sync_status(database), main_menu_markup()
+        if callback_data == "menu:garmin_sync":
+            status = renderers.render_sync_status(database)
+            return (
+                status,
+                {"inline_keyboard": [[{"text": "Start sync", "callback_data": "menu:start_sync"}]]},
+            )
         if callback_data == "menu:start_sync":
             turn = stage_sync_confirmation(database)
             return turn.text, turn.reply_markup or main_menu_markup()
@@ -803,6 +810,13 @@ async def _send_main_menu_action(
         return
     if callback_data == "menu:calendar":
         _register_task(run_calendar_menu(identity=identity, chat_id=chat_id))
+        return
+    if callback_data == "menu:settings":
+        await _send_plain(
+            "Settings",
+            chat_id=chat_id,
+            reply_markup=settings_markup(),
+        )
         return
     text_out, markup = _operational_callback(
         callback_data, identity=identity, chat_id=chat_id
@@ -984,76 +998,6 @@ async def handle_telegram_update(data: dict) -> dict:
             if callback_data.startswith("menu:"):
                 await _send_main_menu_action(
                     callback_data, identity=identity, chat_id=chat_id
-                )
-                return {"status": "ok"}
-            if callback_data == "menu:ask_coach":
-                if _valid_consent(identity.user_id):
-                    await session_manager.create_session(
-                        identity.user_id, chat_id
-                    )
-                    _edit(
-                        ASK_COACH_ACTIVE,
-                        chat_id,
-                        message_id,
-                        ask_coach_back_markup(),
-                    )
-                else:
-                    _edit(
-                        DISCLOSURE,
-                        chat_id,
-                        message_id,
-                        consent_disclosure_markup(),
-                    )
-                return {"status": "ok"}
-            if callback_data == "menu:privacy":
-                consent = get_ask_coach_consent(identity.user_id)
-                _edit(
-                    _privacy_text(),
-                    chat_id,
-                    message_id,
-                    privacy_markup(is_consent_valid(consent)),
-                )
-                return {"status": "ok"}
-            if callback_data == "menu:unlink":
-                _edit(
-                    "Unlink this Telegram chat from GarminCoach?",
-                    chat_id,
-                    message_id,
-                    {
-                        "inline_keyboard": [
-                            [{
-                                "text": "Unlink",
-                                "callback_data": "menu:unlink_confirm",
-                            }],
-                            [{
-                                "text": "Cancel",
-                                "callback_data": "menu:home",
-                            }],
-                        ]
-                    },
-                )
-                return {"status": "ok"}
-            if callback_data == "menu:unlink_confirm":
-                await session_manager.close_session(identity.user_id)
-                unlink_user(identity.user_id)
-                refresh_user_jobs(identity.user_id)
-                telegram.send_link_message(
-                    "Telegram was unlinked from GarminCoach.", chat_id
-                )
-                return {"status": "ok"}
-            if callback_data == "menu:calendar":
-                _edit(
-                    "Loading calendar…",
-                    chat_id,
-                    message_id,
-                    {"inline_keyboard": []},
-                )
-                _register_task(
-                    run_calendar_menu(
-                        identity=identity,
-                        chat_id=chat_id,
-                        message_id=message_id,
-                    )
                 )
                 return {"status": "ok"}
             flow_parts = callback_data.split(":")

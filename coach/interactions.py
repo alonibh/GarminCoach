@@ -336,6 +336,17 @@ def reply_markup(interactions: list[PendingInteraction]) -> dict | None:
         ]]}
     if len(interactions) == 1 and interactions[0].action_type == "schedule_original_session":
         item = interactions[0]
+        try:
+            is_manual = json.loads(item.payload_json).get("flow_type") == "schedule"
+        except (TypeError, ValueError):
+            is_manual = False
+        if is_manual:
+            return {
+                "inline_keyboard": [[
+                    {"text": "Schedule", "callback_data": f"decision_action_{item.interaction_id}"},
+                    {"text": "Change date or time", "callback_data": f"decision_different_time_{item.interaction_id}"},
+                ], [{"text": "Cancel", "callback_data": f"decision_cancel_{item.interaction_id}"}]]
+            }
         return {
             "inline_keyboard": [[
                 {"text": "Approve and schedule", "callback_data": f"decision_action_{item.interaction_id}"},
@@ -1601,6 +1612,29 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
         if planned is None or planned.status in {"completed", "cancelled", "replaced_by_active_recovery", "rest_selected"}:
             row.status = "superseded"
             return FlowTurn("That workout is no longer current.", None)
+        if payload.get("flow_type") == "cancel":
+            cancel_now = get_local_now().replace(tzinfo=None)
+            versions = (program_version(session), sync_version(session), calendar_version(session))
+            cancel_row = PendingInteraction(
+                interaction_id=str(uuid4()),
+                decision_id=None,
+                action_type="cancel_planned_session",
+                target_type="planned_session",
+                target_id=planned.id,
+                payload_json=json.dumps({"planned_session_id": planned.id}, sort_keys=True),
+                program_version=versions[0],
+                sync_version=versions[1],
+                calendar_version=versions[2],
+                created_at=cancel_now,
+                expires_at=cancel_now + timedelta(hours=1),
+                status="pending",
+            )
+            session.add(cancel_row)
+            row.status = "superseded"
+            row.failure_reason = "session_selected"
+            session.flush()
+            text = f"Cancel {planned.title} on {planned.target_date:%a %d %b}?"
+            return FlowTurn(text, reply_markup([cancel_row]))
         payload["planned_session_id"] = planned.id
         payload["flow_step"] = "choose_date"
         row.target_id = planned.id
@@ -1738,6 +1772,60 @@ def stage_sync_confirmation(session: Session) -> FlowTurn:
     session.add(row)
     session.flush()
     return FlowTurn("Start a Garmin sync now?", reply_markup([row]))
+
+
+def begin_cancel_flow(session: Session) -> FlowTurn:
+    """Show a single-workout confirmation or a selection list, then confirm."""
+    now = get_local_now().replace(tzinfo=None)
+    planned_rows = (
+        session.query(PlannedSession)
+        .filter(
+            PlannedSession.target_date >= now.date(),
+            PlannedSession.status == "approved",
+        )
+        .order_by(PlannedSession.target_date, PlannedSession.suggested_time)
+        .limit(8)
+        .all()
+    )
+    if not planned_rows:
+        return FlowTurn("No approved upcoming workout is available to cancel.", None)
+    versions = (program_version(session), sync_version(session), calendar_version(session))
+    if len(planned_rows) == 1:
+        planned = planned_rows[0]
+        row = PendingInteraction(
+            interaction_id=str(uuid4()),
+            decision_id=None,
+            action_type="cancel_planned_session",
+            target_type="planned_session",
+            target_id=planned.id,
+            payload_json=json.dumps({"planned_session_id": planned.id}, sort_keys=True),
+            program_version=versions[0],
+            sync_version=versions[1],
+            calendar_version=versions[2],
+            created_at=now,
+            expires_at=now + timedelta(hours=1),
+            status="pending",
+        )
+        session.add(row)
+        session.flush()
+        text = f"Cancel {planned.title} on {planned.target_date:%a %d %b}?"
+        return FlowTurn(text, reply_markup([row]))
+    ids = [p.id for p in planned_rows]
+    flow_row = _new_flow(
+        session,
+        flow_type="cancel",
+        payload={
+            "flow_step": "choose_session",
+            "offered_planned_session_ids": ids,
+        },
+        target_type="planned_session",
+        target_id=None,
+    )
+    labels = [
+        f"{planned.title} · {planned.target_date:%a}"
+        for planned in planned_rows
+    ]
+    return FlowTurn("Choose a workout to cancel.", _flow_markup(flow_row, labels, "session"))
 
 
 def stage_cancel_choices(session: Session) -> FlowTurn:

@@ -7,10 +7,12 @@ from coach.decision_engine import evaluate_morning_decision
 from coach.interactions import (
     advance_button_flow,
     apply_interaction,
+    begin_cancel_flow,
     begin_reschedule_flow,
     begin_schedule_flow,
     calendar_version,
     program_version,
+    reply_markup,
     stage_cancel_choices,
     stage_decision_actions,
 )
@@ -108,7 +110,7 @@ def test_button_only_schedule_flow_uses_pending_payload(session, monkeypatch):
     assert final_payload["suggested_time"] == "18:00"
     assert (
         confirm.reply_markup["inline_keyboard"][0][0]["text"]
-        == "Approve and schedule"
+        == "Schedule"
     )
 
 
@@ -290,3 +292,103 @@ def test_reschedule_reuses_authenticated_tenant_client(session, monkeypatch):
     assert fake.api.scheduled == [(55, "2026-07-08")]
     assert fake.api.unscheduled == [900]
     assert planned.target_date == date(2026, 7, 8)
+
+
+def test_manual_schedule_flow_uses_schedule_wording(session, monkeypatch):
+    _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
+    _, sessions = _add_program(session)
+    session.commit()
+    monkeypatch.setattr("coach.interactions.calendar_version", lambda _s: "cv1")
+
+    turn = begin_schedule_flow(session)
+    date_callback = turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    time_turn = advance_button_flow(session, date_callback)
+    time_callback = time_turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    confirm = advance_button_flow(session, time_callback)
+
+    buttons_row0 = confirm.reply_markup["inline_keyboard"][0]
+    buttons_row1 = confirm.reply_markup["inline_keyboard"][1]
+    assert buttons_row0[0]["text"] == "Schedule"
+    assert buttons_row0[1]["text"] == "Change date or time"
+    assert buttons_row1[0]["text"] == "Cancel"
+
+
+def test_proactive_schedule_proposal_uses_approve_wording(session, monkeypatch):
+    _fixed_now(monkeypatch)
+    _fresh_calendar(monkeypatch)
+    _constraints(session)
+    result = _decision(session)
+    staged = stage_decision_actions(session, result)
+    sched = next((r for r in staged if r.action_type == "schedule_original_session"), None)
+    if sched is None:
+        return  # No scheduling proposal in this decision — skip
+    markup = reply_markup([sched])
+    assert markup is not None
+    buttons_row0 = markup["inline_keyboard"][0]
+    assert buttons_row0[0]["text"] == "Approve and schedule"
+    assert buttons_row0[1]["text"] == "Set another date"
+    assert markup["inline_keyboard"][1][0]["text"] == "Reject"
+
+
+def test_cancel_single_workout_shows_confirm_directly(session, monkeypatch):
+    _fixed_now(monkeypatch)
+    monkeypatch.setattr("coach.interactions.calendar_version", lambda _s: "cv1")
+    planned = PlannedSession(
+        title="Upper A",
+        activity_type="strength_training",
+        target_date=date(2026, 7, 7),
+        suggested_time="18:00",
+        duration_min=60,
+        status="approved",
+        source="coach",
+    )
+    session.add(planned)
+    session.flush()
+
+    turn = begin_cancel_flow(session)
+
+    assert "Cancel Upper A" in turn.text
+    assert turn.reply_markup is not None
+    buttons = [btn for row in turn.reply_markup["inline_keyboard"] for btn in row]
+    texts = [b["text"] for b in buttons]
+    assert "Cancel workout" in texts
+    assert "Keep workout" in texts
+    row = session.query(PendingInteraction).filter_by(action_type="cancel_planned_session").one()
+    assert row.status == "pending"
+
+
+def test_cancel_multi_workout_shows_selection_then_confirm(session, monkeypatch):
+    _fixed_now(monkeypatch)
+    monkeypatch.setattr("coach.interactions.calendar_version", lambda _s: "cv1")
+    for i, title in enumerate(["Upper A", "Lower B"]):
+        session.add(PlannedSession(
+            title=title,
+            activity_type="strength_training",
+            target_date=date(2026, 7, 7 + i),
+            suggested_time="18:00",
+            duration_min=60,
+            status="approved",
+            source="coach",
+        ))
+    session.flush()
+
+    turn = begin_cancel_flow(session)
+
+    assert "Choose a workout to cancel" in turn.text
+    assert turn.reply_markup is not None
+    assert "inline_keyboard" in turn.reply_markup
+
+    flow_row = session.query(PendingInteraction).filter_by(action_type="button_flow").one()
+    select_callback = turn.reply_markup["inline_keyboard"][0][0]["callback_data"]
+    confirm_turn = advance_button_flow(session, select_callback)
+
+    assert "Cancel Upper A" in confirm_turn.text
+    conf_buttons = [b["text"] for row in confirm_turn.reply_markup["inline_keyboard"] for b in row]
+    assert "Cancel workout" in conf_buttons
+    assert "Keep workout" in conf_buttons
+    assert flow_row.status == "superseded"
+    cancel_row = session.query(PendingInteraction).filter_by(
+        action_type="cancel_planned_session", status="pending"
+    ).one()
+    assert cancel_row is not None
