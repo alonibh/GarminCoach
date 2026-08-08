@@ -158,6 +158,32 @@ def _informational_recovery_facts(session: Session, target: date) -> list[dict]:
     return [fact for fact in facts if fact]
 
 
+def _stable_facts_summary(
+    observations: list[dict],
+    missing_observations: list[dict] | None = None,
+    best_effort: bool | None = None,
+) -> dict:
+    stable_obs = []
+    for item in observations or []:
+        if isinstance(item, dict):
+            stable_obs.append({k: v for k, v in item.items() if k != "fetched_at"})
+    stable_obs.sort(key=lambda x: (str(x.get("signal", "")), str(x.get("value", ""))))
+
+    stable_missing = []
+    for item in missing_observations or []:
+        if isinstance(item, dict):
+            stable_missing.append({k: v for k, v in item.items() if k != "fetched_at"})
+    stable_missing.sort(key=lambda x: (str(x.get("signal", "")), str(x.get("error_code", ""))))
+
+    summary: dict = {
+        "observations": stable_obs,
+        "missing": stable_missing,
+    }
+    if best_effort is not None:
+        summary["best_effort"] = bool(best_effort)
+    return summary
+
+
 def _recovery_record(session: Session, result: DecisionResult, identity: dict) -> DecisionResult:
     result.idempotency_key = f"selected-recovery:{result.decision_date}:{_canonical_hash(identity)}"
     existing = session.query(DecisionRecord).filter_by(idempotency_key=result.idempotency_key).first()
@@ -282,6 +308,7 @@ def evaluate_selected_workout_recovery(
         "policy": policy_version, "rules": [(rule["rule_id"], rule["version"]) for rule in rules],
         "recovery_action_policy": RECOVERY_ACTION_POLICY_VERSION,
         "permitted_actions": permitted_actions,
+        "facts": _stable_facts_summary(result.observations, result.missing_observations, result.best_effort),
     })
 
 
@@ -393,6 +420,7 @@ def evaluate_morning_decision(
     identity = {
         "target": target.isoformat(), "outcome": outcome, "program_id": program.id if program else None,
         "next_id": next_id, "policy": policy_version, "actions": actions, "start_time": planned_start_time,
+        "facts": _stable_facts_summary(result.observations, result.missing_observations, result.best_effort),
     }
     result.idempotency_key = f"morning-proposal:{target.isoformat()}:{_canonical_hash(identity)}"
     existing = session.query(DecisionRecord).filter_by(idempotency_key=result.idempotency_key).first()

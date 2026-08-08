@@ -378,3 +378,56 @@ def test_staging_reuses_precalculated_time_without_second_calendar_lookup(sessio
     markup = reply_markup_for_ids(session, interaction_ids)
     assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
 
+
+def test_morning_facts_fingerprint_updates_decision_record_idempotency(session, monkeypatch):
+    from db import DecisionRecord
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr("notify.outbox.get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
+    program, source = _add_program(session)
+    now_val = datetime(2026, 7, 6, 7, 0)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    # 1. First evaluation: no informational facts exist in DB
+    result1 = evaluate_morning_decision(session, target=TARGET)
+    assert result1.decision_type == "PROPOSE_NEXT_SESSION"
+    assert result1.observations == []
+    rec1 = session.query(DecisionRecord).filter_by(idempotency_key=result1.idempotency_key).one()
+    assert rec1.decision_id == result1.decision_id
+
+    # 2. Fresh sleep/HRV facts arrive in DB while program/session/time stay identical
+    _fresh_data(session)
+
+    # 3. Second evaluation: must produce a new decision with fresh facts, NOT cached rec1
+    result2 = evaluate_morning_decision(session, target=TARGET)
+    assert result2.decision_type == "PROPOSE_NEXT_SESSION"
+    assert result2.decision_id != result1.decision_id
+    assert len(result2.observations) > 0
+    assert result2.idempotency_key != result1.idempotency_key
+    rec2 = session.query(DecisionRecord).filter_by(idempotency_key=result2.idempotency_key).one()
+    assert rec2.decision_id == result2.decision_id
+
+    # 4. Third evaluation with identical facts: must reuse result2 (same decision_id & idempotency_key)
+    result3 = evaluate_morning_decision(session, target=TARGET)
+    assert result3.decision_id == result2.decision_id
+    assert result3.idempotency_key == result2.idempotency_key
+
+    # 5. Outbox/brief dedup: queueing outbox message remains strictly one per day
+    tz = pytz.timezone("Asia/Jerusalem")
+    now_tz = tz.localize(datetime(2026, 7, 6, 7, 30))
+    monkeypatch.setattr("notify.morning.get_local_now", lambda: now_tz)
+    monkeypatch.setattr("notify.morning.get_local_date", lambda: now_tz.date())
+
+    priority_sync_finished()
+    count_first = session.query(NotificationOutbox).filter_by(event_type="morning_briefing").count()
+    assert count_first == 1
+
+    priority_sync_finished()
+    count_second = session.query(NotificationOutbox).filter_by(event_type="morning_briefing").count()
+    assert count_second == 1
+
