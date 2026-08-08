@@ -102,15 +102,16 @@ def test_program_workout_has_structured_warmup_and_generic_fallback(session):
 
 
 def test_execution_blocks_sequential_compilation(session):
+    """All exercises compile as sequential repeat groups; rest_seconds applies between and after working sets."""
     from coach.garmin_compiler import build_program_workout
     program = TrainingProgram(name="Sequential", active=True, status="active")
     session.add(program); session.flush()
     routine = ProgramSession(program_id=program.id, name="Sequential", sequence_order=1)
     session.add(routine); session.flush()
     session.add_all([
-        SessionExercise(program_session_id=routine.id, exercise_name="Bench Press", exercise_key="BENCH_PRESS", sets=2, reps=8, rest_seconds=45, transition_rest_seconds=90, order_index=0),
+        SessionExercise(program_session_id=routine.id, exercise_name="Bench Press", exercise_key="BENCH_PRESS", sets=2, reps=8, rest_seconds=45, order_index=0),
         SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Row", exercise_key="ROW", sets=3, reps=10, rest_seconds=90, order_index=1),
-        SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Curl", exercise_key="CURL", sets=2, reps=12, rest_seconds=45, transition_rest_seconds=0, order_index=2),
+        SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Curl", exercise_key="CURL", sets=2, reps=12, rest_seconds=45, order_index=2),
     ])
     session.commit()
     rows = session.query(SessionExercise).filter_by(program_session_id=routine.id).all()
@@ -118,29 +119,31 @@ def test_execution_blocks_sequential_compilation(session):
     assert len(blocks) == 3
     assert all(isinstance(b, StraightExerciseBlock) for b in blocks)
     steps = build_program_workout(session, routine.id)["workoutSegments"][0]["workoutSteps"]
-    # Bench Press with transition: repeat group + transition rest
-    # Dumbbell Row without transition: repeat group only
-    # Dumbbell Curl with transition=0: repeat group (no trailing rest since 0)
+    # Three exercises → three repeat groups; no separate transition rest steps
     repeat_groups = [s for s in steps if s["type"] == "RepeatGroupDTO"]
     assert len(repeat_groups) == 3
-    # Bench Press group skips last rest (has transition)
-    assert steps[0]["skipLastRestStep"] is True
-    # transition rest of 90s follows Bench Press group
-    assert steps[1]["stepType"]["stepTypeKey"] == "rest"
-    assert steps[1]["endConditionValue"] == 90
+    assert len(steps) == 3
+    # Every group keeps final rest (skipLastRestStep is False)
+    assert all(g["skipLastRestStep"] is False for g in repeat_groups)
+    # rest_seconds is used inside every group
+    assert repeat_groups[0]["workoutSteps"][1]["endConditionValue"] == 45   # Bench Press rest
+    assert repeat_groups[1]["workoutSteps"][1]["endConditionValue"] == 90   # Dumbbell Row rest
+    assert repeat_groups[2]["workoutSteps"][1]["endConditionValue"] == 45   # Dumbbell Curl rest
 
 
 def test_legacy_program_payload_has_golden_execution_shape(session):
-    from coach.garmin_compiler import build_program_workout
+    from coach.garmin_compiler import WARMUP_REST_SECONDS, build_program_workout
     routine = _active_session(session)
     payload = build_program_workout(session, routine.id)
     steps = payload["workoutSegments"][0]["workoutSteps"]
     assert [(step["type"], step["stepOrder"], step["stepId"], step["childStepId"]) for step in steps] == [
-        ("ExecutableStepDTO", 1, 1, 1),
-        ("ExecutableStepDTO", 2, 2, 2),
-        ("RepeatGroupDTO", 3, 3, 3),
-        ("RepeatGroupDTO", 6, 6, 4),
+        ("ExecutableStepDTO", 1, 1, 1),   # warmup exercise
+        ("ExecutableStepDTO", 2, 2, 2),   # warmup rest (WARMUP_REST_SECONDS)
+        ("RepeatGroupDTO", 3, 3, 3),      # Bench Press group
+        ("RepeatGroupDTO", 6, 6, 4),      # Curated Source Move group
     ]
+    # Warmup rest uses the named constant, not exercise.rest_seconds
+    assert steps[1]["endConditionValue"] == WARMUP_REST_SECONDS
     assert steps[2]["skipLastRestStep"] is False
     assert [(child["description"], child["endConditionValue"], child["weightValue"]) for child in steps[2]["workoutSteps"]] == [("Bench Press", 12.0, 40), (None, 90.0, -1.0)]
     assert [(child["description"], child["endConditionValue"]) for child in steps[3]["workoutSteps"]] == [("Curated Source Move", 10.0), (None, 60.0)]
@@ -174,7 +177,7 @@ def test_execution_metadata_changes_scheduling_version_not_progression_fingerpri
     exercise = session.query(SessionExercise).filter_by(program_session_id=routine.id).first()
     fingerprint = prescription_for_session_exercise(exercise, routine.program_id, routine.id)
     before = program_version(session)
-    exercise.transition_rest_seconds = 90
+    exercise.rest_seconds = exercise.rest_seconds + 15
     session.flush()
     assert prescription_for_session_exercise(exercise, routine.program_id, routine.id) == fingerprint
     assert program_version(session) != before

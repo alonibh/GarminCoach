@@ -369,7 +369,6 @@ def _replace_session_exercises(session, program_session: ProgramSession, exercis
                 reps=exercise["reps"],
                 duration_seconds=exercise["duration_seconds"],
                 rest_seconds=exercise["rest_seconds"],
-                transition_rest_seconds=exercise.get("transition_rest_seconds"),
                 progression_rule_key=exercise.get("progression_rule_key"),
                 warmup_enabled=exercise["warmup_enabled"],
                 warmup_reps=exercise["warmup_reps"],
@@ -2239,7 +2238,6 @@ def get_program_page(
                     "duration_seconds": ex.duration_seconds,
                     "weight_kg": ex.weight_kg,
                     "rest_seconds": ex.rest_seconds,
-                    "transition_rest_seconds": ex.transition_rest_seconds,
                     "progression_rule_key": ex.progression_rule_key,
                     "warmup_enabled": ex.warmup_enabled,
                     "warmup_reps": ex.warmup_reps,
@@ -2652,17 +2650,6 @@ async def save_session_exercises(session_id: int, request: Request):
             reps = int(row["reps"]) if row.get("reps") not in (None, "") else None
             duration = int(row["duration_seconds"]) if row.get("duration_seconds") not in (None, "") else None
             sets = int(row["sets"]) if row.get("sets") not in (None, "") else None
-            raw_transition = row.get("transition_rest_seconds")
-            transition = None
-            if raw_transition not in (None, ""):
-                if isinstance(raw_transition, bool):
-                    raise HTTPException(status_code=422, detail="Transition rest must be a whole number from 0 to 600 seconds.")
-                try:
-                    transition = int(raw_transition)
-                except (TypeError, ValueError):
-                    raise HTTPException(status_code=422, detail="Transition rest must be a whole number from 0 to 600 seconds.")
-                if isinstance(raw_transition, float) or str(raw_transition).strip() != str(transition) or not 0 <= transition <= 600:
-                    raise HTTPException(status_code=422, detail="Transition rest must be a whole number from 0 to 600 seconds.")
             if sets is not None and not 1 <= sets <= 20:
                 raise HTTPException(status_code=422, detail="Sets must be between 1 and 20.")
             if reps is not None and not 1 <= reps <= 100:
@@ -2690,7 +2677,7 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Warm-up time must be between 1 and 3600 seconds.")
             if warmup_weight is not None and not 0 <= warmup_weight <= 500:
                 raise HTTPException(status_code=422, detail="Warm-up weight must be between 0 and 500 kg.")
-            validated.append((incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, transition))
+            validated.append((incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration))
 
         # Validate the complete submitted execution structure before touching
         # rows or progression state.  These detached values intentionally use
@@ -2701,9 +2688,8 @@ async def save_session_exercises(session_id: int, request: Request):
             SimpleNamespace(
                 id=incoming_id if incoming_id is not None else -(index + 1),
                 order_index=index, sets=sets, rest_seconds=max(0, min(600, int(row.get("rest_seconds") or 60))),
-                transition_rest_seconds=transition,
             )
-            for index, (incoming_id, row, _name, _meta, _is_generic, _pattern, _warmup_enabled, _warmup_reps, _warmup_duration, _warmup_weight, _weight, _reps, _duration, transition) in enumerate(validated)
+            for index, (incoming_id, row, _name, _meta, _is_generic, _pattern, _warmup_enabled, _warmup_reps, _warmup_duration, _warmup_weight, _weight, _reps, _duration) in enumerate(validated)
             for sets in [int(row["sets"]) if row.get("sets") not in (None, "") else None]
         ]
         try:
@@ -2719,7 +2705,7 @@ async def save_session_exercises(session_id: int, request: Request):
                 db.delete(item)
 
         final_exercises: list[SessionExercise] = []
-        for i, (incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, transition) in enumerate(validated):
+        for i, (incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration) in enumerate(validated):
             values = {
                 "exercise_name": (meta or {}).get("label", name),
                 "exercise_key": (meta or {}).get("key", exercise_key(name)),
@@ -2729,7 +2715,6 @@ async def save_session_exercises(session_id: int, request: Request):
                 "sets": int(row["sets"]) if row.get("sets") not in (None, "") else None,
                 "reps": reps, "duration_seconds": duration, "weight_kg": weight,
                 "rest_seconds": max(0, min(600, int(row.get("rest_seconds") or 60))),
-                "transition_rest_seconds": transition,
                 "warmup_enabled": warmup_enabled,
                 "warmup_reps": warmup_reps if warmup_enabled else None,
                 "warmup_duration_seconds": warmup_duration if warmup_enabled else None,

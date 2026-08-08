@@ -230,7 +230,7 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
         exercise["rest_seconds"]
         for routine in PROGRAMS["ppl_6"]["sessions"]
         for exercise in routine["exercises"]
-    } == {45}
+    } == {90}
     assert {
         exercise["rest_seconds"]
         for routine in PROGRAMS["dumbbell_full_body_3"]["sessions"]
@@ -238,13 +238,12 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
     } == {60}
 
 
-def test_ppl_6_all_exercises_have_transition_rest():
-    """ppl_6 has 90 s transition rest on every exercise."""
-    assert all(
-        item["transition_rest_seconds"] == 90
-        for session in PROGRAMS["ppl_6"]["sessions"]
-        for item in session["exercises"]
-    )
+def test_ppl_6_all_exercises_have_90s_rest():
+    """ppl_6 uses a single 90 s rest value (between sets and after the final set); no transition field."""
+    for session in PROGRAMS["ppl_6"]["sessions"]:
+        for item in session["exercises"]:
+            assert item["rest_seconds"] == 90
+            assert "transition_rest_seconds" not in item
 
 
 def test_muscle_strength_5_is_absent_from_catalog():
@@ -414,12 +413,12 @@ def test_expansion_routines_use_garmincoach_default_rest_where_source_is_silent(
     assert mm_rests == {60, 45}, f"muscle_mania_6: expected 60s (compound) and 45s (isolation) rest, got {mm_rests}"
 
 
-def test_ppl_6_all_exercises_have_transition_timer():
-    """ppl_6 has 45 s between-set rest and 90 s between-exercise transition; no superset fields."""
+def test_ppl_6_all_exercises_have_single_90s_rest_no_transition():
+    """ppl_6 has rest_seconds == 90 on every exercise and no transition_rest_seconds field."""
     for session in PROGRAMS["ppl_6"]["sessions"]:
         for exercise in session["exercises"]:
-            assert exercise["rest_seconds"] == 45
-            assert exercise["transition_rest_seconds"] == 90
+            assert exercise["rest_seconds"] == 90
+            assert "transition_rest_seconds" not in exercise
             assert "superset_group" not in exercise
 
 

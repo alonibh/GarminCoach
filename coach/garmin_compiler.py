@@ -15,6 +15,8 @@ from coach.actions import parse_action
 
 logger = logging.getLogger(__name__)
 
+WARMUP_REST_SECONDS = 60
+
 
 class GarminFailureKind(str, Enum):
     RECONNECT_REQUIRED = "reconnect_required"
@@ -259,13 +261,7 @@ ExecutionBlock = StraightExerciseBlock
 def build_execution_blocks(exercises: Sequence[SessionExercise]) -> tuple[ExecutionBlock, ...]:
     """Return validated, deterministic sequential execution blocks without mutating rows."""
     ordered = sorted(exercises, key=lambda exercise: (exercise.order_index, exercise.id or 0))
-    blocks: list[ExecutionBlock] = []
-    for exercise in ordered:
-        transition = exercise.transition_rest_seconds
-        if transition is not None and (isinstance(transition, bool) or not isinstance(transition, int) or not 0 <= transition <= 600):
-            raise ValueError("Transition rest must be a whole number from 0 to 600 seconds")
-        blocks.append(StraightExerciseBlock(exercise))
-    return tuple(blocks)
+    return tuple(StraightExerciseBlock(exercise) for exercise in ordered)
 
 def reindex_steps(workout_steps: list) -> list:
     """Re-index stepOrder and stepId continuously."""
@@ -324,21 +320,14 @@ def build_program_workout(
                 exercise.warmup_weight_kg, exercise.garmin_name, exercise.garmin_category,
                 exercise.warmup_duration_seconds, "warmup",
             ))
-            steps.append(build_rest_step(exercise.rest_seconds))
-        has_next = block_index + 1 < len(blocks)
+            steps.append(build_rest_step(WARMUP_REST_SECONDS))
         group = build_repeat_group(
             exercise.sets or 1,
             build_generic_step(exercise.exercise_name, exercise.reps, exercise.weight_kg,
                                exercise.garmin_name, exercise.garmin_category, exercise.duration_seconds),
             build_rest_step(exercise.rest_seconds),
         )
-        # Strict legacy parity: an absent transition leaves the original
-        # group and its final rest untouched.
-        if exercise.transition_rest_seconds is not None:
-            group["skipLastRestStep"] = True
         steps.append(group)
-        if has_next and exercise.transition_rest_seconds and exercise.transition_rest_seconds > 0:
-            steps.append(build_rest_step(exercise.transition_rest_seconds))
     nested_steps = sum(1 + len(step.get("workoutSteps", [])) for step in steps)
     if nested_steps > 50:
         raise ValueError(f"Workout has {nested_steps} steps; Garmin limit is 50")

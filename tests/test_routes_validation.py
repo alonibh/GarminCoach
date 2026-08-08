@@ -129,8 +129,8 @@ def test_editor_preserves_submitted_exercise_id_for_rest_only_edit(client):
         assert exercise is not None and exercise.rest_seconds == 90
 
 
-def test_editor_round_trips_execution_fields_and_ignores_legacy_superset_group(client):
-    """save API accepts superset_group from old clients but ignores it; transition_rest still saved."""
+def test_editor_round_trips_rest_seconds_and_ignores_legacy_fields(client):
+    """save API persists rest_seconds; silently ignores superset_group and transition_rest_seconds."""
     c, db_module = client
     from db import ProgramSession, SessionExercise, TrainingProgram
     with db_module.get_session() as s:
@@ -144,10 +144,10 @@ def test_editor_round_trips_execution_fields_and_ignores_legacy_superset_group(c
         ]
         s.add_all(rows); s.flush()
         session_id, ids = routine.id, [row.id for row in rows]
-    # Old client sends superset_group — must be silently ignored; transition_rest must be saved
+    # Old client sends legacy fields — both must be silently ignored; rest_seconds is authoritative
     payload = [
-        {"id": ids[0], "exercise_name": "Goblet Squat", "exercise_key": "SQUAT:GOBLET_SQUAT", "sets": 2, "reps": 10, "rest_seconds": 60, "superset_group": "pair_1", "transition_rest_seconds": 90},
-        {"id": ids[1], "exercise_name": "Dumbbell Row", "exercise_key": "ROW:DUMBBELL_ROW", "sets": 2, "reps": 10, "rest_seconds": 60, "superset_group": "pair_1", "transition_rest_seconds": 90},
+        {"id": ids[0], "exercise_name": "Goblet Squat", "exercise_key": "SQUAT:GOBLET_SQUAT", "sets": 2, "reps": 10, "rest_seconds": 75, "superset_group": "pair_1", "transition_rest_seconds": 90},
+        {"id": ids[1], "exercise_name": "Dumbbell Row", "exercise_key": "ROW:DUMBBELL_ROW", "sets": 2, "reps": 10, "rest_seconds": 75, "superset_group": "pair_1", "transition_rest_seconds": 90},
     ]
     response = c.post(f"/api/session/{session_id}/exercises", json=payload)
     assert response.status_code == 200
@@ -155,7 +155,8 @@ def test_editor_round_trips_execution_fields_and_ignores_legacy_superset_group(c
     with db_module.get_session() as s:
         for item_id in ids:
             ex = s.get(SessionExercise, item_id)
-            assert ex.transition_rest_seconds == 90
+            assert ex.rest_seconds == 75
+            assert not hasattr(ex, "transition_rest_seconds") or ex.transition_rest_seconds is None
             assert not hasattr(ex, "superset_group") or ex.superset_group is None
 
 
@@ -756,32 +757,43 @@ def test_existing_source_template_rest_defaults_are_migrated_without_touching_cu
         assert s.get(SessionExercise, custom_exercise_id).rest_seconds == 61
 
 
-def test_execution_fidelity_source_migration_applies_ppl6_transitions_and_is_idempotent(client):
-    """ppl_6 sessions receive transition_rest_seconds=90; migration is guarded and idempotent."""
+def test_transition_rest_migration_copies_value_to_rest_seconds_and_is_idempotent(client):
+    """Legacy rows with transition_rest_seconds != NULL get rest_seconds updated; migration is idempotent."""
     _, db_module = client
-    from coach.programs import PROGRAMS
     from db import ProgramSession, SessionExercise, TrainingProgram
     from sqlalchemy import text
     with db_module.get_session() as s:
-        ppl = TrainingProgram(name="PPL", goal_tags='["ppl_6"]', status="draft")
-        s.add(ppl); s.flush()
-        ppl_template = PROGRAMS["ppl_6"]["sessions"][0]
-        ppl_session = ProgramSession(program_id=ppl.id, name=ppl_template["name"])
-        s.add(ppl_session); s.flush()
-        for index, item in enumerate(ppl_template["exercises"]):
-            s.add(SessionExercise(program_session_id=ppl_session.id, exercise_name=item["exercise_name"], sets=item["sets"], reps=item["reps"], rest_seconds=45, order_index=index))
-        s.flush()
-        ppl_id = ppl_session.id
+        prog = TrainingProgram(name="PPL", goal_tags='["ppl_6"]', status="draft")
+        s.add(prog); s.flush()
+        sess = ProgramSession(program_id=prog.id, name="Push A")
+        s.add(sess); s.flush()
+        # Simulate pre-migration rows: rest_seconds=45, transition_rest_seconds=90
+        ex1 = SessionExercise(program_session_id=sess.id, exercise_name="Bench Press", exercise_key="BENCH_PRESS", sets=3, reps=10, rest_seconds=45, order_index=0)
+        ex2 = SessionExercise(program_session_id=sess.id, exercise_name="Dumbbell Row", exercise_key="ROW", sets=3, reps=10, rest_seconds=45, order_index=1)
+        ex3 = SessionExercise(program_session_id=sess.id, exercise_name="Custom", exercise_key="CUSTOM", sets=3, reps=10, rest_seconds=75, order_index=2)
+        s.add_all([ex1, ex2, ex3]); s.flush()
+        sess_id, ids = sess.id, [ex1.id, ex2.id, ex3.id]
+        # Manually add transition_rest_seconds via raw SQL (simulating legacy DB)
+        columns = {r[1] for r in s.execute(text("PRAGMA table_info(session_exercises)")).all()}
+        if "transition_rest_seconds" not in columns:
+            s.execute(text("ALTER TABLE session_exercises ADD COLUMN transition_rest_seconds INTEGER"))
+        s.execute(text("UPDATE session_exercises SET transition_rest_seconds = 90 WHERE id IN (:a, :b)"), {"a": ids[0], "b": ids[1]})
+        # ex3 has NULL transition_rest_seconds — must remain at rest_seconds=75
         s.execute(text("CREATE TABLE IF NOT EXISTS app_migrations (migration_key VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"))
-        s.execute(text("DELETE FROM app_migrations WHERE migration_key = 'session_exercise_execution_fidelity_2026_08_01_v1'"))
+        s.execute(text("DELETE FROM app_migrations WHERE migration_key = 'transition_rest_to_rest_seconds_2026_08_08_v1'"))
     db_module._migrate_add_columns()
     with db_module.get_session() as s:
-        assert all(row.transition_rest_seconds == 90 for row in s.query(SessionExercise).filter_by(program_session_id=ppl_id))
-        assert s.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = 'session_exercise_execution_fidelity_2026_08_01_v1'")).scalar_one() == 1
-    # Idempotent: second call must not change already-migrated rows
+        rows = {r.id: r for r in s.query(SessionExercise).filter_by(program_session_id=sess_id)}
+        assert rows[ids[0]].rest_seconds == 90
+        assert rows[ids[1]].rest_seconds == 90
+        assert rows[ids[2]].rest_seconds == 75
+        assert s.execute(text("SELECT COUNT(*) FROM app_migrations WHERE migration_key = 'transition_rest_to_rest_seconds_2026_08_08_v1'")).scalar_one() == 1
+    # Idempotent: second run must not change rows
     db_module._migrate_add_columns()
     with db_module.get_session() as s:
-        assert all(row.transition_rest_seconds == 90 for row in s.query(SessionExercise).filter_by(program_session_id=ppl_id))
+        rows = {r.id: r for r in s.query(SessionExercise).filter_by(program_session_id=sess_id)}
+        assert rows[ids[0]].rest_seconds == 90
+        assert rows[ids[1]].rest_seconds == 90
 
 
 def test_legacy_db_with_extra_superset_group_column_starts_and_works(client):
@@ -908,7 +920,6 @@ def test_onboarding_proposal_is_reviewed_before_activation(client):
 
     active_page = c.get("/program?view=active")
     assert active_page.status_code == 200
-    assert "This remains editable" in active_page.text
     assert "Matching Superset" not in active_page.text
     assert "superset-badge" not in active_page.text
     assert "data-superset-group" not in active_page.text
@@ -1131,8 +1142,8 @@ def test_legacy_removed_plan_renders_safely_without_reset_controls(client):
     assert "superset" not in page.text.lower() or "ex-superset" not in page.text
 
 
-def test_save_api_has_no_active_superset_semantics(client):
-    """Saving exercises with superset_group silently ignores it; only transition_rest is honoured."""
+def test_save_api_ignores_legacy_superset_and_transition_fields(client):
+    """Saving exercises with superset_group/transition_rest_seconds silently ignores both; rest_seconds is authoritative."""
     c, db_module = client
     from db import ProgramSession, SessionExercise, TrainingProgram
     with db_module.get_session() as s:
@@ -1150,13 +1161,13 @@ def test_save_api_has_no_active_superset_semantics(client):
     assert resp.status_code == 200
     with db_module.get_session() as s:
         ex = s.query(SessionExercise).filter_by(program_session_id=session_id).one()
-        assert ex.transition_rest_seconds == 45
-        # superset_group must not be persisted
+        assert ex.rest_seconds == 60
+        assert not hasattr(ex, "transition_rest_seconds") or ex.transition_rest_seconds is None
         assert not hasattr(ex, "superset_group") or ex.superset_group is None
 
 
-def test_plan_page_has_no_superset_ui_for_existing_program(client):
-    """The /program page has no superset field, badge, or data attribute for any program."""
+def test_plan_page_has_no_superset_or_transition_ui(client):
+    """The /program page has no superset field, badge, data attribute, or transition rest input."""
     c, db_module = client
     from db import ProgramSession, SessionExercise, TrainingProgram
     with db_module.get_session() as s:
@@ -1169,7 +1180,7 @@ def test_plan_page_has_no_superset_ui_for_existing_program(client):
         s.add(SessionExercise(
             program_session_id=ps.id, exercise_name="Bench Press", exercise_key="BENCH_PRESS",
             garmin_category="BENCH_PRESS", garmin_name="BENCH_PRESS", sets=3, reps=8,
-            rest_seconds=90, order_index=0, transition_rest_seconds=60,
+            rest_seconds=90, order_index=0,
         ))
     page = c.get("/program?view=active")
     assert page.status_code == 200
@@ -1177,8 +1188,10 @@ def test_plan_page_has_no_superset_ui_for_existing_program(client):
     assert "superset-badge" not in page.text
     assert "data-superset-group" not in page.text
     assert "Superset" not in page.text
-    # Transition rest input must still be present
-    assert "ex-transition-rest" in page.text
+    assert "ex-transition-rest" not in page.text
+    assert "Transition rest" not in page.text
+    # Rest (sec) field is present
+    assert "ex-rest" in page.text
 
 
 def test_completed_multi_user_onboarding_renders_questionnaire(monkeypatch, tmp_path):

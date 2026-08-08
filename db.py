@@ -315,7 +315,6 @@ class SessionExercise(Base):
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     weight_kg: Mapped[Optional[float]] = mapped_column(Float)  # None = bodyweight
     rest_seconds: Mapped[int] = mapped_column(Integer, default=60)
-    transition_rest_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     # Server-owned source progression metadata; NULL is the generic policy.
     progression_rule_key: Mapped[Optional[str]] = mapped_column(String(64))
     warmup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1298,7 +1297,6 @@ _SESSION_EXERCISES_CREATE = """
         duration_seconds INTEGER,
         weight_kg FLOAT,
         rest_seconds INTEGER NOT NULL DEFAULT 60,
-        transition_rest_seconds INTEGER,
         progression_rule_key VARCHAR(64),
         warmup_enabled INTEGER NOT NULL DEFAULT 0,
         warmup_reps INTEGER,
@@ -1317,7 +1315,6 @@ _SESSION_EXERCISE_ADD_COLUMNS = {
     "is_generic": "INTEGER NOT NULL DEFAULT 0",
     "duration_seconds": "INTEGER",
     "rest_seconds": "INTEGER NOT NULL DEFAULT 60",
-    "transition_rest_seconds": "INTEGER",
     "warmup_enabled": "INTEGER NOT NULL DEFAULT 0",
     "warmup_reps": "INTEGER",
     "warmup_duration_seconds": "INTEGER",
@@ -1657,87 +1654,41 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                 {"key": source_rest_migration},
             )
 
-        # Phase 5A is deliberately a tenant-local, source-catalog migration.
-        # It never touches planned sessions or makes an external call.  Rows
-        # are only changed when their source identity, order, and prior catalog
-        # rest are still intact; user edits therefore stay authoritative.
+        # Phase 5A migration: mark applied without action.  On new databases the
+        # transition_rest_seconds column never existed; on old databases this key
+        # was already recorded by the previous deployment so this branch does not
+        # execute.  Either way no data migration is needed here.
         execution_fidelity_migration = "session_exercise_execution_fidelity_2026_08_01_v1"
         execution_fidelity_applied = conn.execute(
             text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
             {"key": execution_fidelity_migration},
         ).first()
         if not execution_fidelity_applied:
-            from coach.programs import PROGRAMS
-            import json as _json
-
-            def source_sessions(program_key: str):
-                program_ids = [row[0] for row in conn.execute(text(
-                    "SELECT id FROM training_programs WHERE goal_tags = :goal_tags"
-                ), {"goal_tags": _json.dumps([program_key])}).all()]
-                for program_id in program_ids:
-                    yield from conn.execute(text(
-                        "SELECT id, name, is_custom FROM program_sessions "
-                        "WHERE program_id = :program_id"
-                    ), {"program_id": program_id}).mappings().all()
-
-            @dataclass(frozen=True)
-            class ExpectedExecutionRow:
-                exercise_name: str
-                order_index: int
-                sets: int
-                reps: int | None
-                duration_seconds: int | None
-                rest_seconds: int
-
-            def expected_rows(template_rows: list[dict], rest: int) -> tuple[ExpectedExecutionRow, ...]:
-                return tuple(ExpectedExecutionRow(
-                    exercise_name=row["exercise_name"], order_index=index,
-                    sets=row["sets"], reps=row["reps"],
-                    duration_seconds=row["duration_seconds"], rest_seconds=rest,
-                ) for index, row in enumerate(template_rows))
-
-            def session_rows(session_id: int):
-                rows = conn.execute(text(
-                    "SELECT id, exercise_name, order_index, sets, reps, duration_seconds, rest_seconds, "
-                    "transition_rest_seconds, is_generic "
-                    "FROM session_exercises WHERE program_session_id = :session_id "
-                "ORDER BY order_index, id"
-                ), {"session_id": session_id}).mappings().all()
-                return rows
-
-            def matches(row, expected: ExpectedExecutionRow) -> bool:
-                return bool(
-                    row is not None
-                    and row["exercise_name"] == expected.exercise_name
-                    and row["order_index"] == expected.order_index
-                    and row["sets"] == expected.sets
-                    and row["reps"] == expected.reps
-                    and row["duration_seconds"] == expected.duration_seconds
-                    and row["rest_seconds"] == expected.rest_seconds
-                    and not row["is_generic"]
-                )
-
-            ppl_by_name = {item["name"]: item for item in PROGRAMS["ppl_6"]["sessions"]}
-            for source_session in source_sessions("ppl_6"):
-                name = source_session["name"]
-                if source_session["is_custom"] or name not in ppl_by_name:
-                    continue
-                expected = expected_rows(ppl_by_name[name]["exercises"], 45)
-                rows = session_rows(source_session["id"])
-                # PPL transitions are all-or-nothing per session so no source
-                # row receives mixed execution semantics.
-                if len(rows) == len(expected) and all(
-                    matches(row, expected[index])
-                    and row["transition_rest_seconds"] is None
-                    for index, row in enumerate(rows)
-                ):
-                    conn.execute(text(
-                        "UPDATE session_exercises SET transition_rest_seconds = 90 "
-                        "WHERE program_session_id = :session_id"
-                    ), {"session_id": source_session["id"]})
             conn.execute(text(
                 "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
             ), {"key": execution_fidelity_migration})
+
+        # Simplified rest model: copy transition_rest_seconds into rest_seconds
+        # for any row where transition_rest_seconds IS NOT NULL, then stop using
+        # the column.  Idempotent: rows where the column is absent or null are
+        # untouched.  The physical column is left in place on existing databases
+        # but the ORM no longer maps or writes it.
+        transition_rest_migration = "transition_rest_to_rest_seconds_2026_08_08_v1"
+        transition_rest_applied = conn.execute(
+            text("SELECT 1 FROM app_migrations WHERE migration_key = :key"),
+            {"key": transition_rest_migration},
+        ).first()
+        if not transition_rest_applied:
+            se_columns = {c["name"] for c in inspect(conn).get_columns("session_exercises")}
+            if "transition_rest_seconds" in se_columns:
+                conn.execute(text(
+                    "UPDATE session_exercises "
+                    "SET rest_seconds = transition_rest_seconds "
+                    "WHERE transition_rest_seconds IS NOT NULL"
+                ))
+            conn.execute(text(
+                "INSERT INTO app_migrations (migration_key, applied_at) VALUES (:key, CURRENT_TIMESTAMP)"
+            ), {"key": transition_rest_migration})
 
         # Phase 5B is deliberately a guarded, tenant-local catalog migration.
         # It assigns no rule to customized, generic, or structurally divergent

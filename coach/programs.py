@@ -188,7 +188,6 @@ def _exercise(
     rest: int = 60,
     notes: str = "",
     duration: int | None = None,
-    transition_rest_seconds: int | None = None,
     progression_rule_key: str | None = None,
 ) -> dict[str, Any]:
     meta = exercise_metadata(name)
@@ -200,7 +199,6 @@ def _exercise(
         "weight_kg": None,
         "duration_seconds": duration,
         "rest_seconds": rest,
-        "transition_rest_seconds": transition_rest_seconds,
         "movement_pattern": movement or (meta or {}).get("movement_pattern", "other"),
         "garmin_category": (meta or {}).get("category"),
         "garmin_name": (meta or {}).get("garmin_name"),
@@ -454,34 +452,34 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         "new",
         [
             _session("Push A", "push", [
-                _exercise("Dumbbell Bench Press", 4, 12, rest=45), _exercise("Incline Smith Machine Bench Press", 3, 10, movement="horizontal_push", rest=45),
-                _exercise("Dips", 3, 15, movement="vertical_push", rest=45), _exercise("Seated Arnold Press", 4, 12, rest=45),
-                _exercise("Lateral Raise", 3, 15, rest=45), _exercise("Cable Overhead Tricep Extension", 4, 15, movement="elbow_extension", rest=45),
+                _exercise("Dumbbell Bench Press", 4, 12, rest=90), _exercise("Incline Smith Machine Bench Press", 3, 10, movement="horizontal_push", rest=90),
+                _exercise("Dips", 3, 15, movement="vertical_push", rest=90), _exercise("Seated Arnold Press", 4, 12, rest=90),
+                _exercise("Lateral Raise", 3, 15, rest=90), _exercise("Cable Overhead Tricep Extension", 4, 15, movement="elbow_extension", rest=90),
             ]),
             _session("Pull A", "pull", [
-                _exercise("Dumbbell Row", 4, 12, rest=45), _exercise("Seated Cable Row", 4, 12, rest=45),
-                _exercise("Pull Up", 3, 12, rest=45), _exercise("Inverted Row", 3, 12, rest=45),
-                _exercise("Dumbbell Curl", 4, 15, rest=45),
+                _exercise("Dumbbell Row", 4, 12, rest=90), _exercise("Seated Cable Row", 4, 12, rest=90),
+                _exercise("Pull Up", 3, 12, rest=90), _exercise("Inverted Row", 3, 12, rest=90),
+                _exercise("Dumbbell Curl", 4, 15, rest=90),
             ]),
             _session("Legs A", "lower body", [
-                _exercise("Leg Press", 4, 10, rest=45), _exercise("Smith Machine Front Squat", 4, 10, rest=45),
-                _exercise("Dumbbell Stiff Leg Deadlift", 4, 12, rest=45), _exercise("Lying Leg Curl", 3, 12, rest=45),
-                _exercise("Bodyweight Hip Thrust", 3, 15, rest=45), _exercise("Standing Calf Raise", 4, 15, rest=45),
+                _exercise("Leg Press", 4, 10, rest=90), _exercise("Smith Machine Front Squat", 4, 10, rest=90),
+                _exercise("Dumbbell Stiff Leg Deadlift", 4, 12, rest=90), _exercise("Lying Leg Curl", 3, 12, rest=90),
+                _exercise("Bodyweight Hip Thrust", 3, 15, rest=90), _exercise("Standing Calf Raise", 4, 15, rest=90),
             ]),
             _session("Push B", "push", [
-                _exercise("Standing Dumbbell Press", 4, 12, movement="vertical_push", rest=45), _exercise("Seated Lateral Raise", 3, 15, rest=45),
-                _exercise("Lateral Raise Machine", 3, 15, movement="vertical_push", rest=45), _exercise("Incline Dumbbell Bench Press", 4, 12, rest=45),
-                _exercise("Push Ups", 4, 15, rest=45), _exercise("Lying Dumbbell Tricep Extensions", 4, 15, movement="elbow_extension", rest=45),
+                _exercise("Standing Dumbbell Press", 4, 12, movement="vertical_push", rest=90), _exercise("Seated Lateral Raise", 3, 15, rest=90),
+                _exercise("Lateral Raise Machine", 3, 15, movement="vertical_push", rest=90), _exercise("Incline Dumbbell Bench Press", 4, 12, rest=90),
+                _exercise("Push Ups", 4, 15, rest=90), _exercise("Lying Dumbbell Tricep Extensions", 4, 15, movement="elbow_extension", rest=90),
             ]),
             _session("Pull B", "pull", [
-                _exercise("Lat Pull Down", 4, 12, rest=45), _exercise("Cable Face Pull", 4, 15, movement="horizontal_pull", rest=45),
-                _exercise("Smith Machine Row", 4, 10, movement="horizontal_pull", rest=45), _exercise("Straight Arm Lat Pull Down", 4, 15, movement="vertical_pull", rest=45),
-                _exercise("Cable Curl", 4, 15, rest=45),
+                _exercise("Lat Pull Down", 4, 12, rest=90), _exercise("Cable Face Pull", 4, 15, movement="horizontal_pull", rest=90),
+                _exercise("Smith Machine Row", 4, 10, movement="horizontal_pull", rest=90), _exercise("Straight Arm Lat Pull Down", 4, 15, movement="vertical_pull", rest=90),
+                _exercise("Cable Curl", 4, 15, rest=90),
             ]),
             _session("Legs B", "lower body", [
-                _exercise("Dumbbell Rear Lunge", 4, 12, rest=45, notes="Each side"), _exercise("Goblet Squat", 4, 15, rest=45),
-                _exercise("Seated Leg Curl", 3, 15, rest=45), _exercise("Dumbbell Deadlift", 3, 12, movement="hip_hinge", rest=45),
-                _exercise("Glute Hyperextension", 3, 15, movement="hip_hinge", rest=45), _exercise("Leg Press Calf Raise", 4, 15, rest=45),
+                _exercise("Dumbbell Rear Lunge", 4, 12, rest=90, notes="Each side"), _exercise("Goblet Squat", 4, 15, rest=90),
+                _exercise("Seated Leg Curl", 3, 15, rest=90), _exercise("Dumbbell Deadlift", 3, 12, movement="hip_hinge", rest=90),
+                _exercise("Glute Hyperextension", 3, 15, movement="hip_hinge", rest=90), _exercise("Leg Press Calf Raise", 4, 15, rest=90),
             ]),
         ],
         "Push, pull, and legs are each trained twice; high-frequency option for established trainees only.",
@@ -865,12 +863,6 @@ PROGRAMS.update({
         ], "Source upper/lower rotation reviewed 2026-08-06; source rest 60 s compound, 45 s isolation applied.",
     ),
 })
-
-# The Planet Fitness source distinguishes the set timer from the transition to
-# the next exercise.  This is template data, not a compiler source-name rule.
-for _ppl_session in PROGRAMS["ppl_6"]["sessions"]:
-    for _ppl_exercise in _ppl_session["exercises"]:
-        _ppl_exercise["transition_rest_seconds"] = 90
 
 # Policy and source-template drift is a correctness failure, not a runtime
 # coaching choice. Validate it when the catalog is loaded.
