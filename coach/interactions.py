@@ -137,22 +137,26 @@ def _schedule_payload(session: Session, result: DecisionResult, action: dict) ->
     calendar = get_upcoming_schedule_result(days=7)
     if calendar["state"] != "fresh":
         return None
-    suggestion = next_available_time(
-        session,
-        now=get_local_now().replace(tzinfo=None),
-        schedule=calendar["events"],
-        start_day=target_day,
-        max_days=1,
-    )
-    if not suggestion or suggestion.program_session_id != session_id:
-        return None
+    suggested_time = action.get("suggested_time")
+    if not suggested_time:
+        suggestion = next_available_time(
+            session,
+            now=get_local_now().replace(tzinfo=None),
+            schedule=calendar["events"],
+            start_day=target_day,
+            max_days=1,
+        )
+        if not suggestion or suggestion.program_session_id != session_id:
+            return None
+        suggested_time = suggestion.start.strftime("%H:%M")
+
     return {
         "action": "schedule_session",
         "program_session_id": session_id,
         "activity_type": program_session.sport_type or "strength_training",
         "title": program_session.name,
         "target_date": action["target_date"],
-        "suggested_time": suggestion.start.strftime("%H:%M"),
+        "suggested_time": suggested_time,
         "duration_min": program_session.duration_min or 60,
         "intensity": "normal",
         "modifications": [],

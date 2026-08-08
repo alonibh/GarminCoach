@@ -2385,12 +2385,16 @@ def get_program_page(
             "age": age,
         }
 
-        today = date.today()
+        from time_utils import get_local_date
+        from coach.decision_engine import INACTIVE_ORIGINAL_SESSION_STATUSES
+
+        today = get_local_date()
         through = today + timedelta(days=14)
         planned = (
             session.query(PlannedSession)
             .filter(PlannedSession.target_date >= today)
             .filter(PlannedSession.target_date <= through)
+            .filter(PlannedSession.status.notin_(tuple(INACTIVE_ORIGINAL_SESSION_STATUSES)))
             .order_by(PlannedSession.target_date.asc(), PlannedSession.suggested_time.asc())
             .all()
         )

@@ -30,7 +30,7 @@
   {% set active_planned = [] %}
   {% if planned %}
     {% for p in planned %}
-      {% if p.status not in ['completed', 'cancelled'] %}
+      {% if p.status not in ['completed', 'cancelled', 'deleted', 'replaced', 'stale'] %}
         {% set _ = active_planned.append(p) %}
       {% endif %}
     {% endfor %}

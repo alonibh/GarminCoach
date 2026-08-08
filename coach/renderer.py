@@ -91,12 +91,23 @@ def authoritative_readiness_line(result: DecisionResult) -> str | None:
     return f"Garmin Training Readiness: {result.readiness_score} ({result.readiness_category})"
 
 
+SELECTED_WORKOUT_RECOVERY_DECISION_TYPES = {
+    "KEEP_SELECTED_WORKOUT",
+    "KEEP_SELECTED_WORKOUT_WITH_WARNING",
+    "REST_RECOMMENDED",
+    "PROGRAM_REST_RECOMMENDED",
+    "MISSING_TRAINING_READINESS",
+    "UNSUPPORTED_TRAINING_READINESS",
+    "UNSUPPORTED_DEVICE_METRICS",
+}
+
+
 def render_morning(
     session: Session, result: DecisionResult, *, plan_only: bool = False,
 ) -> tuple[str | None, dict | None, list[str]]:
     # Recovery is advisory in this phase: rendering must not stage interactions.
     context = [] if plan_only else recovery_fact_lines(session, result)
-    if context:
+    if context and result.decision_type in SELECTED_WORKOUT_RECOVERY_DECISION_TYPES:
         context.append(
             "Sleep, HRV Status, and Recovery Time are informational only; only fresh Garmin Training Readiness guides this decision."
         )
@@ -122,8 +133,10 @@ def render_morning(
             body += f" Optional: {low}-{high} min easy walking at conversational effort."
     elif result.decision_type == "PROPOSE_NEXT_SESSION":
         name = result.next_program_session_name or "Workout"
-        at = f" at {result.planned_start_time}" if result.planned_start_time else ""
-        body = f"Suggested today: {name}{at}."
+        if result.planned_start_time and result.permitted_actions:
+            body = f"Suggested today: {name} at {result.planned_start_time}."
+        else:
+            body = f"No valid workout slot available today for {name}."
     else:
         name = result.planned_session_name or "Workout"
         at = f" at {result.planned_start_time}" if result.planned_start_time else ""

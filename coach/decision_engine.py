@@ -359,14 +359,25 @@ def evaluate_morning_decision(
         best_effort=allow_incomplete,
     )
 
-    if outcome == "PROPOSE_NEXT_SESSION" and actions:
+    if outcome == "PROPOSE_NEXT_SESSION" and next_id:
+        proposal_action = {
+            "type": "schedule_original_session",
+            "program_session_id": next_id,
+            "target_date": target.isoformat(),
+        }
         try:
             from coach.interactions import _schedule_payload
-            sched_payload = _schedule_payload(session, dummy_result, actions[0])
-            if sched_payload and "suggested_time" in sched_payload:
+            sched_payload = _schedule_payload(session, dummy_result, proposal_action)
+            if sched_payload and sched_payload.get("suggested_time"):
                 planned_start_time = sched_payload["suggested_time"]
-        except Exception:
-            pass
+                proposal_action["suggested_time"] = planned_start_time
+                actions = [proposal_action]
+            else:
+                planned_start_time = None
+                actions = []
+        except (ValueError, KeyError, TypeError):
+            planned_start_time = None
+            actions = []
 
     result = DecisionResult(
         decision_id=dummy_result.decision_id, evaluated_at=now.isoformat(), decision_type=outcome, workout_outcome=outcome,

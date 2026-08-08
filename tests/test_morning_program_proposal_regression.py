@@ -223,3 +223,120 @@ def test_plan_page_renders_upcoming_planned_session(session, monkeypatch):
     assert "Next scheduled session" in response.text
     assert "Nothing scheduled yet" not in response.text
 
+
+def test_no_training_readiness_authority_text_on_program_proposal(session, monkeypatch):
+    from coach.renderer import render_morning
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
+    program, source = _add_program(session)
+    _fresh_data(session)
+    now_val = datetime(2026, 7, 6, 7, 30)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    result = evaluate_morning_decision(session, target=TARGET)
+    text, _, _ = render_morning(session, result)
+
+    assert "Sleep: 8h" in text
+    assert "Garmin Sleep Score: 85 (Good)" in text
+    assert "Garmin Training Readiness guides this decision" not in text
+
+
+def test_exact_displayed_time_equals_staged_schedule_payload(session, monkeypatch):
+    import json
+    from coach.interactions import stage_decision_actions
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
+    program, source = _add_program(session)
+    _fresh_data(session)
+    now_val = datetime(2026, 7, 6, 7, 30)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    result = evaluate_morning_decision(session, target=TARGET)
+    text, interaction_ids = prepare_recovery_morning(session, result)
+    staged = stage_decision_actions(session, result)
+
+    assert len(staged) == 1
+    staged_payload = json.loads(staged[0].payload_json)
+    assert f"at {staged_payload['suggested_time']}." in text
+    assert result.planned_start_time == staged_payload["suggested_time"]
+
+
+def test_no_valid_calendar_slot_shows_explicit_no_slot_state_without_button(session, monkeypatch):
+    from coach.renderer import render_morning
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "stale", "events": [], "error": "Calendar unavailable"},
+    )
+    program, source = _add_program(session)
+    _fresh_data(session)
+    now_val = datetime(2026, 7, 6, 7, 30)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+
+    result = evaluate_morning_decision(session, target=TARGET)
+    assert result.decision_type == "PROPOSE_NEXT_SESSION"
+    assert result.planned_start_time is None
+    assert result.permitted_actions == []
+
+    text, interaction_ids = prepare_recovery_morning(session, result)
+    assert "No valid workout slot available today" in text
+    assert "Suggested today:" not in text
+    assert len(interaction_ids) == 0
+
+
+def test_pinned_runtime_imports_fail_visibly_when_missing():
+    import coach.active_recovery as ar
+    import coach.ask_coach_llm as acl
+    assert hasattr(ar, "GarminConnectNotFoundError")
+    assert hasattr(acl, "genai")
+
+
+def test_plan_page_uses_athlete_local_date_and_canonical_active_statuses(session, monkeypatch):
+    import config
+    import db
+    import tenant_store
+    from control_db import User
+    import app as app_module
+
+    monkeypatch.setattr(config, "APP_USERNAME", "", raising=False)
+    monkeypatch.setattr("app.resolve_web_session", lambda sess, token: User(
+        id="00000000-0000-0000-0000-000000000001", email="test@example.com",
+        status="active", role="owner", onboarding_step="complete",
+    ))
+    monkeypatch.setattr(db, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(app_module, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(tenant_store, "engine_for_user", lambda uid, root=None: session.bind)
+
+    program, source = _add_program(session)
+    local_date = date(2026, 7, 6)
+
+    done_sess = PlannedSession(
+        title="Should Be Ignored Done", activity_type="strength_training", target_date=local_date,
+        suggested_time="10:00", duration_min=60, status="completed", source="coach"
+    )
+    active_sess = PlannedSession(
+        title="Active Future Workout", activity_type="strength_training", target_date=local_date,
+        suggested_time="18:00", duration_min=60, status="planned", source="coach"
+    )
+    session.add(done_sess)
+    session.add(active_sess)
+    session.commit()
+
+    monkeypatch.setattr("time_utils.get_local_date", lambda: local_date)
+    client = TestClient(app_module.app, cookies={"gc_session": "test_token"})
+    response = client.get("/program")
+    assert response.status_code == 200
+    assert "Active Future Workout" in response.text
+    assert "Should Be Ignored Done" not in response.text
+
