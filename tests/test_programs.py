@@ -199,7 +199,7 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
         "Bench Press", "Barbell Row", "Seated Overhead Dumbbell Press", "V-Bar Lat Pull Down",
         "Squat", "Stiff Leg Deadlifts", "Incline Dumbbell Bench Press", "Rack Deadlifts",
         "Military Press", "Machine Chest Press", "Machine Row", "Machine Shoulder Press",
-        "Leg Press", "Dumbbell Stiff Leg Deadlift", "Hack Squat",
+        "Leg Press", "Dumbbell Stiff Leg Deadlift",
     }
     upper_lower = {
         name: rest
@@ -502,14 +502,136 @@ def test_routine_exercise_name_exactness_audit():
         f"New unmapped exercises detected: {result['unmapped']}"
     )
     non_exact_names = sorted({name for _, _, name, _ in result["non_exact"]})
-    assert len(result["exact"]) == 256, (
-        f"Exact-label count changed: expected 256, got {len(result['exact'])}. "
+    assert len(result["exact"]) == 261, (
+        f"Exact-label count changed: expected 261, got {len(result['exact'])}. "
         "Review the audit before updating this number."
     )
-    assert len(non_exact_names) == 134, (
-        f"Unique non-exact names changed: expected 134, got {len(non_exact_names)}. "
+    assert len(non_exact_names) == 131, (
+        f"Unique non-exact names changed: expected 131, got {len(non_exact_names)}. "
         f"Names: {non_exact_names}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: alias corrections (Part A) and source substitutions (Part B)
+# ---------------------------------------------------------------------------
+
+def test_corrected_alias_dumbbell_frog_squat():
+    meta = exercise_metadata("Dumbbell Frog Squat")
+    assert meta and meta["key"] == "SQUAT:WIDE_STANCE_GOBLET_SQUAT", (
+        f"Dumbbell Frog Squat must map to SQUAT:WIDE_STANCE_GOBLET_SQUAT, got {meta and meta['key']!r}"
+    )
+
+
+def test_corrected_alias_dumbbell_hip_thrust():
+    meta = exercise_metadata("Dumbbell Hip Thrust")
+    assert meta and meta["key"] == "HIP_RAISE:BARBELL_HIP_THRUST_WITH_BENCH", (
+        f"Dumbbell Hip Thrust must map to HIP_RAISE:BARBELL_HIP_THRUST_WITH_BENCH, got {meta and meta['key']!r}"
+    )
+
+
+def test_corrected_alias_glute_kick_backs():
+    meta = exercise_metadata("Glute Kick Backs")
+    assert meta and meta["key"] == "HIP_STABILITY:QUADRUPED_HIP_EXTENSION", (
+        f"Glute Kick Backs must map to HIP_STABILITY:QUADRUPED_HIP_EXTENSION, got {meta and meta['key']!r}"
+    )
+
+
+def test_corrected_alias_landmine_squat():
+    meta = exercise_metadata("Landmine Squat")
+    assert meta and meta["key"] == "SQUAT:GOBLET_SQUAT", (
+        f"Landmine Squat must map to SQUAT:GOBLET_SQUAT, got {meta and meta['key']!r}"
+    )
+
+
+def test_corrected_alias_leg_press_calf_raise():
+    meta = exercise_metadata("Leg Press Calf Raise")
+    assert meta and meta["key"] == "CALF_RAISE:STANDING_CALF_RAISE", (
+        f"Leg Press Calf Raise must map to CALF_RAISE:STANDING_CALF_RAISE (not seated), got {meta and meta['key']!r}"
+    )
+
+
+def test_corrected_alias_single_leg_good_morning():
+    meta = exercise_metadata("Single Leg Good Morning")
+    assert meta and meta["key"] == "LEG_CURL:SINGLE_LEG_BARBELL_GOOD_MORNING", (
+        f"Single Leg Good Morning must map to LEG_CURL:SINGLE_LEG_BARBELL_GOOD_MORNING, got {meta and meta['key']!r}"
+    )
+
+
+def test_corrected_alias_smith_machine_row():
+    meta = exercise_metadata("Smith Machine Row")
+    assert meta and meta["key"] == "ROW:BENT_OVER_ROW_WITH_BARBELL", (
+        f"Smith Machine Row must map to ROW:BENT_OVER_ROW_WITH_BARBELL (not seated cable), got {meta and meta['key']!r}"
+    )
+
+
+def _session_exercises(prog_key: str, session_name: str) -> list[dict]:
+    prog = PROGRAMS[prog_key]
+    for session in prog["sessions"]:
+        if session["name"] == session_name:
+            return session["exercises"]
+    raise KeyError(f"Session {session_name!r} not found in {prog_key!r}")
+
+
+def test_source_substitution_hack_squat_upper_lower_4():
+    """upper_lower_4 / Lower B: Hack Squat replaced by Leg Press with source provenance note."""
+    exercises = _session_exercises("upper_lower_4", "Lower B")
+    names = [e["exercise_name"] for e in exercises]
+    assert "Hack Squat" not in names, "Hack Squat must not remain in upper_lower_4/Lower B"
+    substituted = [e for e in exercises if e["exercise_name"] == "Leg Press" and "machine hack squat" in e.get("notes", "")]
+    assert substituted, "A Leg Press with note 'machine hack squat' must appear in upper_lower_4/Lower B"
+    e = substituted[0]
+    assert e["sets"] == 2 and e["reps"] == 12 and e["rest_seconds"] == 90
+
+
+def test_source_substitution_hack_squat_and_glute_ham_raise_shul_4():
+    """shul_4 / Lower Strength: Hack Squat → Leg Press and Glute Ham Raise → Swiss Ball Hip Raise And Leg Curl."""
+    exercises = _session_exercises("shul_4", "Lower Strength")
+    names = [e["exercise_name"] for e in exercises]
+    assert "Hack Squat" not in names, "Hack Squat must not remain in shul_4/Lower Strength"
+    assert "Glute Ham Raise" not in names, "Glute Ham Raise must not remain in shul_4/Lower Strength"
+    lp = [e for e in exercises if e["exercise_name"] == "Leg Press" and "machine hack squat" in e.get("notes", "")]
+    assert lp, "Leg Press (source: machine hack squat) must appear in shul_4/Lower Strength"
+    assert lp[0]["sets"] == 3 and lp[0]["reps"] == 15 and lp[0]["rest_seconds"] == 120
+    gh = [e for e in exercises if e["exercise_name"] == "Swiss Ball Hip Raise And Leg Curl"]
+    assert gh, "Swiss Ball Hip Raise And Leg Curl must appear in shul_4/Lower Strength"
+    assert gh[0]["sets"] == 3 and gh[0]["reps"] == 10 and gh[0]["rest_seconds"] == 120
+
+
+def test_source_substitution_hack_squat_muscle_mania_6():
+    """muscle_mania_6 / Lower 3: Hack Squat replaced by Leg Press with source provenance note."""
+    exercises = _session_exercises("muscle_mania_6", "Lower 3")
+    names = [e["exercise_name"] for e in exercises]
+    assert "Hack Squat" not in names, "Hack Squat must not remain in muscle_mania_6/Lower 3"
+    substituted = [e for e in exercises if e["exercise_name"] == "Leg Press" and "machine hack squat" in e.get("notes", "")]
+    assert substituted, "A Leg Press with note 'machine hack squat' must appear in muscle_mania_6/Lower 3"
+    e = substituted[0]
+    assert e["sets"] == 4 and e["reps"] == 12
+
+
+def test_source_substitution_single_arm_landmine_press_barbell_no_rack_4():
+    """barbell_no_rack_4 / Upper B: Single Arm Landmine Press → Single Arm Dumbbell Shoulder Press."""
+    exercises = _session_exercises("barbell_no_rack_4", "Upper B")
+    names = [e["exercise_name"] for e in exercises]
+    assert "Single Arm Landmine Press" not in names, (
+        "Single Arm Landmine Press must not remain in barbell_no_rack_4/Upper B"
+    )
+    substituted = [e for e in exercises if e["exercise_name"] == "Single Arm Dumbbell Shoulder Press"]
+    assert substituted, "Single Arm Dumbbell Shoulder Press must appear in barbell_no_rack_4/Upper B"
+    e = substituted[0]
+    assert e["sets"] == 4 and e["reps"] == 8
+    assert "landmine press" in e.get("notes", "").lower(), (
+        "Source provenance note must reference 'landmine press'"
+    )
+
+
+def test_garmin_adapted_routines_are_in_audit():
+    """The four garmin_adapted routines must be classified as such in the audit doc."""
+    sections = _parse_audit_sections()
+    for key in ("upper_lower_4", "shul_4", "barbell_no_rack_4", "muscle_mania_6"):
+        assert sections.get(key) == "garmin_adapted", (
+            f"'{key}' must be classified as garmin_adapted in the audit doc, got {sections.get(key)!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -551,12 +673,14 @@ def test_audit_doc_source_unverified_count_is_zero():
     )
 
 
-def test_audit_doc_garmin_adapted_count_is_zero():
-    """After removing long_cycle_full_body_3, the garmin_adapted count in the audit must be 0."""
+def test_audit_doc_garmin_adapted_four_routines():
+    """garmin_adapted covers exactly the four routines with no adequate Garmin catalog entry."""
     text = _audit_text()
     assert "Long Cycle Full Body" not in text, (
         "long_cycle_full_body_3 was removed; its display name must not appear in the audit."
     )
+    for key in ("upper_lower_4", "shul_4", "barbell_no_rack_4", "muscle_mania_6"):
+        assert key in text, f"Expected garmin_adapted routine '{key}' missing from audit."
 
 
 def test_audit_doc_garmincoach_default_rest_not_attributed_to_source():
@@ -633,9 +757,9 @@ _VALID_CLASSIFICATIONS = {
 
 _EXPECTED_COUNTS = {
     "source_exact": 7,
-    "source_exact_with_equivalent_names": 12,
-    "source_permitted_optional_omission": 2,
-    "garmin_adapted": 0,
+    "source_exact_with_equivalent_names": 9,
+    "source_permitted_optional_omission": 1,
+    "garmin_adapted": 4,
     "source_mismatch": 0,
     "source_unverified": 0,
 }

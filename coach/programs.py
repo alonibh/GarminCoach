@@ -382,7 +382,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
             ]),
             _session("Lower B", "lower body", [
                 _exercise("Leg Press", 3, 20, rest=90), _exercise("Dumbbell Stiff Leg Deadlift", 3, 12, rest=90), _exercise("Leg Press Calf Raise", 3, 15),
-                _exercise("Hack Squat", 2, 12, rest=90), _exercise("Seated Leg Curl", 2, 12), _exercise("Seated Calf Raise", 2, 12),
+                _exercise("Leg Press", 2, 12, rest=90, notes="Source movement: machine hack squat"), _exercise("Seated Leg Curl", 2, 12), _exercise("Seated Calf Raise", 2, 12),
                 _exercise("Plank", 3, None, duration=60), _exercise("Hyperextension", 3, 12),
             ]),
         ],
@@ -395,7 +395,7 @@ PROGRAMS: dict[str, dict[str, Any]] = {
         [
             _session("Lower Strength", "lower body", [
                 _exercise("Front Squat", 3, 5, rest=300), _exercise("Trap Bar Deadlift", 3, 5, rest=300),
-                _exercise("Hack Squat", 3, 15, rest=120), _exercise("Glute Ham Raise", 3, 10, movement="hip_hinge", rest=120),
+                _exercise("Leg Press", 3, 15, rest=120, notes="Source movement: machine hack squat"), _exercise("Swiss Ball Hip Raise And Leg Curl", 3, 10, rest=120, notes="Source movement: glute-ham raise (GHD)"),
                 _exercise("Seated Calf Raise", 4, 10, rest=120),
             ]),
             _session("Upper Strength", "upper body", [
@@ -690,7 +690,7 @@ PROGRAMS.update({
             ], 90),
             _session("Upper B", "upper body", [
                 _exercise("Band Pull Apart", 3, 20, movement="horizontal_pull"), _exercise("Floor Press", 4, 8),
-                _exercise("Meadows Row", 4, 8, movement="horizontal_pull"), _exercise("Single Arm Landmine Press", 4, 8, movement="vertical_push"),
+                _exercise("Meadows Row", 4, 8, movement="horizontal_pull"), _exercise("Single Arm Dumbbell Shoulder Press", 4, 8, notes="Source movement: single arm landmine press"),
                 _exercise("Inverted Row", 4, 8), _exercise("Banded Tricep Extension", 3, 20),
             ], 90),
             _session("Lower B", "lower body", [
@@ -810,7 +810,7 @@ PROGRAMS.update({
                 _exercise("Chin Up", 3, 6),
             ], 75),
             _session("Lower 3", "lower body", [
-                _exercise("Hack Squat", 4, 12, notes="Source movement: machine hack squat"),
+                _exercise("Leg Press", 4, 12, notes="Source movement: machine hack squat"),
                 _exercise("Hyperextension", 3, 12),
                 _exercise("Adductor Machine", 3, 12, rest=45, notes="Source movement: hip adduction"),
                 _exercise("Abductor Machine", 3, 12, rest=45, notes="Source movement: hip abduction"),

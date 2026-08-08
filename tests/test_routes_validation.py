@@ -700,7 +700,7 @@ def test_existing_source_template_rest_defaults_are_migrated_without_touching_cu
         ("ms_full_body_3", "Full Body 2", "Romanian Deadlift", 120, 90),
         ("upper_lower_4", "Upper A", "Bench Press", 60, 90),
         ("shul_4", "Lower Strength", "Front Squat", 180, 300),
-        ("shul_4", "Lower Strength", "Hack Squat", 90, 120),
+        ("shul_4", "Lower Strength", "Leg Press", 90, 120),
         ("shul_4", "Lower Hypertrophy", "Leg Extension", 60, 45),
     ]
     exercise_ids = []

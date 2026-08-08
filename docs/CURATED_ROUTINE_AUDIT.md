@@ -169,14 +169,14 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 |---|---|
 | **Internal key** | `upper_lower_4` |
 | **Display name** | Upper / Lower Bodybuilding · 4 days |
-| **Classification** | `source_exact_with_equivalent_names` |
+| **Classification** | `garmin_adapted` |
 | **Source URL** | https://www.muscleandstrength.com/workouts/upper-lower-4-day-gym-bodybuilding-workout |
 | **Reviewed** | 2026-07-22 (detailed exercise and rest audit) |
 | **Source sessions** | Upper A; Lower A; Upper B; Lower B |
 | **Required source exercises** | All exercises in all four sessions per 2026-07-22 review |
 | **Equivalent-name substitutions** | Source Pull Ups / Machine Rows alternative → Machine Row recorded |
 | **Optional omissions** | None |
-| **Garmin adaptations** | 3-second eccentric tempo not representable in Garmin FIT protocol |
+| **Garmin adaptations** | 3-second eccentric tempo not representable in Garmin FIT protocol. Lower B: source Hack Squat (machine) replaced by Leg Press — Garmin catalog has no machine hack squat entry; Leg Press shares the supported-back sled-loaded lower-body push pattern. |
 | **Corrections made** | None |
 | **Unresolved source facts** | Source page not re-fetched 2026-08-06 (timed out) |
 | **GarminCoach defaults** | None |
@@ -187,14 +187,14 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 |---|---|
 | **Internal key** | `shul_4` |
 | **Display name** | SHUL Strength / Hypertrophy · 4 days |
-| **Classification** | `source_permitted_optional_omission` |
+| **Classification** | `garmin_adapted` |
 | **Source URL** | https://www.muscleandstrength.com/workouts/shul-workout |
 | **Reviewed** | 2026-07-22 (detailed exercise and rest audit) |
 | **Source sessions** | Lower Strength; Upper Strength; Lower Hypertrophy; Upper Hypertrophy |
 | **Required source exercises** | All exercises in chosen alternative set per 2026-07-22 review |
 | **Equivalent-name substitutions** | None |
 | **Optional omissions** | Front Squat chosen from source alternatives: Safety Bar Squat / Goblet Squat / Front Squat (source offers all three) |
-| **Garmin adaptations** | None |
+| **Garmin adaptations** | Lower Strength: source Hack Squat (machine) replaced by Leg Press — Garmin catalog has no machine hack squat entry. Lower Strength: source Glute Ham Raise (GHD machine) replaced by Swiss Ball Hip Raise And Leg Curl — Garmin catalog has no GHD or Nordic hamstring curl entry; Swiss Ball Hip Raise And Leg Curl is the closest compound posterior-chain equivalent available. |
 | **Corrections made** | None |
 | **Unresolved source facts** | Source page not re-fetched 2026-08-06 (timed out) |
 | **GarminCoach defaults** | None |
@@ -295,14 +295,14 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 |---|---|
 | **Internal key** | `barbell_no_rack_4` |
 | **Display name** | Barbell Only (No Rack) · 4 days |
-| **Classification** | `source_exact_with_equivalent_names` |
+| **Classification** | `garmin_adapted` |
 | **Source URL** | https://www.muscleandstrength.com/workouts/4-day-barbell-only-workout |
 | **Reviewed** | 2026-08-06 via cdn.muscleandstrength.com |
 | **Source sessions** | Upper A; Lower A; Upper B; Lower B |
 | **Required source exercises** | Lower B includes Standing Banded Hip Abduction as a required exercise |
 | **Equivalent-name substitutions** | Standing Banded Hip Abduction → Standing Hip Abduction (noted) |
 | **Optional omissions** | None |
-| **Garmin adaptations** | None |
+| **Garmin adaptations** | Upper B: source Single Arm Landmine Press replaced by Single Arm Dumbbell Shoulder Press — Garmin catalog has no landmine press entry; Single Arm Dumbbell Shoulder Press is the closest unilateral strict overhead press available. |
 | **Corrections made** | 2026-08-06: Added Standing Hip Abduction to Lower B (source movement: standing banded hip abduction). |
 | **Unresolved source facts** | None |
 | **GarminCoach defaults** | Between-set rest: 60 s GarminCoach product default; source page does not specify between-set rest |
@@ -411,14 +411,14 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 |---|---|
 | **Internal key** | `muscle_mania_6` |
 | **Display name** | Muscle Mania Upper / Lower · 6 days |
-| **Classification** | `source_exact_with_equivalent_names` |
+| **Classification** | `garmin_adapted` |
 | **Source URL** | https://www.muscleandstrength.com/workouts/muscle-mania-10-week-muscle-growth-workout |
 | **Reviewed** | 2026-08-06 via cdn.muscleandstrength.com |
 | **Source sessions** | Upper 1; Lower 1; Upper 2 (Upper Workout 3); Lower 2 (Lower Workout 4); Upper 3 (Upper Workout 5); Lower 3 (Lower Workout 6) |
 | **Required source exercises** | Upper 1: Bent Over Row, Barbell Bench Press, Lat Pull Down, Seated Side Lateral Raise, Barbell Curl, French Press. Lower 1: Barbell Back Squat, Romanian Deadlift, Dumbbell Rear Lunge, Leg Curl, Seated Calf Raise, Machine Crunch. Upper 2: Pull Up, Dumbbell Incline Bench Press, Cable Row, Seated Dumbbell Shoulder Press, Machine Preacher Curl, Machine Dip. Lower 2: Leg Press, Barbell Glute Bridge, Leg Extension, Seated Leg Curl, Standing Calf Raise, Machine Crunch. Upper 3: Machine Pec Dec, Machine Lateral Raise, Machine Row, Machine Reverse Fly, Dip, Chin Up. Lower 3: Machine Hack Squat, Hyperextension, Hip Adduction, Hip Abduction, Leg Press Calf Press, Machine Crunch |
-| **Equivalent-name substitutions** | Seated Side Lateral Raise → Dumbbell Lateral Raise; French Press → Seated Overhead EZ Bar Tricep Extension; Dumbbell Rear Lunge → Dumbbell Reverse Lunge; Machine Crunch → Cable Crunch; Dumbbell Incline Bench Press → Incline Dumbbell Bench Press; Cable Row → Seated Cable Row; Machine Preacher Curl → EZ Bar Preacher Curl; Machine Dip → Machine Tricep Dip; Machine Pec Dec → Pec Deck; Machine Lateral Raise → Dumbbell Lateral Raise; Machine Reverse Fly → Dumbbell Rear Delt Lateral Raise; Dip → Weighted Dips; Machine Hack Squat → Hack Squat; Hip Adduction → Adductor Machine; Hip Abduction → Abductor Machine; Leg Press Calf Press → Leg Press Calf Raise |
+| **Equivalent-name substitutions** | Seated Side Lateral Raise → Dumbbell Lateral Raise; French Press → Seated Overhead EZ Bar Tricep Extension; Dumbbell Rear Lunge → Dumbbell Reverse Lunge; Machine Crunch → Cable Crunch; Dumbbell Incline Bench Press → Incline Dumbbell Bench Press; Cable Row → Seated Cable Row; Machine Preacher Curl → EZ Bar Preacher Curl; Machine Dip → Machine Tricep Dip; Machine Pec Dec → Pec Deck; Machine Lateral Raise → Dumbbell Lateral Raise; Machine Reverse Fly → Dumbbell Rear Delt Lateral Raise; Dip → Weighted Dips; Hip Adduction → Adductor Machine; Hip Abduction → Abductor Machine; Leg Press Calf Press → Leg Press Calf Raise |
 | **Optional omissions** | None |
-| **Garmin adaptations** | None |
+| **Garmin adaptations** | Lower 3: source Machine Hack Squat replaced by Leg Press — Garmin catalog has no machine hack squat entry; Leg Press shares the supported-back sled-loaded lower-body push pattern. |
 | **Corrections made** | 2026-08-06: Replaced previous implementation (which was derived from unrelated compound-only logic and did not match the source) with all six source sessions containing all six source exercises each. Applied source-defined rest: 60 s for compound movements, 45 s for isolation movements. |
 | **Unresolved source facts** | None |
 | **GarminCoach defaults** | None (rest is source-defined: 60 s compound, 45 s isolation) |
@@ -434,9 +434,9 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 | Source pages reviewed 2026-07-22 | 14 |
 | Source pages with unresolved review | 0 |
 | `source_exact` | 7 (beginner_full_body_3, total_package_3, dumbbell_full_body_3, split_full_4, barbell_upper_lower_4, maul_5, dumbbell_split_5) |
-| `source_exact_with_equivalent_names` | 12 (full_body_2, ms_full_body_3, upper_lower_4, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, barbell_no_rack_4, ppl_6, muscle_mania_6) |
-| `source_permitted_optional_omission` | 2 (shul_4, built_different_ppl_6) |
-| `garmin_adapted` | 0 |
+| `source_exact_with_equivalent_names` | 9 (full_body_2, ms_full_body_3, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, ppl_6) |
+| `source_permitted_optional_omission` | 1 (built_different_ppl_6) |
+| `garmin_adapted` | 4 (upper_lower_4, shul_4, barbell_no_rack_4, muscle_mania_6) |
 | `source_mismatch` | 0 |
 | `source_unverified` | 0 |
 | Removed 2026-08-08 | 3 routines removed (long_cycle_full_body_3, powerbuilding_ppl_6, low_volume_high_intensity_6) |
