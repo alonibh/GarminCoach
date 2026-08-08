@@ -370,19 +370,13 @@ def test_dashboard_renders_local_informational_trend_surface(client):
     c, _ = client
     response = c.get("/")
     assert response.status_code == 200
-    assert "28-day recovery and health trends" in response.text
-    assert "Trends are informational and do not change your workout." in response.text
+    assert "28-day recovery and health trends" not in response.text
+    assert "Long-term fitness history" not in response.text
     assert 'data-chart-range="7"' in response.text
     assert 'data-chart-range="28"' in response.text
     assert "dashboardChartRange" in response.text
     assert 'id="stressChart"' in response.text
     assert 'id="bodyBatteryChart"' in response.text
-    assert "Coverage: none" in response.text
-    assert "coverage none" in response.text
-    assert "Garmin baseline low" in response.text
-    assert "Garmin baseline high" in response.text
-    assert "Min " + "Good" + " Range" not in response.text
-    assert "Max " + "Good" + " Range" not in response.text
     assert "lineChart('rhrChart'" in response.text
     assert "lineChart('stressChart'" in response.text
 

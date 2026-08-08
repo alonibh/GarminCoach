@@ -65,12 +65,7 @@ from sync.scheduler import (
     stop_schedulers,
 )
 from time_utils import get_local_date
-from metrics.recovery_trends import (
-    RecoveryHealthTrend,
-    TrendDirection,
-    build_recovery_health_trend_report,
-)
-from metrics.slow_metric_history import build_slow_metric_history_report
+
 from auth_routes import SESSION_COOKIE as MULTI_USER_SESSION_COOKIE
 from auth_routes import router as auth_router
 from account_routes import router as account_router
@@ -1210,87 +1205,7 @@ def _intensity_minutes_summary(session, end_day: date, days: int) -> dict:
     }
 
 
-def _format_trend_value(value: float | None, unit: str) -> str | None:
-    if value is None:
-        return None
-    if unit == "hours":
-        total_minutes = int(round(value * 60))
-        hours, minutes = divmod(total_minutes, 60)
-        return f"{hours}h {minutes:02d}m"
-    if unit == "minutes":
-        return f"{int(round(value))} min"
-    if unit in {"points", "ms", "bpm", "steps"}:
-        return f"{int(round(value)):,} {unit}" if unit != "points" else f"{int(round(value))} points"
-    return f"{value:g} {unit}"
 
-
-def _trend_card(trend: RecoveryHealthTrend) -> dict:
-    comparison = {
-        TrendDirection.HIGHER: "Higher than prior 21-day median",
-        TrendDirection.LOWER: "Lower than prior 21-day median",
-        TrendDirection.STABLE: "Similar to prior 21-day median",
-        TrendDirection.INSUFFICIENT_DATA: "Not enough valid days to compare",
-    }[trend.direction]
-    return {
-        "key": trend.key,
-        "label": trend.label,
-        "recent": _format_trend_value(trend.recent.median, trend.unit),
-        "baseline": _format_trend_value(trend.baseline.median, trend.unit),
-        "comparison": comparison,
-        "coverage_label": trend.coverage.value,
-        "coverage_text": f"{trend.recent.valid_days + trend.baseline.valid_days}/28 valid days",
-        "latest": _format_trend_value(trend.latest_value, trend.unit),
-        "latest_day": trend.latest_day.isoformat() if trend.latest_day else None,
-        "note": trend.informational_note,
-        "source_status": trend.source_status.replace("_", " ").title() if trend.source_status else None,
-        "source_day": trend.source_day.isoformat() if trend.source_day else None,
-        "source_baseline": (
-            f"{int(round(trend.source_baseline_low))}–{int(round(trend.source_baseline_high))} ms"
-            if trend.source_baseline_low is not None and trend.source_baseline_high is not None else None
-        ),
-    }
-
-
-def _trend_presentation(report) -> dict:
-    by_key = {trend.key: trend for trend in report.trends}
-    core_keys = ("sleep_duration", "sleep_score", "hrv_overnight", "resting_hr", "stress_avg")
-    cards = [_trend_card(by_key[key]) for key in core_keys]
-    recovery = by_key["recovery_time"]
-    if recovery.latest_value is not None:
-        cards.append(_trend_card(recovery))
-    timing = report.sleep_timing
-    timing_card = None
-    if timing is not None:
-        comparison = {
-            TrendDirection.HIGHER: "Higher variability than prior 21-day median",
-            TrendDirection.LOWER: "Lower variability than prior 21-day median",
-            TrendDirection.STABLE: "Similar variability to prior 21-day median",
-            TrendDirection.INSUFFICIENT_DATA: "Not enough valid nights to compare",
-        }[timing.direction]
-        timing_card = {
-            "recent": f"{int(round(timing.recent.median))} min variability" if timing.recent.median is not None else None,
-            "baseline": f"{int(round(timing.baseline.median))} min" if timing.baseline.median is not None else None,
-            "comparison": comparison,
-            "coverage_label": timing.coverage.value,
-            "coverage_text": f"{timing.recent.valid_days + timing.baseline.valid_days}/28 valid nights",
-            "bedtime": timing.recent_bedtime.strftime("%H:%M") if timing.recent_bedtime else None,
-            "wake_time": timing.recent_wake_time.strftime("%H:%M") if timing.recent_wake_time else None,
-            "note": timing.informational_note,
-        }
-    body = report.body_battery
-    body_card = {
-        "high": _trend_card(body.high), "low": _trend_card(body.low),
-        "charged": _trend_card(body.charged), "drained": _trend_card(body.drained),
-    } if body else None
-    return {
-        "as_of_day": report.as_of_day.isoformat(),
-        "overnight_end_day": report.overnight_end_day.isoformat(),
-        "full_day_end_day": report.full_day_end_day.isoformat(),
-        "cards": cards,
-        "timing": timing_card,
-        "body_battery": body_card,
-        "movement": _trend_card(by_key["steps"]),
-    }
 
 
 def _dashboard_hero(readiness_tiles: list[dict], sleep_series: list[dict]) -> dict:
@@ -1403,11 +1318,6 @@ def dashboard(request: Request, activity_page: int = 1):
             (activity_page - 1) * activity_page_size
         ).limit(activity_page_size).all()
         chart_data = _dashboard_chart_data(s, as_of_day=today)
-        trend_report = build_recovery_health_trend_report(
-            s, as_of_day=today, overnight_today_ready=_overnight_metrics_ready(s),
-        )
-        trend_presentation = _trend_presentation(trend_report)
-        slow_metric_history = build_slow_metric_history_report(s, as_of_day=today)
         intensity_summary = {
             "seven_day": _intensity_minutes_summary(s, today, 7),
             "twenty_eight_day": _intensity_minutes_summary(s, today, 28),
@@ -1472,8 +1382,6 @@ def dashboard(request: Request, activity_page: int = 1):
             "profile": profile,
             "active_program": current_program,
             "intensity_summary": intensity_summary,
-            "recovery_health_trends": trend_presentation,
-            "slow_metric_history": slow_metric_history,
             "recovery_panel": recovery_panel,
         },
     )

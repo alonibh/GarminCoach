@@ -164,94 +164,7 @@
 </div></section>
 {% endif %}
 
-{% if slow_metric_history is defined %}{% set slow = slow_metric_history %}
-{% set has_slow_cards = (slow.fitness_age.points or slow.fitness_age.capability_state == 'supported') or (slow.vo2_running.points or slow.vo2_running.capability_state == 'supported') or (slow.vo2_cycling.points or slow.vo2_cycling.capability_state == 'supported') or (slow.training_status.state in ['SUPPORTED_WITH_DATA', 'SUPPORTED_NO_DATA']) %}
-{% if has_slow_cards %}
-<section class="slow-metric-history" aria-labelledby="slow-metric-history-title">
-  <div class="metric-section-heading"><div><span class="eyebrow">Local observations</span><h2 id="slow-metric-history-title">Long-term fitness history</h2></div></div>
-  <p class="trend-authority-note">Garmin-provided information only. It does not change a workout or recovery decision.</p>
-  <div class="slow-history-grid">
-    {% if slow.fitness_age.points or slow.fitness_age.capability_state == 'supported' %}
-    <article class="card slow-history-card">
-      <h3>Fitness Age</h3>
-      <p><strong>{{ '%.1f'|format(slow.fitness_age.current_value) if slow.fitness_age.current_value is not none else 'No local observation' }}</strong>{% if slow.fitness_age.current_value is not none %} yrs{% endif %}</p>
-      {% if slow.target_fitness_age.current_value is not none %}<p class="muted">Achievable Fitness Age: {{ '%.1f'|format(slow.target_fitness_age.current_value) }} yrs</p>{% endif %}
-      {% if slow.fitness_age.previous_value is not none %}<p class="muted">Previous changed value: {{ '%.1f'|format(slow.fitness_age.previous_value) }}</p>{% endif %}
-      {% if slow.fitness_age.points %}<div class="slow-chart-wrap"><canvas id="fitnessAgeHistoryChart"></canvas></div>{% endif %}
-      <p class="muted">Source: Garmin-provided estimate.</p>
-    </article>
-    {% endif %}
-    {% for series, label, chart_id in [(slow.vo2_running, 'Running VO₂ max', 'runningVo2HistoryChart'), (slow.vo2_cycling, 'Cycling VO₂ max', 'cyclingVo2HistoryChart')] %}
-      {% if series.points or series.capability_state == 'supported' %}
-      <article class="card slow-history-card">
-        <h3>{{ label }}</h3>
-        <p><strong>{{ '%.1f'|format(series.current_value) if series.current_value is not none else 'No local observation' }}</strong>{% if series.current_value is not none %} ml/kg/min{% endif %}</p>
-        {% if series.previous_value is not none %}<p class="muted">Previous changed value: {{ '%.1f'|format(series.previous_value) }}</p>{% endif %}
-        {% if series.points %}<div class="slow-chart-wrap"><canvas id="{{ chart_id }}"></canvas></div>{% endif %}
-      </article>
-      {% endif %}
-    {% endfor %}
-    {% if slow.training_status.state in ['SUPPORTED_WITH_DATA', 'SUPPORTED_NO_DATA'] %}
-    <article class="card slow-history-card training-status-history">
-      <h3>Training Status</h3>
-      {% if slow.training_status.state == 'SUPPORTED_WITH_DATA' %}
-        <p>Garmin Training Status: <strong>{{ slow.training_status.current_status }}</strong></p>
-        <p class="muted">Observed {{ slow.training_status.current_day }}{% if slow.training_status.device_display_name %} · {{ slow.training_status.device_display_name }}{% endif %}</p>
-        <ul class="status-history-list">{% for point in slow.training_status.changes|reverse %}<li>{{ point.observed_on }} · {{ point.status }}</li>{% endfor %}</ul>
-      {% else %}
-        <p>Training Status is supported for this device, but no current observation is stored.</p>
-      {% endif %}
-    </article>
-    {% endif %}
-  </div>
-</section>
-{% endif %}
-{% endif %}
 
-{% if recovery_health_trends %}
-<section class="recovery-health-trends" aria-labelledby="recovery-health-trends-title">
-  <div class="metric-section-heading"><div><span class="eyebrow">Recent 7 days vs prior 21 days</span><h2 id="recovery-health-trends-title">28-day recovery and health trends</h2></div></div>
-  <p class="muted">As of {{ recovery_health_trends.as_of_day }}. Exact calendar-day coverage is shown for every metric; missing days are not treated as zero.</p>
-  <p class="trend-authority-note">Trends are informational and do not change your workout.</p>
-  <p class="trend-coverage-legend muted"><strong>Coverage:</strong> sufficient (20+ valid days and comparison coverage), partial (14–19), sparse (1–13), or none.</p>
-  <div class="trend-card-grid">
-    {% for card in recovery_health_trends.cards %}
-    <article class="card trend-card" data-trend="{{ card.key }}">
-      <h3>{{ card.label }} <span class="info" tabindex="0" data-tip="{{ card.note }}">i</span></h3>
-      <strong class="trend-card-value">{{ card.recent if card.recent else 'No valid recent value' }}</strong>
-      <p>{{ card.comparison }}</p>
-      {% if card.baseline %}<p class="muted">Prior median: {{ card.baseline }}</p>{% endif %}
-      <p class="muted">Coverage: {{ card.coverage_label }} · {{ card.coverage_text }}{% if card.latest %} · Latest {{ card.latest }} ({{ card.latest_day }}){% endif %}</p>
-      {% if card.source_status %}<p class="muted">Garmin status: {{ card.source_status }}{% if card.source_day %} ({{ card.source_day }}){% endif %}{% if card.source_baseline %} · Garmin baseline {{ card.source_baseline }}{% endif %}</p>{% endif %}
-    </article>
-    {% endfor %}
-    {% if recovery_health_trends.timing %}
-    {% set timing = recovery_health_trends.timing %}
-    <article class="card trend-card" data-trend="sleep-timing">
-      <h3>Sleep timing consistency <span class="info" tabindex="0" data-tip="Median absolute midpoint variation across valid stored sleep intervals; not a score.">i</span></h3>
-      <strong class="trend-card-value">{{ timing.recent if timing.recent else 'No valid recent value' }}</strong>
-      <p>{{ timing.comparison }}</p>
-      {% if timing.baseline %}<p class="muted">Prior variability: {{ timing.baseline }}</p>{% endif %}
-      {% if timing.bedtime or timing.wake_time %}<p class="muted">Recent median bedtime {{ timing.bedtime or '—' }} · wake time {{ timing.wake_time or '—' }}</p>{% endif %}
-      <p class="muted">Coverage: {{ timing.coverage_label }} · {{ timing.coverage_text }}</p>
-    </article>
-    {% endif %}
-    {% if recovery_health_trends.body_battery %}
-    {% set battery = recovery_health_trends.body_battery %}
-    <article class="card trend-card body-battery-trend" data-trend="body-battery">
-      <h3>Body Battery <span class="info" tabindex="0" data-tip="Separate Garmin daily summary facts; no combined Body Battery score is calculated.">i</span></h3>
-      <div class="body-battery-primary"><span><strong>High</strong> {{ battery.high.recent or '—' }}<small>{{ battery.high.comparison }}</small></span><span><strong>Low</strong> {{ battery.low.recent or '—' }}<small>{{ battery.low.comparison }}</small></span></div>
-      <p class="muted">High coverage: {{ battery.high.coverage_label }} · {{ battery.high.coverage_text }} · Low coverage: {{ battery.low.coverage_label }} · {{ battery.low.coverage_text }}</p>
-      <p class="muted">Charged: {{ battery.charged.recent or '—' }} ({{ battery.charged.comparison }}) · coverage {{ battery.charged.coverage_label }} · {{ battery.charged.coverage_text }}</p>
-      <p class="muted">Drained: {{ battery.drained.recent or '—' }} ({{ battery.drained.comparison }}) · coverage {{ battery.drained.coverage_label }} · {{ battery.drained.coverage_text }}</p>
-    </article>
-    {% endif %}
-  </div>
-  <div class="trend-movement-context">
-    <span class="eyebrow">Movement context</span><strong>Steps: {{ recovery_health_trends.movement.recent or 'No valid recent value' }}</strong> · {{ recovery_health_trends.movement.comparison }} · <span class="muted">Coverage: {{ recovery_health_trends.movement.coverage_label }} · {{ recovery_health_trends.movement.coverage_text }}</span>
-  </div>
-</section>
-{% endif %}
 
 <section aria-labelledby="trends-title"><div class="metric-section-heading"><div><span id="chart-range-heading" class="eyebrow">Last 28 days</span><h2 id="trends-title">Your charts</h2></div><div class="chart-range-control" role="group" aria-label="Chart date range"><button type="button" data-chart-range="7" aria-pressed="false">7 days</button><button type="button" data-chart-range="28" aria-pressed="true">28 days</button></div></div>
 
@@ -337,19 +250,7 @@
 </section>
 </div>
 
-{% if slow_metric_history is defined and has_slow_cards %}<script>
-document.addEventListener("DOMContentLoaded", () => {
-  const slowLine = (id, points, label) => {
-    const canvas = document.getElementById(id);
-    if (!canvas || !points.length || typeof Chart === 'undefined') return;
-    new Chart(canvas, { type: 'line', data: { labels: points.map(p => p.day), datasets: [{ label, data: points.map(p => p.value), borderColor: '#12b8ff', backgroundColor: 'rgba(18,184,255,.12)', tension: .25, fill: false }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b98a5', maxRotation: 0 }, grid: { display: false } }, y: { ticks: { color: '#8b98a5' }, grid: { color: '#2a333d' } } } } });
-  };
-  slowLine('fitnessAgeHistoryChart', [{% for p in slow.fitness_age.points %}{ day: '{{ p.observed_on }}', value: {{ p.value }} }{% if not loop.last %}, {% endif %}{% endfor %}], 'Fitness Age');
-  slowLine('runningVo2HistoryChart', [{% for p in slow.vo2_running.points %}{ day: '{{ p.observed_on }}', value: {{ p.value }} }{% if not loop.last %}, {% endif %}{% endfor %}], 'Running VO₂ max');
-  slowLine('cyclingVo2HistoryChart', [{% for p in slow.vo2_cycling.points %}{ day: '{{ p.observed_on }}', value: {{ p.value }} }{% if not loop.last %}, {% endif %}{% endfor %}], 'Cycling VO₂ max');
-});
-</script>
-{% endif %}
+
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {

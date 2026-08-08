@@ -1,17 +1,66 @@
 import pytest
 from datetime import date
-from types import SimpleNamespace
+from fastapi.testclient import TestClient
 
 import app as app_module
 import metrics.freshness as freshness_module
-from metrics.slow_metric_history import (
-    ScopedNumericHistory,
-    SlowMetricHistoryReport,
-    TrainingStatusHistory,
-)
 
 
-def test_recovery_time_hidden_for_unsupported_and_unverified_capability(monkeypatch):
+@pytest.fixture
+def client(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "APP_USERNAME", "", raising=False)
+    import sync.scheduler as scheduler
+    monkeypatch.setattr(scheduler, "start_scheduler", lambda: None)
+    from control_db import User
+    monkeypatch.setattr("app.resolve_web_session", lambda s, token: User(id="00000000-0000-0000-0000-000000000001", email="test@example.com", status="active", role="owner", onboarding_step="complete"))
+    c = TestClient(app_module.app)
+    c.cookies.set("gc_session", "testuser")
+    return c, app_module.app
+
+
+def test_removed_sections_do_not_appear_on_dashboard(client, monkeypatch):
+    """Proves that neither section heading appears on the dashboard,
+    the surrounding dashboard sections still render, and the dashboard route
+    no longer builds either removed report.
+    """
+    c, _ = client
+
+    # Spy on report builder functions to verify the dashboard route does NOT call them.
+    trend_report_called = False
+    slow_report_called = False
+
+    def spy_trend_report(*args, **kwargs):
+        nonlocal trend_report_called
+        trend_report_called = True
+
+    def spy_slow_report(*args, **kwargs):
+        nonlocal slow_report_called
+        slow_report_called = True
+
+    import metrics.recovery_trends as rt_mod
+    import metrics.slow_metric_history as sm_mod
+    monkeypatch.setattr(rt_mod, "build_recovery_health_trend_report", spy_trend_report)
+    monkeypatch.setattr(sm_mod, "build_slow_metric_history_report", spy_slow_report)
+
+    response = c.get("/")
+    assert response.status_code == 200
+
+    # 1. Neither section heading appears
+    assert "28-day recovery and health trends" not in response.text
+    assert "Long-term fitness history" not in response.text
+
+    # 2. Surrounding dashboard sections still render
+    assert "Today" in response.text
+    assert "Your charts" in response.text
+    assert "Garmin insights" in response.text or "Body metrics" in response.text
+
+    # 3. Dashboard route no longer builds either removed report
+    assert not trend_report_called, "Dashboard route should not call build_recovery_health_trend_report"
+    assert not slow_report_called, "Dashboard route should not call build_slow_metric_history_report"
+
+
+def test_recovery_time_signal_row_logic(monkeypatch):
     """Recovery Time row is hidden when Connect capability is unsupported/unverified,
     shown when stored value exists, and shows 'Not available today' when supported without data.
     """
@@ -59,116 +108,3 @@ def test_recovery_time_hidden_for_unsupported_and_unverified_capability(monkeypa
     rec_row = next(r for r in signals_tile["signal_rows"] if r["label"] == "Recovery Time")
     assert rec_row["value"] == "Not available today"
     assert rec_row["indicator"] == "No data"
-
-
-def _render_dashboard(**kwargs):
-    template = app_module.templates.get_template("dashboard.html")
-    defaults = {
-        "health_series": [],
-        "sleep_series": [],
-        "activities": [],
-        "fitness_tiles": [],
-        "readiness_tiles": [],
-        "sync_running": False,
-    }
-    defaults.update(kwargs)
-    return template.render(**defaults)
-
-
-def test_training_status_rendered_only_for_supported_states():
-    """Training Status card renders only for SUPPORTED_WITH_DATA and SUPPORTED_NO_DATA,
-    and is hidden for UNSUPPORTED, NO_DEVICE_IDENTITY, and UNVERIFIED states.
-    """
-    def make_report(state, status="BUILDING"):
-        return SlowMetricHistoryReport(
-            as_of_day=date(2026, 8, 8),
-            fitness_age=ScopedNumericHistory("fitness_age", "account", "account", None, None, (), "supported", False),
-            target_fitness_age=ScopedNumericHistory("target_fitness_age", "account", "account", None, None, (), "supported", False),
-            vo2_running=ScopedNumericHistory("vo2max", "activity", "running", None, None, (), "unsupported", False),
-            vo2_cycling=ScopedNumericHistory("vo2max", "activity", "cycling", None, None, (), "unsupported", False),
-            vo2_legacy=ScopedNumericHistory("vo2max", "device", "legacy", None, None, (), "unsupported", True),
-            training_status=TrainingStatusHistory(
-                state=state,
-                device_scope_key="forerunner965" if state == "SUPPORTED_WITH_DATA" else None,
-                device_display_name="Forerunner 965" if state == "SUPPORTED_WITH_DATA" else None,
-                capability_state="supported" if "SUPPORTED" in state else "unsupported",
-                current_status=status if state == "SUPPORTED_WITH_DATA" else None,
-                current_day=date(2026, 8, 8) if state == "SUPPORTED_WITH_DATA" else None,
-                changes=(),
-            ),
-        )
-
-    # SUPPORTED_WITH_DATA -> rendered with status
-    html = _render_dashboard(slow_metric_history=make_report("SUPPORTED_WITH_DATA"))
-    assert "Training Status" in html
-    assert "Garmin Training Status:" in html
-    assert "BUILDING" in html
-
-    # SUPPORTED_NO_DATA -> rendered with no data message
-    html = _render_dashboard(slow_metric_history=make_report("SUPPORTED_NO_DATA"))
-    assert "Training Status" in html
-    assert "Training Status is supported for this device, but no current observation is stored." in html
-
-    # UNSUPPORTED -> card completely hidden
-    html = _render_dashboard(slow_metric_history=make_report("UNSUPPORTED"))
-    assert "Training Status" not in html
-
-    # NO_DEVICE_IDENTITY -> card completely hidden
-    html = _render_dashboard(slow_metric_history=make_report("NO_DEVICE_IDENTITY"))
-    assert "Training Status" not in html
-
-    # UNVERIFIED -> card completely hidden
-    html = _render_dashboard(slow_metric_history=make_report("UNVERIFIED"))
-    assert "Training Status" not in html
-
-
-def test_vo2_legacy_removed_and_empty_unsupported_cards_hidden():
-    """Legacy VO2 max card is never rendered even with points;
-    Running/Cycling VO2 cards render only when points exist or capability is supported.
-    """
-    report = SlowMetricHistoryReport(
-        as_of_day=date(2026, 8, 8),
-        fitness_age=ScopedNumericHistory("fitness_age", "account", "account", None, None, (), "unsupported", False),
-        target_fitness_age=ScopedNumericHistory("target_fitness_age", "account", "account", None, None, (), "unsupported", False),
-        vo2_running=ScopedNumericHistory("vo2max", "activity", "running", None, None, (), "unsupported", False),
-        vo2_cycling=ScopedNumericHistory("vo2max", "activity", "cycling", None, None, (), "unsupported", False),
-        vo2_legacy=ScopedNumericHistory(
-            "vo2max", "device", "legacy", 48.5, None,
-            (SimpleNamespace(observed_on=date(2026, 8, 1), value=48.5),),
-            "unsupported", True,
-        ),
-        training_status=TrainingStatusHistory("UNSUPPORTED", None, None, "unsupported", None, None, ()),
-    )
-
-    html = _render_dashboard(slow_metric_history=report)
-    assert "Legacy VO₂ max" not in html
-    assert "activity type unverified" not in html
-    assert "Running VO₂ max" not in html
-    assert "Cycling VO₂ max" not in html
-    # Entire section hidden because no slow cards meet display criteria
-    assert "Long-term fitness history" not in html
-
-
-def test_typed_vo2_and_supported_empty_cards_display():
-    """Running/Cycling VO2 with valid typed points or supported capability display correctly."""
-    report = SlowMetricHistoryReport(
-        as_of_day=date(2026, 8, 8),
-        fitness_age=ScopedNumericHistory("fitness_age", "account", "account", 30.0, None, (), "supported", False),
-        target_fitness_age=ScopedNumericHistory("target_fitness_age", "account", "account", None, None, (), "supported", False),
-        vo2_running=ScopedNumericHistory(
-            "vo2max", "activity", "running", 52.0, None,
-            (SimpleNamespace(observed_on=date(2026, 8, 1), value=52.0),),
-            "supported", False,
-        ),
-        vo2_cycling=ScopedNumericHistory("vo2max", "activity", "cycling", None, None, (), "supported", False),
-        vo2_legacy=ScopedNumericHistory("vo2max", "device", "legacy", None, None, (), "unsupported", True),
-        training_status=TrainingStatusHistory("UNSUPPORTED", None, None, "unsupported", None, None, ()),
-    )
-
-    html = _render_dashboard(slow_metric_history=report)
-    assert "Long-term fitness history" in html
-    assert "Fitness Age" in html
-    assert "Running VO₂ max" in html
-    assert "52.0" in html
-    assert "Cycling VO₂ max" in html
-    assert "No local observation" in html
