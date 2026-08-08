@@ -204,14 +204,7 @@
     <div class="chart-head"><h3>Calories<span class="info" tabindex="0" data-tip="Daily caloric expenditure. Shows resting calories (BMR) and active calories from workouts and movement.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
     <div class="chart-wrap"><canvas id="caloriesChart"></canvas></div>
   </div>
-  <div class="card chart-card" data-chart="stress">
-    <div class="chart-head"><h3>Stress<span class="info" tabindex="0" data-tip="Stored daily Garmin stress average. Missing days stay blank.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
-    <div class="chart-wrap"><canvas id="stressChart"></canvas></div>
-  </div>
-  <div class="card chart-card" data-chart="body-battery">
-    <div class="chart-head"><h3>Body Battery<span class="info" tabindex="0" data-tip="Stored daily high and low source series. This chart does not create a readiness band.">i</span></h3><button class="collapse-btn" type="button" aria-label="Collapse">-</button></div>
-    <div class="chart-wrap"><canvas id="bodyBatteryChart"></canvas></div>
-  </div>
+
 </div>
 </section>
 
@@ -524,23 +517,7 @@ lineChart('stepsChart', healthk.map(d => d.day), healthk.map(d => d.steps), 'Ste
   { label: 'Garmin step goal', values: healthk.map(d => d.step_goal) },
 ]);
 stackedBarChart('caloriesChart', healthk.map(d => d.day), healthk.map(d => d.active_kcal), healthk.map(d => d.bmr_kcal));
-lineChart('stressChart', healthk.map(d => d.day), healthk.map(d => d.stress), 'Stress', '#ff6b6b', round0);
 
-function bodyBatteryChart(labels, high, low) {
-  const el = document.getElementById('bodyBatteryChart');
-  if (!el) return;
-  const chart = new Chart(el, {
-    type: 'line',
-    data: { labels: labels.map(fmtDay), datasets: [
-      { label: 'High', data: high, borderColor: '#56ccff', backgroundColor: 'transparent', borderWidth: 2.5, tension: .35, spanGaps: false, pointRadius: 2.5 },
-      { label: 'Low', data: low, borderColor: '#9b6dff', backgroundColor: 'transparent', borderWidth: 2.5, tension: .35, spanGaps: false, pointRadius: 2.5 },
-    ] },
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: true, labels: { color: '#9aacbc' } }, tooltip: { callbacks: { title: (items) => items[0]?.chart?.$rawLabels?.[items[0].dataIndex] || '' } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8b98a5', autoSkip: true, maxTicksLimit: 6, maxRotation: 0 } }, y: { min: 0, max: 100, grid: { color: '#2a333d' }, ticks: { color: '#8b98a5', maxTicksLimit: 4 } } } }
-  });
-  chart.$rawLabels = labels;
-  dashboardCharts.bodyBatteryChart = chart;
-}
-bodyBatteryChart(healthk.map(d => d.day), healthk.map(d => d.bb_high), healthk.map(d => d.bb_low));
 
 function updateLineChart(id, labels, data, references = []) {
   const chart = dashboardCharts[id];
@@ -572,7 +549,6 @@ function updateDashboardCharts(data) {
     ],
   );
   updateLineChart('rhrChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.rhr));
-  updateLineChart('stressChart', refreshedHealth.map(d => d.day), refreshedHealth.map(d => d.stress));
   updateLineChart(
     'stepsChart',
     refreshedHealth.map(d => d.day),
@@ -588,15 +564,6 @@ function updateDashboardCharts(data) {
     calories.data.datasets[0].data = refreshedHealth.map(d => d.bmr_kcal);
     calories.data.datasets[1].data = refreshedHealth.map(d => d.active_kcal);
     calories.update('none');
-  }
-  const battery = dashboardCharts.bodyBatteryChart;
-  if (battery) {
-    const labels = refreshedHealth.map(d => d.day);
-    battery.$rawLabels = labels;
-    battery.data.labels = labels.map(fmtDay);
-    battery.data.datasets[0].data = refreshedHealth.map(d => d.bb_high);
-    battery.data.datasets[1].data = refreshedHealth.map(d => d.bb_low);
-    battery.update('none');
   }
 }
 

@@ -108,3 +108,45 @@ def test_recovery_time_signal_row_logic(monkeypatch):
     rec_row = next(r for r in signals_tile["signal_rows"] if r["label"] == "Recovery Time")
     assert rec_row["value"] == "Not available today"
     assert rec_row["indicator"] == "No data"
+
+
+def test_stress_and_body_battery_graphs_removed(client):
+    """Proves Stress and Body Battery canvas/charts are absent, remaining charts render,
+    and health_series no longer exposes the removed chart-only fields."""
+    import json
+
+    c, _ = client
+    response = c.get("/")
+    assert response.status_code == 200
+
+    # Removed chart canvases and JS are absent
+    assert 'id="stressChart"' not in response.text
+    assert 'id="bodyBatteryChart"' not in response.text
+    assert "lineChart('stressChart'" not in response.text
+    assert "bodyBatteryChart(" not in response.text
+
+    # Remaining charts still render
+    assert 'id="rhrChart"' in response.text
+    assert 'id="hrvChart"' in response.text
+    assert 'id="sleepChart"' in response.text
+    assert 'id="stepsChart"' in response.text
+    assert 'id="caloriesChart"' in response.text
+    assert "lineChart('rhrChart'" in response.text
+    assert "lineChart('hrvChart'" in response.text
+
+    # Extract health_series JSON from the rendered page and verify removed fields absent
+    import re
+    m = re.search(r"const health = (\[.*?\]);", response.text, re.DOTALL)
+    assert m, "health_series JSON not found in dashboard"
+    health_series = json.loads(m.group(1))
+    if health_series:
+        first = health_series[0]
+        assert "stress" not in first, "stress field should not be in health_series"
+        assert "bb_high" not in first, "bb_high field should not be in health_series"
+        assert "bb_low" not in first, "bb_low field should not be in health_series"
+        assert "bb_charged" not in first, "bb_charged field should not be in health_series"
+        assert "bb_drained" not in first, "bb_drained field should not be in health_series"
+        # Remaining series fields still present
+        assert "rhr" in first
+        assert "hrv" in first
+        assert "steps" in first

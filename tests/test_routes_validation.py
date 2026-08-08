@@ -375,10 +375,18 @@ def test_dashboard_renders_local_informational_trend_surface(client):
     assert 'data-chart-range="7"' in response.text
     assert 'data-chart-range="28"' in response.text
     assert "dashboardChartRange" in response.text
-    assert 'id="stressChart"' in response.text
-    assert 'id="bodyBatteryChart"' in response.text
+    # Stress and Body Battery charts removed
+    assert 'id="stressChart"' not in response.text
+    assert 'id="bodyBatteryChart"' not in response.text
+    assert "lineChart('stressChart'" not in response.text
+    assert "bodyBatteryChart(" not in response.text
+    # Remaining charts still present
+    assert 'id="rhrChart"' in response.text
+    assert 'id="hrvChart"' in response.text
+    assert 'id="sleepChart"' in response.text
+    assert 'id="stepsChart"' in response.text
+    assert 'id="caloriesChart"' in response.text
     assert "lineChart('rhrChart'" in response.text
-    assert "lineChart('stressChart'" in response.text
 
 
 def test_workout_detail_renders_stored_hr_zones_without_garmin(client, monkeypatch):
