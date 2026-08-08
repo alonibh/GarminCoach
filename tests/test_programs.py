@@ -5,12 +5,12 @@ from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_fo
 from coach.program_policy import REJECTED_DEFAULT_ROUTINES, SOURCE_TRAINING_LEVELS
 
 
-def test_catalog_contains_twenty_five_reviewed_routines_from_two_to_six_days():
+def test_catalog_contains_twenty_four_reviewed_routines_from_two_to_six_days():
     assert len(GARMIN_EXERCISES) > 1800
-    assert len(PROGRAMS) == 25
+    assert len(PROGRAMS) == 24
     assert {len(program["sessions"]) for program in PROGRAMS.values()} == {2, 3, 4, 5, 6}
     assert {days: sum(len(program["sessions"]) == days for program in PROGRAMS.values()) for days in range(2, 7)} == {
-        2: 1, 3: 7, 4: 9, 5: 3, 6: 5,
+        2: 1, 3: 7, 4: 9, 5: 2, 6: 5,
     }
     for program in PROGRAMS.values():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
@@ -48,7 +48,6 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "upper_lower_4": "Beginner",
         "shul_4": "Intermediate",
         "split_full_4": "Advanced",
-        "muscle_strength_5": "Intermediate",
         "ppl_6": "Beginner",
         "dumbbell_full_body_3": "Beginner",
         "planet_fitness_full_body_3": "Beginner",
@@ -227,10 +226,6 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
         for routine in PROGRAMS["split_full_4"]["sessions"]
         for exercise in routine["exercises"]
     } == {45}
-    assert set(_rests("muscle_strength_5", "Upper Strength").values()) == {180}
-    assert set(_rests("muscle_strength_5", "Lower Strength").values()) == {180}
-    for session_name in {"Back & Shoulders Size", "Chest & Arms Size", "Legs Size"}:
-        assert set(_rests("muscle_strength_5", session_name).values()) == {90}
     assert {
         exercise["rest_seconds"]
         for routine in PROGRAMS["ppl_6"]["sessions"]
@@ -243,33 +238,19 @@ def test_all_ten_templates_use_their_source_reviewed_between_set_rest_rules():
     } == {60}
 
 
-def test_phase5a_source_execution_metadata_matches_the_audited_templates():
-    expected_pairs = {
-        "Back & Shoulders Size": [
-            ("Wide Grip Pull Down", "Narrow Grip Pull Down"),
-            ("Straight Arm Rope Pull Down", "Lower Back Hyperextensions"),
-            ("Cable EZ Bar Upright Row", "Rope Face Pull"),
-        ],
-        "Chest & Arms Size": [("Flat Machine Chest Press", "Incline Dumbbell Fly")],
-        "Legs Size": [
-            ("Seated Hamstring Curl", "Leg Extension"),
-            ("Leg Press", "Barbell Walking Lunge"),
-            ("Abductor Machine", "Adductor Machine"),
-            ("Seated Calf Raise", "Single Leg Calf Press"),
-        ],
-    }
-    assert sum(map(len, expected_pairs.values())) == 8
-    for session_name, pairs in expected_pairs.items():
-        exercises = next(item["exercises"] for item in PROGRAMS["muscle_strength_5"]["sessions"] if item["name"] == session_name)
-        for first, second in pairs:
-            first_index = next(index for index, item in enumerate(exercises) if item["exercise_name"] == first)
-            left, right = exercises[first_index:first_index + 2]
-            assert right["exercise_name"] == second
-            assert left["superset_group"] == right["superset_group"]
-            assert left["transition_rest_seconds"] == right["transition_rest_seconds"] == 90
-        assert all(item["transition_rest_seconds"] == 90 for item in exercises)
-    assert all(item["transition_rest_seconds"] is None for session in PROGRAMS["muscle_strength_5"]["sessions"][:2] for item in session["exercises"])
-    assert all(item["superset_group"] is None and item["transition_rest_seconds"] == 90 for session in PROGRAMS["ppl_6"]["sessions"] for item in session["exercises"])
+def test_ppl_6_all_exercises_have_transition_rest():
+    """ppl_6 has 90 s transition rest on every exercise."""
+    assert all(
+        item["transition_rest_seconds"] == 90
+        for session in PROGRAMS["ppl_6"]["sessions"]
+        for item in session["exercises"]
+    )
+
+
+def test_muscle_strength_5_is_absent_from_catalog():
+    assert "muscle_strength_5" not in PROGRAMS
+    assert "muscle_strength_5" not in {choice["key"] for choice in PLAN_CHOICES}
+    assert len(PLAN_CHOICES) == 24
 
 
 def test_major_region_gate_ignores_focus_labels_and_arm_isolation():
@@ -433,39 +414,15 @@ def test_expansion_routines_use_garmincoach_default_rest_where_source_is_silent(
     assert mm_rests == {60, 45}, f"muscle_mania_6: expected 60s (compound) and 45s (isolation) rest, got {mm_rests}"
 
 
-def test_ppl_6_all_exercises_have_transition_timer_and_no_superset_group():
-    """ppl_6 has 45 s between-set rest and 90 s between-exercise transition; no superset groups."""
+def test_ppl_6_all_exercises_have_transition_timer():
+    """ppl_6 has 45 s between-set rest and 90 s between-exercise transition; no superset fields."""
     for session in PROGRAMS["ppl_6"]["sessions"]:
         for exercise in session["exercises"]:
             assert exercise["rest_seconds"] == 45
             assert exercise["transition_rest_seconds"] == 90
-            assert exercise["superset_group"] is None
+            assert "superset_group" not in exercise
 
 
-def test_muscle_strength_5_superset_pairs_and_transitions():
-    """muscle_strength_5 size sessions encode exactly 8 source superset pairs."""
-    expected_pairs = {
-        "Back & Shoulders Size": [
-            ("Wide Grip Pull Down", "Narrow Grip Pull Down"),
-            ("Straight Arm Rope Pull Down", "Lower Back Hyperextensions"),
-            ("Cable EZ Bar Upright Row", "Rope Face Pull"),
-        ],
-        "Chest & Arms Size": [("Flat Machine Chest Press", "Incline Dumbbell Fly")],
-        "Legs Size": [
-            ("Seated Hamstring Curl", "Leg Extension"),
-            ("Leg Press", "Barbell Walking Lunge"),
-            ("Abductor Machine", "Adductor Machine"),
-            ("Seated Calf Raise", "Single Leg Calf Press"),
-        ],
-    }
-    total_pairs = sum(len(v) for v in expected_pairs.values())
-    assert total_pairs == 8
-    for session in PROGRAMS["muscle_strength_5"]["sessions"]:
-        if session["name"] in expected_pairs:
-            exercises = session["exercises"]
-            paired_groups = {e["superset_group"] for e in exercises if e["superset_group"]}
-            assert len(paired_groups) == len(expected_pairs[session["name"]])
-            assert all(e["transition_rest_seconds"] == 90 for e in exercises)
 
 
 def test_expansion_routines_have_two_weekly_lower_push_pull_exposures():
@@ -656,7 +613,7 @@ _VALID_CLASSIFICATIONS = {
 
 _EXPECTED_COUNTS = {
     "source_exact": 7,
-    "source_exact_with_equivalent_names": 14,
+    "source_exact_with_equivalent_names": 13,
     "source_permitted_optional_omission": 3,
     "garmin_adapted": 1,
     "source_mismatch": 0,
@@ -869,11 +826,11 @@ def _check_summary_key_lists_match(
 # Structural invariant tests (operate on raw records from the real audit doc)
 # ---------------------------------------------------------------------------
 
-def test_audit_contains_exactly_25_routine_sections():
-    """The audit must have exactly 25 routine sections."""
+def test_audit_contains_exactly_24_routine_sections():
+    """The audit must have exactly 24 routine sections."""
     records = _parse_audit_records()
-    assert len(records) == 25, (
-        f"Expected 25 sections; found {len(records)}: {[r['heading'] for r in records]}"
+    assert len(records) == 24, (
+        f"Expected 24 sections; found {len(records)}: {[r['heading'] for r in records]}"
     )
 
 
@@ -945,10 +902,10 @@ def test_audit_section_classification_counts_match_expected():
         )
 
 
-def test_audit_section_counts_sum_to_25():
-    """All classification counts must sum to len(PROGRAMS) == 25."""
+def test_audit_section_counts_sum_to_24():
+    """All classification counts must sum to len(PROGRAMS) == 24."""
     sections = _parse_audit_sections()
-    assert len(sections) == len(PROGRAMS) == 25, (
+    assert len(sections) == len(PROGRAMS) == 24, (
         f"Section count {len(sections)} != PROGRAMS count {len(PROGRAMS)}"
     )
 

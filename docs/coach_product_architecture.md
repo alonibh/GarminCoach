@@ -15,7 +15,7 @@ The detailed metric catalog and synchronization contract are defined in
 [`METRIC_SYNC_POLICY.md`](METRIC_SYNC_POLICY.md). Formula semantics are defined
 in [`METRICS.md`](METRICS.md).
 
-Source execution structure (superset membership and transition timers) is a
+Source execution structure (transition timers) is a
 source-template/compiler concern only. It has no biometric, decision,
 progression, coaching, or automatic scheduling authority, and changes only
 future Garmin compilation after the existing confirmation boundary.

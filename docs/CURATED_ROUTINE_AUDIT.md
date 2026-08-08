@@ -347,24 +347,6 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 
 ## 5-day routines
 
-### muscle_strength_5
-
-| Field | Detail |
-|---|---|
-| **Internal key** | `muscle_strength_5` |
-| **Display name** | Muscle & Strength Building Split · 5 days |
-| **Classification** | `source_exact_with_equivalent_names` |
-| **Source URL** | https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split |
-| **Reviewed** | 2026-08-06 via cdn.muscleandstrength.com |
-| **Source sessions** | Upper Strength; Lower Strength; Back & Shoulders Size; Chest & Arms Size; Legs Size |
-| **Required source exercises** | All exercises in all five sessions confirmed per 2026-08-06 review |
-| **Equivalent-name substitutions** | None required; exercise names match source |
-| **Optional omissions** | 3× per week ab workout (source explicitly describes it as addable "at the end of three workouts each week"; not integrated into the five sessions) |
-| **Garmin adaptations** | None |
-| **Corrections made** | None (existing implementation matches source) |
-| **Unresolved source facts** | None |
-| **GarminCoach defaults** | None (rest is source-defined: 120–180 s strength sessions, 60–90 s size sessions; implementation uses 180 s and 90 s respectively) |
-
 ### maul_5
 
 | Field | Detail |
@@ -506,7 +488,7 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 | Source pages reviewed 2026-07-22 | 17 |
 | Source pages with unresolved review | 0 |
 | `source_exact` | 7 (beginner_full_body_3, total_package_3, dumbbell_full_body_3, split_full_4, barbell_upper_lower_4, maul_5, dumbbell_split_5) |
-| `source_exact_with_equivalent_names` | 14 (full_body_2, ms_full_body_3, upper_lower_4, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, barbell_no_rack_4, muscle_strength_5, ppl_6, low_volume_high_intensity_6, muscle_mania_6) |
+| `source_exact_with_equivalent_names` | 13 (full_body_2, ms_full_body_3, upper_lower_4, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, barbell_no_rack_4, ppl_6, low_volume_high_intensity_6, muscle_mania_6) |
 | `source_permitted_optional_omission` | 3 (shul_4, powerbuilding_ppl_6, built_different_ppl_6) |
 | `garmin_adapted` | 1 (long_cycle_full_body_3 — auto-regulation progression not implemented) |
 | `source_mismatch` | 0 |
@@ -524,10 +506,9 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 | Between-set rest for original 10 routines | Source-defined (audited 2026-07-18 and 2026-07-22) |
 | Between-set rest for whole_body_toning_3 | Source-defined (30–45 s; upper bound 45 s applied) |
 | Between-set rest for muscle_mania_6 | Source-defined (60 s compound; 45 s isolation) |
-| Between-set rest for muscle_strength_5 | Source-defined (120–180 s strength; 60–90 s size) |
 | Between-set rest for planet_fitness_upper_lower_4 | Source-specified range 60–90 s; 60 s lower bound applied |
 | Between-set rest for 11 source-silent routines | GarminCoach product default (60 s); not attributed to ACSM |
-| Superset pairs (muscle_strength_5, ppl_6) | Source-defined |
+| Transition rest (ppl_6) | Source-defined |
 | Training level badges | Source-defined (never inferred) |
 | Session rolling rest slots | Source-defined (weekday names converted to rolling slots) |
 | Optional cardio exclusion | Source-defined: app excludes cardio sessions entirely |
@@ -549,4 +530,4 @@ The ACSM Position Stand does not prescribe 60 seconds as a universal between-set
 
 - `docs/routine_source_audit.md` — detailed exercise comparison, between-set rest, and operating-rule audit (2026-07-18 through 2026-07-22)
 - `docs/routine_catalog_admission.md` — admission criteria, replacement table, and enforcement (reviewed 2026-07-22)
-- `docs/SOURCE_EXECUTION_FIDELITY_CONTRACT.md` — superset and transition encoding contract
+- `docs/SOURCE_EXECUTION_FIDELITY_CONTRACT.md` — transition rest encoding contract

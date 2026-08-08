@@ -369,7 +369,6 @@ def _replace_session_exercises(session, program_session: ProgramSession, exercis
                 reps=exercise["reps"],
                 duration_seconds=exercise["duration_seconds"],
                 rest_seconds=exercise["rest_seconds"],
-                superset_group=exercise.get("superset_group"),
                 transition_rest_seconds=exercise.get("transition_rest_seconds"),
                 progression_rule_key=exercise.get("progression_rule_key"),
                 warmup_enabled=exercise["warmup_enabled"],
@@ -2240,7 +2239,6 @@ def get_program_page(
                     "duration_seconds": ex.duration_seconds,
                     "weight_kg": ex.weight_kg,
                     "rest_seconds": ex.rest_seconds,
-                    "superset_group": ex.superset_group,
                     "transition_rest_seconds": ex.transition_rest_seconds,
                     "progression_rule_key": ex.progression_rule_key,
                     "warmup_enabled": ex.warmup_enabled,
@@ -2319,6 +2317,7 @@ def get_program_page(
                 ),
                 "duration_review_result": review_result,
                 "exercise_catalog": catalog_for_ui(),
+                "catalog_template_exists": template is not None,
             },
         )
 
@@ -2653,13 +2652,6 @@ async def save_session_exercises(session_id: int, request: Request):
             reps = int(row["reps"]) if row.get("reps") not in (None, "") else None
             duration = int(row["duration_seconds"]) if row.get("duration_seconds") not in (None, "") else None
             sets = int(row["sets"]) if row.get("sets") not in (None, "") else None
-            raw_group = row.get("superset_group")
-            group = None if raw_group in (None, "") else str(raw_group).strip()
-            if group is not None and (
-                not 1 <= len(group) <= 32
-                or any(not (char.isascii() and (char.isalnum() or char in "_-")) for char in group)
-            ):
-                raise HTTPException(status_code=422, detail="Superset must use 1-32 ASCII letters, digits, underscores, or hyphens.")
             raw_transition = row.get("transition_rest_seconds")
             transition = None
             if raw_transition not in (None, ""):
@@ -2698,7 +2690,7 @@ async def save_session_exercises(session_id: int, request: Request):
                 raise HTTPException(status_code=422, detail="Warm-up time must be between 1 and 3600 seconds.")
             if warmup_weight is not None and not 0 <= warmup_weight <= 500:
                 raise HTTPException(status_code=422, detail="Warm-up weight must be between 0 and 500 kg.")
-            validated.append((incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, group, transition))
+            validated.append((incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, transition))
 
         # Validate the complete submitted execution structure before touching
         # rows or progression state.  These detached values intentionally use
@@ -2709,9 +2701,9 @@ async def save_session_exercises(session_id: int, request: Request):
             SimpleNamespace(
                 id=incoming_id if incoming_id is not None else -(index + 1),
                 order_index=index, sets=sets, rest_seconds=max(0, min(600, int(row.get("rest_seconds") or 60))),
-                superset_group=group, transition_rest_seconds=transition,
+                transition_rest_seconds=transition,
             )
-            for index, (incoming_id, row, _name, _meta, _is_generic, _pattern, _warmup_enabled, _warmup_reps, _warmup_duration, _warmup_weight, _weight, _reps, _duration, group, transition) in enumerate(validated)
+            for index, (incoming_id, row, _name, _meta, _is_generic, _pattern, _warmup_enabled, _warmup_reps, _warmup_duration, _warmup_weight, _weight, _reps, _duration, transition) in enumerate(validated)
             for sets in [int(row["sets"]) if row.get("sets") not in (None, "") else None]
         ]
         try:
@@ -2727,7 +2719,7 @@ async def save_session_exercises(session_id: int, request: Request):
                 db.delete(item)
 
         final_exercises: list[SessionExercise] = []
-        for i, (incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, group, transition) in enumerate(validated):
+        for i, (incoming_id, row, name, meta, is_generic, pattern, warmup_enabled, warmup_reps, warmup_duration, warmup_weight, weight, reps, duration, transition) in enumerate(validated):
             values = {
                 "exercise_name": (meta or {}).get("label", name),
                 "exercise_key": (meta or {}).get("key", exercise_key(name)),
@@ -2737,7 +2729,6 @@ async def save_session_exercises(session_id: int, request: Request):
                 "sets": int(row["sets"]) if row.get("sets") not in (None, "") else None,
                 "reps": reps, "duration_seconds": duration, "weight_kg": weight,
                 "rest_seconds": max(0, min(600, int(row.get("rest_seconds") or 60))),
-                "superset_group": group,
                 "transition_rest_seconds": transition,
                 "warmup_enabled": warmup_enabled,
                 "warmup_reps": warmup_reps if warmup_enabled else None,
@@ -2798,11 +2789,6 @@ def delete_session_exercise(session_id: int, exercise_id: int):
         ).first()
         if not ex:
             raise HTTPException(status_code=404, detail="Exercise not found")
-        if ex.superset_group is not None:
-            raise HTTPException(
-                status_code=422,
-                detail="Clear or remove both superset members through one complete session save.",
-            )
         from coach.strength_progression_integration import InvalidationCause, invalidate_session_exercises
         invalidate_session_exercises(db, [ex.id], cause=InvalidationCause.EXERCISE_DELETED)
         db.delete(ex)

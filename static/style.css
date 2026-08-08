@@ -1812,9 +1812,6 @@ details summary {
 }
 .exercise-row:hover { border-color: rgba(47, 129, 247, .34); background: rgba(47, 129, 247, .035); }
 .source-progression-note { grid-column: 1 / -1; display: grid; gap: .2rem; font-size: .78rem; color: var(--muted, #6b7280); }
-.exercise-row.is-superset { border-color: rgba(126, 87, 194, .58); background: rgba(126, 87, 194, .07); }
-.exercise-row.superset-connected { border-top-style: dashed; }
-.superset-badge { display: inline-flex; align-items: center; margin-left: .45rem; padding: .14rem .42rem; border-radius: 999px; color: #d9c9ff; background: rgba(126, 87, 194, .24); border: 1px solid rgba(160, 122, 232, .5); font-size: .68rem; font-weight: 750; white-space: nowrap; }
 .exercise-identity { display: grid; align-self: stretch; gap: .3rem; min-width: 0; }
 .exercise-field-label { min-height: 1em; color: var(--muted); font-size: .68rem; font-weight: 750; letter-spacing: .055em; text-transform: uppercase; }
 .exercise-name-line { display: flex; align-items: center; min-height: 42px; gap: .65rem; min-width: 0; }

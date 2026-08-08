@@ -168,13 +168,12 @@ review), 4D (Telegram notifications), 4E (trends), 4F (slow metrics), 4G
 
 **Status: complete**
 
-**Goal:** Source-template supersets for `muscle_strength_5`, separate
-between-exercise transition timers for `ppl_6`, deterministic source rep-goal
-progression proposals for the six Powerbuilding PPL main lifts, and durable
-source-duration review prompts.
+**Goal:** Between-exercise transition timers for `ppl_6`, deterministic source
+rep-goal progression proposals for the six Powerbuilding PPL main lifts, and
+durable source-duration review prompts.
 
-**Implemented subphases:** 5A (supersets/transitions), 5B (source rep-goal
-progression), 5C (source-duration review prompts).
+**Implemented subphases:** 5A (transitions), 5B (source rep-goal progression),
+5C (source-duration review prompts).
 
 **Main production modules:**
 `coach/garmin_compiler.py`, `coach/programs.py`, `coach/program_policy.py`,

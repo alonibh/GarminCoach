@@ -62,7 +62,6 @@ The next work is operational verification, not another design phase:
 
 After the operational cycle passes, the highest-value engineering gaps are:
 
-- explicit superset groups;
 - separate between-set and between-exercise transition timers;
 - operator-visible sync/outbox health;
 - source-specific duration/deload review prompts; and

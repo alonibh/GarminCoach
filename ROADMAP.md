@@ -124,9 +124,8 @@ automatically rewrites exercise structure or already scheduled Garmin workouts.
 
 ## Phase 5: Source execution and longer-horizon program fidelity
 
-- [x] Phase 5A: source-template supersets for `muscle_strength_5` and separate
-  between-exercise transition timers for `ppl_6`, with safe future-only Garmin
-  compilation and no progression or coaching authority.
+- [x] Phase 5A: between-exercise transition timers for `ppl_6`, with safe
+  future-only Garmin compilation and no progression or coaching authority.
 - [x] Phase 5B: deterministic source rep-goal progression proposals for the six
   `powerbuilding_ppl_6` main lifts, using two local qualifying appearances and
   explicit web confirmation, with no automatic or scheduled-workout mutation.

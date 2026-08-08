@@ -99,7 +99,7 @@ def program_version(session: Session) -> str:
         "execution": [
             (item.id, item.program_session_id, item.order_index, item.exercise_key,
              item.sets, item.reps, item.duration_seconds, item.weight_kg,
-             item.rest_seconds, item.superset_group, item.transition_rest_seconds,
+             item.rest_seconds, item.transition_rest_seconds,
              item.warmup_enabled, item.warmup_reps, item.warmup_duration_seconds,
              item.warmup_weight_kg)
             for item in exercises

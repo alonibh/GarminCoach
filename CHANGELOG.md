@@ -112,8 +112,8 @@
 
 ## 2026-08-01 - Source execution fidelity
 
-- Added source-template supersets for `muscle_strength_5` and separate PPL
-  transition timers for future Garmin compilation, with guarded tenant migration.
+- Added PPL transition timers for future Garmin compilation, with guarded
+  tenant migration.
 
 ## 2026-07-22 - Missing-Program Morning Brief Recovery
 

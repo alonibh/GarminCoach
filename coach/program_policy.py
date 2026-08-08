@@ -100,13 +100,6 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         ("Back & Biceps", "Legs", "Chest, Shoulders & Triceps", "Full Body"),
         (0, 0, 1, 2), (0, 0, 1, 2),
     ),
-    "muscle_strength_5": ProgramPolicy(
-        "muscle_strength_5",
-        "https://www.muscleandstrength.com/workouts/5-day-muscle-and-strength-building-workout-split",
-        ("Upper Strength", "Lower Strength", "Back & Shoulders Size", "Chest & Arms Size", "Legs Size"),
-        (0, 1, 0, 0, 1), (0, 1, 0, 0, 1),
-        omitted_source_components=("Optional separate three-times-weekly ab workout",),
-    ),
     "ppl_6": ProgramPolicy(
         "ppl_6",
         "https://www.muscleandstrength.com/workouts/6-day-push-pull-legs-planet-fitness-workout",
@@ -209,7 +202,6 @@ SOURCE_TRAINING_LEVELS: Mapping[str, str] = {
     "upper_lower_4": "Beginner",
     "shul_4": "Intermediate",
     "split_full_4": "Advanced",
-    "muscle_strength_5": "Intermediate",
     "ppl_6": "Beginner",
     "dumbbell_full_body_3": "Beginner",
     "planet_fitness_full_body_3": "Beginner",
@@ -234,7 +226,7 @@ SOURCE_TRAINING_LEVELS: Mapping[str, str] = {
 DEFAULT_ROUTINE_ADMISSION: Mapping[str, str] = {
     key: "repeatable_base_template" for key in (
         "full_body_2", "beginner_full_body_3", "ms_full_body_3", "total_package_3",
-        "upper_lower_4", "shul_4", "split_full_4", "muscle_strength_5", "ppl_6",
+        "upper_lower_4", "shul_4", "split_full_4", "ppl_6",
         "dumbbell_full_body_3", "planet_fitness_full_body_3", "long_cycle_full_body_3",
         "whole_body_toning_3", "planet_fitness_upper_lower_4", "optimized_volume_4",
         "phul_4", "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",

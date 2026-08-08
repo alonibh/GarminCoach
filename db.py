@@ -315,9 +315,6 @@ class SessionExercise(Base):
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     weight_kg: Mapped[Optional[float]] = mapped_column(Float)  # None = bodyweight
     rest_seconds: Mapped[int] = mapped_column(Integer, default=60)
-    # Execution metadata.  NULL deliberately retains the pre-Phase-5A
-    # straight-set compiler semantics.
-    superset_group: Mapped[Optional[str]] = mapped_column(String(32))
     transition_rest_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     # Server-owned source progression metadata; NULL is the generic policy.
     progression_rule_key: Mapped[Optional[str]] = mapped_column(String(64))
@@ -1301,7 +1298,6 @@ _SESSION_EXERCISES_CREATE = """
         duration_seconds INTEGER,
         weight_kg FLOAT,
         rest_seconds INTEGER NOT NULL DEFAULT 60,
-        superset_group VARCHAR(32),
         transition_rest_seconds INTEGER,
         progression_rule_key VARCHAR(64),
         warmup_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1321,7 +1317,6 @@ _SESSION_EXERCISE_ADD_COLUMNS = {
     "is_generic": "INTEGER NOT NULL DEFAULT 0",
     "duration_seconds": "INTEGER",
     "rest_seconds": "INTEGER NOT NULL DEFAULT 60",
-    "superset_group": "VARCHAR(32)",
     "transition_rest_seconds": "INTEGER",
     "warmup_enabled": "INTEGER NOT NULL DEFAULT 0",
     "warmup_reps": "INTEGER",
@@ -1598,8 +1593,6 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                         return 180 if exercise_name in shul_strength_anchors else 90
                     if exercise_name in shul_hypertrophy_isolations:
                         return 60
-                elif program_key == "muscle_strength_5":
-                    return 120 if session_name in {"Upper Strength", "Lower Strength"} else 60
                 return current
 
             legacy_session_names = {
@@ -1622,7 +1615,7 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
 
             for program_key in (
                 "beginner_full_body_3", "ms_full_body_3", "total_package_3",
-                "upper_lower_4", "shul_4", "muscle_strength_5",
+                "upper_lower_4", "shul_4",
             ):
                 for routine in PROGRAMS[program_key]["sessions"]:
                     for exercise in routine["exercises"]:
@@ -1706,7 +1699,7 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
             def session_rows(session_id: int):
                 rows = conn.execute(text(
                     "SELECT id, exercise_name, order_index, sets, reps, duration_seconds, rest_seconds, "
-                    "superset_group, transition_rest_seconds, is_generic "
+                    "transition_rest_seconds, is_generic "
                     "FROM session_exercises WHERE program_session_id = :session_id "
                 "ORDER BY order_index, id"
                 ), {"session_id": session_id}).mappings().all()
@@ -1724,50 +1717,6 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                     and not row["is_generic"]
                 )
 
-            muscle = PROGRAMS["muscle_strength_5"]["sessions"]
-            muscle_by_name = {item["name"]: item for item in muscle}
-            pairs = {
-                "Back & Shoulders Size": ((0, 1, "superset_1"), (4, 5, "superset_2"), (10, 11, "superset_3")),
-                "Chest & Arms Size": ((1, 2, "superset_1"),),
-                "Legs Size": ((0, 1, "superset_1"), (3, 4, "superset_2"), (5, 6, "superset_3"), (9, 10, "superset_4")),
-            }
-            for source_session in source_sessions("muscle_strength_5"):
-                name = source_session["name"]
-                if source_session["is_custom"] or name not in pairs:
-                    continue
-                expected = expected_rows(muscle_by_name[name]["exercises"], 90)
-                rows = session_rows(source_session["id"])
-                by_order: dict[int, object] = {}
-                duplicate_orders: set[int] = set()
-                for row in rows:
-                    if row["order_index"] in by_order:
-                        duplicate_orders.add(row["order_index"])
-                    by_order[row["order_index"]] = row
-                pair_indexes = {index for pair in pairs[name] for index in pair[:2]}
-                # Straight rows are independently guarded so an unrelated
-                # customization cannot manufacture a malformed pair.
-                for index, expected_row in enumerate(expected):
-                    row = by_order.get(index)
-                    if (
-                        index not in pair_indexes and index not in duplicate_orders
-                        and matches(row, expected_row)
-                        and row["superset_group"] is None and row["transition_rest_seconds"] is None
-                    ):
-                        conn.execute(text("UPDATE session_exercises SET transition_rest_seconds = 90 WHERE id = :id"), {"id": row["id"]})
-                for first, second, group in pairs[name]:
-                    left, right = by_order.get(first), by_order.get(second)
-                    if (
-                        first not in duplicate_orders and second not in duplicate_orders
-                        and matches(left, expected[first]) and matches(right, expected[second])
-                        and left["sets"] > 0 and left["sets"] == right["sets"]
-                        and left["superset_group"] is None and right["superset_group"] is None
-                        and left["transition_rest_seconds"] is None and right["transition_rest_seconds"] is None
-                    ):
-                        conn.execute(text(
-                            "UPDATE session_exercises SET superset_group = :group, transition_rest_seconds = 90 "
-                            "WHERE id IN (:left, :right)"
-                        ), {"group": group, "left": left["id"], "right": right["id"]})
-
             ppl_by_name = {item["name"]: item for item in PROGRAMS["ppl_6"]["sessions"]}
             for source_session in source_sessions("ppl_6"):
                 name = source_session["name"]
@@ -1779,7 +1728,7 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
                 # row receives mixed execution semantics.
                 if len(rows) == len(expected) and all(
                     matches(row, expected[index])
-                    and row["superset_group"] is None and row["transition_rest_seconds"] is None
+                    and row["transition_rest_seconds"] is None
                     for index, row in enumerate(rows)
                 ):
                     conn.execute(text(

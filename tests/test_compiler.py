@@ -4,7 +4,9 @@ import pytest
 from garminconnect import GarminConnectAuthenticationError
 from coach.garmin_compiler import (
     GarminFailureKind,
+    StraightExerciseBlock,
     _get_step_weight,
+    build_execution_blocks,
     build_generic_step,
     compile_and_schedule_result,
 )
@@ -99,37 +101,33 @@ def test_program_workout_has_structured_warmup_and_generic_fallback(session):
     assert generic["category"] is None and generic["exerciseName"] is None
 
 
-def test_execution_blocks_compile_structured_straight_and_superset(session):
-    from coach.garmin_compiler import build_execution_blocks, build_program_workout
-    program = TrainingProgram(name="Structured", active=True, status="active")
+def test_execution_blocks_sequential_compilation(session):
+    from coach.garmin_compiler import build_program_workout
+    program = TrainingProgram(name="Sequential", active=True, status="active")
     session.add(program); session.flush()
-    routine = ProgramSession(program_id=program.id, name="Structured", sequence_order=1)
+    routine = ProgramSession(program_id=program.id, name="Sequential", sequence_order=1)
     session.add(routine); session.flush()
     session.add_all([
         SessionExercise(program_session_id=routine.id, exercise_name="Bench Press", exercise_key="BENCH_PRESS", sets=2, reps=8, rest_seconds=45, transition_rest_seconds=90, order_index=0),
-        SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Row", exercise_key="ROW", sets=3, reps=10, rest_seconds=90, superset_group="pair_1", transition_rest_seconds=90, order_index=1),
-        SessionExercise(program_session_id=routine.id, exercise_name="Lat Pull Down", exercise_key="PULLDOWN", sets=3, reps=12, rest_seconds=90, superset_group="pair_1", transition_rest_seconds=90, order_index=2),
-        SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Curl", exercise_key="CURL", sets=2, reps=12, rest_seconds=45, transition_rest_seconds=0, order_index=3),
+        SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Row", exercise_key="ROW", sets=3, reps=10, rest_seconds=90, order_index=1),
+        SessionExercise(program_session_id=routine.id, exercise_name="Dumbbell Curl", exercise_key="CURL", sets=2, reps=12, rest_seconds=45, transition_rest_seconds=0, order_index=2),
     ])
     session.commit()
     rows = session.query(SessionExercise).filter_by(program_session_id=routine.id).all()
-    assert [type(item).__name__ for item in build_execution_blocks(rows)] == ["StraightExerciseBlock", "SupersetBlock", "StraightExerciseBlock"]
+    blocks = build_execution_blocks(rows)
+    assert len(blocks) == 3
+    assert all(isinstance(b, StraightExerciseBlock) for b in blocks)
     steps = build_program_workout(session, routine.id)["workoutSegments"][0]["workoutSteps"]
-    assert [step["type"] for step in steps] == ["RepeatGroupDTO", "ExecutableStepDTO", "RepeatGroupDTO", "ExecutableStepDTO", "RepeatGroupDTO"]
+    # Bench Press with transition: repeat group + transition rest
+    # Dumbbell Row without transition: repeat group only
+    # Dumbbell Curl with transition=0: repeat group (no trailing rest since 0)
+    repeat_groups = [s for s in steps if s["type"] == "RepeatGroupDTO"]
+    assert len(repeat_groups) == 3
+    # Bench Press group skips last rest (has transition)
     assert steps[0]["skipLastRestStep"] is True
-    assert steps[1]["stepType"]["stepTypeKey"] == "rest" and steps[1]["endConditionValue"] == 90
-    assert [child["description"] for child in steps[2]["workoutSteps"][:2]] == ["Dumbbell Row", "Lat Pull Down"]
-    assert steps[2]["workoutSteps"][2]["endConditionValue"] == 90
-    assert steps[2]["skipLastRestStep"] is True
-    assert steps[3]["endConditionValue"] == 90
-    assert steps[-1]["skipLastRestStep"] is True
-
-
-def test_execution_blocks_reject_malformed_superset_without_external_work(session):
-    from coach.garmin_compiler import build_execution_blocks
-    one = SessionExercise(exercise_name="A", sets=3, reps=10, rest_seconds=60, superset_group="bad", order_index=0)
-    with pytest.raises(ValueError, match="exactly two"):
-        build_execution_blocks([one])
+    # transition rest of 90s follows Bench Press group
+    assert steps[1]["stepType"]["stepTypeKey"] == "rest"
+    assert steps[1]["endConditionValue"] == 90
 
 
 def test_legacy_program_payload_has_golden_execution_shape(session):
@@ -176,7 +174,6 @@ def test_execution_metadata_changes_scheduling_version_not_progression_fingerpri
     exercise = session.query(SessionExercise).filter_by(program_session_id=routine.id).first()
     fingerprint = prescription_for_session_exercise(exercise, routine.program_id, routine.id)
     before = program_version(session)
-    exercise.superset_group = "pair"
     exercise.transition_rest_seconds = 90
     session.flush()
     assert prescription_for_session_exercise(exercise, routine.program_id, routine.id) == fingerprint

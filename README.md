@@ -93,8 +93,8 @@ for the canonical per-phase status summary.
   training days per cycle.
 - Source-reviewed exercise order, rolling session sequence, required recovery
   intervals, optional recovery guidance, exclusions, between-set timers, and
-  audited structural supersets. `ppl_6` uses 45-second set rests and 90-second
-  between-exercise transitions; guarded catalog migration preserves custom rows.
+  `ppl_6` uses 45-second set rests and 90-second between-exercise transitions;
+  guarded catalog migration preserves custom rows.
 - Source ranges resolve to concrete Garmin timers using the documented upper-
   bound convention; timers can be skipped early on the watch.
 - Warm-up steps are added deterministically by movement and joint exposure.
@@ -308,9 +308,8 @@ but are explicitly not valid backups.
 - Strength details exist only when Garmin recorded them. Manual UI correction
   remains available for a misdetected set, but the Telegram bot never requests
   manual set logging.
-- The five-day source program's supersets and PPL's separate between-exercise
-  transition timer are not yet represented structurally; current templates use
-  straight sets and one rest field per exercise.
+- The `ppl_6` between-exercise transition timer is represented structurally;
+  all other programs use straight sets with one rest field per exercise.
 - A source-duration review is informational and athlete-controlled. It does not
   declare a program complete or change a workout; source progression remains
   explicitly web-confirmed.
