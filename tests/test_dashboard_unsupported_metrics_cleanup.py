@@ -113,8 +113,6 @@ def test_recovery_time_signal_row_logic(monkeypatch):
 def test_stress_and_body_battery_graphs_removed(client):
     """Proves Stress and Body Battery canvas/charts are absent, remaining charts render,
     and health_series no longer exposes the removed chart-only fields."""
-    import json
-
     c, _ = client
     response = c.get("/")
     assert response.status_code == 200
@@ -134,19 +132,22 @@ def test_stress_and_body_battery_graphs_removed(client):
     assert "lineChart('rhrChart'" in response.text
     assert "lineChart('hrvChart'" in response.text
 
-    # Extract health_series JSON from the rendered page and verify removed fields absent
-    import re
-    m = re.search(r"const health = (\[.*?\]);", response.text, re.DOTALL)
-    assert m, "health_series JSON not found in dashboard"
-    health_series = json.loads(m.group(1))
-    if health_series:
-        first = health_series[0]
-        assert "stress" not in first, "stress field should not be in health_series"
-        assert "bb_high" not in first, "bb_high field should not be in health_series"
-        assert "bb_low" not in first, "bb_low field should not be in health_series"
-        assert "bb_charged" not in first, "bb_charged field should not be in health_series"
-        assert "bb_drained" not in first, "bb_drained field should not be in health_series"
-        # Remaining series fields still present
-        assert "rhr" in first
-        assert "hrv" in first
-        assert "steps" in first
+    # Verify removed fields absent and retained fields present by calling the function directly.
+    from datetime import date as _date
+    from db import DailyHealth
+    row = DailyHealth(day=_date(2026, 8, 1))
+    series = app_module._dashboard_health_series([row], overnight_ready=True, as_of_day=_date(2026, 8, 8))
+    assert len(series) == 1
+    entry = series[0]
+    # Removed chart-only fields must not appear
+    assert "stress" not in entry
+    assert "bb_high" not in entry
+    assert "bb_low" not in entry
+    assert "bb_charged" not in entry
+    assert "bb_drained" not in entry
+    # Retained series fields still present
+    assert "rhr" in entry
+    assert "hrv" in entry
+    assert "steps" in entry
+    assert "active_kcal" in entry
+    assert "bmr_kcal" in entry
