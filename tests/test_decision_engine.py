@@ -160,7 +160,6 @@ def test_poor_readiness_with_calendar_conflict_offers_keep_cancel_and_new_date(s
 
 
 def test_unsupported_device_has_no_metric_only_warning_or_skip(session):
-    _add_program(session)
     _fresh_sleep(session)
     freshness.set_capability_override(session, freshness.TRAINING_READINESS, "unsupported")
     session.commit()

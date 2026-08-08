@@ -30,6 +30,15 @@ def _decision(session, score=74):
     )
 
 
+def _decision_no_program(session, score=74):
+    _fresh_sleep(session)
+    _fresh_readiness(session, score)
+    session.commit()
+    return evaluate_morning_decision(
+        session, target=TARGET, evaluated_at=datetime(2026, 7, 6, 8)
+    )
+
+
 def _fixed_now(monkeypatch):
     fixed = datetime(2026, 7, 6, 8, 5)
     monkeypatch.setattr("coach.interactions.get_local_now", lambda: fixed)
@@ -55,7 +64,7 @@ def test_recovery_renderer_stages_no_interaction(session, monkeypatch):
     _fixed_now(monkeypatch)
     _fresh_calendar(monkeypatch)
     _constraints(session)
-    result = _decision(session, 74)
+    result = _decision_no_program(session, 74)
 
     text, markup, ids = render_morning(session, result)
 
@@ -68,7 +77,7 @@ def test_recovery_result_never_stages_a_schedule(session, monkeypatch):
     _fixed_now(monkeypatch)
     _fresh_calendar(monkeypatch)
     _constraints(session)
-    result = _decision(session, 74)
+    result = _decision_no_program(session, 74)
     assert stage_decision_actions(session, result) == []
 
 
