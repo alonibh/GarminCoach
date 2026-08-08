@@ -7,7 +7,6 @@ import pytest
 from garminconnect import (
     GarminConnectAuthenticationError,
     GarminConnectConnectionError,
-    GarminConnectNotFoundError,
     GarminConnectTooManyRequestsError,
 )
 from garminconnect.workout import WalkingWorkout
@@ -18,6 +17,7 @@ from coach.active_recovery import (
     ACTIVE_RECOVERY_TEMPLATE_VERSION,
     ACTIVE_RECOVERY_WORKOUT_NAME,
     ActiveRecoveryFailureKind,
+    GarminConnectNotFoundError,
     build_active_recovery_workout,
     ensure_active_recovery_workout,
     verify_active_recovery_workout,

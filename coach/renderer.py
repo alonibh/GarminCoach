@@ -110,6 +110,20 @@ def render_morning(
         ) + "."
     elif result.decision_type == "PROGRAM_REST_RECOMMENDED":
         body = f"Program rest is recommended; {result.planned_session_name} remains selected and pending."
+    elif result.decision_type == "PROGRAM_REST_DAY":
+        earliest = result.earliest_eligible_date or "tomorrow"
+        body = f"Program rest day. {result.next_program_session_name or 'Next session'} is next; earliest {earliest}."
+        if result.optional_recovery_activity and not plan_only:
+            dur = result.optional_recovery_activity.get("duration_min")
+            if isinstance(dur, (list, tuple)) and len(dur) == 2:
+                low, high = dur
+            else:
+                low, high = 20, 30
+            body += f" Optional: {low}-{high} min easy walking at conversational effort."
+    elif result.decision_type == "PROPOSE_NEXT_SESSION":
+        name = result.next_program_session_name or "Workout"
+        at = f" at {result.planned_start_time}" if result.planned_start_time else ""
+        body = f"Suggested today: {name}{at}."
     else:
         name = result.planned_session_name or "Workout"
         at = f" at {result.planned_start_time}" if result.planned_start_time else ""

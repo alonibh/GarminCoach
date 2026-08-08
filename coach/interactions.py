@@ -294,8 +294,13 @@ def prepare_recovery_morning(session: Session, result: DecisionResult, *, plan_o
     """Small orchestration boundary: rendering stays pure and staging stays local."""
     from coach.renderer import render_morning
     text, _markup, _ids = render_morning(session, result, plan_only=plan_only)
-    row = None if plan_only else stage_recovery_choice(session, result)
-    return text, [row.interaction_id] if row else []
+    if plan_only:
+        return text, []
+    if any(action.get("type") == "choose_recovery_outcome" for action in result.permitted_actions):
+        row = stage_recovery_choice(session, result)
+        return text, [row.interaction_id] if row else []
+    staged = stage_decision_actions(session, result)
+    return text, [row.interaction_id for row in staged]
 
 
 def button_label(action_type: str) -> str:

@@ -6,8 +6,13 @@ import json
 import time
 from typing import Literal
 
-from google import genai
-from google.genai import errors, types
+try:
+    from google import genai
+    from google.genai import errors, types
+except ImportError:
+    genai = None  # type: ignore
+    errors = None  # type: ignore
+    types = None  # type: ignore
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 

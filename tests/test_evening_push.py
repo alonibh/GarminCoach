@@ -195,5 +195,5 @@ def test_program_becoming_available_corrects_an_existing_no_action_brief(session
     session.commit()
     clock["now"] = tz.localize(datetime(2026, 7, 4, 11, 35))
 
-    assert coach_module.generate_daily_suggestion(session) is False
-    assert session.query(NotificationOutbox).filter_by(event_type="late_material_update").count() == 0
+    assert coach_module.generate_daily_suggestion(session) is True
+    assert session.query(NotificationOutbox).filter_by(event_type="late_material_update").count() == 1

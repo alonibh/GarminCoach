@@ -90,15 +90,6 @@ def start_priority_fetch() -> bool:
         row = _state(session)
         if reconcile_sent_brief(session, row):
             return False
-        from coach.decision_engine import selected_workouts_for_date
-        # Automatic recovery refresh has a single, unambiguous selected-workout
-        # target. It never fetches merely to propose the next program session.
-        if len(selected_workouts_for_date(session)) != 1:
-            row.status = "evaluating"
-            sent = generate_daily_suggestion(session)
-            row.status = "queued" if sent else "complete"
-            row.updated_at = _now_naive()
-            return False
         mark_priority_pending(session)
         row.status = "fetching"
         row.updated_at = _now_naive()
@@ -110,22 +101,16 @@ def priority_sync_finished() -> None:
     with get_session() as session:
         row = _state(session)
         row.last_priority_fetch_at = _now_naive()
-        from coach.decision_engine import selected_workouts_for_date
         if reconcile_sent_brief(session, row):
             enqueue_late_material_update(session)
             return
-        if len(selected_workouts_for_date(session)) != 1:
+        facts = morning_freshness(session)
+        if facts["ready"] or row.answer_anyway:
             row.status = "evaluating"
-            sent = generate_daily_suggestion(session)
+            sent = generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
             row.status = "queued" if sent else "complete"
         else:
-            facts = morning_freshness(session)
-            if facts["ready"] or row.answer_anyway:
-                row.status = "evaluating"
-                sent = generate_daily_suggestion(session, allow_incomplete=row.answer_anyway)
-                row.status = "queued" if sent else "complete"
-            else:
-                row.status = "waiting"
+            row.status = "waiting"
         row.updated_at = _now_naive()
 
 

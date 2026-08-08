@@ -11,7 +11,13 @@ import logging
 import threading
 from typing import Any, Mapping
 
-from garminconnect import GarminConnectAuthenticationError, GarminConnectNotFoundError
+from garminconnect import GarminConnectAuthenticationError
+try:
+    from garminconnect import GarminConnectNotFoundError
+except ImportError:
+    class GarminConnectNotFoundError(Exception):  # type: ignore
+        pass
+
 from garminconnect.workout import ExecutableStep, WalkingWorkout, WorkoutSegment
 from sqlalchemy.orm import Session
 

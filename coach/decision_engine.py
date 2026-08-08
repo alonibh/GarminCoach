@@ -289,5 +289,118 @@ def evaluate_morning_decision(
     session: Session, *, allow_incomplete: bool = False, target: date | None = None,
     evaluated_at: datetime | None = None,
 ) -> DecisionResult:
-    """Compatibility entry point; no recovery decision may propose a next program session."""
-    return evaluate_selected_workout_recovery(session, target=target, evaluated_at=evaluated_at)
+    """Evaluate today's morning decision for selected workout recovery or program proposal."""
+    target = target or get_local_date()
+    now = evaluated_at or get_local_now()
+    eligible = selected_workouts_for_date(session, target)
+
+    if len(eligible) >= 1:
+        return evaluate_selected_workout_recovery(
+            session,
+            planned_session_id=eligible[0].id if len(eligible) == 1 else None,
+            target=target,
+            evaluated_at=now,
+        )
+
+    program = active_program(session)
+    cursor = session.get(ProgramCursor, program.id) if program else None
+
+    planned_start_time = None
+    next_id = None
+    next_name = None
+    earliest = None
+    optional_rec = None
+    policy_version = None
+
+    if program and cursor:
+        state = program_state_facts(session, program, on_date=target)
+        if state:
+            policy_version = state.get("policy_version")
+            next_id = state.get("next_session_id")
+            next_name = state.get("next_session_name")
+            earliest = state.get("earliest_recommended_date")
+            optional_rec = state.get("optional_recovery_activity")
+
+            if state.get("is_program_rest_day"):
+                outcome = "PROGRAM_REST_DAY"
+                reasons = ["PROGRAM_SPACING_REQUIRES_REST"]
+                actions: list[dict] = []
+            elif next_id:
+                outcome = "PROPOSE_NEXT_SESSION"
+                reasons = ["NEXT_PROGRAM_SESSION_ELIGIBLE"]
+                actions = [{
+                    "type": "schedule_original_session",
+                    "program_session_id": next_id,
+                    "target_date": target.isoformat(),
+                }]
+            else:
+                outcome = "NO_SELECTED_WORKOUT"
+                reasons = ["NO_ELIGIBLE_SELECTED_WORKOUT"]
+                actions = []
+        else:
+            outcome = "NO_SELECTED_WORKOUT"
+            reasons = ["NO_ELIGIBLE_SELECTED_WORKOUT"]
+            actions = []
+    else:
+        outcome = "NO_SELECTED_WORKOUT"
+        reasons = ["NO_ELIGIBLE_SELECTED_WORKOUT"]
+        actions = []
+
+    observations = _informational_recovery_facts(session, target)
+
+    dummy_result = DecisionResult(
+        decision_id=str(uuid4()), evaluated_at=now.isoformat(), decision_type=outcome, workout_outcome=outcome,
+        active_program_id=program.id if program else None, active_program_name=program.name if program else None,
+        program_policy_version=policy_version, planned_session_id=None, planned_session_name=None,
+        planned_start_time=None, next_program_session_id=next_id, next_program_session_name=next_name,
+        earliest_eligible_date=earliest, readiness_score=None, readiness_category=None,
+        observations=observations, missing_observations=[], applied_rules=[], reason_codes=reasons,
+        permitted_actions=actions, optional_recovery_activity=optional_rec, decision_date=target.isoformat(),
+        best_effort=allow_incomplete,
+    )
+
+    if outcome == "PROPOSE_NEXT_SESSION" and actions:
+        try:
+            from coach.interactions import _schedule_payload
+            sched_payload = _schedule_payload(session, dummy_result, actions[0])
+            if sched_payload and "suggested_time" in sched_payload:
+                planned_start_time = sched_payload["suggested_time"]
+        except Exception:
+            pass
+
+    result = DecisionResult(
+        decision_id=dummy_result.decision_id, evaluated_at=now.isoformat(), decision_type=outcome, workout_outcome=outcome,
+        active_program_id=program.id if program else None, active_program_name=program.name if program else None,
+        program_policy_version=policy_version, planned_session_id=None, planned_session_name=None,
+        planned_start_time=planned_start_time, next_program_session_id=next_id, next_program_session_name=next_name,
+        earliest_eligible_date=earliest, readiness_score=None, readiness_category=None,
+        observations=observations, missing_observations=[], applied_rules=[], reason_codes=reasons,
+        permitted_actions=actions, optional_recovery_activity=optional_rec, decision_date=target.isoformat(),
+        best_effort=allow_incomplete,
+    )
+
+    identity = {
+        "target": target.isoformat(), "outcome": outcome, "program_id": program.id if program else None,
+        "next_id": next_id, "policy": policy_version, "actions": actions, "start_time": planned_start_time,
+    }
+    result.idempotency_key = f"morning-proposal:{target.isoformat()}:{_canonical_hash(identity)}"
+    existing = session.query(DecisionRecord).filter_by(idempotency_key=result.idempotency_key).first()
+    if existing:
+        return DecisionResult(**json.loads(existing.result_json))
+
+    session.add(DecisionRecord(
+        decision_id=result.decision_id, evaluated_at=datetime.fromisoformat(result.evaluated_at).replace(tzinfo=None),
+        decision_type=result.decision_type, active_program_id=result.active_program_id,
+        program_policy_version=result.program_policy_version, planned_session_id=None,
+        next_program_session_id=result.next_program_session_id,
+        earliest_eligible_date=date.fromisoformat(result.earliest_eligible_date) if result.earliest_eligible_date else None,
+        observations_json=json.dumps(result.observations, sort_keys=True),
+        missing_json=json.dumps(result.missing_observations, sort_keys=True),
+        rule_ids_json=json.dumps([item["rule_id"] for item in result.applied_rules]),
+        reason_codes_json=json.dumps(result.reason_codes),
+        permitted_actions_json=json.dumps(result.permitted_actions, sort_keys=True),
+        result_json=json.dumps(result.to_dict(), sort_keys=True), idempotency_key=result.idempotency_key,
+    ))
+    session.flush()
+    return result
+
