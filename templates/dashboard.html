@@ -165,10 +165,13 @@
 {% endif %}
 
 {% if slow_metric_history is defined %}{% set slow = slow_metric_history %}
+{% set has_slow_cards = (slow.fitness_age.points or slow.fitness_age.capability_state == 'supported') or (slow.vo2_running.points or slow.vo2_running.capability_state == 'supported') or (slow.vo2_cycling.points or slow.vo2_cycling.capability_state == 'supported') or (slow.training_status.state in ['SUPPORTED_WITH_DATA', 'SUPPORTED_NO_DATA']) %}
+{% if has_slow_cards %}
 <section class="slow-metric-history" aria-labelledby="slow-metric-history-title">
   <div class="metric-section-heading"><div><span class="eyebrow">Local observations</span><h2 id="slow-metric-history-title">Long-term fitness history</h2></div></div>
   <p class="trend-authority-note">Garmin-provided information only. It does not change a workout or recovery decision.</p>
   <div class="slow-history-grid">
+    {% if slow.fitness_age.points or slow.fitness_age.capability_state == 'supported' %}
     <article class="card slow-history-card">
       <h3>Fitness Age</h3>
       <p><strong>{{ '%.1f'|format(slow.fitness_age.current_value) if slow.fitness_age.current_value is not none else 'No local observation' }}</strong>{% if slow.fitness_age.current_value is not none %} yrs{% endif %}</p>
@@ -177,8 +180,9 @@
       {% if slow.fitness_age.points %}<div class="slow-chart-wrap"><canvas id="fitnessAgeHistoryChart"></canvas></div>{% endif %}
       <p class="muted">Source: Garmin-provided estimate.</p>
     </article>
+    {% endif %}
     {% for series, label, chart_id in [(slow.vo2_running, 'Running VO₂ max', 'runningVo2HistoryChart'), (slow.vo2_cycling, 'Cycling VO₂ max', 'cyclingVo2HistoryChart')] %}
-      {% if series.points or series.capability_state != 'unknown' %}
+      {% if series.points or series.capability_state == 'supported' %}
       <article class="card slow-history-card">
         <h3>{{ label }}</h3>
         <p><strong>{{ '%.1f'|format(series.current_value) if series.current_value is not none else 'No local observation' }}</strong>{% if series.current_value is not none %} ml/kg/min{% endif %}</p>
@@ -187,31 +191,21 @@
       </article>
       {% endif %}
     {% endfor %}
-    {% if slow.vo2_legacy.points %}
-    <article class="card slow-history-card">
-      <h3>Legacy VO₂ max — activity type unverified</h3>
-      <p><strong>{{ '%.1f'|format(slow.vo2_legacy.current_value) if slow.vo2_legacy.current_value is not none else 'No local observation' }}</strong>{% if slow.vo2_legacy.current_value is not none %} ml/kg/min{% endif %}</p>
-      <p class="muted">This local legacy data is not running or cycling data.</p>
-    </article>
-    {% endif %}
+    {% if slow.training_status.state in ['SUPPORTED_WITH_DATA', 'SUPPORTED_NO_DATA'] %}
     <article class="card slow-history-card training-status-history">
       <h3>Training Status</h3>
       {% if slow.training_status.state == 'SUPPORTED_WITH_DATA' %}
         <p>Garmin Training Status: <strong>{{ slow.training_status.current_status }}</strong></p>
         <p class="muted">Observed {{ slow.training_status.current_day }}{% if slow.training_status.device_display_name %} · {{ slow.training_status.device_display_name }}{% endif %}</p>
         <ul class="status-history-list">{% for point in slow.training_status.changes|reverse %}<li>{{ point.observed_on }} · {{ point.status }}</li>{% endfor %}</ul>
-      {% elif slow.training_status.state == 'SUPPORTED_NO_DATA' %}
-        <p>Training Status is supported for this device, but no current observation is stored.</p>
-      {% elif slow.training_status.state == 'UNSUPPORTED' %}
-        <p>Training Status is not supported for the current device.</p>
-      {% elif slow.training_status.state == 'NO_DEVICE_IDENTITY' %}
-        <p>Training Status is unavailable until Garmin device identity is known.</p>
       {% else %}
-        <p>Training Status availability is unverified for the current device.</p>
+        <p>Training Status is supported for this device, but no current observation is stored.</p>
       {% endif %}
     </article>
+    {% endif %}
   </div>
 </section>
+{% endif %}
 {% endif %}
 
 {% if recovery_health_trends %}
@@ -343,7 +337,7 @@
 </section>
 </div>
 
-{% if slow_metric_history is defined %}<script>
+{% if slow_metric_history is defined and has_slow_cards %}<script>
 document.addEventListener("DOMContentLoaded", () => {
   const slowLine = (id, points, label) => {
     const canvas = document.getElementById(id);

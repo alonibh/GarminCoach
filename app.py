@@ -926,28 +926,20 @@ def _readiness_tiles() -> list[dict]:
             })
 
             recovery_capability = capability_state(s, "recovery_time_connect")
-            device_recovery = capability_state(s, "recovery_time_device")
             if health and health.recovery_time_minutes is not None and is_fresh(RECOVERY_TIME):
-                recovery_value = f"Garmin recovery timer: {int(health.recovery_time_minutes)} min remaining"
-                recovery_indicator = "Informational"
-            elif device_recovery == "supported" and recovery_capability == "unsupported":
-                recovery_value = "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect."
-                recovery_indicator = "Watch only"
-            elif device_recovery == "supported" and recovery_capability == "unknown":
-                recovery_value = "Recovery Time is available on the watch; availability through Garmin Connect is unverified."
-                recovery_indicator = "Unverified"
-            elif recovery_capability == "unknown":
-                recovery_value = "Recovery Time availability through Garmin Connect is unverified."
-                recovery_indicator = "Unverified"
-            else:
-                recovery_value = "Not available today"
-                recovery_indicator = "No data"
-            signal_rows.append({
-                "label": "Recovery Time",
-                "value": recovery_value,
-                "indicator": recovery_indicator,
-                "tone": "neutral",
-            })
+                signal_rows.append({
+                    "label": "Recovery Time",
+                    "value": f"Garmin recovery timer: {int(health.recovery_time_minutes)} min remaining",
+                    "indicator": "Informational",
+                    "tone": "neutral",
+                })
+            elif recovery_capability == "supported":
+                signal_rows.append({
+                    "label": "Recovery Time",
+                    "value": "Not available today",
+                    "indicator": "No data",
+                    "tone": "neutral",
+                })
 
             if health and health.resting_hr is not None and is_fresh(RESTING_HR):
                 from statistics import median

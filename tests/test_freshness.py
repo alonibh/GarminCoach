@@ -156,7 +156,6 @@ def test_dashboard_replaces_unsupported_readiness_with_separate_recovery_signals
     assert readiness["signal_rows"] == [
         {"label": "Sleep", "value": "8h 15m · score 91 (Excellent)", "indicator": "Excellent", "tone": "positive"},
         {"label": "HRV", "value": "61 ms · within 57–66 baseline", "indicator": "Within baseline", "tone": "positive"},
-        {"label": "Recovery Time", "value": "Recovery Time is available on the watch but is not exposed to GarminCoach through Garmin Connect.", "indicator": "Watch only", "tone": "neutral"},
         {"label": "Resting HR", "value": "49 bpm · 3 bpm below 28-day median", "indicator": "Below median", "tone": "comparison"},
         {"label": "Sleep stress", "value": "18 · Garmin resting range", "indicator": "Resting Range", "tone": "positive"},
     ]
@@ -212,10 +211,8 @@ def test_dashboard_uses_proven_synced_raw_recovery_facts_without_freshness_rows(
         "indicator": "Within baseline", "tone": "positive",
     }
     assert recovery["signal_rows"][2] == {
-        "label": "Recovery Time",
-        "value": "Recovery Time is available on the watch; availability through Garmin Connect is unverified.",
-        "indicator": "Unverified",
-        "tone": "neutral",
+        "label": "Resting HR", "value": "51 bpm · recent baseline unavailable",
+        "indicator": "Measured", "tone": "neutral",
     }
 
 
