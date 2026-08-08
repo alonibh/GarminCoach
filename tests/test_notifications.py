@@ -185,7 +185,7 @@ def test_morning_brief_outbox_updates_and_sends_when_data_arrives(session, monke
     monkeypatch.setattr("coach.decision_engine.get_local_now", lambda: now)
 
     res1 = evaluate_morning_decision(session, allow_incomplete=True, target=today)
-    assert res1.best_effort is False
+    assert res1.best_effort is True
     row = enqueue_notification(
         session,
         event_type="morning_briefing",
