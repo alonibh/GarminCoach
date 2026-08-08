@@ -87,13 +87,7 @@ def test_all_curated_program_policies_match_catalog():
         f"PROGRAM_POLICIES keys differ from PROGRAMS keys: "
         f"extra={set(PROGRAM_POLICIES)-set(PROGRAMS)}, missing={set(PROGRAMS)-set(PROGRAM_POLICIES)}"
     )
-    assert len(PROGRAM_POLICIES) == 24
-
-
-def test_powerbuilding_uses_published_level_and_intermediate_cadence():
-    policy = PROGRAM_POLICIES["powerbuilding_ppl_6"]
-    assert SOURCE_TRAINING_LEVELS["powerbuilding_ppl_6"] == "Intermediate"
-    assert policy.minimum_rest_days_after == (0, 0, 1, 0, 0, 1)
+    assert len(PROGRAM_POLICIES) == 21
 
 
 def test_activity_sync_captures_provenance_once(session, monkeypatch):

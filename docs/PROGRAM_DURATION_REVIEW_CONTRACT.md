@@ -1,6 +1,6 @@
 # Program-duration review contract
 
-Phase 5C creates a neutral **source-duration review point** for exactly these curated policy keys: `dumbbell_full_body_3` (8 weeks), `phul_4` (12), `dumbbell_upper_lower_4` (12), `barbell_no_rack_4` (8), `barbell_upper_lower_4` (10), `maul_5` (12), `dumbbell_split_5` (12), `powerbuilding_ppl_6` (12), `low_volume_high_intensity_6` (6), `built_different_ppl_6` (10), and `muscle_mania_6` (10). The reviewed `ProgramPolicy.source_duration_weeks` is the sole duration authority; `NULL` and invalid metadata are ineligible.
+Phase 5C creates a neutral **source-duration review point** for exactly these curated policy keys: `dumbbell_full_body_3` (8 weeks), `phul_4` (12), `dumbbell_upper_lower_4` (12), `barbell_no_rack_4` (8), `barbell_upper_lower_4` (10), `maul_5` (12), `dumbbell_split_5` (12), `built_different_ppl_6` (10), and `muscle_mania_6` (10). The reviewed `ProgramPolicy.source_duration_weeks` is the sole duration authority; `NULL` and invalid metadata are ineligible.
 
 ## Eligibility, anchor, and durable state
 

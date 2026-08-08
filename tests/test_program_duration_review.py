@@ -46,8 +46,7 @@ def test_duration_policy_is_exact_and_rejects_bad_values():
     expected = {
         "dumbbell_full_body_3": 8, "phul_4": 12, "dumbbell_upper_lower_4": 12,
         "barbell_no_rack_4": 8, "barbell_upper_lower_4": 10, "maul_5": 12,
-        "dumbbell_split_5": 12, "powerbuilding_ppl_6": 12,
-        "low_volume_high_intensity_6": 6, "built_different_ppl_6": 10,
+        "dumbbell_split_5": 12, "built_different_ppl_6": 10,
         "muscle_mania_6": 10,
     }
     assert {key: item.source_duration_weeks for key, item in PROGRAM_POLICIES.items()

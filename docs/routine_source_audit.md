@@ -128,7 +128,6 @@ resets at a week boundary and missed sessions are not debt.
 | `split_full_4` | Back/Biceps -> Legs -> Chest/Shoulders/Triceps -> Full Body | 0, 0, 1, 2 | No explicit recovery activity found in the source program | Keep. Preserve the three-day split block, rest slot, then full-body session. |
 | `ppl_6` | Push A -> Pull A -> Legs A -> Push B -> Pull B -> Legs B | 0, 0, 0, 0, 0, 1 | Low-intensity cardio may be added based on goals; HIIT should be limited | Keep. Do not turn optional goal-dependent cardio into a default recovery prescription. |
 | `dumbbell_full_body_3` | Full Body 1 -> Full Body 2 -> Full Body 3 | 1, 1, 1 | Optional cardio is separate from the resistance routine | Keep the source's rest day between full-body sessions. |
-| `powerbuilding_ppl_6` | Push A -> Pull A -> Legs A -> Push B -> Pull B -> Legs B | 0, 0, 1, 0, 0, 1 | Meal plan is outside the resistance routine | Keep the published Intermediate level and translate its three-on/one-off schedule into rolling rest slots. |
 
 ### Source findings supporting the rolling rules
 

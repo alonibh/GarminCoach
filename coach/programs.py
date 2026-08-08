@@ -541,29 +541,6 @@ PROGRAMS.update({
             ], 70),
         ], "Three machine-and-dumbbell full-body exposures; source lower-bound rep targets retained.",
     ),
-    "long_cycle_full_body_3": _program(
-        "Long Cycle Full Body (Adapted) · 3 days",
-        "https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout", "new", [
-            _session("Workout 1", "full body", [
-                _exercise("Squat", 3, 8), _exercise("Bench Press", 3, 8), _exercise("Barbell Row", 3, 8),
-                _exercise("Lying EZ Bar Triceps Extension", 3, 8, notes="Source movement: lying tricep extension (not a skullcrusher)"),
-                _exercise("Leg Curl", 3, 8), _exercise("Dumbbell Curl", 3, 8),
-                _exercise("Weighted Sit Up", 3, 10),
-            ], 60),
-            _session("Workout 2", "full body", [
-                _exercise("Deadlift", 3, 8), _exercise("Military Press", 3, 8), _exercise("Pull Up", 3, 8),
-                _exercise("Weighted Dips", 3, 8, movement="vertical_push", notes="Source movement: dips or cable extension (tricep focus)"),
-                _exercise("Seated Calf Raise", 3, 8), _exercise("Barbell Shrug", 3, 8, notes="Source movement: power barbell shrug (explosive)"),
-                _exercise("Plank", 3, None, duration=60),
-            ], 60),
-            _session("Workout 3", "full body", [
-                _exercise("Squat", 3, 8), _exercise("Bench Press", 3, 8), _exercise("Barbell Row", 3, 8),
-                _exercise("Lying EZ Bar Triceps Extension", 3, 8, notes="Source movement: lying tricep extension (not a skullcrusher)"),
-                _exercise("Leg Curl", 3, 8), _exercise("Dumbbell Curl", 3, 8),
-                _exercise("Cable Crunch", 3, 10),
-            ], 60),
-        ], "GarminCoach adaptation: source exercises matched; Long Cycle auto-regulation progression (12→5 rep auto-decrement) not implemented.",
-    ),
     "whole_body_toning_3": _program(
         "Whole Body Toning · 3 days",
         "https://www.muscleandstrength.com/workouts/3-day-whole-body-toning-workout.html", "six_to_twenty_four_months", [
@@ -784,26 +761,6 @@ PROGRAMS.update({
                 _exercise("Pinwheel Curl", 2, 8), _exercise("Overhead Dumbbell Tricep Extension", 3, 8), _exercise("Dumbbell Shrug", 3, 12),
             ], 60),
         ], "Repeatable dumbbell split with two lower and two complete upper-region exposures.",
-    ),
-    "powerbuilding_ppl_6": _program(
-        "Powerbuilding PPL · 6 days", "https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan", "six_to_twenty_four_months", [
-            _session("Push A", "push", [_exercise("Barbell Bench Press", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Seated Overhead Press", 3, 8), _exercise("Weighted Dips", 3, 10, movement="vertical_push")], 60),
-            _session("Pull A", "pull", [_exercise("Deadlift", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Chin Up", 3, 8, notes="Add weight when appropriate"), _exercise("Chest Supported Machine Row", 3, 10)], 60),
-            _session("Legs A", "lower body", [_exercise("Barbell Back Squat", 5, 3, movement="knee_dominant", rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Good Morning", 3, 8, movement="hip_hinge"), _exercise("Leg Press", 3, 10)], 60),
-            _session("Push B", "push", [_exercise("Standing Overhead Barbell Press", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Incline Bench Press", 3, 8), _exercise("Narrow Grip Bench Press", 3, 10)], 60),
-            _session("Pull B", "pull", [_exercise("Deadlift", 5, 3, rest=120, notes="Use the source snatch-grip variation", progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Barbell Row", 3, 8), _exercise("Pull Up", 3, 10, notes="Add weight when appropriate")], 60),
-            _session("Legs B", "lower body", [_exercise("Front Squat", 5, 3, rest=120, progression_rule_key="powerbuilding_rep_goal_15_v1"), _exercise("Romanian Deadlift", 3, 8), _exercise("Barbell Hip Thrust", 3, 10)], 60),
-        ], "Heavy, medium, and lighter rep-goal PPL sessions are represented as editable starting targets.",
-    ),
-    "low_volume_high_intensity_6": _program(
-        "Low-Volume High-Intensity · 6 days", "https://www.muscleandstrength.com/workouts/6-day-low-volume-high-intensity-workout-split", "six_to_twenty_four_months", [
-            _session("Chest & Triceps", "push", [_exercise("Incline Smith Machine Bench Press", 2, 6), _exercise("Flat Machine Chest Press", 2, 6), _exercise("Pec Deck", 2, 8), _exercise("Machine Tricep Dip", 2, 8, movement="vertical_push")], 75),
-            _session("Back Thickness", "pull", [_exercise("Machine Row", 2, 6, notes="Use the Hammer Strength low row"), _exercise("Chest Supported Machine Row", 2, 6), _exercise("Rack Deadlifts", 2, 6)], 75),
-            _session("Quads", "lower body", [_exercise("Front Squat", 2, 6), _exercise("Hack Squat", 2, 6), _exercise("Leg Press", 2, 8, notes="Perform one leg at a time"), _exercise("Walking Lunge", 2, 8)], 75),
-            _session("Shoulders & Biceps", "push", [_exercise("Machine Shoulder Press", 2, 6), _exercise("Standing Military Press", 2, 6), _exercise("Lateral Raise", 2, 8, notes="Use a cable"), _exercise("Barbell Curl", 2, 8)], 75),
-            _session("Back Width", "pull", [_exercise("Cable Row", 2, 6, notes="Perform one arm at a time"), _exercise("Dumbbell Pullover", 2, 8, movement="vertical_pull"), _exercise("Narrow Grip Pull Down", 2, 8, notes="Use an underhand grip")], 75),
-            _session("Hamstrings", "lower body", [_exercise("Lying Leg Curl", 2, 6), _exercise("Stiff Leg Deadlifts", 2, 6), _exercise("Seated Hamstring Curl", 2, 8), _exercise("Barbell Hip Thrust", 2, 8, notes="Source movement: barbell glute bridge")], 75),
-        ], "Six focused low-volume sessions; each exercise uses the source's heavy starting rep target.",
     ),
     "built_different_ppl_6": _program(
         "Built Different PPL · 6 days", "https://www.muscleandstrength.com/workouts/built-different-ppl-workout", "two_plus_years", [

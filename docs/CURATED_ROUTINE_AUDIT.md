@@ -141,24 +141,6 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 | **Unresolved source facts** | None |
 | **GarminCoach defaults** | Between-set rest: 60 s GarminCoach product default; source page does not specify between-set rest |
 
-### long_cycle_full_body_3
-
-| Field | Detail |
-|---|---|
-| **Internal key** | `long_cycle_full_body_3` |
-| **Display name** | Long Cycle Full Body (Adapted) · 3 days |
-| **Classification** | `garmin_adapted` |
-| **Source URL** | https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout |
-| **Reviewed** | 2026-08-06 via cdn.muscleandstrength.com |
-| **Source sessions** | Workout 1; Workout 2; Workout 3 |
-| **Required source exercises** | All source exercises are now present per 2026-08-06 correction |
-| **Equivalent-name substitutions** | Lying Tricep Extension → Lying EZ Bar Triceps Extension; Power Barbell Shrug → Barbell Shrug; Dips (tricep focus) → Weighted Dips |
-| **Optional omissions** | None |
-| **Garmin adaptations** | Source defines a Long Cycle auto-regulation progression model where reps auto-decrement (12→5) based on performance across weeks. GarminCoach does not implement this dynamic progression system. The routine is therefore classified as an adapted version and renamed accordingly. All exercises are present; only the defining auto-regulation progression behavior is not implemented. |
-| **Corrections made** | 2026-08-06: Added all missing exercises (Lying EZ Bar Triceps Extension, Leg Curl, Dumbbell Curl, Weighted Sit Up — Workout 1; Weighted Dips, Seated Calf Raise, Barbell Shrug, Plank — Workout 2; Cable Crunch — Workout 3). Renamed from "Long Cycle Full Body · 3 days" to "Long Cycle Full Body (Adapted) · 3 days" to reflect the unimplemented auto-regulation progression. |
-| **Unresolved source facts** | None |
-| **GarminCoach defaults** | Between-set rest: 60 s GarminCoach product default; source page does not specify between-set rest |
-
 ### whole_body_toning_3
 
 | Field | Detail |
@@ -405,42 +387,6 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 | **Unresolved source facts** | Source page not re-fetched 2026-08-06 (timed out) |
 | **GarminCoach defaults** | None |
 
-### powerbuilding_ppl_6
-
-| Field | Detail |
-|---|---|
-| **Internal key** | `powerbuilding_ppl_6` |
-| **Display name** | Powerbuilding PPL · 6 days |
-| **Classification** | `source_permitted_optional_omission` |
-| **Source URL** | https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan |
-| **Reviewed** | 2026-07-22 (detailed exercise and rest audit) |
-| **Source sessions** | Push A; Pull A; Legs A; Push B; Pull B; Legs B |
-| **Required source exercises** | All resistance exercises in all six sessions per 2026-07-22 review |
-| **Equivalent-name substitutions** | None |
-| **Optional omissions** | Meal plan (not a resistance session) |
-| **Garmin adaptations** | Source snatch-grip deadlift variation noted; progression translated to `powerbuilding_rep_goal_15_v1` rule (GarminCoach safety overlay, not source text) |
-| **Corrections made** | None |
-| **Unresolved source facts** | Source page not re-fetched 2026-08-06 (timed out) |
-| **GarminCoach defaults** | None |
-
-### low_volume_high_intensity_6
-
-| Field | Detail |
-|---|---|
-| **Internal key** | `low_volume_high_intensity_6` |
-| **Display name** | Low-Volume High-Intensity · 6 days |
-| **Classification** | `source_exact_with_equivalent_names` |
-| **Source URL** | https://www.muscleandstrength.com/workouts/6-day-low-volume-high-intensity-workout-split |
-| **Reviewed** | 2026-07-22 (detailed exercise audit) |
-| **Source sessions** | Chest & Triceps; Back Thickness; Quads; Shoulders & Biceps; Back Width; Hamstrings |
-| **Required source exercises** | All exercises in all six sessions per 2026-07-22 review |
-| **Equivalent-name substitutions** | Barbell Glute Bridge per source note in Hamstrings session |
-| **Optional omissions** | None |
-| **Garmin adaptations** | None |
-| **Corrections made** | None |
-| **Unresolved source facts** | Between-set rest not captured in 2026-07-22 audit; source page not re-fetched 2026-08-06 (timed out) |
-| **GarminCoach defaults** | Between-set rest: 60 s GarminCoach product default; source page has not been reviewed for rest guidance |
-
 ### built_different_ppl_6
 
 | Field | Detail |
@@ -483,18 +429,18 @@ ACSM reference: Resistance Training Prescription for Muscle Function, Hypertroph
 
 | Stat | Count |
 |---|---|
-| Total routines | 25 |
-| Source pages successfully reviewed 2026-08-06 (cdn fallback) | 8 |
-| Source pages reviewed 2026-07-22 | 17 |
+| Total routines | 21 |
+| Source pages successfully reviewed 2026-08-06 (cdn fallback) | 7 |
+| Source pages reviewed 2026-07-22 | 14 |
 | Source pages with unresolved review | 0 |
 | `source_exact` | 7 (beginner_full_body_3, total_package_3, dumbbell_full_body_3, split_full_4, barbell_upper_lower_4, maul_5, dumbbell_split_5) |
-| `source_exact_with_equivalent_names` | 13 (full_body_2, ms_full_body_3, upper_lower_4, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, barbell_no_rack_4, ppl_6, low_volume_high_intensity_6, muscle_mania_6) |
-| `source_permitted_optional_omission` | 3 (shul_4, powerbuilding_ppl_6, built_different_ppl_6) |
-| `garmin_adapted` | 1 (long_cycle_full_body_3 — auto-regulation progression not implemented) |
+| `source_exact_with_equivalent_names` | 12 (full_body_2, ms_full_body_3, upper_lower_4, planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, dumbbell_upper_lower_4, barbell_no_rack_4, ppl_6, muscle_mania_6) |
+| `source_permitted_optional_omission` | 2 (shul_4, built_different_ppl_6) |
+| `garmin_adapted` | 0 |
 | `source_mismatch` | 0 |
 | `source_unverified` | 0 |
-| Corrections implemented 2026-08-06 | 8 routines (planet_fitness_full_body_3, long_cycle_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, barbell_no_rack_4, muscle_mania_6) |
-| Routines renamed | 1 (long_cycle_full_body_3 → "Long Cycle Full Body (Adapted) · 3 days") |
+| Removed 2026-08-08 | 3 routines removed (long_cycle_full_body_3, powerbuilding_ppl_6, low_volume_high_intensity_6) |
+| Corrections implemented 2026-08-06 | 7 routines (planet_fitness_full_body_3, whole_body_toning_3, planet_fitness_upper_lower_4, optimized_volume_4, phul_4, barbell_no_rack_4, muscle_mania_6) |
 | ACSM attribution corrections | All incorrect ACSM attribution removed from routines where source is silent on rest; relabelled as GarminCoach product default |
 
 ## Attribution of each field

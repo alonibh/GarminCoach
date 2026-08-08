@@ -1699,8 +1699,8 @@ def _migrate_add_columns(target_engine: Engine | None = None) -> None:
         if not source_progression_applied:
             from coach.programs import PROGRAMS
             import json as _json
-            template = {row["name"]: row["exercises"][0]
-                        for row in PROGRAMS["powerbuilding_ppl_6"]["sessions"]}
+            _pb_sessions = PROGRAMS.get("powerbuilding_ppl_6", {}).get("sessions", [])
+            template = {row["name"]: row["exercises"][0] for row in _pb_sessions}
             programs = conn.execute(text(
                 "SELECT id FROM training_programs WHERE goal_tags = :tags"
             ), {"tags": _json.dumps(["powerbuilding_ppl_6"])}).mappings().all()

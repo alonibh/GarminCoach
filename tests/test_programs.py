@@ -1,16 +1,16 @@
 import pytest
 
 from coach.programs import PLAN_CHOICES, PROGRAMS, _exercise, _session, recommend_program
-from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for
+from coach.exercises import GARMIN_EXERCISES, exercise_metadata, muscle_group_for, catalog_for_ui
 from coach.program_policy import REJECTED_DEFAULT_ROUTINES, SOURCE_TRAINING_LEVELS
 
 
-def test_catalog_contains_twenty_four_reviewed_routines_from_two_to_six_days():
+def test_catalog_contains_twenty_one_reviewed_routines_from_two_to_six_days():
     assert len(GARMIN_EXERCISES) > 1800
-    assert len(PROGRAMS) == 24
+    assert len(PROGRAMS) == 21
     assert {len(program["sessions"]) for program in PROGRAMS.values()} == {2, 3, 4, 5, 6}
     assert {days: sum(len(program["sessions"]) == days for program in PROGRAMS.values()) for days in range(2, 7)} == {
-        2: 1, 3: 7, 4: 9, 5: 2, 6: 5,
+        2: 1, 3: 6, 4: 9, 5: 2, 6: 3,
     }
     for program in PROGRAMS.values():
         assert program["source_url"].startswith("https://www.muscleandstrength.com/")
@@ -51,7 +51,6 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "ppl_6": "Beginner",
         "dumbbell_full_body_3": "Beginner",
         "planet_fitness_full_body_3": "Beginner",
-        "long_cycle_full_body_3": "Beginner",
         "whole_body_toning_3": "Intermediate",
         "planet_fitness_upper_lower_4": "Beginner",
         "optimized_volume_4": "Beginner",
@@ -61,8 +60,6 @@ def test_source_training_levels_are_reflected_in_catalog_badges():
         "barbell_upper_lower_4": "Beginner",
         "maul_5": "Beginner",
         "dumbbell_split_5": "Intermediate",
-        "powerbuilding_ppl_6": "Intermediate",
-        "low_volume_high_intensity_6": "Intermediate",
         "built_different_ppl_6": "Advanced",
         "muscle_mania_6": "Advanced",
     }
@@ -249,7 +246,7 @@ def test_ppl_6_all_exercises_have_90s_rest():
 def test_muscle_strength_5_is_absent_from_catalog():
     assert "muscle_strength_5" not in PROGRAMS
     assert "muscle_strength_5" not in {choice["key"] for choice in PLAN_CHOICES}
-    assert len(PLAN_CHOICES) == 24
+    assert len(PLAN_CHOICES) == 21
 
 
 def test_major_region_gate_ignores_focus_labels_and_arm_isolation():
@@ -324,7 +321,6 @@ def test_expansion_routine_session_and_exercise_counts():
     """Each expansion routine has its source-reviewed session and exercise structure."""
     expected = {
         "planet_fitness_full_body_3": (3, [7, 8, 8]),
-        "long_cycle_full_body_3": (3, [7, 7, 7]),
         "whole_body_toning_3": (3, [7, 7, 6]),
         "planet_fitness_upper_lower_4": (4, [8, 6, 8, 6]),
         "optimized_volume_4": (4, [7, 5, 7, 5]),
@@ -334,8 +330,6 @@ def test_expansion_routine_session_and_exercise_counts():
         "barbell_upper_lower_4": (4, [5, 5, 5, 5]),
         "maul_5": (5, [4, 4, 4, 4, 4]),
         "dumbbell_split_5": (5, [6, 7, 6, 7, 7]),
-        "powerbuilding_ppl_6": (6, [3, 3, 3, 3, 3, 3]),
-        "low_volume_high_intensity_6": (6, [4, 3, 4, 4, 3, 4]),
         "built_different_ppl_6": (6, [4, 4, 4, 4, 4, 4]),
         "muscle_mania_6": (6, [6, 6, 6, 6, 6, 6]),
     }
@@ -367,34 +361,16 @@ def test_phul_uses_source_reviewed_rest_values():
             assert rests == {60}, f"PHUL {session['name']} should be all 60s, got {rests}"
 
 
-def test_powerbuilding_ppl_uses_source_reviewed_rest_values():
-    """Powerbuilding PPL uses 120 s for compound anchors and 60 s for accessories."""
-    anchor_names = {
-        "Barbell Bench Press", "Deadlift", "Barbell Back Squat",
-        "Standing Overhead Barbell Press", "Front Squat",
-    }
-    for session in PROGRAMS["powerbuilding_ppl_6"]["sessions"]:
-        for exercise in session["exercises"]:
-            if exercise["exercise_name"] in anchor_names:
-                assert exercise["rest_seconds"] == 120, (
-                    f"Powerbuilding anchor {exercise['exercise_name']} should be 120s"
-                )
-            else:
-                assert exercise["rest_seconds"] == 60, (
-                    f"Powerbuilding accessory {exercise['exercise_name']} should be 60s"
-                )
-
-
 def test_expansion_routines_use_garmincoach_default_rest_where_source_is_silent():
     """Expansion routines where source specifies no rest use 60 s (GarminCoach product default)."""
     # Routines where source is silent on rest — 60 s is the GarminCoach default, not attributed to ACSM.
     # Routines where source is silent on rest — 60 s GarminCoach default, not ACSM-attributed.
     garmincoach_default_keys = {
-        "planet_fitness_full_body_3", "long_cycle_full_body_3",
+        "planet_fitness_full_body_3",
         "planet_fitness_upper_lower_4",
         "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
         "maul_5", "dumbbell_split_5",
-        "low_volume_high_intensity_6", "built_different_ppl_6",
+        "built_different_ppl_6",
     }
     for key in garmincoach_default_keys:
         rests = {e["rest_seconds"] for s in PROGRAMS[key]["sessions"] for e in s["exercises"]}
@@ -427,11 +403,10 @@ def test_ppl_6_all_exercises_have_single_90s_rest_no_transition():
 def test_expansion_routines_have_two_weekly_lower_push_pull_exposures():
     """All expansion routines satisfy the catalog's mandatory two-exposure gate."""
     expansion_keys = [
-        "planet_fitness_full_body_3", "long_cycle_full_body_3", "whole_body_toning_3",
+        "planet_fitness_full_body_3", "whole_body_toning_3",
         "planet_fitness_upper_lower_4", "optimized_volume_4", "phul_4",
         "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
-        "maul_5", "dumbbell_split_5", "powerbuilding_ppl_6",
-        "low_volume_high_intensity_6", "built_different_ppl_6", "muscle_mania_6",
+        "maul_5", "dumbbell_split_5", "built_different_ppl_6", "muscle_mania_6",
     ]
     for key in expansion_keys:
         program = PROGRAMS[key]
@@ -443,11 +418,10 @@ def test_expansion_routines_have_two_weekly_lower_push_pull_exposures():
 def test_every_expansion_routine_is_garmin_representable():
     """Every exercise in every expansion routine maps to the Garmin exercise catalog."""
     expansion_keys = [
-        "planet_fitness_full_body_3", "long_cycle_full_body_3", "whole_body_toning_3",
+        "planet_fitness_full_body_3", "whole_body_toning_3",
         "planet_fitness_upper_lower_4", "optimized_volume_4", "phul_4",
         "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
-        "maul_5", "dumbbell_split_5", "powerbuilding_ppl_6",
-        "low_volume_high_intensity_6", "built_different_ppl_6", "muscle_mania_6",
+        "maul_5", "dumbbell_split_5", "built_different_ppl_6", "muscle_mania_6",
     ]
     missing = [
         (key, session["name"], exercise["exercise_name"])
@@ -462,7 +436,7 @@ def test_every_expansion_routine_is_garmin_representable():
 def test_expansion_routine_warmup_anchors():
     """First exercise of each expansion-routine session that is a qualifying compound gets a warm-up."""
     for key in [
-        "phul_4", "powerbuilding_ppl_6", "muscle_mania_6",
+        "phul_4", "muscle_mania_6",
         "barbell_upper_lower_4", "barbell_no_rack_4",
     ]:
         for session in PROGRAMS[key]["sessions"]:
@@ -475,15 +449,67 @@ def test_expansion_routine_warmup_anchors():
                 )
 
 
-def test_powerbuilding_ppl_uses_rep_goal_progression_rule_for_five_set_anchors():
-    """The five-set compound anchors in powerbuilding_ppl_6 carry the rep-goal progression rule."""
-    rule = "powerbuilding_rep_goal_15_v1"
-    for session in PROGRAMS["powerbuilding_ppl_6"]["sessions"]:
-        for exercise in session["exercises"]:
-            if exercise["sets"] == 5:
-                assert exercise["progression_rule_key"] == rule, (
-                    f"powerbuilding anchor {exercise['exercise_name']} should have rule {rule!r}"
-                )
+# ---------------------------------------------------------------------------
+# Exercise-name exactness audit (catalog_for_ui comparison)
+# ---------------------------------------------------------------------------
+
+def audit_exercise_name_exactness(programs=None):
+    """Return a dict with audit results comparing routine names to exact catalog_for_ui() labels.
+
+    Keys:
+        exact        – list of (prog_key, session_name, exercise_name) that exactly match a label
+        non_exact    – list of (prog_key, session_name, exercise_name, resolved_label) that differ
+        unmapped     – list of (prog_key, session_name, exercise_name) with no catalog resolution
+    """
+    if programs is None:
+        programs = PROGRAMS
+    exact_labels = {item["label"] for item in catalog_for_ui()}
+    exact, non_exact, unmapped = [], [], []
+    for prog_key, program in programs.items():
+        for session in program["sessions"]:
+            for exercise in session["exercises"]:
+                name = exercise["exercise_name"]
+                if name in exact_labels:
+                    exact.append((prog_key, session["name"], name))
+                else:
+                    meta = exercise_metadata(name)
+                    if meta is None:
+                        unmapped.append((prog_key, session["name"], name))
+                    else:
+                        non_exact.append((prog_key, session["name"], name, meta["label"]))
+    return {"exact": exact, "non_exact": non_exact, "unmapped": unmapped}
+
+
+def test_no_routine_exercise_is_unmapped_in_catalog():
+    """Every exercise in every routine must resolve via exercise_metadata() (no None)."""
+    result = audit_exercise_name_exactness()
+    assert result["unmapped"] == [], (
+        f"Exercises that do not resolve to the Garmin catalog: {result['unmapped']}"
+    )
+
+
+def test_routine_exercise_name_exactness_audit():
+    """Report non-exact routine exercise names; fail only if any are completely unmapped.
+
+    Non-exact-but-safe-equivalent names are expected and accepted; this test
+    records the current counts so regressions (new unmapped names) are detected.
+    The full list of non-exact names must be reviewed manually when this count
+    changes.
+    """
+    result = audit_exercise_name_exactness()
+    total = len(result["exact"]) + len(result["non_exact"]) + len(result["unmapped"])
+    assert result["unmapped"] == [], (
+        f"New unmapped exercises detected: {result['unmapped']}"
+    )
+    non_exact_names = sorted({name for _, _, name, _ in result["non_exact"]})
+    assert len(result["exact"]) == 256, (
+        f"Exact-label count changed: expected 256, got {len(result['exact'])}. "
+        "Review the audit before updating this number."
+    )
+    assert len(non_exact_names) == 134, (
+        f"Unique non-exact names changed: expected 134, got {len(non_exact_names)}. "
+        f"Names: {non_exact_names}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -525,16 +551,11 @@ def test_audit_doc_source_unverified_count_is_zero():
     )
 
 
-def test_audit_doc_garmin_adapted_routine_clearly_named():
-    """The garmin_adapted routine must be named as an adaptation, not as source-exact."""
+def test_audit_doc_garmin_adapted_count_is_zero():
+    """After removing long_cycle_full_body_3, the garmin_adapted count in the audit must be 0."""
     text = _audit_text()
-    # long_cycle_full_body_3 is the only garmin_adapted routine
-    assert "Long Cycle Full Body (Adapted)" in text, (
-        "The garmin_adapted routine must be named to indicate it is an adaptation."
-    )
-    # It must not be classified as source_exact anywhere
-    assert "`source_exact`\n| **Source URL** | https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout" not in text, (
-        "long_cycle_full_body_3 must not be classified as source_exact."
+    assert "Long Cycle Full Body" not in text, (
+        "long_cycle_full_body_3 was removed; its display name must not appear in the audit."
     )
 
 
@@ -548,22 +569,22 @@ def test_audit_doc_garmincoach_default_rest_not_attributed_to_source():
     )
 
 
-def test_long_cycle_classified_garmin_adapted_in_programs():
-    """long_cycle_full_body_3 display name must indicate it is an adapted routine."""
-    name = PROGRAMS["long_cycle_full_body_3"]["name"]
-    assert "Adapted" in name, (
-        f"long_cycle_full_body_3 display name must contain 'Adapted'; got {name!r}"
-    )
+def test_removed_routines_are_absent_from_programs_and_plan_choices():
+    """The three removed non-ACSM routines must not appear anywhere in the catalog."""
+    removed = {"long_cycle_full_body_3", "powerbuilding_ppl_6", "low_volume_high_intensity_6"}
+    assert not (removed & set(PROGRAMS)), f"Removed keys still in PROGRAMS: {removed & set(PROGRAMS)}"
+    plan_keys = {choice["key"] for choice in PLAN_CHOICES}
+    assert not (removed & plan_keys), f"Removed keys still in PLAN_CHOICES: {removed & plan_keys}"
 
 
 def test_source_silent_routines_use_garmincoach_default_rest_not_higher():
     """Source-silent routines must use exactly 60 s between-set rest (GarminCoach default)."""
     source_silent = {
-        "planet_fitness_full_body_3", "long_cycle_full_body_3",
+        "planet_fitness_full_body_3",
         "planet_fitness_upper_lower_4",
         "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
         "maul_5", "dumbbell_split_5",
-        "low_volume_high_intensity_6", "built_different_ppl_6",
+        "built_different_ppl_6",
         "optimized_volume_4",
     }
     for key in source_silent:
@@ -612,9 +633,9 @@ _VALID_CLASSIFICATIONS = {
 
 _EXPECTED_COUNTS = {
     "source_exact": 7,
-    "source_exact_with_equivalent_names": 13,
-    "source_permitted_optional_omission": 3,
-    "garmin_adapted": 1,
+    "source_exact_with_equivalent_names": 12,
+    "source_permitted_optional_omission": 2,
+    "garmin_adapted": 0,
     "source_mismatch": 0,
     "source_unverified": 0,
 }
@@ -825,11 +846,11 @@ def _check_summary_key_lists_match(
 # Structural invariant tests (operate on raw records from the real audit doc)
 # ---------------------------------------------------------------------------
 
-def test_audit_contains_exactly_24_routine_sections():
-    """The audit must have exactly 24 routine sections."""
+def test_audit_contains_exactly_21_routine_sections():
+    """The audit must have exactly 21 routine sections."""
     records = _parse_audit_records()
-    assert len(records) == 24, (
-        f"Expected 24 sections; found {len(records)}: {[r['heading'] for r in records]}"
+    assert len(records) == 21, (
+        f"Expected 21 sections; found {len(records)}: {[r['heading'] for r in records]}"
     )
 
 
@@ -901,10 +922,10 @@ def test_audit_section_classification_counts_match_expected():
         )
 
 
-def test_audit_section_counts_sum_to_24():
-    """All classification counts must sum to len(PROGRAMS) == 24."""
+def test_audit_section_counts_sum_to_21():
+    """All classification counts must sum to len(PROGRAMS) == 21."""
     sections = _parse_audit_sections()
-    assert len(sections) == len(PROGRAMS) == 24, (
+    assert len(sections) == len(PROGRAMS) == 21, (
         f"Section count {len(sections)} != PROGRAMS count {len(PROGRAMS)}"
     )
 

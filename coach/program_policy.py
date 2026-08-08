@@ -117,11 +117,6 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         "planet_fitness_full_body_3", "https://www.muscleandstrength.com/workouts/3-day-full-body-planet-fitness-workout",
         ("Full Body A", "Full Body B", "Full Body C"), (1, 1, 1), (1, 1, 1), source_reviewed_at="2026-07-22",
     ),
-    "long_cycle_full_body_3": ProgramPolicy(
-        "long_cycle_full_body_3", "https://www.muscleandstrength.com/workouts/beginner-long-cycle-muscle-strength-building-workout",
-        ("Workout 1", "Workout 2", "Workout 3"), (1, 1, 1), (1, 1, 1), source_reviewed_at="2026-07-22",
-        omitted_source_components=("Non-defining isolation accessories",),
-    ),
     "whole_body_toning_3": ProgramPolicy(
         "whole_body_toning_3", "https://www.muscleandstrength.com/workouts/3-day-whole-body-toning-workout.html",
         ("Series 1", "Series 2", "Series 3"), (1, 1, 1), (1, 1, 1), source_reviewed_at="2026-07-22",
@@ -168,17 +163,6 @@ PROGRAM_POLICIES: Mapping[str, ProgramPolicy] = {
         ("Chest, Shoulders & Triceps", "Legs & Core A", "Back & Biceps", "Legs & Core B", "Complete Upper Body"),
         (0, 0, 0, 0, 2), (0, 0, 0, 0, 2), source_duration_weeks=12, source_reviewed_at="2026-07-22",
     ),
-    "powerbuilding_ppl_6": ProgramPolicy(
-        "powerbuilding_ppl_6", "https://www.muscleandstrength.com/workouts/6-day-powerbuilding-split-meal-plan",
-        ("Push A", "Pull A", "Legs A", "Push B", "Pull B", "Legs B"), (0, 0, 1, 0, 0, 1), (0, 0, 1, 0, 0, 1),
-        source_duration_weeks=12, source_reviewed_at="2026-07-22", omitted_source_components=("Meal plan", "Non-defining isolation accessories"),
-    ),
-    "low_volume_high_intensity_6": ProgramPolicy(
-        "low_volume_high_intensity_6", "https://www.muscleandstrength.com/workouts/6-day-low-volume-high-intensity-workout-split",
-        ("Chest & Triceps", "Back Thickness", "Quads", "Shoulders & Biceps", "Back Width", "Hamstrings"),
-        (0, 0, 0, 0, 0, 1), (0, 0, 0, 0, 0, 1), source_duration_weeks=6, source_reviewed_at="2026-07-22",
-        omitted_source_components=("Non-defining isolation accessories",),
-    ),
     "built_different_ppl_6": ProgramPolicy(
         "built_different_ppl_6", "https://www.muscleandstrength.com/workouts/built-different-ppl-workout",
         ("Push 1", "Pull 1", "Legs 1", "Push 2", "Pull 2", "Legs 2"), (0, 0, 0, 0, 0, 1), (0, 0, 0, 0, 0, 1),
@@ -205,7 +189,6 @@ SOURCE_TRAINING_LEVELS: Mapping[str, str] = {
     "ppl_6": "Beginner",
     "dumbbell_full_body_3": "Beginner",
     "planet_fitness_full_body_3": "Beginner",
-    "long_cycle_full_body_3": "Beginner",
     "whole_body_toning_3": "Intermediate",
     "planet_fitness_upper_lower_4": "Beginner",
     "optimized_volume_4": "Beginner",
@@ -215,8 +198,6 @@ SOURCE_TRAINING_LEVELS: Mapping[str, str] = {
     "barbell_upper_lower_4": "Beginner",
     "maul_5": "Beginner",
     "dumbbell_split_5": "Intermediate",
-    "powerbuilding_ppl_6": "Intermediate",
-    "low_volume_high_intensity_6": "Intermediate",
     "built_different_ppl_6": "Advanced",
     "muscle_mania_6": "Advanced",
 }
@@ -227,11 +208,10 @@ DEFAULT_ROUTINE_ADMISSION: Mapping[str, str] = {
     key: "repeatable_base_template" for key in (
         "full_body_2", "beginner_full_body_3", "ms_full_body_3", "total_package_3",
         "upper_lower_4", "shul_4", "split_full_4", "ppl_6",
-        "dumbbell_full_body_3", "planet_fitness_full_body_3", "long_cycle_full_body_3",
+        "dumbbell_full_body_3", "planet_fitness_full_body_3",
         "whole_body_toning_3", "planet_fitness_upper_lower_4", "optimized_volume_4",
         "phul_4", "dumbbell_upper_lower_4", "barbell_no_rack_4", "barbell_upper_lower_4",
-        "maul_5", "dumbbell_split_5", "powerbuilding_ppl_6", "low_volume_high_intensity_6",
-        "built_different_ppl_6", "muscle_mania_6",
+        "maul_5", "dumbbell_split_5", "built_different_ppl_6", "muscle_mania_6",
     )
 }
 
