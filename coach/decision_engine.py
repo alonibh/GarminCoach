@@ -237,7 +237,7 @@ def evaluate_selected_workout_recovery(
         })
     else:
         # Avoid creating a cursor during advisory recovery evaluation. Existing program policy remains authoritative.
-        state = program_state_facts(session, program, on_date=target, persist=persist) if program else None
+        state = program_state_facts(session, program, on_date=target, persist=persist) if program and session.get(ProgramCursor, program.id) else None
         if state and state["is_program_rest_day"]:
             outcome, reasons = "PROGRAM_REST_RECOMMENDED", ["PROGRAM_SPACING_REQUIRES_REST"]
             policy_version = state["policy_version"]

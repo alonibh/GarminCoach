@@ -578,3 +578,79 @@ def test_read_only_preview_program_cursor_safety_regressions(session, monkeypatc
     assert initialized_cursor is not None
     assert initialized_cursor.next_program_session_id == source[0].id
 
+
+def test_evaluate_selected_workout_recovery_cursor_safety_regressions(session, monkeypatch):
+    from coach.decision_engine import evaluate_selected_workout_recovery
+    from coach.renderers import render_recommendation
+    from db import ProgramCursor
+
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
+    now_val = datetime(2026, 7, 6, 12, 0)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    program, source = _add_program(session)
+    _fresh_data(session)
+    existing_cursor = session.get(ProgramCursor, program.id)
+    if existing_cursor:
+        session.delete(existing_cursor)
+        session.commit()
+
+    planned = PlannedSession(
+        title="Leg Day", activity_type="strength_training", target_date=TARGET,
+        suggested_time="18:00", duration_min=60, status="planned", source="coach"
+    )
+    session.add(planned)
+    session.commit()
+
+    # 1. selected PlannedSession + active program + missing ProgramCursor + persist=True does NOT create a cursor
+    res_true = evaluate_selected_workout_recovery(session, planned_session_id=planned.id, target=TARGET, persist=True)
+    assert res_true.decision_type in {"KEEP_SELECTED_WORKOUT", "KEEP_SELECTED_WORKOUT_WITH_WARNING", "REST_RECOMMENDED"}
+    assert session.get(ProgramCursor, program.id) is None
+
+    # 2. same case persist=False also does not create one
+    res_false = evaluate_selected_workout_recovery(session, planned_session_id=planned.id, target=TARGET, persist=False)
+    assert res_false.decision_type in {"KEEP_SELECTED_WORKOUT", "KEEP_SELECTED_WORKOUT_WITH_WARNING", "REST_RECOMMENDED"}
+    assert session.get(ProgramCursor, program.id) is None
+
+    # 3. existing stale cursor + persist=True retains the previous repair behavior
+    stale_cursor = ProgramCursor(
+        program_id=program.id,
+        next_program_session_id=999999,
+        policy_version="stale_v0",
+        created_at=datetime(2026, 7, 1),
+        updated_at=datetime(2026, 7, 1),
+    )
+    session.add(stale_cursor)
+    session.commit()
+
+    evaluate_selected_workout_recovery(session, planned_session_id=planned.id, target=TARGET, persist=True)
+    repaired_cursor = session.get(ProgramCursor, program.id)
+    assert repaired_cursor.next_program_session_id == source[0].id
+
+    # 4. existing stale cursor + persist=False remains unchanged
+    repaired_cursor.next_program_session_id = 888888
+    repaired_cursor.policy_version = "stale_v1"
+    session.commit()
+
+    evaluate_selected_workout_recovery(session, planned_session_id=planned.id, target=TARGET, persist=False)
+    unchanged_cursor = session.get(ProgramCursor, program.id)
+    assert unchanged_cursor.next_program_session_id == 888888
+    assert unchanged_cursor.policy_version == "stale_v1"
+
+    # 5. active program/no selected workout preview still derives the first session without creating a cursor
+    session.delete(planned)
+    session.delete(unchanged_cursor)
+    session.commit()
+    assert session.get(ProgramCursor, program.id) is None
+
+    text_preview = render_recommendation(session)
+    assert "Suggested today:" in text_preview
+    assert "Full Body 1" in text_preview
+    assert session.get(ProgramCursor, program.id) is None
+
