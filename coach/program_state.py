@@ -245,28 +245,50 @@ def reconcile_active_program(session: Session) -> int:
 
 
 def program_state_facts(
-    session: Session, program: TrainingProgram, *, on_date: date | None = None
+    session: Session, program: TrainingProgram, *, on_date: date | None = None, persist: bool = True,
 ) -> dict | None:
     """Return deterministic sequence/rest facts for renderers and decision logic."""
     policy, sessions = _policy_and_sessions(session, program)
-    if not policy:
+    if not policy or not sessions:
         return None
-    cursor = initialize_program_cursor(session, program)
-    if not cursor:
-        return None
-    session.flush()
+
+    if persist:
+        cursor = initialize_program_cursor(session, program)
+        if not cursor:
+            return None
+        session.flush()
+        next_session_id = cursor.next_program_session_id
+        last_completed_at = cursor.last_completed_at
+        last_completed_program_session_id = cursor.last_completed_program_session_id
+    else:
+        cursor = session.get(ProgramCursor, program.id)
+        if cursor is None:
+            next_session_id = sessions[0].id
+            last_completed_at = None
+            last_completed_program_session_id = None
+        else:
+            by_id_ids = {item.id for item in sessions}
+            if cursor.next_program_session_id in by_id_ids:
+                next_session_id = cursor.next_program_session_id
+            elif cursor.last_completed_activity_id is None:
+                next_session_id = sessions[0].id
+            else:
+                next_session_id = None
+            last_completed_at = cursor.last_completed_at
+            last_completed_program_session_id = cursor.last_completed_program_session_id
+
     by_id = {item.id: item for item in sessions}
-    next_session = by_id.get(cursor.next_program_session_id)
+    next_session = by_id.get(next_session_id)
     if not next_session:
         return None
 
     target = on_date or date.today()
     earliest_allowed = target
     earliest_recommended = target
-    if cursor.last_completed_at and cursor.last_completed_program_session_id in by_id:
-        completed = by_id[cursor.last_completed_program_session_id]
+    if last_completed_at and last_completed_program_session_id in by_id:
+        completed = by_id[last_completed_program_session_id]
         index = sessions.index(completed)
-        completed_day = cursor.last_completed_at.date()
+        completed_day = last_completed_at.date()
         earliest_allowed = completed_day + timedelta(days=policy.minimum_rest_days_after[index] + 1)
         earliest_recommended = completed_day + timedelta(days=policy.preferred_rest_days_after[index] + 1)
     is_rest_day = target < earliest_recommended
@@ -287,7 +309,7 @@ def program_state_facts(
         "policy_version": policy.version,
         "next_session_id": next_session.id,
         "next_session_name": next_session.name,
-        "last_completed_at": cursor.last_completed_at.isoformat() if cursor.last_completed_at else None,
+        "last_completed_at": last_completed_at.isoformat() if last_completed_at else None,
         "earliest_allowed_date": earliest_allowed.isoformat(),
         "earliest_recommended_date": earliest_recommended.isoformat(),
         "is_program_rest_day": is_rest_day,

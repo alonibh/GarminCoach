@@ -486,7 +486,8 @@ def test_telegram_recommendation_menu_button_current_state_regressions(session, 
     }
     assert counts_before == counts_after
 
-    cursor = session.get(ProgramCursor, program.id)
+    from coach.program_state import initialize_program_cursor
+    cursor = session.get(ProgramCursor, program.id) or initialize_program_cursor(session, program)
     cursor.last_completed_program_session_id = source[0].id
     cursor.next_program_session_id = source[1].id
     cursor.last_completed_at = datetime(2026, 7, 5, 9, 0)
@@ -505,4 +506,75 @@ def test_telegram_recommendation_menu_button_current_state_regressions(session, 
 
     text_selected = render_recommendation(session)
     assert "Custom Upper Body" in text_selected
+
+
+def test_read_only_preview_program_cursor_safety_regressions(session, monkeypatch):
+    from coach.renderers import render_recommendation
+    from db import ProgramCursor
+
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr(
+        "coach.calendar.get_upcoming_schedule_result",
+        lambda days=7: {"state": "fresh", "events": [], "error": None},
+    )
+    now_val = datetime(2026, 7, 6, 12, 0)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    program, source = _add_program(session)
+    existing_cursor = session.get(ProgramCursor, program.id)
+    if existing_cursor:
+        session.delete(existing_cursor)
+        session.commit()
+
+    assert session.get(ProgramCursor, program.id) is None
+
+    # 1. active curated program + no ProgramCursor + render_recommendation() gives the correct first-session preview
+    text_preview = render_recommendation(session)
+    assert "Suggested today:" in text_preview
+    assert "Full Body 1" in text_preview
+
+    # 2. no ProgramCursor row is created
+    assert session.get(ProgramCursor, program.id) is None
+
+    # 3. stale cursor is not repaired by preview
+    stale_cursor = ProgramCursor(
+        program_id=program.id,
+        next_program_session_id=999999,
+        policy_version="stale_v0",
+        created_at=datetime(2026, 7, 1),
+        updated_at=datetime(2026, 7, 1),
+    )
+    session.add(stale_cursor)
+    session.commit()
+
+    text_stale_preview = render_recommendation(session)
+    assert "Suggested today:" in text_stale_preview
+    assert "Full Body 1" in text_stale_preview
+
+    cursor_after_preview = session.get(ProgramCursor, program.id)
+    assert cursor_after_preview.next_program_session_id == 999999
+    assert cursor_after_preview.policy_version == "stale_v0"
+
+    # 4. normal persisted morning evaluation still initializes/repairs the cursor as before
+    # 4a: Repair stale cursor on persist=True
+    persisted_result = evaluate_morning_decision(session, target=TARGET, persist=True)
+    assert persisted_result.decision_type == "PROPOSE_NEXT_SESSION"
+
+    repaired_cursor = session.get(ProgramCursor, program.id)
+    assert repaired_cursor.next_program_session_id == source[0].id
+    assert repaired_cursor.policy_version != "stale_v0"
+
+    # 4b: Initialize missing cursor on persist=True
+    session.delete(repaired_cursor)
+    session.commit()
+    assert session.get(ProgramCursor, program.id) is None
+
+    target_new = date(2026, 7, 7)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: target_new)
+    init_result = evaluate_morning_decision(session, target=target_new, persist=True)
+    initialized_cursor = session.get(ProgramCursor, program.id)
+    assert initialized_cursor is not None
+    assert initialized_cursor.next_program_session_id == source[0].id
 

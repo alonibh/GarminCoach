@@ -214,11 +214,11 @@ def _round_up_to_quarter(value: datetime) -> datetime:
     return value.replace(second=0, microsecond=0)
 
 
-def _session_details(session: Session, today: date) -> tuple[int, str, int, date] | None:
+def _session_details(session: Session, today: date, *, persist: bool = True) -> tuple[int, str, int, date] | None:
     program = active_program(session)
     if not program:
         return None
-    state = program_state_facts(session, program, on_date=today)
+    state = program_state_facts(session, program, on_date=today, persist=persist)
     sessions = program_sessions_for(session, program.id)
     by_id = {item.id: item for item in sessions}
     next_session = by_id.get(state["next_session_id"]) if state else (sessions[0] if sessions else None)
@@ -283,10 +283,10 @@ def available_start_times(
 
 def next_available_time(
     session: Session, *, now: datetime, schedule: list[dict], max_days: int = 7,
-    start_day: date | None = None, preferred_time: time | None = None,
+    start_day: date | None = None, preferred_time: time | None = None, persist: bool = True,
 ) -> TimeSuggestion | None:
     """Return the first valid full session slot; never delegate time arithmetic to the LLM."""
-    details = _session_details(session, now.date())
+    details = _session_details(session, now.date(), persist=persist)
     if not details:
         return None
     program_session_id, session_name, duration_min, earliest_day = details

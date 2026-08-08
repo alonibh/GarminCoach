@@ -126,7 +126,7 @@ def calendar_version(session: Session) -> str:
     })
 
 
-def _schedule_payload(session: Session, result: DecisionResult, action: dict) -> dict | None:
+def _schedule_payload(session: Session, result: DecisionResult, action: dict, *, persist: bool = True) -> dict | None:
     session_id = int(action["program_session_id"])
     program_session = session.get(ProgramSession, session_id)
     if not program_session:
@@ -145,6 +145,7 @@ def _schedule_payload(session: Session, result: DecisionResult, action: dict) ->
             schedule=calendar["events"],
             start_day=target_day,
             max_days=1,
+            persist=persist,
         )
         if not suggestion or suggestion.program_session_id != session_id:
             return None

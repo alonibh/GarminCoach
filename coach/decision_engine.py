@@ -237,7 +237,7 @@ def evaluate_selected_workout_recovery(
         })
     else:
         # Avoid creating a cursor during advisory recovery evaluation. Existing program policy remains authoritative.
-        state = program_state_facts(session, program, on_date=target) if program and session.get(ProgramCursor, program.id) else None
+        state = program_state_facts(session, program, on_date=target, persist=persist) if program else None
         if state and state["is_program_rest_day"]:
             outcome, reasons = "PROGRAM_REST_RECOMMENDED", ["PROGRAM_SPACING_REQUIRES_REST"]
             policy_version = state["policy_version"]
@@ -343,7 +343,7 @@ def evaluate_morning_decision(
     policy_version = None
 
     if program:
-        state = program_state_facts(session, program, on_date=target)
+        state = program_state_facts(session, program, on_date=target, persist=persist)
         if state:
             policy_version = state.get("policy_version")
             next_id = state.get("next_session_id")
@@ -397,7 +397,7 @@ def evaluate_morning_decision(
         }
         try:
             from coach.interactions import _schedule_payload
-            sched_payload = _schedule_payload(session, dummy_result, proposal_action)
+            sched_payload = _schedule_payload(session, dummy_result, proposal_action, persist=persist)
             if sched_payload and sched_payload.get("suggested_time"):
                 planned_start_time = sched_payload["suggested_time"]
                 proposal_action["suggested_time"] = planned_start_time
