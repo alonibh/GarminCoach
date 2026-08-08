@@ -131,14 +131,14 @@ def _schedule_payload(session: Session, result: DecisionResult, action: dict) ->
     program_session = session.get(ProgramSession, session_id)
     if not program_session:
         raise ValueError("Program session no longer exists")
-    from coach.calendar import get_upcoming_schedule_result
-    from coach.scheduling import next_available_time
     target_day = date.fromisoformat(action["target_date"])
-    calendar = get_upcoming_schedule_result(days=7)
-    if calendar["state"] != "fresh":
-        return None
     suggested_time = action.get("suggested_time")
     if not suggested_time:
+        from coach.calendar import get_upcoming_schedule_result
+        from coach.scheduling import next_available_time
+        calendar = get_upcoming_schedule_result(days=7)
+        if calendar["state"] != "fresh":
+            return None
         suggestion = next_available_time(
             session,
             now=get_local_now().replace(tzinfo=None),

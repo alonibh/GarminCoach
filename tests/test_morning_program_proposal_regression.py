@@ -340,3 +340,41 @@ def test_plan_page_uses_athlete_local_date_and_canonical_active_statuses(session
     assert "Active Future Workout" in response.text
     assert "Should Be Ignored Done" not in response.text
 
+
+def test_staging_reuses_precalculated_time_without_second_calendar_lookup(session, monkeypatch):
+    import json
+    from coach.interactions import stage_decision_actions, prepare_recovery_morning, reply_markup_for_ids
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+
+    payload_calendar_calls = 0
+
+    def mock_calendar(days=7):
+        nonlocal payload_calendar_calls
+        if days == 7:
+            payload_calendar_calls += 1
+            if payload_calendar_calls > 1:
+                raise RuntimeError("_schedule_payload must not fetch calendar a second time during staging!")
+        return {"state": "fresh", "events": [], "error": None}
+
+    monkeypatch.setattr("coach.calendar.get_upcoming_schedule_result", mock_calendar)
+    program, source = _add_program(session)
+    _fresh_data(session)
+    now_val = datetime(2026, 7, 6, 7, 30)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: TARGET)
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now_val)
+    monkeypatch.setattr("coach.interactions.get_local_now", lambda: now_val)
+
+    result = evaluate_morning_decision(session, target=TARGET)
+    assert payload_calendar_calls == 1
+    assert result.planned_start_time == "18:00"
+
+    text, interaction_ids = prepare_recovery_morning(session, result)
+    staged = stage_decision_actions(session, result)
+
+    assert payload_calendar_calls == 1
+    assert len(staged) == 1
+    staged_payload = json.loads(staged[0].payload_json)
+    assert staged_payload["suggested_time"] == "18:00"
+    markup = reply_markup_for_ids(session, interaction_ids)
+    assert markup["inline_keyboard"][0][0]["text"] == "Approve and schedule"
+
