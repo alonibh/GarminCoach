@@ -267,6 +267,13 @@ def test_single_user_complete_success(tmp_path, monkeypatch):
     release_process_lock(lk)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only descriptor fsync compatibility")
+def test_windows_successful_replacement_skips_read_only_descriptor_fsync(tmp_path, monkeypatch):
+    """Windows cannot fsync the read-only descriptor used for verification."""
+    env = _prepare(tmp_path, monkeypatch, multi_user=False)
+    assert _call_replace(env).stage is RestoreStage.COMPLETED
+
+
 def test_multi_user_complete_success_two_tenants(tmp_path, monkeypatch):
     """Phase 6B3B2: multi-user replacement with two tenants completes."""
     env = _prepare(tmp_path, monkeypatch, multi_user=True, num_tenants=2)
@@ -585,6 +592,23 @@ def test_os_replace_failure_on_control_target_triggers_rollback(tmp_path, monkey
     saf_entries = {e.target_key: e for e in saf_snap.entries}
     single_user_tgt = next(t for t in discover_database_targets(profile=TargetProfile.RUNTIME) if t.kind == "single_user")
     assert _sha256(single_user_tgt.path) == saf_entries[single_user_tgt.target_key].sha256
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only descriptor fsync compatibility")
+def test_windows_rollback_skips_read_only_descriptor_fsync(tmp_path, monkeypatch):
+    """Rollback verification must not fsync a read-only descriptor on Windows."""
+    env = _prepare(tmp_path, monkeypatch, multi_user=False)
+    ctrl_path = str(config.CONTROL_DB_PATH)
+    original_replace = os.replace
+
+    def fail_on_control(src, dst):
+        if str(dst) == ctrl_path:
+            raise OSError("Injected control replace failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fail_on_control)
+    with pytest.raises(ConfiguredReplacementRollbackCompletedError):
+        _call_replace(env)
 
 
 def test_staged_artifact_corrupted_before_replacement(tmp_path, monkeypatch):

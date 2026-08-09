@@ -2126,7 +2126,8 @@ def _run_rollback(
                             raise ConfiguredReplacementManualRecoveryRequiredError(
                                 f"Rollback: fchmod did not take effect for '{tgt.target_key}'"
                             )
-                    os.fsync(rep_fd)
+                    if os.name != "nt":
+                        os.fsync(rep_fd)
                     # Re-stat pathname after fchmod and fsync.
                     post_pst = os.stat(str(tgt.path), follow_symlinks=False)
                     if (post_pst.st_dev, post_pst.st_ino) != (rep_st.st_dev, rep_st.st_ino):
@@ -3031,7 +3032,8 @@ def replace_and_verify_configured_restore(
                             raise ConfiguredReplacementPreconditionError(
                                 f"Replacement fchmod failed for '{tgt.target_key}'"
                             )
-                    os.fsync(rep_fd)
+                    if os.name != "nt":
+                        os.fsync(rep_fd)
                     # Re-stat pathname after fchmod and fsync.
                     post_pst = os.stat(str(tgt.path), follow_symlinks=False)
                     if (post_pst.st_dev, post_pst.st_ino) != (rep_st.st_dev, rep_st.st_ino):
