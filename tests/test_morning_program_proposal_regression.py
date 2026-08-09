@@ -1,16 +1,18 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime
 import pytz
 
 import pytest
 from fastapi.testclient import TestClient
 
+from coach import coach
 from coach.decision_engine import evaluate_morning_decision, selected_workouts_for_date
 from coach.interactions import prepare_recovery_morning, reply_markup_for_ids
 from db import DailyHealth, MorningBriefState, NotificationOutbox, PlannedSession, ProgramCursor, Sleep
 from metrics import freshness
 import notify.morning as morning
 from notify.morning import morning_deadline, priority_sync_finished, start_priority_fetch
+import sync.sync_runner as sync_runner
 import tenant_context
 from tests.test_program_state import _add_program
 
@@ -95,6 +97,39 @@ def test_morning_watch_starts_priority_fetch_and_waits_for_data(session, monkeyp
     priority_sync_finished()
     state = session.get(MorningBriefState, TARGET)
     assert state.status in {"queued", "complete"}
+    assert session.query(NotificationOutbox).filter_by(event_type="morning_briefing").count() == 1
+
+
+def test_priority_then_normal_sync_does_not_bypass_unready_morning_wait(session, monkeypatch):
+    """The normal sync started after priority completion must preserve waiting."""
+    monkeypatch.setattr(morning, "get_session", lambda: _bound_session(session))
+    monkeypatch.setattr("notify.outbox.get_session", lambda: _bound_session(session))
+    tz = pytz.timezone("Asia/Jerusalem")
+    now = tz.localize(datetime(2026, 7, 6, 7, 0))
+    monkeypatch.setattr("time_utils.get_local_now", lambda: now)
+    monkeypatch.setattr("time_utils.get_local_date", lambda: now.date())
+    monkeypatch.setattr(morning, "get_local_now", lambda: now)
+    monkeypatch.setattr(morning, "get_local_date", lambda: now.date())
+
+    # Exercise sync_runner's real post-priority ordering: priority completion
+    # waits, then the normal-sync coaching call runs against the same facts.
+    monkeypatch.setattr(sync_runner, "_current_garmin_lock", nullcontext)
+    monkeypatch.setattr(sync_runner, "run_priority_sync", lambda: {"priority": True})
+    monkeypatch.setattr(sync_runner, "_checkpoint_current_tenant", lambda: None)
+    monkeypatch.setattr(sync_runner, "_set_lock_ts", lambda value: None)
+    monkeypatch.setattr(
+        sync_runner,
+        "try_start_sync",
+        lambda full=False: coach.generate_daily_suggestion(session),
+    )
+
+    sync_runner._run_priority()
+    state = session.get(MorningBriefState, TARGET)
+    assert state.status == "waiting"
+    assert session.query(NotificationOutbox).filter_by(event_type="morning_briefing").count() == 0
+
+    _fresh_data(session)
+    priority_sync_finished()
     assert session.query(NotificationOutbox).filter_by(event_type="morning_briefing").count() == 1
 
 

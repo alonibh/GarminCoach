@@ -423,6 +423,16 @@ def generate_daily_suggestion(session: Session, *, allow_incomplete: bool = Fals
     if get_local_now().hour >= 17:
         logger.info("Evening workout proposals are disabled until next morning's overnight data.")
         return False
+    # This function is also called by the regular incremental-sync path after a
+    # priority sync.  Do not let that second path bypass MorningBriefState's
+    # waiting state and create a briefing from stale overnight facts.  The
+    # explicit 11:30 / "answer anyway" fallback opts into incomplete data.
+    if not allow_incomplete:
+        from metrics.freshness import proactive_metrics_ready
+
+        if not proactive_metrics_ready(session):
+            logger.info("Skipping morning briefing until today's sleep data is finalized.")
+            return False
     from coach.decision_engine import evaluate_morning_decision
     from coach.interactions import prepare_recovery_morning
     result = evaluate_morning_decision(session, allow_incomplete=allow_incomplete)
