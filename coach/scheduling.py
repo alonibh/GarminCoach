@@ -305,3 +305,46 @@ def next_available_time(
                 candidate_day, chosen, duration_min, session_name, program_session_id
             )
     return None
+
+
+def fallback_start_times(
+    session: Session, *, now: datetime, target_day: date,
+    duration_min: int, limit: int = 8,
+) -> list[time]:
+    """Return candidate start times for a day ignoring calendar conflicts.
+
+    Used when the user explicitly chooses to force-schedule a workout on a day
+    that has no available open slots under normal constraints.
+    """
+    goal = session.get(Goal, 1)
+    profile = session.get(AthleteProfile, 1) if session else None
+    raw_constraints = (goal.custom_input if goal and goal.custom_input else (profile.availability if profile else "")) or ""
+
+    weekly = parse_weekly_availability(raw_constraints)
+    day_cfg = weekly.get(target_day.weekday(), DEFAULT_WEEKLY_AVAILABILITY[target_day.weekday()])
+
+    if not day_cfg.get("off") and day_cfg.get("start") and day_cfg.get("end"):
+        opening_time = _parse_clock(day_cfg.get("start", "18:00")) or time(18, 0)
+        closing_time = _parse_clock(day_cfg.get("end", "20:00")) or time(20, 0)
+    else:
+        opening_time = time(7, 0)
+        closing_time = time(22, 0)
+
+    candidate = datetime.combine(target_day, opening_time)
+    if target_day == now.date():
+        candidate = max(candidate, _round_up_to_quarter(now))
+    end_limit = datetime.combine(target_day, closing_time)
+
+    if candidate + timedelta(minutes=duration_min) > end_limit and target_day == now.date() and candidate < datetime.combine(target_day, time(23, 0)):
+        end_limit = datetime.combine(target_day, time(23, 0))
+
+    starts: list[time] = []
+    total_minutes = (end_limit - candidate).total_seconds() / 60
+    step_minutes = 60 if total_minutes > 240 else 15
+
+    while candidate + timedelta(minutes=duration_min) <= end_limit and len(starts) < limit:
+        starts.append(candidate.time())
+        candidate += timedelta(minutes=step_minutes)
+
+    return starts
+

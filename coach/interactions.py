@@ -622,32 +622,41 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             return "stale", "Program or calendar data changed. Ask again."
         payload = json.loads(row.payload_json)
         target_day = date.fromisoformat(payload.get("target_date") or planned.target_date.isoformat())
-        from coach.calendar import get_upcoming_schedule_result
-        from coach.scheduling import available_start_times
-        days = max(2, (target_day - now.date()).days + 1)
-        calendar = get_upcoming_schedule_result(days=days)
-        if calendar["state"] != "fresh":
-            row.status = "superseded"
-            row.failure_reason = "calendar_access_error"
-            return "stale", "Calendar could not be checked. No time change was made."
-        try:
-            selected_time = datetime.strptime(payload["suggested_time"], "%H:%M").time()
-        except (KeyError, TypeError, ValueError):
-            row.status = "superseded"
-            row.failure_reason = "schedule_slot_changed"
-            return "stale", "That workout time is no longer available. Choose a new date and time."
-        valid_starts = available_start_times(
-            session,
-            now=now,
-            schedule=calendar["events"],
-            target_day=target_day,
-            duration_min=planned.duration_min or 60,
-            limit=96,
-        )
-        if selected_time not in valid_starts:
-            row.status = "superseded"
-            row.failure_reason = "schedule_slot_changed"
-            return "stale", "That workout time is no longer available. Choose a new date and time."
+        is_forced = bool(payload.get("forced", False))
+        if not is_forced:
+            from coach.calendar import get_upcoming_schedule_result
+            from coach.scheduling import available_start_times
+            days = max(2, (target_day - now.date()).days + 1)
+            calendar = get_upcoming_schedule_result(days=days)
+            if calendar["state"] != "fresh":
+                row.status = "superseded"
+                row.failure_reason = "calendar_access_error"
+                return "stale", "Calendar could not be checked. No time change was made."
+            try:
+                selected_time = datetime.strptime(payload["suggested_time"], "%H:%M").time()
+            except (KeyError, TypeError, ValueError):
+                row.status = "superseded"
+                row.failure_reason = "schedule_slot_changed"
+                return "stale", "That workout time is no longer available. Choose a new date and time."
+            valid_starts = available_start_times(
+                session,
+                now=now,
+                schedule=calendar["events"],
+                target_day=target_day,
+                duration_min=planned.duration_min or 60,
+                limit=96,
+            )
+            if selected_time not in valid_starts:
+                row.status = "superseded"
+                row.failure_reason = "schedule_slot_changed"
+                return "stale", "That workout time is no longer available. Choose a new date and time."
+        else:
+            try:
+                datetime.strptime(payload["suggested_time"], "%H:%M").time()
+            except (KeyError, TypeError, ValueError):
+                row.status = "superseded"
+                row.failure_reason = "invalid_time_format"
+                return "stale", "Invalid workout time. Choose a new date and time."
         if planned.garmin_workout_id and target_day != planned.target_date:
             garmin_client = None
             stage = "authenticate"
@@ -728,36 +737,45 @@ def _apply_interaction(session: Session, interaction_id: str) -> tuple[str, str]
             return "stale", "Program or calendar data changed. Ask again."
         payload = json.loads(row.payload_json)
         target_day = date.fromisoformat(payload["target_date"])
-        from coach.calendar import get_upcoming_schedule_result
-        from coach.scheduling import next_available_time
+        is_forced = bool(payload.get("forced", False))
+        if not is_forced:
+            from coach.calendar import get_upcoming_schedule_result
+            from coach.scheduling import next_available_time
 
-        calendar = get_upcoming_schedule_result(days=7)
-        if calendar["state"] != "fresh":
-            row.status = "superseded"
-            row.failure_reason = "calendar_unavailable"
-            return "stale", "Calendar data changed. Ask again."
-        current_slot = next_available_time(
-            session,
-            now=now,
-            schedule=calendar["events"],
-            start_day=target_day,
-            max_days=1,
-            preferred_time=datetime.strptime(payload["suggested_time"], "%H:%M").time(),
-        )
-        expected = (
-            int(payload["program_session_id"]),
-            payload["target_date"],
-            payload["suggested_time"],
-        )
-        actual = (
-            current_slot.program_session_id,
-            current_slot.day.isoformat(),
-            current_slot.start.strftime("%H:%M"),
-        ) if current_slot else None
-        if actual != expected:
-            row.status = "superseded"
-            row.failure_reason = "schedule_slot_changed"
-            return "stale", "The available workout time changed. Ask again."
+            calendar = get_upcoming_schedule_result(days=7)
+            if calendar["state"] != "fresh":
+                row.status = "superseded"
+                row.failure_reason = "calendar_unavailable"
+                return "stale", "Calendar data changed. Ask again."
+            current_slot = next_available_time(
+                session,
+                now=now,
+                schedule=calendar["events"],
+                start_day=target_day,
+                max_days=1,
+                preferred_time=datetime.strptime(payload["suggested_time"], "%H:%M").time(),
+            )
+            expected = (
+                int(payload["program_session_id"]),
+                payload["target_date"],
+                payload["suggested_time"],
+            )
+            actual = (
+                current_slot.program_session_id,
+                current_slot.day.isoformat(),
+                current_slot.start.strftime("%H:%M"),
+            ) if current_slot else None
+            if actual != expected:
+                row.status = "superseded"
+                row.failure_reason = "schedule_slot_changed"
+                return "stale", "The available workout time changed. Ask again."
+        else:
+            try:
+                datetime.strptime(payload["suggested_time"], "%H:%M").time()
+            except (KeyError, TypeError, ValueError):
+                row.status = "superseded"
+                row.failure_reason = "invalid_time_format"
+                return "stale", "Invalid workout time. Ask again."
         from coach.garmin_compiler import compile_and_schedule_for_interaction
 
         result = compile_and_schedule_for_interaction(session, payload)
@@ -1396,6 +1414,34 @@ def _flow_markup(
     }
 
 
+def _flow_force_markup(row: PendingInteraction) -> dict:
+    payload = json.loads(row.payload_json)
+    nonce = payload["nonce"]
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "⚡ Force schedule anyway",
+                    "callback_data": f"flow:{row.interaction_id}:{nonce}:force:0",
+                }
+            ],
+            [
+                {
+                    "text": "📅 Choose another date",
+                    "callback_data": f"flow:{row.interaction_id}:{nonce}:date_picker:0",
+                }
+            ],
+            [
+                {
+                    "text": "Cancel",
+                    "callback_data": f"flow:{row.interaction_id}:{nonce}:cancel:0",
+                }
+            ],
+        ]
+    }
+
+
+
 def _new_flow(
     session: Session,
     *,
@@ -1648,6 +1694,38 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
             _flow_markup(row, labels, "date"),
         )
 
+    if payload["flow_step"] == "choose_force_or_date":
+        if kind == "force":
+            payload["flow_step"] = "choose_time"
+            payload["forced"] = True
+            payload["offered_times"] = payload.get("fallback_times", [])
+            row.payload_json = json.dumps(payload, sort_keys=True)
+            target_day = date.fromisoformat(payload["target_date"])
+            return FlowTurn(
+                f"Choose a time (force schedule on {target_day:%a %d %b}):",
+                _flow_markup(row, payload["offered_times"], "time"),
+            )
+        if kind == "date_picker":
+            payload["flow_step"] = "choose_date"
+            payload["forced"] = False
+            row.payload_json = json.dumps(payload, sort_keys=True)
+            labels = [
+                date.fromisoformat(value).strftime("%a %d %b")
+                for value in payload["offered_dates"]
+            ]
+            flow_title = "workout"
+            if payload.get("flow_type") == "reschedule":
+                planned = session.get(PlannedSession, int(payload["planned_session_id"]))
+                flow_title = planned.title if planned else "workout"
+            else:
+                program_session = session.get(ProgramSession, int(payload["program_session_id"]))
+                flow_title = program_session.name if program_session else "workout"
+            return FlowTurn(
+                f"Choose a date for {flow_title}.",
+                _flow_markup(row, labels, "date"),
+            )
+        return FlowTurn("This choice is invalid.", None)
+
     if payload["flow_step"] == "choose_date" and kind == "date":
         offered = payload["offered_dates"]
         if not 0 <= index < len(offered):
@@ -1663,7 +1741,7 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
         if not duration_min:
             return FlowTurn("That workout is no longer current.", None)
         from coach.calendar import get_upcoming_schedule_result
-        from coach.scheduling import available_start_times
+        from coach.scheduling import available_start_times, fallback_start_times
         days = max(2, (target_day - now.date()).days + 1)
         calendar = get_upcoming_schedule_result(days=days)
         if calendar["state"] != "fresh":
@@ -1672,15 +1750,30 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
             session, now=now, schedule=calendar["events"], target_day=target_day,
             duration_min=duration_min, limit=8,
         )
-        payload["offered_times"] = [value.strftime("%H:%M") for value in starts]
-        if not payload["offered_times"]:
+        if starts:
+            payload["offered_times"] = [value.strftime("%H:%M") for value in starts]
+            payload["flow_step"] = "choose_time"
+            payload["forced"] = False
+            row.payload_json = json.dumps(payload, sort_keys=True)
+            return FlowTurn(
+                "Choose a time.",
+                _flow_markup(row, payload["offered_times"], "time"),
+            )
+
+        fallback_starts = fallback_start_times(
+            session, now=now, target_day=target_day, duration_min=duration_min, limit=8
+        )
+        if not fallback_starts:
             row.payload_json = json.dumps(payload, sort_keys=True)
             return FlowTurn("No available time fits on that date. Choose another date or Cancel.", _flow_markup(row, [date.fromisoformat(value).strftime("%a %d %b") for value in offered], "date"))
-        payload["flow_step"] = "choose_time"
+
+        payload["fallback_times"] = [value.strftime("%H:%M") for value in fallback_starts]
+        payload["flow_step"] = "choose_force_or_date"
         row.payload_json = json.dumps(payload, sort_keys=True)
+        date_label = target_day.strftime("%a %d %b")
         return FlowTurn(
-            "Choose a time.",
-            _flow_markup(row, payload["offered_times"], "time"),
+            f"No open slots found on {date_label} (due to calendar events or availability settings).\n\nWould you like to force schedule anyway?",
+            _flow_force_markup(row),
         )
 
     if payload["flow_step"] == "choose_time" and kind == "time":
@@ -1689,6 +1782,7 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
             return FlowTurn("This choice is invalid.", None)
         selected_time = offered[index]
         target_date = payload["target_date"]
+        is_forced = bool(payload.get("forced", False))
         if payload["flow_type"] == "reschedule":
             planned = session.get(
                 PlannedSession, int(payload["planned_session_id"])
@@ -1707,12 +1801,14 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
                     "target_date": target_date,
                     "suggested_time": selected_time,
                     "offered_times": offered,
+                    "forced": is_forced,
                     "page": payload.get("page", 0),
                 },
                 sort_keys=True,
             )
+            prefix = "Confirm (force):" if is_forced else "Confirm:"
             text = (
-                f"Confirm: move {planned.title} to "
+                f"{prefix} move {planned.title} to "
                 f"{target_date} at {selected_time}."
             )
         else:
@@ -1741,12 +1837,14 @@ def advance_button_flow(session: Session, callback_data: str) -> FlowTurn:
                     "intensity": "normal",
                     "modifications": [],
                     "offered_times": offered,
+                    "forced": is_forced,
                     "page": payload.get("page", 0),
                 },
                 sort_keys=True,
             )
+            prefix = "Confirm (force):" if is_forced else "Confirm:"
             text = (
-                f"Confirm: schedule {program_session.name} on "
+                f"{prefix} schedule {program_session.name} on "
                 f"{target_date} at {selected_time}."
             )
         return FlowTurn(text, reply_markup([row]))
