@@ -7,6 +7,7 @@
 - **Database**: local SQLite (`garmincoach.db`); schema/migrations in `db.py` → `init_db()` + `_migrate_add_columns()`. No external DB server.
 - **AI**: `coach/llm.py` supports `gemini` (default in prod: `gemini-2.5-flash`), `claude` (`claude-haiku-4-5`), and `ollama`. Provider set via `LLM_PROVIDER` in `.env`.
 - **Config**: `.env` (from `.env.example`). Holds Garmin creds, LLM keys, sync schedule, session secret, optional Telegram settings.
+- **Milestones & Backlog**: See [`MILESTONES.md`](MILESTONES.md) for current and planned product roadmap.
 - **Local root**: `C:\Projects\garmincoach`. Deployment script: `deploy.ps1`.
 - Local-only details in `.codex/local-context.md` — **do not commit**.
 
