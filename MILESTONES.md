@@ -10,21 +10,20 @@ This document serves as the canonical product backlog and milestone roadmap for 
 
 | Milestone | Focus Area | Primary Target | Status |
 | :--- | :--- | :--- | :--- |
-| **Phases 1–6** | Garmin Sync, Deterministic Policy, Safety & Guarded Restore | Garmin Athletes | **Complete** (See [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md)) |
-| **Milestone 7** | **Non-Garmin & Manual Input Foundation (PWA Gym Mode & Daily Check-in)** | All Athletes | 🎯 **Active Next Focus** |
-| **Milestone 8** | **Web "Ask Coach" AI Hub & Personal Records (PR) Radar** | All Athletes | 📋 Planned |
-| **Milestone 9** | **Smart Exercise Substitutions & Equipment Profiles** | Strength Athletes | 📋 Planned |
-| **Milestone 10** | **Hybrid & Running Training Engine (5K, 10K, Half-Marathon)** | Runners & Hybrid | 📋 Planned |
-| **Milestone 11** | **Multi-Ecosystem Ingestion (Strava, Apple Health, Whoop)** | Universal | 📋 Planned |
-| **Milestone 12** | **Multi-Channel Outbox (PWA Web Push & Messaging Channels)** | Mobile Users | 📋 Planned |
+| **Milestone 1** | **Non-Garmin & Manual Input Foundation (PWA Gym Mode & Daily Check-in)** | All Athletes | 🎯 **Active Next Focus** |
+| **Milestone 2** | **Web "Ask Coach" AI Hub & Personal Records (PR) Radar** | All Athletes | 📋 Planned |
+| **Milestone 3** | **Smart Exercise Substitutions & Equipment Profiles** | Strength Athletes | 📋 Planned |
+| **Milestone 4** | **Hybrid & Running Training Engine (5K, 10K, Half-Marathon)** | Runners & Hybrid | 📋 Planned |
+| **Milestone 5** | **Multi-Ecosystem Ingestion (Strava, Apple Health, Whoop)** | Universal | 📋 Planned |
+| **Milestone 6** | **Multi-Channel Outbox (PWA Web Push & Messaging Channels)** | Mobile Users | 📋 Planned |
 
 ---
 
-## 🎯 Milestone 7: Non-Garmin & Manual Input Foundation (Active)
+## 🎯 Milestone 1: Non-Garmin & Manual Input Foundation (Active)
 
 **Objective**: Make GarminCoach a fully self-contained, top-tier training platform that operates seamlessly **with or without a Garmin watch**. Enable real-time in-gym set logging, rest timing, and subjective readiness check-ins that integrate directly into the deterministic decision engine.
 
-### 7A: Subjective Daily Check-in (Wearable-Free Morning Briefing)
+### 1A: Subjective Daily Check-in (Wearable-Free Morning Briefing)
 * **Goal**: Provide morning workout recommendations and recovery adjustments for athletes without overnight biometric tracking (or on days when the watch was not worn).
 * **User Experience**:
   * Clean morning prompt via Web Dashboard banner / Telegram bot:
@@ -39,7 +38,7 @@ This document serves as the canonical product backlog and milestone roadmap for 
 
 ---
 
-### 7B: Live In-Gym Workout Mode (Mobile PWA & Web Live Mode)
+### 1B: Live In-Gym Workout Mode (Mobile PWA & Web Live Mode)
 * **Goal**: Enable athletes to execute, time, and record their workouts live in the gym without relying on smartwatch inputs.
 * **User Experience (`/workout/live` or `/session/{id}/live`)**:
   * **Touch-Optimized UI**: High-contrast, large-button layout designed for gym usage.
@@ -51,7 +50,7 @@ This document serves as the canonical product backlog and milestone roadmap for 
 
 ---
 
-### 7C: Manual Activity Ingestion & File Dropzone
+### 1C: Manual Activity Ingestion & File Dropzone
 * **Goal**: Backfill or manually log past workouts and cardio sessions.
 * **Features**:
   * **Manual Activity Form**: Log past strength sessions, runs, swims, or walks (date, duration, RPE, estimated calories, distance).
@@ -60,9 +59,9 @@ This document serves as the canonical product backlog and milestone roadmap for 
 
 ---
 
-## 📋 Milestone 8: Web AI Coaching & Personal Records (PR) Radar
+## 📋 Milestone 2: Web AI Coaching & Personal Records (PR) Radar
 
-### 8A: Embedded Web "Ask Coach" Chat Drawer
+### 2A: Embedded Web "Ask Coach" Chat Drawer
 * **Goal**: Bring Gemini-powered *Ask Coach* from Telegram directly into the web dashboard.
 * **Features**:
   * Slide-over interactive chat drawer on the web dashboard.
@@ -70,7 +69,7 @@ This document serves as the canonical product backlog and milestone roadmap for 
   * Uses the existing zero-storage, privacy-safe `advisory_snapshot` read model.
 * **Effort**: Low | **Value**: Very High.
 
-### 8B: Personal Records (PR) & Estimated 1RM Milestones
+### 2B: Personal Records (PR) & Estimated 1RM Milestones
 * **Goal**: Celebrate strength progress and visualize all-time achievements.
 * **Features**:
   * Automatic e1RM calculation (Brzycki / Epley formulas) per exercise set.
@@ -78,7 +77,7 @@ This document serves as the canonical product backlog and milestone roadmap for 
   * "Trophy Case" & Strength Radar on the Progression page.
 * **Effort**: Low–Medium | **Value**: High.
 
-### 8C: Body Weight & Composition Trend Overlay
+### 2C: Body Weight & Composition Trend Overlay
 * **Goal**: Correlate body mass fluctuations with strength progression and caloric load.
 * **Features**:
   * 7-day rolling weight average chart overlaid against weekly training load.
@@ -87,9 +86,9 @@ This document serves as the canonical product backlog and milestone roadmap for 
 
 ---
 
-## 📋 Milestone 9: Smart Exercise Substitutions & Equipment Profiles
+## 📋 Milestone 3: Smart Exercise Substitutions & Equipment Profiles
 
-### 9A: 1-to-1 Biomechanical Exercise Swapper
+### 3A: 1-to-1 Biomechanical Exercise Swapper
 * **Goal**: Dynamically replace unavailable or uncomfortable exercises without breaking program progression.
 * **Features**:
   * Clustered movement patterns (`horizontal_push`, `vertical_pull`, `knee_flexion`, `hip_hinge`, etc.).
@@ -97,15 +96,15 @@ This document serves as the canonical product backlog and milestone roadmap for 
   * Intelligent weight scaling factor between barbell, dumbbell, and machine variants.
 * **Effort**: Medium | **Value**: High.
 
-### 9B: Equipment Availability Profiles
+### 3B: Equipment Availability Profiles
 * **Goal**: Tailor programs to Home Gym, Dumbbell-Only, Commercial Gym, or Calisthenics setups.
 * **Effort**: Low–Medium | **Value**: Medium–High.
 
 ---
 
-## 📋 Milestone 10: Hybrid Athlete & Structured Running Engine
+## 📋 Milestone 4: Hybrid Athlete & Structured Running Engine
 
-### 10A: Curated Running & Cardio Programs
+### 4A: Curated Running & Cardio Programs
 * **Goal**: Expand GarminCoach to serve the runner and hybrid athlete community.
 * **Features**:
   * 5K, 10K, Half-Marathon, and 80/20 Polarized Zone 2 base-building programs.
@@ -115,24 +114,24 @@ This document serves as the canonical product backlog and milestone roadmap for 
 
 ---
 
-## 📋 Milestone 11: Multi-Ecosystem Ingestion (Strava, Apple Health, Whoop)
+## 📋 Milestone 5: Multi-Ecosystem Ingestion (Strava, Apple Health, Whoop)
 
-### 11A: Strava OAuth Ingestion Bridge
+### 5A: Strava OAuth Ingestion Bridge
 * **Goal**: Ingest non-Garmin cardio and run data automatically via universal Strava Webhooks.
 * **Effort**: Medium | **Value**: High.
 
-### 11B: Apple HealthKit / Health Connect Import
+### 5B: Apple HealthKit / Health Connect Import
 * **Goal**: Ingest Apple Watch sleep, resting HR, and workouts via standardized JSON payloads.
 * **Effort**: Medium | **Value**: Very High.
 
 ---
 
-## 📋 Milestone 12: Modern Multi-Channel Outbox & Push Notifications
+## 📋 Milestone 6: Modern Multi-Channel Outbox & Push Notifications
 
-### 12A: PWA Web Push Notifications
+### 6A: PWA Web Push Notifications
 * **Goal**: Deliver morning briefings and 1-hour pre-workout reminders on iOS, Android, and Desktop without requiring Telegram.
 * **Effort**: Medium | **Value**: Medium–High.
 
-### 12B: WhatsApp / Custom Messaging Bridge
+### 6B: WhatsApp / Custom Messaging Bridge
 * **Goal**: Optional WhatsApp/Twilio integration for athletes who prefer WhatsApp over Telegram.
 * **Effort**: Medium | **Value**: Medium.

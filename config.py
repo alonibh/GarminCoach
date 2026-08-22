@@ -40,7 +40,7 @@ GEMINI_TOP_K = int(os.getenv("GEMINI_TOP_K", "40"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 
 # --- Ask Coach (advisory-only Gemini integration) ---
-ASK_COACH_MODEL = os.getenv("ASK_COACH_MODEL", "gemini-3.6-flash")
+ASK_COACH_MODEL = os.getenv("ASK_COACH_MODEL", "gemini-3.7-flash")
 ASK_COACH_THINKING_LEVEL = os.getenv("ASK_COACH_THINKING_LEVEL", "medium")
 ASK_COACH_MAX_OUTPUT_TOKENS = int(os.getenv("ASK_COACH_MAX_OUTPUT_TOKENS", "4096"))
 ASK_COACH_TIMEOUT_SECONDS = int(os.getenv("ASK_COACH_TIMEOUT_SECONDS", "25"))
