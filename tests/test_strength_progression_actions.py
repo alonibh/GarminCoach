@@ -35,7 +35,7 @@ def _pending(session):
     session.add_all(activities); session.flush()
     prescription = _prescription(exercise, program.id, program_session.id)
     now = datetime(2026, 7, 31, 12)
-    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000, (
+    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 72500, (
         {"set_index": 0, "set_type": "REST", "reps": None, "weight_kg_source": None,
          "weight_grams": None, "duration_seconds": 60, "edited": False, "excluded": "rest"},
         {"set_index": 1, "set_type": "WORK", "reps": 10, "weight_kg_source": "70.0",
@@ -126,7 +126,7 @@ def test_harmless_correction_refreshes_pending_support_before_approval(session, 
     now, exercise, proposal = _pending(session)
     original_id = getattr(proposal, decisive_attribute)
     original = session.get(StrengthProgressionEvidence, original_id)
-    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000, (), ())
+    result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 72500, (), ())
     revised = append_evidence(session, session_exercise_id=exercise.id, activity_id=original.activity_id,
         policy_version=proposal.policy_version, prescription_fingerprint=proposal.prescription_fingerprint,
         source_fingerprint=f"harmless-correction-{original.activity_id}", appearance_at=original.appearance_at,

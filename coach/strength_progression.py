@@ -68,9 +68,12 @@ class ReasonCode(str, Enum):
     INVALID_WEIGHT = "invalid_weight"
     BELOW_TEMPLATE_WEIGHT = "below_template_weight"
     MISSED_TARGET_REPS = "missed_target_reps"
+    ABOVE_TEMPLATE_HOLD = "above_template_hold"
     QUALIFIED = "qualified"
     NEUTRAL_PERFORMANCE = "neutral_performance"
     STREAK_NOT_READY = "streak_not_ready"
+    NO_HIGHER_COMMON_WEIGHT = "no_higher_common_weight"
+    NO_LOWER_COMMON_WEIGHT = "no_lower_common_weight"
     DECREASE_FLOOR = "decrease_floor"
     EVIDENCE_MISMATCH = "evidence_mismatch"
     SOURCE_REP_GOAL_LOW_TIER = "source_rep_goal_low_tier"
@@ -435,8 +438,20 @@ def classify_appearance(appearance: AppearanceInput) -> AppearanceClassification
     attempts = prepared.working_sets
     if len(attempts) < prescription.prescribed_sets:
         reason = ReasonCode.MISSING_WORKING_SET if appearance.strength_payload_complete else ReasonCode.INCOMPLETE_PAYLOAD
-        classification = AppearanceClassification.MATERIALLY_UNDER_TARGET if appearance.strength_payload_complete else AppearanceClassification.UNSCORABLE
-        return AppearanceClassificationResult(classification, current, None, payload, (reason,))
+        if not appearance.strength_payload_complete:
+            return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload, (reason,))
+        # A partial session is decrease evidence only when the athlete did not
+        # attempt a load above the template. An athlete deliberately working
+        # heavier but stopping early should hold, not be prescribed less.
+        try:
+            attempted_weights = [normalize_weight_grams(item.weight_kg) for item in attempts]
+        except ValueError:
+            return AppearanceClassificationResult(AppearanceClassification.UNSCORABLE, current, None, payload, (ReasonCode.INVALID_WEIGHT,))
+        if any(weight > current for weight in attempted_weights):
+            return AppearanceClassificationResult(AppearanceClassification.NEUTRAL, current, None, payload,
+                                                  (ReasonCode.ABOVE_TEMPLATE_HOLD, reason))
+        candidate = min(attempted_weights) if attempted_weights else None
+        return AppearanceClassificationResult(AppearanceClassification.MATERIALLY_UNDER_TARGET, current, candidate, payload, (reason,))
     weights: list[int] = []
     for attempt in attempts:
         if not isinstance(attempt.reps, int) or isinstance(attempt.reps, bool) or attempt.reps <= 0:
@@ -448,11 +463,15 @@ def classify_appearance(appearance: AppearanceInput) -> AppearanceClassification
     if all(item.reps >= prescription.target_reps and weight >= current for item, weight in zip(attempts, weights)):
         return AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, current, min(weights), payload, (ReasonCode.QUALIFIED,))
     misses = sum(item.reps < prescription.target_reps for item in attempts)
-    if any(weight < current for weight in weights) or misses >= math.ceil(prescription.prescribed_sets / 2):
+    underperformed = any(weight < current for weight in weights) or misses >= math.ceil(prescription.prescribed_sets / 2)
+    if underperformed and any(weight > current for weight in weights):
+        return AppearanceClassificationResult(AppearanceClassification.NEUTRAL, current, None, payload,
+                                              (ReasonCode.ABOVE_TEMPLATE_HOLD,))
+    if underperformed:
         reasons: list[ReasonCode] = []
         if any(weight < current for weight in weights): reasons.append(ReasonCode.BELOW_TEMPLATE_WEIGHT)
         if misses >= math.ceil(prescription.prescribed_sets / 2): reasons.append(ReasonCode.MISSED_TARGET_REPS)
-        return AppearanceClassificationResult(AppearanceClassification.MATERIALLY_UNDER_TARGET, current, None, payload, tuple(reasons))
+        return AppearanceClassificationResult(AppearanceClassification.MATERIALLY_UNDER_TARGET, current, min(weights), payload, tuple(reasons))
     return AppearanceClassificationResult(AppearanceClassification.NEUTRAL, current, None, payload, (ReasonCode.NEUTRAL_PERFORMANCE,))
 
 
@@ -556,12 +575,22 @@ def calculate_proposal(policy: ProgressionPolicy, prescription: ExercisePrescrip
             suggested = current + source_increment
         else:
             source_increment = None
-            proven = min(row.candidate_weight_grams for row in decisive)
-            suggested = proven if proven > current else current + policy.global_increment_grams
+            # Consecutive successful appearances establish readiness; the most
+            # recent completed load is the user's current demonstrated weight.
+            proven = decisive[-1].candidate_weight_grams
+            if proven <= current:
+                return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version,
+                                      prescription_fingerprint(prescription), None,
+                                      (ReasonCode.NO_HIGHER_COMMON_WEIGHT,))
+            suggested = proven
     else:
-        if any(row.classification != AppearanceClassification.MATERIALLY_UNDER_TARGET for row in decisive):
+        if any(row.classification != AppearanceClassification.MATERIALLY_UNDER_TARGET or row.candidate_weight_grams is None for row in decisive):
             return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.EVIDENCE_MISMATCH,))
-        suggested = current - policy.global_increment_grams
+        suggested = min(row.candidate_weight_grams for row in decisive)
+        if suggested >= current:
+            return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version,
+                                  prescription_fingerprint(prescription), None,
+                                  (ReasonCode.NO_LOWER_COMMON_WEIGHT,))
         if suggested <= 0:
             return ProposalResult(None, current, None, streak.decisive_evidence_ids, policy.policy_version, prescription_fingerprint(prescription), None, (ReasonCode.DECREASE_FLOOR,))
     key = fingerprint({"session_exercise_id": prescription.session_exercise_id, "policy_version": policy.policy_version, "prescription_fingerprint": prescription_fingerprint(prescription), "direction": expected.value, "current_weight_grams": current, "suggested_weight_grams": suggested, "decisive_evidence_ids": streak.decisive_evidence_ids})

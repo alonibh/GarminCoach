@@ -57,7 +57,7 @@ def _seed(db_module):
             {"set_index": 1, "set_type": "WORK", "reps": 10, "weight_kg_source": "70.0",
              "weight_grams": 70000, "duration_seconds": None, "edited": True},
         )
-        result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 70000, payload, ())
+        result = AppearanceClassificationResult(AppearanceClassification.INCREASE_QUALIFIED, 70000, 72500, payload, ())
         evidence = []
         for index in range(2):
             activity = Activity(id=9000 + index)

@@ -146,7 +146,7 @@ def test_proposal_formulas_and_validation():
     streak = derive_streak(policy, [first, second], session_exercise_id=3, prescription=prescription_fingerprint(p), as_of=second.appearance_at)
     proposal = calculate_proposal(policy, p, streak, [first, second])
     assert proposal.direction == ProposalDirection.INCREASE and proposal.suggested_weight_grams == 75000
-    under = [EvidenceRecord("c", 3, policy.policy_version, prescription_fingerprint(p), datetime(2026, 1, 3), AppearanceClassification.MATERIALLY_UNDER_TARGET), EvidenceRecord("d", 3, policy.policy_version, prescription_fingerprint(p), datetime(2026, 1, 4), AppearanceClassification.MATERIALLY_UNDER_TARGET)]
+    under = [EvidenceRecord("c", 3, policy.policy_version, prescription_fingerprint(p), datetime(2026, 1, 3), AppearanceClassification.MATERIALLY_UNDER_TARGET, 70000), EvidenceRecord("d", 3, policy.policy_version, prescription_fingerprint(p), datetime(2026, 1, 4), AppearanceClassification.MATERIALLY_UNDER_TARGET, 70000)]
     down = calculate_proposal(policy, p, derive_streak(policy, under, session_exercise_id=3, prescription=prescription_fingerprint(p), as_of=datetime(2026, 1, 4)), under)
     assert down.direction == ProposalDirection.DECREASE and down.suggested_weight_grams == 70000
 
@@ -155,13 +155,14 @@ def test_proposal_boundaries_and_invalid_working_sets():
     policy, p, fp = ProgressionPolicy(), _prescription(), prescription_fingerprint(_prescription())
     current = [EvidenceRecord("a", 3, policy.policy_version, fp, datetime(2026, 1, 1), AppearanceClassification.INCREASE_QUALIFIED, 72500), EvidenceRecord("b", 3, policy.policy_version, fp, datetime(2026, 1, 2), AppearanceClassification.INCREASE_QUALIFIED, 72500)]
     current_streak = derive_streak(policy, current, session_exercise_id=3, prescription=fp, as_of=datetime(2026, 1, 2))
-    assert calculate_proposal(policy, p, current_streak, current).suggested_weight_grams == 75000
+    held = calculate_proposal(policy, p, current_streak, current)
+    assert held.direction is None and ReasonCode.NO_HIGHER_COMMON_WEIGHT in held.reason_codes
     higher = [EvidenceRecord("c", 3, policy.policy_version, fp, datetime(2026, 1, 3), AppearanceClassification.INCREASE_QUALIFIED, 77500), EvidenceRecord("d", 3, policy.policy_version, fp, datetime(2026, 1, 4), AppearanceClassification.INCREASE_QUALIFIED, 75000)]
     high_streak = derive_streak(policy, higher, session_exercise_id=3, prescription=fp, as_of=datetime(2026, 1, 4))
     assert calculate_proposal(policy, p, high_streak, higher).suggested_weight_grams == 75000
     floor_p = _prescription(template_weight_kg="2.5")
     floor_fp = prescription_fingerprint(floor_p)
-    under = [EvidenceRecord("e", 3, policy.policy_version, floor_fp, datetime(2026, 1, 5), AppearanceClassification.MATERIALLY_UNDER_TARGET), EvidenceRecord("f", 3, policy.policy_version, floor_fp, datetime(2026, 1, 6), AppearanceClassification.MATERIALLY_UNDER_TARGET)]
+    under = [EvidenceRecord("e", 3, policy.policy_version, floor_fp, datetime(2026, 1, 5), AppearanceClassification.MATERIALLY_UNDER_TARGET, 0), EvidenceRecord("f", 3, policy.policy_version, floor_fp, datetime(2026, 1, 6), AppearanceClassification.MATERIALLY_UNDER_TARGET, 0)]
     floor = calculate_proposal(policy, floor_p, derive_streak(policy, under, session_exercise_id=3, prescription=floor_fp, as_of=datetime(2026, 1, 6)), under)
     assert floor.direction is None and ReasonCode.DECREASE_FLOOR in floor.reason_codes
     invalid_reps = _group(*[ObservedSet(index, "ACTIVE", 0, 72.5) for index in range(3)])
@@ -169,6 +170,32 @@ def test_proposal_boundaries_and_invalid_working_sets():
     for invalid_weight in ("NaN", "Infinity"):
         bad_weight = _group(ObservedSet(0, "ACTIVE", 10, invalid_weight), ObservedSet(1, "ACTIVE", 10, 72.5), ObservedSet(2, "ACTIVE", 10, 72.5))
         assert classify_appearance(AppearanceInput(p, bad_weight, True, datetime.now())).classification == AppearanceClassification.UNSCORABLE
+
+
+def test_actual_weights_drive_changes_and_above_template_misses_hold():
+    p = _prescription(template_weight_kg="14")
+    first = _group(*[ObservedSet(index, "ACTIVE", 10, 14) for index in range(3)])
+    second = _group(*[ObservedSet(index, "ACTIVE", 10, 16) for index in range(3)])
+    first_result = classify_appearance(AppearanceInput(p, first, True, datetime(2026, 1, 1)))
+    second_result = classify_appearance(AppearanceInput(p, second, True, datetime(2026, 1, 2)))
+    fp = prescription_fingerprint(p)
+    evidence = [
+        EvidenceRecord("first", 3, "strength-progression-v1", fp, datetime(2026, 1, 1), first_result.classification, first_result.candidate_weight_grams),
+        EvidenceRecord("second", 3, "strength-progression-v1", fp, datetime(2026, 1, 2), second_result.classification, second_result.candidate_weight_grams),
+    ]
+    policy = ProgressionPolicy()
+    proposal = calculate_proposal(policy, p, derive_streak(policy, evidence,
+        session_exercise_id=3, prescription=fp, as_of=datetime(2026, 1, 2)), evidence)
+    assert proposal.direction == ProposalDirection.INCREASE and proposal.suggested_weight_grams == 16000
+
+    press = _prescription(template_weight_kg="12", prescribed_sets=4)
+    above_template_misses = _group(
+        ObservedSet(0, "ACTIVE", 10, 14), ObservedSet(1, "ACTIVE", 10, 14),
+        ObservedSet(2, "ACTIVE", 7, 14), ObservedSet(3, "ACTIVE", 6, 14),
+    )
+    held = classify_appearance(AppearanceInput(press, above_template_misses, True, datetime(2026, 1, 2)))
+    assert held.classification == AppearanceClassification.NEUTRAL
+    assert ReasonCode.ABOVE_TEMPLATE_HOLD in held.reason_codes
 
 
 def test_powerbuilding_source_rep_goal_tiers_and_strict_weight():

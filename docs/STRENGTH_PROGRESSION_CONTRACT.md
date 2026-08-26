@@ -97,14 +97,14 @@ Two consecutive classifications of the same exact `SessionExercise` are required
 After two consecutive increase-qualified appearances with candidates `C1` and `C2`, calculate:
 
 ```text
-common_proven_weight = min(C1, C2)
-suggested_weight = common_proven_weight, if common_proven_weight > W
-                   = W + I, otherwise
+latest_proven_weight = C2
+suggested_weight = latest_proven_weight, if latest_proven_weight > W
+                   = no automatic change, otherwise
 ```
 
-Normalize the result to 0.25 kg. A higher weight proven in both workouts may exceed one increment and MUST NOT be capped: with `W = 70`, `I = 2.5`, and `C1/C2 = 75/75`, propose `75`, not `72.5`. If both qualifying workouts merely prove `W`, propose `W + I`; for `W = 72.5`, this is `75.0` at the default increment.
+Normalize the result to 0.25 kg. A higher weight proven in the latest successful workout may exceed one increment and MUST NOT be capped: with `W = 70`, `I = 2.5`, and `C1/C2 = 70/75`, propose `75`, not `72.5`. If both qualifying workouts merely prove `W`, leave the template unchanged; progression follows the weight actually completed rather than inventing a fixed increment.
 
-After two consecutive materially under-target appearances, propose exactly `W - I`, normalized to 0.25 kg. Do not derive a reduction from the lowest performed weight. The result MUST remain positive: if subtraction is zero or negative, create no automatic proposal and require an ordinary manual editor change instead.
+An appearance with a working set above `W` is neutral when it misses target reps or ends early: it records that the athlete is adapting to a heavier load and MUST NOT be decrease evidence. After two consecutive materially under-target appearances performed entirely at or below `W`, propose the lowest common attempted working weight across the two appearances. The result MUST be positive and lower than `W`; otherwise create no automatic proposal and require an ordinary manual editor change instead.
 
 ## 6. Corrections and prescription versions
 
