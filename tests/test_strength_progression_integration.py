@@ -55,7 +55,7 @@ def test_two_explicit_activity_events_create_one_pending_proposal(session):
     first = _activity(session, 100, datetime(2026, 1, 1))
     second = _activity(session, 101, datetime(2026, 1, 10))
     _match_with_sets(session, first, program, planned)
-    _match_with_sets(session, second, program, planned)
+    _match_with_sets(session, second, program, planned, weight=72.5)
 
     first_report = process_activity_recalculation(session, first.id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
     assert first_report.evidence_created == 1

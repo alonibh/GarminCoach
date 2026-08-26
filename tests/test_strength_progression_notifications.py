@@ -31,14 +31,14 @@ def _seed(session):
     return program, planned
 
 
-def _activity(session, identifier, when, program, planned):
+def _activity(session, identifier, when, program, planned, *, weight=70):
     row = Activity(id=identifier, activity_type="strength_training", start_time=when)
     session.add(row); session.flush()
     session.add(ActivityProgramMatch(activity_id=row.id, program_id=program.id, program_session_id=planned.id,
         match_method="test", policy_version="test", matched_at=when))
     for index in range(2):
         session.add(ExerciseSet(activity_id=row.id, set_index=index, set_type="ACTIVE", exercise_category="BENCH",
-            exercise_name="BENCH", reps=8, weight_kg=70, edited=False))
+            exercise_name="BENCH", reps=8, weight_kg=weight, edited=False))
     session.add(SyncState(key=f"activity_strength_sets_checked:{row.id}", value="complete"))
     session.flush()
     return row
@@ -47,7 +47,7 @@ def _activity(session, identifier, when, program, planned):
 def test_material_batch_receipt_bridge_and_plain_summary(session):
     program, planned = _seed(session)
     first = _activity(session, 400, datetime(2026, 1, 1), program, planned)
-    second = _activity(session, 401, datetime(2026, 1, 8), program, planned)
+    second = _activity(session, 401, datetime(2026, 1, 8), program, planned, weight=72.5)
     process_activity_recalculation(session, first.id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
     report = process_activity_recalculation(session, second.id, cause=RecalculationCause.STRENGTH_SETS_RESOLVED)
     assert len(report.material_proposal_changes) == 1
