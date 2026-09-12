@@ -224,6 +224,11 @@ It sends compact aggregates, freshness, coverage, and decisive facts—not raw
 sensor series, full history, GPS, or intraday timelines. It remains strictly
 below the deterministic authority hierarchy and cannot alter a workout.
 
+Proactive **Daily Coach Insight** reuses this exact privacy ceiling and aggregate
+context contract. It runs Sunday–Friday at 21:00 local time for opted-in users,
+using `gemini-3.5-flash-lite` with minimal thinking level, strict structured JSON
+modes, atomic pre-generation reservation, and evening quiet-hour cancellation.
+
 ## 10. Current implementation gaps
 
 The current runtime must later be changed to match this target:

@@ -89,7 +89,9 @@ from logging_filters import install_calendar_feed_access_log_filter
 install_calendar_feed_access_log_filter()
 
 def validate_startup_configuration() -> None:
-    """Validate local Ask Coach and single-process settings without network I/O."""
+    """Validate local Ask Coach, Daily Insight, and single-process settings without network I/O."""
+    if config.DEFAULT_GEMINI_MODEL != "gemini-3.5-flash-lite":
+        raise RuntimeError("DEFAULT_GEMINI_MODEL must be gemini-3.5-flash-lite")
     if not config.GEMINI_API_KEY.strip():
         raise RuntimeError("GEMINI_API_KEY is required")
     if not config.ASK_COACH_MODEL.strip():
@@ -101,6 +103,17 @@ def validate_startup_configuration() -> None:
         "high",
     }:
         raise RuntimeError("ASK_COACH_THINKING_LEVEL is invalid")
+    if not config.DAILY_INSIGHT_MODEL.strip():
+        raise RuntimeError("DAILY_INSIGHT_MODEL must not be empty")
+    if config.DAILY_INSIGHT_THINKING_LEVEL not in {
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    }:
+        raise RuntimeError("DAILY_INSIGHT_THINKING_LEVEL is invalid")
+    if not config.DAILY_INSIGHT_CONSENT_VERSION.strip():
+        raise RuntimeError("DAILY_INSIGHT_CONSENT_VERSION must not be empty")
     numeric_ranges = {
         "ASK_COACH_MAX_OUTPUT_TOKENS": (
             config.ASK_COACH_MAX_OUTPUT_TOKENS,
@@ -119,6 +132,26 @@ def validate_startup_configuration() -> None:
         ),
         "ASK_COACH_SCHEMA_CORRECTION_RETRIES": (
             config.ASK_COACH_SCHEMA_CORRECTION_RETRIES,
+            0,
+            1,
+        ),
+        "DAILY_INSIGHT_MAX_OUTPUT_TOKENS": (
+            config.DAILY_INSIGHT_MAX_OUTPUT_TOKENS,
+            1,
+            8192,
+        ),
+        "DAILY_INSIGHT_TIMEOUT_SECONDS": (
+            config.DAILY_INSIGHT_TIMEOUT_SECONDS,
+            1,
+            120,
+        ),
+        "DAILY_INSIGHT_TRANSIENT_RETRIES": (
+            config.DAILY_INSIGHT_TRANSIENT_RETRIES,
+            0,
+            1,
+        ),
+        "DAILY_INSIGHT_SCHEMA_CORRECTION_RETRIES": (
+            config.DAILY_INSIGHT_SCHEMA_CORRECTION_RETRIES,
             0,
             1,
         ),

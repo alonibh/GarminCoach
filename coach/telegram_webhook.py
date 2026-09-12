@@ -24,19 +24,25 @@ from coach.ask_coach_session import (
 from coach.privacy_logger import log_sanitized_error
 from coach.telegram_menu import (
     ASK_COACH_BACK_LABEL,
+    DAILY_INSIGHT_DISCLOSURE,
     MAIN_MENU_ACTIONS,
     ask_coach_back_markup,
     ask_coach_retry_markup,
     consent_disclosure_markup,
+    daily_insight_markup,
     main_menu_markup,
     privacy_markup,
     settings_markup,
 )
 from control_db import (
     get_ask_coach_consent,
+    get_daily_insight_consent,
     is_consent_valid,
+    is_daily_insight_authorized,
     record_ask_coach_consent,
+    record_daily_insight_consent,
     revoke_ask_coach_consent,
+    revoke_daily_insight_consent,
 )
 from db import PendingInteraction
 from tenant_context import TenantIdentity, bind_tenant, reset_tenant
@@ -818,6 +824,16 @@ async def _send_main_menu_action(
             reply_markup=settings_markup(),
         )
         return
+    if callback_data == "menu:daily_insight":
+        authorized = is_daily_insight_authorized(identity.user_id)
+        status_line = "Status: *Enabled*" if authorized else "Status: *Disabled*"
+        text = f"{DAILY_INSIGHT_DISCLOSURE}\n\n{status_line}"
+        await _send_plain(
+            text,
+            chat_id=chat_id,
+            reply_markup=daily_insight_markup(is_opted_in=authorized),
+        )
+        return
     text_out, markup = _operational_callback(
         callback_data, identity=identity, chat_id=chat_id
     )
@@ -960,13 +976,48 @@ async def handle_telegram_update(data: dict) -> dict:
                 return {"status": "ok"}
             if callback_data == "ask:consent_revoke":
                 revoke_ask_coach_consent(identity.user_id)
+                revoke_daily_insight_consent(identity.user_id)
                 await session_manager.close_session(identity.user_id)
                 _edit(
-                    "Ask Coach consent was revoked and its active session was "
-                    "cleared.",
+                    "Ask Coach consent was revoked, Daily Coach Insight was disabled, "
+                    "and the active session was cleared.",
                     chat_id,
                     message_id,
                     main_menu_markup(),
+                )
+                return {"status": "ok"}
+            if callback_data == "insight:enable":
+                if not _valid_consent(identity.user_id):
+                    _edit(
+                        "Daily Coach Insight requires active Ask Coach AI consent. "
+                        "Please accept the Ask Coach privacy terms first.",
+                        chat_id,
+                        message_id,
+                        {"inline_keyboard": [
+                            [{"text": "Ask Coach privacy", "callback_data": "menu:privacy"}],
+                            [{"text": "Back to Settings", "callback_data": "menu:settings"}],
+                        ]},
+                    )
+                    return {"status": "ok"}
+                record_daily_insight_consent(
+                    identity.user_id,
+                    config.DAILY_INSIGHT_CONSENT_VERSION,
+                )
+                _edit(
+                    "Daily Coach Insight has been enabled! You will receive a proactive "
+                    "coaching insight Sunday–Friday at 21:00 local time.\n\nStatus: *Enabled*",
+                    chat_id,
+                    message_id,
+                    daily_insight_markup(is_opted_in=True),
+                )
+                return {"status": "ok"}
+            if callback_data == "insight:disable":
+                revoke_daily_insight_consent(identity.user_id)
+                _edit(
+                    "Daily Coach Insight has been disabled.\n\nStatus: *Disabled*",
+                    chat_id,
+                    message_id,
+                    daily_insight_markup(is_opted_in=False),
                 )
                 return {"status": "ok"}
             if callback_data.startswith("ask:retry:"):

@@ -259,6 +259,23 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
         from coach.interactions import reply_markup_for_ids
         return payload["text"], reply_markup_for_ids(session, payload.get("interaction_ids", []))
 
+    if row.event_type == "daily_ai_insight":
+        if not isinstance(payload, dict):
+            return None
+        target_date_str = payload.get("local_date")
+        if not target_date_str or target_date_str != now.date().isoformat():
+            return None
+        from control_db import is_daily_insight_authorized
+        from tenant_context import current_tenant
+        tenant = current_tenant()
+        user_id = payload.get("user_id") or (tenant.user_id if tenant else "default_user")
+        if not is_daily_insight_authorized(user_id):
+            return None
+        text = payload.get("text")
+        if not text:
+            return None
+        return text, None
+
     if row.event_type in {"calendar_access_error", "calendar_conflict"}:
         return payload["text"], payload.get("reply_markup")
     return None
@@ -325,6 +342,25 @@ def deliver_notification(session: Session, row: NotificationOutbox, now: datetim
     if not _claim_notification(session, row, now):
         logger.info("Skipped unclaimable notification row_id=%s event_type=%s", row.id, row.event_type)
         return "retry"
+    if row.event_type == "daily_ai_insight":
+        payload_date = None
+        try:
+            payload = json.loads(row.payload_json)
+            payload_date = payload.get("local_date")
+        except Exception:
+            pass
+        is_stale = (
+            now.hour >= 22
+            or now.hour < 7
+            or row.due_at.date() < now.date()
+            or (payload_date is not None and payload_date != now.date().isoformat())
+        )
+        if is_stale:
+            row.status = "cancelled"
+            row.last_error = "stale_daily_insight"
+            session.commit()
+            logger.info("Cancelled stale daily insight row_id=%s", row.id)
+            return "cancelled"
     if row.quiet_hour_policy == "defer":
         deferred = _quiet_defer(now)
         if deferred:

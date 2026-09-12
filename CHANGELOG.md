@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-12 - Standardize Gemini defaults and add Daily Coach Insight
+
+- Standardized repository-wide default Gemini model to `gemini-3.5-flash-lite`.
+- Configured generic `LLM_PROVIDER` default to `gemini` while preserving existing `LLM_ENABLED` gating, Claude, and Ollama support.
+- Set Ask Coach default thinking level to `low`.
+- Added Daily Coach Insight: proactive, scheduled evening advisory-only coaching insight delivered via Telegram Sunday–Friday at 21:00 local time (skipping Saturday for weekly summary).
+- Reused `ask-coach-v3` privacy-bounded advisory snapshot without external Garmin or calendar calls.
+- Enforced informed dual-consent authorization model (`is_daily_insight_authorized` requiring valid Ask Coach AI consent and explicit Daily Insight opt-in).
+- Implemented atomic pre-generation outbox reservation (`generating` status) to prevent duplicate spend under execution races.
+- Added evening quiet-hour cancellation (22:00–07:00) preventing next-morning delivery of stale evening insights.
+- Added Telegram settings toggle and clear privacy disclosure for Daily Coach Insight.
+
 ## 2026-08-06 - Supported runtime enforcement and routine fidelity audit
 
 - Removed `GarminConnectNotFoundError` and `garminconnect.workout` compatibility

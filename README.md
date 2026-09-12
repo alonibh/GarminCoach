@@ -177,7 +177,7 @@ corrections, is in [`docs/CURATED_ROUTINE_AUDIT.md`](docs/CURATED_ROUTINE_AUDIT.
 - `garminconnect` for Garmin Connect synchronization
 - Chart.js for dashboard charts
 - Telegram Bot API for messages and confirmation buttons
-- Optional Ollama, Claude, or Gemini provider for legacy non-chat generation
+- Gemini (`gemini-3.5-flash-lite` default), Claude, or Ollama provider for Ask Coach and Daily Coach Insight
 
 Important modules:
 
@@ -237,6 +237,7 @@ network such as Tailscale can provide remote access without changing the app.
   default and stops after a briefing is sent.
 - The missing-data decision deadline is fixed at 11:30 local time.
 - Weekly summary is fixed at Saturday 20:00 local time.
+- Daily Coach Insight runs Sunday–Friday at 21:00 local time for opted-in users (skips Saturday due to the weekly summary).
 - The durable notification outbox is checked every minute.
 
 See [`.env.example`](.env.example) for all supported settings.

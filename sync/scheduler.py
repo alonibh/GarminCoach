@@ -68,6 +68,9 @@ def _run_user_notification_job(user_id: str, job: str) -> None:
         elif job == "weekly_summary":
             from notify.weekly import send_weekly_summary
             send_weekly_summary()
+        elif job == "daily_coach_insight":
+            from coach.daily_insight import run_daily_coach_insight_job
+            run_daily_coach_insight_job(user_id=user_id)
         elif job == "notification_outbox":
             from notify.outbox import process_due_notifications
             process_due_notifications()
@@ -121,6 +124,7 @@ def refresh_user_jobs(user_id: str) -> None:
         ),
         ("morning_deadline", CronTrigger(hour=11, minute=30, timezone=timezone)),
         ("weekly_summary", CronTrigger(day_of_week="sat", hour=20, minute=0, timezone=timezone)),
+        ("daily_coach_insight", CronTrigger(day_of_week="mon-fri,sun", hour=21, minute=0, timezone=timezone)),
         ("notification_outbox", CronTrigger(minute="*", second=15, timezone=timezone)),
     )
     for name, trigger in notification_jobs:
@@ -233,6 +237,15 @@ def start_scheduler() -> BackgroundScheduler:
         send_weekly_summary,
         CronTrigger(day_of_week="sat", hour=20, minute=0),
         id="weekly_summary",
+        replace_existing=True,
+    )
+
+    # Proactive daily AI coach insight: Sunday-Friday 21:00 local (skips Saturday).
+    from coach.daily_insight import run_daily_coach_insight_job
+    sched.add_job(
+        run_daily_coach_insight_job,
+        CronTrigger(day_of_week="mon-fri,sun", hour=21, minute=0),
+        id="daily_coach_insight",
         replace_existing=True,
     )
 

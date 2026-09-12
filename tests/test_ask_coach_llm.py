@@ -65,7 +65,7 @@ def test_async_interactions_uses_store_false_and_structured_format(monkeypatch):
     call = fake.aio.interactions.calls[0]
     assert response.answer == "Best-effort advice."
     assert call["store"] is False
-    assert call["generation_config"]["thinking_level"] == "medium"
+    assert call["generation_config"]["thinking_level"] == "low"
     assert call["response_format"]["mime_type"] == "application/json"
     assert "tools" not in call
 

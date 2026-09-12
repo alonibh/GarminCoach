@@ -75,9 +75,34 @@ def privacy_markup(has_consent: bool) -> dict:
     return {"inline_keyboard": rows}
 
 
+DAILY_INSIGHT_DISCLOSURE = (
+    "*Daily Coach Insight (AI)*\n\n"
+    "Receive a proactive AI coaching insight every evening at 21:00 "
+    "local time (Sunday–Friday).\n\n"
+    "• *Schedule:* Sent Sun–Fri at 21:00 local time. Automatically skipped on Saturday (weekly summary).\n"
+    "• *Data Shared:* Daily advisory snapshot including recent training, recovery metrics "
+    "(HRV, sleep, resting HR, readiness), and tomorrow's scheduled session.\n"
+    "• *Provider:* Google Gemini (store=False, data is not retained or used to train models).\n"
+    "• *Advisory Only:* Insights are fitness guidance only and do not provide medical advice."
+)
+
+
+def daily_insight_markup(is_opted_in: bool) -> dict:
+    toggle_text = "Disable Daily Insight" if is_opted_in else "Enable Daily Insight"
+    toggle_data = "insight:disable" if is_opted_in else "insight:enable"
+    return {
+        "inline_keyboard": [
+            [{"text": toggle_text, "callback_data": toggle_data}],
+            [{"text": "Back to Settings", "callback_data": "menu:settings"}],
+            [{"text": "Back to menu", "callback_data": "menu:home"}],
+        ]
+    }
+
+
 def settings_markup() -> dict:
     return {
         "inline_keyboard": [
+            [{"text": "Daily Coach Insight", "callback_data": "menu:daily_insight"}],
             [{"text": "Ask Coach privacy", "callback_data": "menu:privacy"}],
             [{"text": "Unlink Telegram", "callback_data": "menu:unlink"}],
             [{"text": "Back to menu", "callback_data": "menu:home"}],

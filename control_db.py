@@ -194,6 +194,18 @@ class AskCoachConsent(ControlBase):
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
 
 
+class DailyInsightConsent(ControlBase):
+    __tablename__ = "daily_insight_consents"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    consent_version: Mapped[str] = mapped_column(String(32), default="daily-insight-v1")
+    opted_in: Mapped[bool] = mapped_column(Boolean, default=True)
+    consented_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+
+
 class AuditEvent(ControlBase):
     __tablename__ = "audit_events"
 
@@ -347,6 +359,53 @@ def is_consent_valid(consent: AskCoachConsent | None) -> bool:
         hmac.compare_digest(stored_hash, consent.category_hash)
         and hmac.compare_digest(stored_hash, expected_hash)
     )
+
+
+def get_daily_insight_consent(user_id: str) -> DailyInsightConsent | None:
+    with get_control_session() as session:
+        return session.get(DailyInsightConsent, user_id)
+
+
+def record_daily_insight_consent(
+    user_id: str,
+    version: str = "daily-insight-v1",
+) -> DailyInsightConsent:
+    with get_control_session() as session:
+        consent = session.get(DailyInsightConsent, user_id)
+        if consent is None:
+            consent = DailyInsightConsent(user_id=user_id)
+            session.add(consent)
+        consent.consent_version = version
+        consent.opted_in = True
+        consent.consented_at = utcnow()
+        consent.revoked_at = None
+        session.flush()
+        session.expunge(consent)
+        return consent
+
+
+def revoke_daily_insight_consent(user_id: str) -> DailyInsightConsent | None:
+    with get_control_session() as session:
+        consent = session.get(DailyInsightConsent, user_id)
+        if consent is not None:
+            consent.opted_in = False
+            consent.revoked_at = utcnow()
+            session.flush()
+            session.expunge(consent)
+        return consent
+
+
+def is_daily_insight_authorized(user_id: str) -> bool:
+    """Proactive Daily Insight requires valid Gemini Ask Coach consent and active Daily Insight opt-in."""
+    ask_consent = get_ask_coach_consent(user_id)
+    if not is_consent_valid(ask_consent):
+        return False
+    insight_consent = get_daily_insight_consent(user_id)
+    if insight_consent is None or not insight_consent.opted_in or insight_consent.revoked_at is not None:
+        return False
+    if insight_consent.consent_version != config.DAILY_INSIGHT_CONSENT_VERSION:
+        return False
+    return True
 
 
 @contextmanager

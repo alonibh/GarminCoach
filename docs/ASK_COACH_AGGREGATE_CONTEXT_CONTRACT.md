@@ -111,3 +111,12 @@ bounded wrappers with exact omission counts. The effective ceiling is the lower
 of configured maximum and 16,000; compact sorted-key serialization trims oldest
 activity, farthest planned, next exercises, extra sessions, recovery items,
 slow previous values, then strength highlights.
+
+## Daily Coach Insight
+
+Daily Coach Insight reuses the identical `ask-coach-v3` advisory snapshot without alteration or relaxation of privacy rules.
+- **Provider & Model**: Google Gemini with canonical `gemini-3.5-flash-lite`, `thinking_level="minimal"`, and `store=False`.
+- **Schedule**: Sunday through Friday at 21:00 local time (skipping Saturday for the deterministic weekly summary).
+- **Consent**: Dual consent required: valid Ask Coach consent (`ask-coach-v2` / `ask-coach-categories-v2`) and explicit Daily Insight opt-in (`daily-insight-v1`). Revocation of Ask Coach consent immediately revokes Daily Insight.
+- **Structured Output**: Strict Pydantic validation into modes: `daily_insight`, `tomorrow_preview`, `progress_spotlight`, `steady_state`.
+- **Delivery**: Outbox-driven with atomic pre-generation claim reservation (`generating` state) preventing duplicate generation races. Undelivered insights are cancelled at or after 22:00 local time and never deferred to morning.
