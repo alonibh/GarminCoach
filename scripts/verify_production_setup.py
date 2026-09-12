@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -294,16 +295,26 @@ def verify_system_service() -> dict:
         if len(lines) >= 2:
             srv_res["systemd_sub_state"] = lines[1]
 
-    rc, out = _run_cmd(["curl", "-s", "-w", "\n%{http_code}", "http://127.0.0.1:8000/health"])
-    if rc == 0 and out:
-        parts = out.rsplit("\n", 1)
-        if len(parts) == 2:
-            body, code = parts
-            srv_res["health_code"] = int(code) if code.isdigit() else code
-            try:
-                srv_res["health_json"] = json.loads(body)
-            except Exception:
-                srv_res["health_json"] = body
+    for _ in range(10):
+        rc, out = _run_cmd(["curl", "-s", "-w", "\n%{http_code}", "http://127.0.0.1:8000/health"])
+        if rc == 0 and out:
+            parts = out.rsplit("\n", 1)
+            if len(parts) == 2:
+                body, code = parts
+                if code.isdigit() and int(code) == 200:
+                    srv_res["health_code"] = 200
+                    try:
+                        srv_res["health_json"] = json.loads(body)
+                    except Exception:
+                        srv_res["health_json"] = body
+                    break
+                else:
+                    srv_res["health_code"] = int(code) if code.isdigit() else code
+                    try:
+                        srv_res["health_json"] = json.loads(body)
+                    except Exception:
+                        srv_res["health_json"] = body
+        time.sleep(1)
 
     return srv_res
 
