@@ -21,13 +21,10 @@ jobs:
             set -Eeuo pipefail
             cd /home/ubuntu/garmincoach
             echo "DEPLOYED_SHA=$(git rev-parse HEAD)"
-            .venv/bin/python scripts/garmin_compat_probe.py
-            echo "PYTHON_312_PATH=$(command -v python3.12 || true)"
-            python3.12 --version || true
-            echo "VENV_PYTHON=$(readlink -f .venv/bin/python)"
-            sudo systemctl show garmincoach \
-              -p ActiveState \
-              -p SubState \
-              -p ExecStart \
-              --no-pager
-            apt-cache policy python3.12 python3.12-venv || true
+            previous_exec_start=$(sudo systemctl show garmincoach -p ExecStart --value)
+            active_env=$(printf '%s\n' "$previous_exec_start" | grep -oE '/home/ubuntu/garmincoach/\.venv[^/[:space:]]*/bin/' | head -n 1 | sed 's#/bin/$##' || true)
+            if [ -z "$active_env" ] || [ ! -d "$active_env" ]; then
+              active_env="/home/ubuntu/garmincoach/.venv"
+            fi
+            echo "ACTIVE_ENV=$active_env"
+            "$active_env/bin/python" scripts/verify_production_setup.py
