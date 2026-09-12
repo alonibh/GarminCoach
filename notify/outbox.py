@@ -274,7 +274,7 @@ def _materialize(session: Session, row: NotificationOutbox, now: datetime) -> tu
         text = payload.get("text")
         if not text:
             return None
-        return text, None
+        return text, None, None
 
     if row.event_type in {"calendar_access_error", "calendar_conflict"}:
         return payload["text"], payload.get("reply_markup")

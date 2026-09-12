@@ -61,9 +61,13 @@ def test_generation_config_and_header_auth(monkeypatch):
 
     # generationConfig present with the expected knobs.
     gc = cap["json"]["generationConfig"]
-    assert "temperature" in gc
     assert "maxOutputTokens" in gc
     assert gc["maxOutputTokens"] == config.GEMINI_MAX_OUTPUT_TOKENS
+    assert gc.get("thinkingConfig") == {"thinkingLevel": "minimal"}
+    assert "temperature" not in gc
+    assert "topP" not in gc
+    assert "topK" not in gc
+    assert "thinkingBudget" not in gc.get("thinkingConfig", {})
 
 
 def test_history_roles_mapped(monkeypatch):

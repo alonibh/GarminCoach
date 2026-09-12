@@ -80,9 +80,8 @@ DAILY_INSIGHT_DISCLOSURE = (
     "Receive a proactive AI coaching insight every evening at 21:00 "
     "local time (Sunday–Friday).\n\n"
     "• *Schedule:* Sent Sun–Fri at 21:00 local time. Automatically skipped on Saturday (weekly summary).\n"
-    "• *Data Shared:* Daily advisory snapshot including recent training, recovery metrics "
-    "(HRV, sleep, resting HR, readiness), and tomorrow's scheduled session.\n"
-    "• *Provider:* Google Gemini (store=False, data is not retained or used to train models).\n"
+    "• *Data Shared:* Proactively sends a privacy-bounded daily advisory snapshot (recent training, recovery metrics such as HRV, sleep, resting HR, and upcoming schedule) to Google Gemini.\n"
+    "• *Provider:* Google Gemini. GarminCoach sends each request with store=False, so the Interactions API does not store the interaction for server-side conversation state. Google's processing and data-use practices are governed by the Gemini API service tier and applicable terms.\n"
     "• *Advisory Only:* Insights are fitness guidance only and do not provide medical advice."
 )
 

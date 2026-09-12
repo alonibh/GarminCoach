@@ -98,7 +98,7 @@ def run_daily_coach_insight_job(
         if tenant is not None:
             effective_user_id = tenant.user_id
 
-    # In multi-user mode, verify account status, telegram linking, and AI authorization
+    # In multi-user mode, verify account status and telegram linking
     if config.MULTI_USER_ENABLED:
         if effective_user_id is None:
             logger.info("Daily insight skipped: no tenant identity available")
@@ -111,11 +111,11 @@ def run_daily_coach_insight_job(
                     effective_user_id,
                 )
                 return False
-    else:
-        user_key = effective_user_id or "default_user"
-        if not is_daily_insight_authorized(user_key):
-            logger.info("Daily insight skipped: missing or revoked consent/opt-in")
-            return False
+
+    user_key = effective_user_id or "default_user"
+    if not is_daily_insight_authorized(user_key):
+        logger.info("Daily insight skipped: missing or revoked consent/opt-in")
+        return False
 
     if session is not None:
         return _generate_insight_with_session(session, effective_user_id, now_utc)
@@ -141,6 +141,11 @@ def _generate_insight_with_session(
     effective_user_id: str | None,
     now_utc: datetime | None,
 ) -> bool:
+    user_key = effective_user_id or "default_user"
+    if not is_daily_insight_authorized(user_key):
+        logger.info("Daily insight skipped: missing or revoked consent/opt-in")
+        return False
+
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
     # 1. Build bounded local snapshot using existing API and timezone-aware generation instant
@@ -152,7 +157,7 @@ def _generate_insight_with_session(
             return False
         local_date = date.fromisoformat(local_date_str)
     except Exception as exc:
-        logger.error("Failed to build advisory snapshot for daily insight: %s", exc)
+        logger.error("Failed to build advisory snapshot for daily insight: %s", type(exc).__name__)
         return False
 
     # 2. Saturday check: skip Gemini entirely on Saturday (weekly summary runs Saturday at 20:00)
@@ -174,7 +179,7 @@ def _generate_insight_with_session(
     try:
         snapshot_json = serialize_advisory_snapshot(snapshot)
     except Exception as exc:
-        logger.error("Failed to serialize advisory snapshot: %s", exc)
+        logger.error("Failed to serialize advisory snapshot: %s", type(exc).__name__)
         claim.status = "failed"
         claim.last_error = "snapshot_serialization_failed"
         session.commit()

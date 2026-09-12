@@ -94,6 +94,13 @@ def validate_startup_configuration() -> None:
         raise RuntimeError("DEFAULT_GEMINI_MODEL must be gemini-3.5-flash-lite")
     if not config.GEMINI_API_KEY.strip():
         raise RuntimeError("GEMINI_API_KEY is required")
+    if config.GEMINI_THINKING_LEVEL not in {
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    }:
+        raise RuntimeError("GEMINI_THINKING_LEVEL is invalid")
     if not config.ASK_COACH_MODEL.strip():
         raise RuntimeError("ASK_COACH_MODEL must not be empty")
     if config.ASK_COACH_THINKING_LEVEL not in {

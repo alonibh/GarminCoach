@@ -5,6 +5,11 @@ import config
 from app import validate_startup_configuration
 
 
+@pytest.fixture(autouse=True)
+def mock_gemini_api_key(monkeypatch):
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "dummy-gemini-test-key")
+
+
 def test_canonical_gemini_defaults():
     assert config.DEFAULT_GEMINI_MODEL == "gemini-3.5-flash-lite"
     assert config.LLM_PROVIDER == "gemini"
@@ -14,6 +19,7 @@ def test_canonical_gemini_defaults():
 
 
 def test_canonical_thinking_levels():
+    assert config.GEMINI_THINKING_LEVEL == "minimal"
     assert config.ASK_COACH_THINKING_LEVEL == "low"
     assert config.DAILY_INSIGHT_THINKING_LEVEL == "minimal"
     assert config.DAILY_INSIGHT_MAX_OUTPUT_TOKENS == 1024
@@ -25,15 +31,28 @@ def test_startup_validation_accepts_canonical_config():
     validate_startup_configuration()
 
 
+def test_startup_validation_accepts_model_overrides(monkeypatch):
+    monkeypatch.setattr(config, "GEMINI_MODEL", "custom-model")
+    monkeypatch.setattr(config, "ASK_COACH_MODEL", "gemini-2.5-flash")
+    monkeypatch.setattr(config, "DAILY_INSIGHT_MODEL", "gemini-2.5-pro")
+    validate_startup_configuration()
+
+
 def test_startup_validation_rejects_non_canonical_default_model(monkeypatch):
     monkeypatch.setattr(config, "DEFAULT_GEMINI_MODEL", "gemini-2.5-flash")
     with pytest.raises(RuntimeError, match="DEFAULT_GEMINI_MODEL"):
         validate_startup_configuration()
 
 
-def test_startup_validation_rejects_non_canonical_daily_insight_model(monkeypatch):
+def test_startup_validation_rejects_empty_daily_insight_model(monkeypatch):
     monkeypatch.setattr(config, "DAILY_INSIGHT_MODEL", "   ")
     with pytest.raises(RuntimeError, match="DAILY_INSIGHT_MODEL"):
+        validate_startup_configuration()
+
+
+def test_startup_validation_rejects_invalid_gemini_thinking_level(monkeypatch):
+    monkeypatch.setattr(config, "GEMINI_THINKING_LEVEL", "maximum")
+    with pytest.raises(RuntimeError, match="GEMINI_THINKING_LEVEL"):
         validate_startup_configuration()
 
 

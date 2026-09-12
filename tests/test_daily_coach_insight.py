@@ -128,6 +128,7 @@ def test_daily_insight_pydantic_schema_modes():
         assert resp.mode == mode
         text = render_daily_insight_telegram_text(resp)
         assert "Factual observation" in text
+        assert "*" not in text
         if resp.action:
             assert resp.action in text
 
@@ -619,3 +620,165 @@ def test_telegram_webhook_daily_insight_enable_disable_flow(monkeypatch):
     asyncio.run(handle_telegram_update(_cb("ask:consent_revoke", 105)))
     assert not is_daily_insight_authorized(user_id)
     assert get_daily_insight_consent(user_id).revoked_at is not None
+
+
+# --- 8. Multi-User Scheduled Job Authorization Gates ---
+
+
+def test_multi_user_daily_insight_authorization_gates_generation(session, monkeypatch):
+    monkeypatch.setattr(config, "MULTI_USER_ENABLED", True)
+    init_control_db()
+
+    user_id = "00000000-0000-0000-0000-000000000002"
+    with get_control_session() as csession:
+        user = User(
+            id=user_id,
+            email="athlete-gate@example.com",
+            status="active",
+            role="athlete",
+            timezone="UTC",
+            telegram_linked=True,
+        )
+        csession.add(user)
+
+    snapshot_calls = []
+    gemini_calls = []
+
+    def fake_snapshot(*args, **kwargs):
+        snapshot_calls.append(kwargs)
+        return _sample_snapshot("2026-07-05")
+
+    async def fake_gemini(*args, **kwargs):
+        gemini_calls.append(kwargs)
+        return DailyInsightResponse(
+            mode="daily_insight",
+            body="Good recovery score.",
+            action="Maintain current hydration.",
+            basis_sections=["current_recovery"],
+        )
+
+    monkeypatch.setattr("coach.daily_insight.build_advisory_snapshot", fake_snapshot)
+    monkeypatch.setattr("coach.daily_insight.generate_daily_coach_insight", fake_gemini)
+
+    now_sun = datetime(2026, 7, 5, 21, 0, tzinfo=timezone.utc)
+
+    # 1. Active + linked + no consent at all -> False, 0 snapshot calls, 0 gemini calls, 0 outbox rows
+    res = run_daily_coach_insight_job(user_id=user_id, now_utc=now_sun, session=session)
+    assert res is False
+    assert len(snapshot_calls) == 0
+    assert len(gemini_calls) == 0
+    assert session.query(NotificationOutbox).count() == 0
+
+    # 2. Active + linked + Ask Coach consent only -> False, 0 snapshot calls, 0 gemini calls, 0 outbox rows
+    record_ask_coach_consent(
+        user_id,
+        config.ASK_COACH_CONSENT_VERSION,
+        config.ASK_COACH_PROVIDER,
+        config.ASK_COACH_DATA_CATEGORIES_VERSION,
+        config.CURRENT_ASK_COACH_DATA_CATEGORIES,
+    )
+    res = run_daily_coach_insight_job(user_id=user_id, now_utc=now_sun, session=session)
+    assert res is False
+    assert len(snapshot_calls) == 0
+    assert len(gemini_calls) == 0
+    assert session.query(NotificationOutbox).count() == 0
+
+    # 3. Active + linked + both consents -> True, 1 snapshot call, 1 gemini call, 1 pending row
+    record_daily_insight_consent(user_id, config.DAILY_INSIGHT_CONSENT_VERSION)
+    res = run_daily_coach_insight_job(user_id=user_id, now_utc=now_sun, session=session)
+    assert res is True
+    assert len(snapshot_calls) == 1
+    assert len(gemini_calls) == 1
+    rows = session.query(NotificationOutbox).filter_by(event_type="daily_ai_insight").all()
+    assert len(rows) == 1
+    assert rows[0].status == "pending"
+
+    # 4. Revoked Ask Coach consent on next day -> False, 0 additional snapshot/gemini calls
+    revoke_ask_coach_consent(user_id)
+    now_mon = datetime(2026, 7, 6, 21, 0, tzinfo=timezone.utc)
+    def fake_snapshot_mon(*args, **kwargs):
+        snapshot_calls.append(kwargs)
+        return _sample_snapshot("2026-07-06")
+    monkeypatch.setattr("coach.daily_insight.build_advisory_snapshot", fake_snapshot_mon)
+    res = run_daily_coach_insight_job(user_id=user_id, now_utc=now_mon, session=session)
+    assert res is False
+    assert len(snapshot_calls) == 1
+    assert len(gemini_calls) == 1
+
+    # 5. Inactive user (even if consents re-granted) -> False
+    record_ask_coach_consent(
+        user_id,
+        config.ASK_COACH_CONSENT_VERSION,
+        config.ASK_COACH_PROVIDER,
+        config.ASK_COACH_DATA_CATEGORIES_VERSION,
+        config.CURRENT_ASK_COACH_DATA_CATEGORIES,
+    )
+    with get_control_session() as csession:
+        u = csession.get(User, user_id)
+        u.status = "suspended"
+        csession.commit()
+    now_tue = datetime(2026, 7, 7, 21, 0, tzinfo=timezone.utc)
+    res = run_daily_coach_insight_job(user_id=user_id, now_utc=now_tue, session=session)
+    assert res is False
+    assert len(snapshot_calls) == 1
+    assert len(gemini_calls) == 1
+
+    # 6. Unlinked Telegram -> False
+    with get_control_session() as csession:
+        u = csession.get(User, user_id)
+        u.status = "active"
+        u.telegram_linked = False
+        csession.commit()
+    res = run_daily_coach_insight_job(user_id=user_id, now_utc=now_tue, session=session)
+    assert res is False
+    assert len(snapshot_calls) == 1
+    assert len(gemini_calls) == 1
+
+
+# --- 9. Plain-Text Delivery and Disclosure Tests ---
+
+
+def test_plain_text_delivery_handles_markdown_characters(session, monkeypatch):
+    user_id = "user-md-chars-1"
+    _create_user_and_consents(user_id)
+
+    tricky_text = "🧠 Daily Coach Insight\n\nIntervals [4x400m] @ 5:00_pace (target: HR > 160 & *intensity*)."
+    row = NotificationOutbox(
+        event_type="daily_ai_insight",
+        due_at=datetime(2026, 7, 5, 21, 0),
+        quiet_hour_policy="cancel",
+        payload_json=json.dumps({
+            "local_date": "2026-07-05",
+            "text": tricky_text,
+            "user_id": user_id,
+        }),
+        status="pending",
+        attempts=0,
+        idempotency_key="daily-insight:2026-07-05",
+        created_at=datetime(2026, 7, 5, 21, 0),
+    )
+    session.add(row)
+    session.commit()
+
+    captured_calls = []
+
+    def fake_send(text, reply_markup=None, parse_mode="Markdown"):
+        captured_calls.append({"text": text, "reply_markup": reply_markup, "parse_mode": parse_mode})
+        return True
+
+    monkeypatch.setattr("notify.outbox.send_message", fake_send)
+
+    now_dt = datetime(2026, 7, 5, 21, 5)
+    outcome = deliver_notification(session, row, now_dt)
+    assert outcome == "sent"
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["parse_mode"] is None
+    assert captured_calls[0]["text"] == tricky_text
+
+
+def test_daily_insight_disclosure_content():
+    assert "store=False" in DAILY_INSIGHT_DISCLOSURE
+    assert "Interactions API does not store" in DAILY_INSIGHT_DISCLOSURE
+    assert "applicable terms" in DAILY_INSIGHT_DISCLOSURE
+    assert "Google Gemini" in DAILY_INSIGHT_DISCLOSURE
+

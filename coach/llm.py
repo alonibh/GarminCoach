@@ -45,10 +45,9 @@ def generate_structured(system: str, user: str, schema: dict) -> str:
                     "system_instruction": {"parts": {"text": system}},
                     "contents": [{"role": "user", "parts": [{"text": user}]}],
                     "generationConfig": {
-                        "temperature": 0,
                         "maxOutputTokens": 512,
                         "responseMimeType": "application/json",
-                        "thinkingConfig": {"thinkingBudget": 0},
+                        "thinkingConfig": {"thinkingLevel": "minimal"},
                     },
                 },
                 timeout=30,
@@ -155,12 +154,9 @@ def _generate_gemini(system: str, user: str, history: list[dict]) -> str:
             "system_instruction": {"parts": {"text": system}},
             "contents": contents,
             "generationConfig": {
-                "temperature": config.GEMINI_TEMPERATURE,
                 "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS,
-                "topP": config.GEMINI_TOP_P,
-                "topK": config.GEMINI_TOP_K,
                 "thinkingConfig": {
-                    "thinkingBudget": 0,
+                    "thinkingLevel": config.GEMINI_THINKING_LEVEL,
                 },
             },
         }

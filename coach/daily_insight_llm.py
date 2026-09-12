@@ -107,9 +107,9 @@ def render_daily_insight_telegram_text(response: DailyInsightResponse) -> str:
         "steady_state": "⚖️ Daily Coach Insight",
     }
     heading = headings.get(response.mode, "🧠 Daily Coach Insight")
-    text = f"*{heading}*\n\n{response.body}"
+    text = f"{heading}\n\n{response.body}"
     if response.action:
-        text += f"\n\n*Suggestion:* {response.action}"
+        text += f"\n\nSuggestion: {response.action}"
     return text
 
 

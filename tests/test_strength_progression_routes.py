@@ -26,6 +26,9 @@ def client(monkeypatch):
         id="00000000-0000-0000-0000-000000000001", email="test@example.com",
         status="active", role="owner", onboarding_step="complete",
     ))
+    fixed_now = datetime(2026, 7, 31, 12)
+    monkeypatch.setattr("app._naive_utc", lambda: fixed_now)
+    monkeypatch.setattr(db, "naive_utc", lambda: fixed_now)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool, future=True)
     monkeypatch.setattr(db, "engine", engine)
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False, future=True))
